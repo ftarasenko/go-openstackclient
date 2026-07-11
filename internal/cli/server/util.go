@@ -1,0 +1,158 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+)
+
+var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// isUUID reports whether s looks like a canonical UUID.
+func isUUID(s string) bool {
+	return uuidRe.MatchString(s)
+}
+
+// parseKeyVal splits a "key=value" string into its two halves. The value may
+// itself contain '=' signs; only the first is treated as the separator.
+func parseKeyVal(s string) (string, string, error) {
+	i := strings.Index(s, "=")
+	if i < 0 {
+		return "", "", fmt.Errorf("expected key=value, got %q", s)
+	}
+	key := strings.TrimSpace(s[:i])
+	if key == "" {
+		return "", "", fmt.Errorf("empty key in %q", s)
+	}
+	return key, s[i+1:], nil
+}
+
+// parseKeyValStrings turns a slice of "key=value" flag values into a map.
+func parseKeyValStrings(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	m := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, err := parseKeyVal(p)
+		if err != nil {
+			return nil, err
+		}
+		m[k] = v
+	}
+	return m, nil
+}
+
+// resolveServerID accepts either a server ID or a server name and returns the
+// server's ID. Nova's server-scoped endpoints all key on the ID, while operators
+// routinely pass names, so this performs the name→ID lookup where required. A
+// value that already looks like a UUID is used verbatim to avoid an extra call.
+func resolveServerID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
+	if isUUID(ref) {
+		return ref, nil
+	}
+	pages, err := servers.List(client, servers.ListOpts{Name: ref}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving server %q: %w", ref, err)
+	}
+	all, err := servers.ExtractServers(pages)
+	if err != nil {
+		return "", fmt.Errorf("resolving server %q: %w", ref, err)
+	}
+	var matches []servers.Server
+	for _, s := range all {
+		if s.Name == ref {
+			matches = append(matches, s)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no server found with name %q", ref)
+	case 1:
+		return matches[0].ID, nil
+	default:
+		return "", fmt.Errorf("more than one server matches name %q; specify the ID", ref)
+	}
+}
+
+// resolveFlavorRef accepts either a flavor ID or a flavor name and returns the
+// flavor ID that nova expects in flavorRef. Flavor IDs are frequently short,
+// non-UUID strings (e.g. "1"), so this always consults the flavor list and
+// matches on either the ID or the name.
+func resolveFlavorRef(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
+	pages, err := flavors.ListDetail(client, nil).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving flavor %q: %w", ref, err)
+	}
+	all, err := flavors.ExtractFlavors(pages)
+	if err != nil {
+		return "", fmt.Errorf("resolving flavor %q: %w", ref, err)
+	}
+	for _, f := range all {
+		if f.ID == ref || f.Name == ref {
+			return f.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no flavor found matching %q", ref)
+}
+
+// formatNetworks renders a server's address map (keyed by network name) into a
+// compact "net=ip, ip" string, matching the Networks column of `openstack
+// server list`.
+func formatNetworks(addresses map[string]any) string {
+	if len(addresses) == 0 {
+		return ""
+	}
+	nets := make([]string, 0, len(addresses))
+	for name := range addresses {
+		nets = append(nets, name)
+	}
+	sort.Strings(nets)
+	parts := make([]string, 0, len(nets))
+	for _, name := range nets {
+		var ips []string
+		if list, ok := addresses[name].([]any); ok {
+			for _, entry := range list {
+				if m, ok := entry.(map[string]any); ok {
+					if addr, ok := m["addr"].(string); ok {
+						ips = append(ips, addr)
+					}
+				}
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", name, strings.Join(ips, ", ")))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// flavorName extracts a human-readable flavor name from the server's embedded
+// flavor object (the "original_name" key, present from microversion 2.47).
+func flavorName(flavor map[string]any) string {
+	if flavor == nil {
+		return ""
+	}
+	if n, ok := flavor["original_name"].(string); ok {
+		return n
+	}
+	if n, ok := flavor["id"].(string); ok {
+		return n
+	}
+	return ""
+}
+
+// imageID extracts the image ID from the server's embedded image object.
+func imageID(image map[string]any) string {
+	if image == nil {
+		return ""
+	}
+	if id, ok := image["id"].(string); ok {
+		return id
+	}
+	return ""
+}

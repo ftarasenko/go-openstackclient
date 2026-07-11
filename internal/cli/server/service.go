@@ -1,0 +1,203 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
+	"github.com/spf13/cobra"
+
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/output"
+)
+
+// newComputeCommand builds the "compute" parent group, home of
+// "compute service ...".
+func newComputeCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "compute",
+		Short: "Compute (nova) administrative commands",
+	}
+	cmd.AddCommand(newComputeServiceCommand(a, o))
+	return cmd
+}
+
+func newComputeServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "service",
+		Short: "Manage compute (nova) services",
+	}
+	cmd.AddCommand(newComputeServiceListCommand(a, o), newComputeServiceSetCommand(a, o))
+	return cmd
+}
+
+// serviceListFlags holds the filters accepted by "compute service list".
+type serviceListFlags struct {
+	long    bool
+	host    string
+	service string
+}
+
+func newComputeServiceListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &serviceListFlags{}
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List compute services",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runComputeServiceList(ctx, client, o, f, cmd.OutOrStdout())
+		},
+	}
+	fl := cmd.Flags()
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
+	fl.StringVar(&f.host, "host", "", "filter by host name")
+	// --service filters on the service binary (e.g. nova-compute); -c is handled by output.
+	fl.StringVar(&f.service, "service", "", "filter by service binary, e.g. nova-compute")
+	return cmd
+}
+
+func runComputeServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *serviceListFlags, w io.Writer) error {
+	opts := services.ListOpts{Host: f.host, Binary: f.service}
+	pages, err := services.List(client, opts).AllPages(ctx)
+	if err != nil {
+		return fmt.Errorf("listing compute services: %w", err)
+	}
+	all, err := services.ExtractServices(pages)
+	if err != nil {
+		return fmt.Errorf("parsing compute service list: %w", err)
+	}
+	return o.WriteList(w, serviceListTable(all, f.long))
+}
+
+func serviceListTable(list []services.Service, long bool) output.Table {
+	cols := []string{"ID", "Binary", "Host", "Zone", "Status", "State", "Updated At"}
+	if long {
+		cols = append(cols, "Disabled Reason", "Forced Down")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
+	for _, s := range list {
+		row := []any{s.ID, s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt.String()}
+		if long {
+			row = append(row, s.DisabledReason, s.ForcedDown)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	return t
+}
+
+// serviceUpdateBody is a raw services.UpdateOptsBuilder. gophercloud's
+// services.UpdateOpts tags forced_down with omitempty, so it cannot express
+// forced_down=false (needed by "--up"); building the map directly avoids that
+// gap while still going through the typed services.Update call.
+type serviceUpdateBody map[string]any
+
+func (b serviceUpdateBody) ToServiceUpdateMap() (map[string]any, error) {
+	return map[string]any(b), nil
+}
+
+// serviceSetFlags holds the mutations accepted by "compute service set".
+type serviceSetFlags struct {
+	enable        bool
+	disable       bool
+	disableReason string
+	up            bool
+	down          bool
+}
+
+func newComputeServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &serviceSetFlags{}
+	cmd := &cobra.Command{
+		Use:   "set <host> <binary>",
+		Short: "Set attributes of a compute service (enable/disable, up/down)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			if f.enable && f.disable {
+				return fmt.Errorf("--enable and --disable are mutually exclusive")
+			}
+			if f.up && f.down {
+				return fmt.Errorf("--up and --down are mutually exclusive")
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runComputeServiceSet(ctx, client, args[0], args[1], f, cmd.OutOrStdout())
+		},
+	}
+	fl := cmd.Flags()
+	fl.BoolVar(&f.enable, "enable", false, "enable the service")
+	fl.BoolVar(&f.disable, "disable", false, "disable the service")
+	fl.StringVar(&f.disableReason, "disable-reason", "", "reason for disabling the service")
+	fl.BoolVar(&f.up, "up", false, "clear the forced-down flag")
+	fl.BoolVar(&f.down, "down", false, "force the service down (fenced by operator)")
+	return cmd
+}
+
+func runComputeServiceSet(ctx context.Context, client *gophercloud.ServiceClient, host, binary string, f *serviceSetFlags, w io.Writer) error {
+	id, err := resolveServiceID(ctx, client, host, binary)
+	if err != nil {
+		return err
+	}
+
+	body := serviceUpdateBody{}
+	if f.enable {
+		body["status"] = string(services.ServiceEnabled)
+	}
+	if f.disable {
+		body["status"] = string(services.ServiceDisabled)
+	}
+	if f.disableReason != "" {
+		body["disabled_reason"] = f.disableReason
+	}
+	if f.up {
+		body["forced_down"] = false
+	}
+	if f.down {
+		body["forced_down"] = true
+	}
+	if len(body) == 0 {
+		return fmt.Errorf("nothing to do: pass --enable/--disable and/or --up/--down")
+	}
+
+	if _, err := services.Update(ctx, client, id, body).Extract(); err != nil {
+		return fmt.Errorf("updating compute service %s/%s: %w", host, binary, err)
+	}
+	if _, err := fmt.Fprintf(w, "Updated compute service %s on host %s\n", binary, host); err != nil {
+		return err
+	}
+	return nil
+}
+
+// resolveServiceID looks up a compute service's ID from its host and binary.
+// nova's update endpoint keys on the service ID (a UUID since microversion
+// 2.53), so operators' host+binary arguments must be resolved first.
+func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, host, binary string) (string, error) {
+	pages, err := services.List(client, services.ListOpts{Host: host, Binary: binary}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving compute service %s/%s: %w", host, binary, err)
+	}
+	all, err := services.ExtractServices(pages)
+	if err != nil {
+		return "", fmt.Errorf("resolving compute service %s/%s: %w", host, binary, err)
+	}
+	for _, s := range all {
+		if s.Host == host && s.Binary == binary {
+			return s.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no compute service %q found on host %q", binary, host)
+}
