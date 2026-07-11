@@ -197,6 +197,7 @@ func newRecordSetCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	fl.StringArrayVar(&f.records, "record", nil, "record data; repeat for multiple records")
 	fl.IntVar(&f.ttl, "ttl", 0, "time to live (seconds) for the recordset")
 	fl.StringVar(&f.description, "description", "", "description of the recordset")
+	_ = cmd.MarkFlagRequired("type")
 	return cmd
 }
 

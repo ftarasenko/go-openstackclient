@@ -98,16 +98,56 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf(&ao.ApplicationCredentialName, o.AppCredName)
 	setIf(&ao.ApplicationCredentialSecret, o.AppCredSecret)
 
-	// Scope: a domain name given without a project implies a domain-scoped
-	// token; otherwise a project domain qualifies the project scope.
-	if o.DomainName != "" && o.ProjectName == "" && o.ProjectID == "" && ao.TenantName == "" && ao.TenantID == "" {
-		ao.Scope = &gophercloud.AuthScope{DomainName: o.DomainName}
-		ao.DomainName = o.DomainName
-	} else if o.ProjectDomainName != "" {
-		ao.DomainName = o.ProjectDomainName
-	} else if o.UserDomainName != "" {
-		ao.DomainName = o.UserDomainName
+	o.applyDomainScope(ao)
+}
+
+// applyDomainScope wires the user's identity domain and the token scope
+// independently, so a user in one domain can scope to a project in another.
+//
+// gophercloud uses ao.DomainName for BOTH the user's identity domain and — when
+// ao.Scope is nil — the project scope's domain (ToTokenV3ScopeMap), which
+// conflates the two. We therefore set ao.Scope explicitly whenever a domain flag
+// is supplied. When no koc domain flag is given we leave scoping untouched so
+// the clouds.yaml / AuthOptionsFromEnv defaults are preserved.
+func (o *Options) applyDomainScope(ao *gophercloud.AuthOptions) {
+	if o.UserDomainName == "" && o.ProjectDomainName == "" && o.DomainName == "" {
+		return
 	}
+
+	// The user's identity domain qualifies the username/user-id. Prefer an
+	// explicit user domain, then a lone --os-domain-name, then the project
+	// domain (single-domain clouds set only one of these).
+	if userDomain := firstNonEmpty(o.UserDomainName, o.DomainName, o.ProjectDomainName); userDomain != "" {
+		ao.DomainName = userDomain
+		ao.DomainID = ""
+	}
+
+	projectName := firstNonEmpty(o.ProjectName, ao.TenantName)
+	projectID := firstNonEmpty(o.ProjectID, ao.TenantID)
+
+	switch {
+	case projectID != "":
+		// Project-by-ID scope needs no domain qualifier.
+		ao.Scope = &gophercloud.AuthScope{ProjectID: projectID}
+	case projectName != "":
+		// Project-by-name must be qualified by the project's own domain.
+		ao.Scope = &gophercloud.AuthScope{
+			ProjectName: projectName,
+			DomainName:  firstNonEmpty(o.ProjectDomainName, o.UserDomainName, o.DomainName),
+		}
+	case o.DomainName != "":
+		// Domain-scoped token (no project).
+		ao.Scope = &gophercloud.AuthScope{DomainName: o.DomainName}
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (o *Options) applyEndpointOverrides(eo *gophercloud.EndpointOpts) {

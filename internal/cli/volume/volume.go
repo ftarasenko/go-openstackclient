@@ -222,6 +222,14 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				}
 				f.image = id
 			}
+			// Resolve a --snapshot name to an ID via cinder before creating.
+			if f.snapshot != "" && !resolve.IsUUID(f.snapshot) {
+				id, err := resolveSnapshotID(ctx, client, f.snapshot)
+				if err != nil {
+					return err
+				}
+				f.snapshot = id
+			}
 			return runVolumeCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
@@ -233,12 +241,13 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.snapshot, "snapshot", "", "source snapshot (ID or name)")
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "availability zone")
 	fl.StringArrayVar(&f.property, "property", nil, "set a property key=value (repeatable)")
-	_ = cmd.MarkFlagRequired("size")
 	return cmd
 }
 
 func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *volumeCreateFlags, w io.Writer) error {
-	if f.size <= 0 {
+	// Cinder derives the size from the source snapshot, so --size is only
+	// required for image-from and blank creates.
+	if f.snapshot == "" && f.size <= 0 {
 		return fmt.Errorf("--size must be a positive number of GiB")
 	}
 	meta, err := parseKeyValMap(f.property)
@@ -333,6 +342,10 @@ func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *volumeSetFlags, cmd *cobra.Command) error {
+	if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("description") &&
+		!cmd.Flags().Changed("size") && len(f.property) == 0 {
+		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --property")
+	}
 	id, err := resolveVolumeID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -432,8 +445,25 @@ func runVolumeUnset(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	for _, key := range f.property {
 		delete(merged, key)
 	}
-	if _, err := volumes.Update(ctx, client, id, volumes.UpdateOpts{Metadata: merged}).Extract(); err != nil {
+	if _, err := volumes.Update(ctx, client, id, metadataUpdateOpts{metadata: merged}).Extract(); err != nil {
 		return fmt.Errorf("updating volume %q: %w", ref, err)
 	}
 	return nil
+}
+
+// metadataUpdateOpts is a volumes.UpdateOptsBuilder that always emits the
+// "metadata" key in the PUT body — even when the map is empty. volumes.UpdateOpts
+// tags Metadata with `json:",omitempty"`, so unsetting the last key would drop
+// the field entirely and cinder (which replaces metadata wholesale) would keep
+// the old values. Sending "metadata":{} clears them as intended.
+type metadataUpdateOpts struct {
+	metadata map[string]string
+}
+
+func (o metadataUpdateOpts) ToVolumeUpdateMap() (map[string]any, error) {
+	m := map[string]string{}
+	for k, v := range o.metadata {
+		m[k] = v
+	}
+	return map[string]any{"volume": map[string]any{"metadata": m}}, nil
 }

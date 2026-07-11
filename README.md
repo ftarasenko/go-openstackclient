@@ -142,6 +142,24 @@ make lint     # golangci-lint run ./...
 make tidy     # go mod tidy && go mod vendor
 ```
 
+## Known limitations
+
+A multi-perspective correctness review hardened the initial surface (auth domain
+scoping, nova floating-IP microversion, `--wait` semantics, `--limit`, metadata
+unset, cross-service resolution, debug redaction, and more). A few lower-risk
+items are deferred and worth noting:
+
+- **Name-not-found on list filters is silent.** A name→ID resolver that finds no
+  match passes the reference through as a literal ID, so a mistyped `--domain`/
+  `--project` filter yields an empty result rather than an error (write paths
+  still 404 loudly). UUIDs always short-circuit resolution.
+- **`baremetal node set` uses JSON-patch `replace`** for scalar attributes; on
+  some ironic builds `add` is needed for a previously-absent attribute.
+- **`role assignment list` with both `--project` and `--domain`** sends both
+  scope qualifiers; keystone treats them as mutually exclusive.
+- **`--debug` elides large/binary bodies** (image up/downloads) and redacts
+  tokens and credential fields; it does not pretty-print JSON.
+
 ## KeyStack documentation caveat
 
 Command and flag names should be verified against the KeyStack command

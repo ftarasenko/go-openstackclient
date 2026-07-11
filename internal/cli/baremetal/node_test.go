@@ -165,6 +165,36 @@ func TestRunNodeList_ColumnSelection(t *testing.T) {
 	}
 }
 
+func TestRunNodeList_LimitCapsResults(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// Server returns 2 nodes even though the client asked for a page size of 1
+	// (mirrors ironic returning a full page); --limit must cap the rendered rows.
+	fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(nodeListBody))
+	})
+
+	client := baremetalClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+	f := &nodeListFlags{limit: 1}
+
+	var buf bytes.Buffer
+	if err := runNodeList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runNodeList returned error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("--limit 1 should render exactly 1 row, got %d:\n%s", len(lines), buf.String())
+	}
+	if !strings.Contains(lines[0], "node-a") {
+		t.Errorf("first row should be node-a, got %q", lines[0])
+	}
+}
+
 func TestNodeListFilters_MarkerAndProvisionState(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

@@ -32,6 +32,16 @@ func enableDisable(cmd interface{ Changed(string) bool }, enable, disable bool) 
 	}
 }
 
+// mutuallyExclusive returns an error when both named boolean flags were set on
+// the same invocation. It backs the contradictory-flag guards for pairs such as
+// --enable/--disable and --ingress/--egress.
+func mutuallyExclusive(flags interface{ Changed(string) bool }, a, b string) error {
+	if flags.Changed(a) && flags.Changed(b) {
+		return fmt.Errorf("--%s and --%s are mutually exclusive", a, b)
+	}
+	return nil
+}
+
 // resolveNetworkID resolves a network name or ID to an ID. It first filters by
 // name; a single match wins. When no network matches by name the argument is
 // assumed to already be an ID and returned unchanged (matching OSC's

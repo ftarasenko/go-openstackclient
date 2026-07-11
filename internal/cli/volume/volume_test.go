@@ -194,6 +194,49 @@ func TestRunVolumeCreate_RejectsNonPositiveSize(t *testing.T) {
 	}
 }
 
+func TestRunVolumeUnset_ClearsLastKey(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "44444444-4444-4444-4444-444444444444"
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"volume": {"id": "` + id + `", "name": "vol", "metadata": {"k": "v"}}}`))
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(body, &gotBody); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"volume": {"id": "` + id + `", "name": "vol", "metadata": {}}}`))
+		default:
+			t.Errorf("unexpected method %q", r.Method)
+		}
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	f := &volumeUnsetFlags{property: []string{"k"}}
+	if err := runVolumeUnset(context.Background(), client, id, f); err != nil {
+		t.Fatalf("runVolumeUnset returned error: %v", err)
+	}
+
+	vol, ok := gotBody["volume"].(map[string]any)
+	if !ok {
+		t.Fatalf("PUT body missing top-level \"volume\" object: %#v", gotBody)
+	}
+	meta, ok := vol["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("PUT body must include \"metadata\" key (empty object), got: %#v", vol)
+	}
+	if len(meta) != 0 {
+		t.Errorf("metadata = %#v, want empty object", meta)
+	}
+}
+
 const serviceListBody = `{
   "services": [
     {

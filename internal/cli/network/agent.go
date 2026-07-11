@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -143,15 +144,17 @@ func newAgentDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAgentDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
+	var errs []error
 	for _, id := range ids {
 		if err := agents.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network agent %s: %w", id, err)
+			errs = append(errs, fmt.Errorf("deleting network agent %s: %w", id, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted agent %s\n", id); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type agentSetFlags struct {
@@ -184,6 +187,9 @@ func newAgentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAgentSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *agentSetFlags, flags flagSet, w io.Writer) error {
+	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
+		return err
+	}
 	state := enableDisable(flags, f.enable, f.disable)
 	if state == nil {
 		return fmt.Errorf("agent set requires --enable or --disable")

@@ -221,6 +221,7 @@ type serverCreateFlags struct {
 	image          string
 	flavor         string
 	networks       []string
+	nics           []string
 	keyName        string
 	configDrive    bool
 	configDriveSet bool
@@ -241,6 +242,10 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			f.configDriveSet = cmd.Flags().Changed("config-drive")
+			// --network and --nic are aliases bound to separate slices so
+			// mixing them does not clobber values. Merge --nic after --network,
+			// preserving order, before resolution and use.
+			f.networks = append(f.networks, f.nics...)
 			ctx := cmd.Context()
 			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
@@ -259,7 +264,7 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.flavor, "flavor", "", "flavor ID or name (required)")
 	// --network and --nic are accepted as aliases for the same value: a network ID/name to attach.
 	fl.StringArrayVar(&f.networks, "network", nil, "network ID or name to attach; repeatable")
-	fl.StringArrayVar(&f.networks, "nic", nil, "alias of --network")
+	fl.StringArrayVar(&f.nics, "nic", nil, "alias of --network")
 	fl.StringVar(&f.keyName, "key-name", "", "name of the keypair to inject")
 	fl.BoolVar(&f.configDrive, "config-drive", false, "enable a config drive")
 	fl.StringArrayVar(&f.securityGroups, "security-group", nil, "security group name; repeatable")

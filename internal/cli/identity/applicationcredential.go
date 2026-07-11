@@ -195,11 +195,38 @@ func newAppCredDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
-func runAppCredDelete(ctx context.Context, client *gophercloud.ServiceClient, userID, id string) error {
+func runAppCredDelete(ctx context.Context, client *gophercloud.ServiceClient, userID, ref string) error {
+	id, err := resolveAppCredID(ctx, client, userID, ref)
+	if err != nil {
+		return err
+	}
 	if err := applicationcredentials.Delete(ctx, client, userID, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting application credential %q: %w", id, err)
+		return fmt.Errorf("deleting application credential %q: %w", ref, err)
 	}
 	return nil
+}
+
+// resolveAppCredID resolves an application credential name to its ID within the
+// owning user's credentials. It mirrors the name-or-ID resolvers in resolve.go:
+// exactly one name match wins, zero matches falls back to treating ref as an ID,
+// and more than one match is ambiguous.
+func resolveAppCredID(ctx context.Context, client *gophercloud.ServiceClient, userID, ref string) (string, error) {
+	pages, err := applicationcredentials.List(client, userID, applicationcredentials.ListOpts{Name: ref}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving application credential %q: %w", ref, err)
+	}
+	all, err := applicationcredentials.ExtractApplicationCredentials(pages)
+	if err != nil {
+		return "", fmt.Errorf("parsing application credential list: %w", err)
+	}
+	switch len(all) {
+	case 0:
+		return ref, nil
+	case 1:
+		return all[0].ID, nil
+	default:
+		return "", fmt.Errorf("application credential name %q is ambiguous: %d matches", ref, len(all))
+	}
 }
 
 func formatTime(t time.Time) string {

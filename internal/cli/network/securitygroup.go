@@ -2,8 +2,10 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
@@ -158,19 +160,22 @@ func newSecurityGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runSecurityGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
+	var errs []error
 	for _, nameOrID := range names {
 		id, err := resolveSecGroupID(ctx, client, nameOrID)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := groups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting security group %s: %w", nameOrID, err)
+			errs = append(errs, fmt.Errorf("deleting security group %s: %w", nameOrID, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted security group %s\n", nameOrID); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type secGroupSetFlags struct {
@@ -363,6 +368,9 @@ func newSecurityGroupRuleCreateCommand(a *auth.Options, o *output.Options) *cobr
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			if err := mutuallyExclusive(cmd.Flags(), "ingress", "egress"); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, err := newNetworkClient(ctx, a)
 			if err != nil {
@@ -393,13 +401,17 @@ func runSecurityGroupRuleCreate(ctx context.Context, client *gophercloud.Service
 	}
 	etherType := rules.EtherType4
 	if f.ethertype != "" {
-		etherType = rules.RuleEtherType(f.ethertype)
+		normalized, err := normalizeEtherType(f.ethertype)
+		if err != nil {
+			return err
+		}
+		etherType = normalized
 	}
 	opts := rules.CreateOpts{
 		Direction:      direction,
 		EtherType:      etherType,
 		SecGroupID:     gid,
-		Protocol:       rules.RuleProtocol(f.protocol),
+		Protocol:       normalizeProtocol(f.protocol),
 		RemoteIPPrefix: f.remoteIP,
 	}
 	if f.dstPort != "" {
@@ -425,6 +437,29 @@ func runSecurityGroupRuleCreate(ctx context.Context, client *gophercloud.Service
 	return o.WriteSingle(w, fields, values)
 }
 
+// normalizeEtherType maps a case-insensitive ethertype (e.g. "ipv6", "IPV4")
+// onto neutron's canonical "IPv4"/"IPv6" spelling. Empty values are handled by
+// the caller (the default applies).
+func normalizeEtherType(v string) (rules.RuleEtherType, error) {
+	switch strings.ToLower(v) {
+	case "ipv4":
+		return rules.EtherType4, nil
+	case "ipv6":
+		return rules.EtherType6, nil
+	default:
+		return "", fmt.Errorf("invalid --ethertype %q: want IPv4 or IPv6", v)
+	}
+}
+
+// normalizeProtocol lowercases the protocol so values like "TCP" become the
+// "tcp" neutron expects. Empty values are left untouched (no protocol set).
+func normalizeProtocol(v string) rules.RuleProtocol {
+	if v == "" {
+		return ""
+	}
+	return rules.RuleProtocol(strings.ToLower(v))
+}
+
 func newSecurityGroupRuleDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <rule> [<rule> ...]",
@@ -446,13 +481,15 @@ func newSecurityGroupRuleDeleteCommand(a *auth.Options, o *output.Options) *cobr
 }
 
 func runSecurityGroupRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
+	var errs []error
 	for _, id := range ids {
 		if err := rules.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting security group rule %s: %w", id, err)
+			errs = append(errs, fmt.Errorf("deleting security group rule %s: %w", id, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted security group rule %s\n", id); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
