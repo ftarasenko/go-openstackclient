@@ -42,6 +42,10 @@ CGO_ENABLED=0 go build -trimpath \
 
 or just `make build`.
 
+Tagged releases (push a `v*` tag) build and publish static binaries for
+**linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64 and
+windows/arm64** via the release workflow.
+
 ### Air-gapped / offline build
 
 All dependencies are vendored (`vendor/` is committed). The build reproduces
