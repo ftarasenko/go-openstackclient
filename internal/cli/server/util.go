@@ -10,7 +10,43 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 )
+
+// resolveServerCreateRefs turns the human-friendly --image (glance) and
+// --network (neutron) references on a create request into IDs, deriving the
+// image and network clients lazily from the shared session so those services
+// are only contacted when a non-UUID name is actually supplied.
+func resolveServerCreateRefs(ctx context.Context, session *auth.Client, f *serverCreateFlags) error {
+	if f.image != "" && !isUUID(f.image) {
+		img, err := session.Image()
+		if err != nil {
+			return err
+		}
+		id, err := resolve.ImageID(ctx, img, f.image)
+		if err != nil {
+			return err
+		}
+		f.image = id
+	}
+	for i, n := range f.networks {
+		if n == "" || isUUID(n) {
+			continue
+		}
+		net, err := session.Network()
+		if err != nil {
+			return err
+		}
+		id, err := resolve.NetworkID(ctx, net, n)
+		if err != nil {
+			return err
+		}
+		f.networks[i] = id
+	}
+	return nil
+}
 
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 

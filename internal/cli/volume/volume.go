@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -205,9 +206,21 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newVolumeClient(ctx, a)
+			client, session, err := newVolumeSession(ctx, a)
 			if err != nil {
 				return err
+			}
+			// Resolve a --image name to an ID via glance before creating.
+			if f.image != "" && !resolve.IsUUID(f.image) {
+				img, err := session.Image()
+				if err != nil {
+					return err
+				}
+				id, err := resolve.ImageID(ctx, img, f.image)
+				if err != nil {
+					return err
+				}
+				f.image = id
 			}
 			return runVolumeCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},

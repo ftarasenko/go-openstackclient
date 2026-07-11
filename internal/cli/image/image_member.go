@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -35,8 +36,8 @@ func newImageRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 // newImageAddProjectCommand builds "image add project <image> <project>".
 //
-// <project> is used verbatim as the member (project) ID; project name→ID
-// resolution would require the identity service and is not performed here.
+// The <image> and <project> references may be names or IDs; the image is
+// resolved via glance and the project name→ID via the identity service.
 func newImageAddProjectCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "project <image> <project>",
@@ -47,7 +48,7 @@ func newImageAddProjectCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newImageClient(ctx, a)
+			client, session, err := newImageSession(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -55,7 +56,11 @@ func newImageAddProjectCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return runImageAddProject(ctx, client, o, id, args[1], cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, args[1])
+			if err != nil {
+				return err
+			}
+			return runImageAddProject(ctx, client, o, id, projectID, cmd.OutOrStdout())
 		},
 	}
 	return cmd
@@ -81,7 +86,7 @@ func newImageRemoveProjectCommand(a *auth.Options, o *output.Options) *cobra.Com
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newImageClient(ctx, a)
+			client, session, err := newImageSession(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -89,7 +94,11 @@ func newImageRemoveProjectCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			return runImageRemoveProject(ctx, client, id, args[1], cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, args[1])
+			if err != nil {
+				return err
+			}
+			return runImageRemoveProject(ctx, client, id, projectID, cmd.OutOrStdout())
 		},
 	}
 	return cmd
@@ -103,6 +112,19 @@ func runImageRemoveProject(ctx context.Context, client *gophercloud.ServiceClien
 		return err
 	}
 	return nil
+}
+
+// resolveProjectRef turns a project name or ID into a project ID via the
+// identity service derived from the shared session.
+func resolveProjectRef(ctx context.Context, session *auth.Client, ref string) (string, error) {
+	if ref == "" || resolve.IsUUID(ref) {
+		return ref, nil
+	}
+	identityClient, err := session.Identity()
+	if err != nil {
+		return "", err
+	}
+	return resolve.ProjectID(ctx, identityClient, ref)
 }
 
 func memberFields(m *members.Member) ([]string, []any) {
