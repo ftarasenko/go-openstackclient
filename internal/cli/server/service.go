@@ -29,7 +29,11 @@ func newComputeServiceCommand(a *auth.Options, o *output.Options) *cobra.Command
 		Use:   "service",
 		Short: "Manage compute (nova) services",
 	}
-	cmd.AddCommand(newComputeServiceListCommand(a, o), newComputeServiceSetCommand(a, o))
+	cmd.AddCommand(
+		newComputeServiceListCommand(a, o),
+		newComputeServiceSetCommand(a, o),
+		newComputeServiceDeleteCommand(a, o),
+	)
 	return cmd
 }
 
@@ -177,6 +181,40 @@ func runComputeServiceSet(ctx context.Context, client *gophercloud.ServiceClient
 		return fmt.Errorf("updating compute service %s/%s: %w", host, binary, err)
 	}
 	if _, err := fmt.Fprintf(w, "Updated compute service %s on host %s\n", binary, host); err != nil {
+		return err
+	}
+	return nil
+}
+
+func newComputeServiceDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete <host> <binary>",
+		Short: "Delete (remove) a compute service",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runComputeServiceDelete(ctx, client, args[0], args[1], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+func runComputeServiceDelete(ctx context.Context, client *gophercloud.ServiceClient, host, binary string, w io.Writer) error {
+	id, err := resolveServiceID(ctx, client, host, binary)
+	if err != nil {
+		return err
+	}
+	if err := services.Delete(ctx, client, id).ExtractErr(); err != nil {
+		return fmt.Errorf("deleting compute service %s/%s: %w", host, binary, err)
+	}
+	if _, err := fmt.Fprintf(w, "Deleted compute service %s on host %s\n", binary, host); err != nil {
 		return err
 	}
 	return nil
