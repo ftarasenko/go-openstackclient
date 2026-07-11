@@ -30,6 +30,10 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,7 +51,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="$(git describe --tags --always --dirty)"
-          OUT="koc-${{ matrix.goos }}-${{ matrix.goarch }}"
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          OUT="koc-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
           go build -trimpath \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o "dist/${OUT}" ./cmd/koc
