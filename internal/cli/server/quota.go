@@ -81,15 +81,16 @@ func runQuotaShow(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		}
 	}
 
+	// The injected_files, injected_file_content_bytes and injected_file_path_bytes
+	// quotas were removed from nova at microversion 2.57 and are always 0 under
+	// the negotiated "latest" microversion, so they are omitted.
 	fields := []string{
 		"Instances", "Cores", "RAM", "Key Pairs", "Metadata Items",
-		"Server Groups", "Server Group Members", "Injected Files",
-		"Injected File Content Bytes", "Injected File Path Bytes",
+		"Server Groups", "Server Group Members",
 	}
 	values := []any{
 		qs.Instances, qs.Cores, qs.RAM, qs.KeyPairs, qs.MetadataItems,
-		qs.ServerGroups, qs.ServerGroupMembers, qs.InjectedFiles,
-		qs.InjectedFileContentBytes, qs.InjectedFilePathBytes,
+		qs.ServerGroups, qs.ServerGroupMembers,
 	}
 	return o.WriteSingle(w, fields, values)
 }

@@ -348,8 +348,17 @@ func runServerRemoveVolume(ctx context.Context, client *gophercloud.ServiceClien
 // the raw server-action endpoint directly. Documented as a raw fallback.
 
 func serverActionRaw(ctx context.Context, client *gophercloud.ServiceClient, id string, body map[string]any) error {
-	url := client.ServiceURL("servers", id, "action")
-	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
+	// The addFloatingIp/removeFloatingIp server actions were removed from nova
+	// at microversion 2.44. The compute client negotiates "latest", so these
+	// requests must be pinned to a pre-2.44 microversion or nova 404s. Setting
+	// RequestOpts.MoreHeaders is not enough: service_client.go's
+	// setMicroversionHeader overwrites X-OpenStack-Nova-API-Version from
+	// client.Microversion on every Request. Shallow-copy the service client
+	// (sharing the ProviderClient) and override its Microversion for this call.
+	legacy := *client
+	legacy.Microversion = "2.43"
+	url := legacy.ServiceURL("servers", id, "action")
+	resp, err := legacy.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
 	if resp != nil {
 		defer func() { _ = resp.Body.Close() }()
 	}

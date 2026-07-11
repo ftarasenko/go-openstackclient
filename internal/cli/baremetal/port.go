@@ -91,6 +91,10 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("parsing baremetal port list: %w", err)
 	}
+	// Limit is only the page size to ironic; enforce it as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
+	}
 	return o.WriteList(w, portListTable(all, f.long))
 }
 

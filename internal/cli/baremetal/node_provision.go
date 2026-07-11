@@ -96,10 +96,21 @@ func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr
 	return nil
 }
 
+// maxConsecutiveGetErrors bounds how many CONSECUTIVE nodes.Get failures the
+// --wait poll tolerates before giving up; the counter resets on any success.
+const maxConsecutiveGetErrors = 5
+
 // waitForProvisionState polls the node until it reaches want, or a terminal
 // failure/error state, or the timeout/context expires. Unlike gophercloud's
 // nodes.WaitForProvisionState it fails fast on error states instead of spinning
 // until timeout.
+//
+// Success and failure are keyed off ironic's target_provision_state: ironic
+// clears it only once a transition settles. This avoids returning immediately
+// when the node's starting ProvisionState already equals want (e.g. rebuild of
+// an "active" node, inspect of a "manageable" node) before ironic has begun the
+// transition, and avoids hanging the full timeout when a transition settles into
+// an unexpected state (e.g. manage verify failure → "enroll").
 func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id string, want nodes.ProvisionState) error {
 	ctx, cancel := context.WithTimeout(ctx, provisionPollTimeout)
 	defer cancel()
@@ -107,16 +118,30 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 	ticker := time.NewTicker(provisionPollInterval)
 	defer ticker.Stop()
 
+	var getErrors int
 	for {
 		n, err := nodes.Get(ctx, client, id).Extract()
 		if err != nil {
-			return fmt.Errorf("polling node %s: %w", id, err)
-		}
-		switch {
-		case n.ProvisionState == string(want):
-			return nil
-		case isProvisionFailure(n.ProvisionState):
-			return fmt.Errorf("node %s entered failure state %q: %s", id, n.ProvisionState, n.LastError)
+			// Tolerate a small number of consecutive transient Get errors, but
+			// stop promptly if the context is done.
+			if ctx.Err() != nil {
+				return fmt.Errorf("waiting for node %s to reach %q: %w", id, want, ctx.Err())
+			}
+			getErrors++
+			if getErrors > maxConsecutiveGetErrors {
+				return fmt.Errorf("polling node %s: %w", id, err)
+			}
+		} else {
+			getErrors = 0
+			settled := n.TargetProvisionState == ""
+			switch {
+			case settled && n.ProvisionState == string(want):
+				return nil
+			case isProvisionFailure(n.ProvisionState):
+				return fmt.Errorf("node %s entered failure state %q: %s", id, n.ProvisionState, n.LastError)
+			case settled && n.ProvisionState != string(want) && n.LastError != "":
+				return fmt.Errorf("node %s settled in unexpected state %q instead of %q: %s", id, n.ProvisionState, want, n.LastError)
+			}
 		}
 		select {
 		case <-ctx.Done():

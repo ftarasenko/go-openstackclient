@@ -216,8 +216,9 @@ func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		swap := f.swap
 		opts.Swap = &swap
 	}
-	// --private wins when explicitly requested; otherwise the flavor is public.
-	isPublic := !f.private
+	// --private wins when explicitly requested; --public=false also yields a
+	// private flavor. Public only when requested and not overridden by --private.
+	isPublic := f.public && !f.private
 	opts.IsPublic = &isPublic
 
 	fl, err := flavors.Create(ctx, client, opts).Extract()

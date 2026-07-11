@@ -68,6 +68,9 @@ type Table struct {
 
 // WriteList renders a multi-row result (e.g. "node list") in the selected format.
 func (o *Options) WriteList(w io.Writer, t Table) error {
+	if err := o.validateColumns(t.Columns); err != nil {
+		return err
+	}
 	cols, idx := o.selectColumns(t.Columns)
 	rows := make([][]any, len(t.Rows))
 	for i, r := range t.Rows {
@@ -96,6 +99,9 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 
 // WriteSingle renders a single resource as a Field/Value view (e.g. "node show").
 func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error {
+	if err := o.validateColumns(fields); err != nil {
+		return err
+	}
 	// Column selection filters which fields are shown.
 	if len(o.Columns) > 0 {
 		var fFields []string
@@ -145,6 +151,33 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 		}
 		return writeTable(w, []string{"Field", "Value"}, rows)
 	}
+}
+
+// validateColumns errors when a requested -c/--column name matches none of the
+// available headers (case-insensitively), matching OSC, which rejects unknown
+// columns rather than silently dropping them.
+func (o *Options) validateColumns(all []string) error {
+	if len(o.Columns) == 0 {
+		return nil
+	}
+	var unknown []string
+	for _, want := range o.Columns {
+		found := false
+		for _, have := range all {
+			if strings.EqualFold(strings.TrimSpace(want), have) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			unknown = append(unknown, want)
+		}
+	}
+	if len(unknown) > 0 {
+		return fmt.Errorf("unknown column(s): %s (available: %s)",
+			strings.Join(unknown, ", "), strings.Join(all, ", "))
+	}
+	return nil
 }
 
 // selectColumns returns the effective column headers and the indices into the

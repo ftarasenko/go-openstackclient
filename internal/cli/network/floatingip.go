@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -203,19 +204,22 @@ func newFloatingIPDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runFloatingIPDelete(ctx context.Context, client *gophercloud.ServiceClient, addrs []string, w io.Writer) error {
+	var errs []error
 	for _, addrOrID := range addrs {
 		id, err := resolveFloatingIPID(ctx, client, addrOrID)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := floatingips.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting floating IP %s: %w", addrOrID, err)
+			errs = append(errs, fmt.Errorf("deleting floating IP %s: %w", addrOrID, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted floating IP %s\n", addrOrID); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type floatingIPSetFlags struct {

@@ -137,6 +137,10 @@ func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("parsing baremetal node list: %w", err)
 	}
+	// Limit is only the page size to ironic; enforce it as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
+	}
 
 	return o.WriteList(w, nodeListTable(all, f.long))
 }

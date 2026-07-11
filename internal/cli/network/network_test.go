@@ -203,3 +203,42 @@ func TestRunAgentList_AgentTypeFilterQueryParam(t *testing.T) {
 		}
 	}
 }
+
+// TestRunSecurityGroupRuleCreate_NormalizesEtherTypeAndProtocol confirms that
+// mixed-case --ethertype and --protocol values are canonicalized before the
+// request body is built ("ipv6" -> "IPv6", "TCP" -> "tcp").
+func TestRunSecurityGroupRuleCreate_NormalizesEtherTypeAndProtocol(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// resolveSecGroupID lists groups by name; return no match so the arg is
+	// treated as an ID and passed straight through.
+	fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"security_groups":[]}`))
+	})
+	fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{
+			"security_group_rule": {
+				"direction": "ingress",
+				"ethertype": "IPv6",
+				"protocol": "tcp",
+				"security_group_id": "sg-id-1"
+			}
+		}`)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"security_group_rule":{"id":"rule-1","security_group_id":"sg-id-1","direction":"ingress","ethertype":"IPv6","protocol":"tcp"}}`))
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+	f := &secGroupRuleCreateFlags{protocol: "TCP", ethertype: "ipv6"}
+
+	var buf bytes.Buffer
+	if err := runSecurityGroupRuleCreate(context.Background(), client, o, "sg-id-1", f, &buf); err != nil {
+		t.Fatalf("runSecurityGroupRuleCreate returned error: %v", err)
+	}
+}

@@ -53,11 +53,11 @@ func runHypervisorList(ctx context.Context, client *gophercloud.ServiceClient, o
 		return fmt.Errorf("parsing hypervisor list: %w", err)
 	}
 	t := output.Table{
-		Columns: []string{"ID", "Hypervisor Hostname", "Type", "Host IP", "State", "Status"},
+		Columns: []string{"ID", "Hypervisor Hostname", "Type", "State", "Status"},
 		Rows:    make([][]any, 0, len(all)),
 	}
 	for _, h := range all {
-		t.Rows = append(t.Rows, []any{h.ID, h.HypervisorHostname, h.HypervisorType, h.HostIP, h.State, h.Status})
+		t.Rows = append(t.Rows, []any{h.ID, h.HypervisorHostname, h.HypervisorType, h.State, h.Status})
 	}
 	return o.WriteList(w, t)
 }

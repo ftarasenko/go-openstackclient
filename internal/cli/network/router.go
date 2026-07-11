@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -176,19 +177,22 @@ func newRouterDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRouterDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
+	var errs []error
 	for _, nameOrID := range names {
 		id, err := resolveRouterID(ctx, client, nameOrID)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := routers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting router %s: %w", nameOrID, err)
+			errs = append(errs, fmt.Errorf("deleting router %s: %w", nameOrID, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted router %s\n", nameOrID); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type routerSetFlags struct {
@@ -225,6 +229,9 @@ func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *routerSetFlags, flags flagSet, w io.Writer) error {
+	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
+		return err
+	}
 	id, err := resolveRouterID(ctx, client, nameOrID)
 	if err != nil {
 		return err

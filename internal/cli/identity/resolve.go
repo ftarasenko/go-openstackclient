@@ -154,6 +154,16 @@ func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, na
 // enabledFromFlags derives the tri-state Enabled pointer from the mutually
 // exclusive --enable/--disable pair. It returns nil when neither was set so the
 // server default (or an unchanged value on update) is preserved.
+// checkEnableDisable rejects an invocation that set both --enable and --disable,
+// which are mutually exclusive. Callers pass the tri-state "Changed" bits they
+// already read for enabledFromFlags.
+func checkEnableDisable(enableSet, disableSet bool) error {
+	if enableSet && disableSet {
+		return fmt.Errorf("--enable and --disable are mutually exclusive")
+	}
+	return nil
+}
+
 func enabledFromFlags(enableSet, disableSet, enable bool) *bool {
 	if enableSet {
 		v := enable

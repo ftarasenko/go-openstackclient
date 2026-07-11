@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -194,6 +195,9 @@ func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			if err := mutuallyExclusive(cmd.Flags(), "enable", "disable"); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, err := newNetworkClient(ctx, a)
 			if err != nil {
@@ -298,19 +302,22 @@ func newNetworkDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runNetworkDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
+	var errs []error
 	for _, nameOrID := range names {
 		id, err := resolveNetworkID(ctx, client, nameOrID)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := networks.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network %s: %w", nameOrID, err)
+			errs = append(errs, fmt.Errorf("deleting network %s: %w", nameOrID, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted network %s\n", nameOrID); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type networkSetFlags struct {
@@ -349,6 +356,9 @@ func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNetworkSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *networkSetFlags, flags flagSet, w io.Writer) error {
+	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
+		return err
+	}
 	id, err := resolveNetworkID(ctx, client, nameOrID)
 	if err != nil {
 		return err

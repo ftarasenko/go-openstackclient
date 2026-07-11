@@ -118,6 +118,9 @@ func newDomainCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			f.enableSet = cmd.Flags().Changed("enable")
 			f.disableSet = cmd.Flags().Changed("disable")
+			if err := checkEnableDisable(f.enableSet, f.disableSet); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, err := newIdentityClient(ctx, a)
 			if err != nil {
@@ -190,6 +193,9 @@ func newDomainSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			f.enableSet = cmd.Flags().Changed("enable")
 			f.disableSet = cmd.Flags().Changed("disable")
+			if err := checkEnableDisable(f.enableSet, f.disableSet); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, err := newIdentityClient(ctx, a)
 			if err != nil {

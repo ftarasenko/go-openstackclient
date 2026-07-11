@@ -158,6 +158,69 @@ func TestRunSimpleAction_StartPostsOsStart(t *testing.T) {
 	}
 }
 
+func TestRunServerAddFloatingIP_PinsLegacyMicroversion(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotNovaVersion string
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotNovaVersion = r.Header.Get("X-OpenStack-Nova-API-Version")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	// Client negotiates "latest"; the floating-IP action must still pin 2.43.
+	client := computeClient(fakeServer, "latest")
+
+	var buf bytes.Buffer
+	if err := runServerAddFloatingIP(context.Background(), client, id, "192.0.2.10", "", &buf); err != nil {
+		t.Fatalf("runServerAddFloatingIP returned error: %v", err)
+	}
+
+	if gotNovaVersion != "2.43" {
+		t.Errorf("X-OpenStack-Nova-API-Version = %q, want 2.43", gotNovaVersion)
+	}
+	if _, ok := gotBody["addFloatingIp"]; !ok {
+		t.Errorf("action body = %v, want key %q", gotBody, "addFloatingIp")
+	}
+	// The caller's client Microversion must be left untouched by the shallow copy.
+	if client.Microversion != "latest" {
+		t.Errorf("client.Microversion = %q, want unchanged %q", client.Microversion, "latest")
+	}
+}
+
+func TestRunServerRemoveFloatingIP_PinsLegacyMicroversion(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotNovaVersion string
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotNovaVersion = r.Header.Get("X-OpenStack-Nova-API-Version")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "latest")
+
+	var buf bytes.Buffer
+	if err := runServerRemoveFloatingIP(context.Background(), client, id, "192.0.2.10", &buf); err != nil {
+		t.Fatalf("runServerRemoveFloatingIP returned error: %v", err)
+	}
+
+	if gotNovaVersion != "2.43" {
+		t.Errorf("X-OpenStack-Nova-API-Version = %q, want 2.43", gotNovaVersion)
+	}
+	if _, ok := gotBody["removeFloatingIp"]; !ok {
+		t.Errorf("action body = %v, want key %q", gotBody, "removeFloatingIp")
+	}
+}
+
 const serviceListBody = `{
   "services": [
     {
