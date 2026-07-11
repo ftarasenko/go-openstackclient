@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Enforce the air-gap requirement in CI: builds and tests must reproduce
+# offline from the committed vendor/ tree.
+env:
+  GOFLAGS: -mod=vendor
+  GOPROXY: "off"
+  CGO_ENABLED: "0"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build static binary (offline, from vendor/)
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty)" \
+            -o koc ./cmd/koc
+          file koc
+
+      - name: Test
+        run: go test ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.5.0

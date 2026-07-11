@@ -1,0 +1,16 @@
+# Build artifacts
+/koc
+/dist/
+*.test
+*.out
+coverage.*
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local credentials — never commit
+clouds.yaml
+secure.yaml
