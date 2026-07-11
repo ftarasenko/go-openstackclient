@@ -1,5 +1,7 @@
 # Build artifacts
 /koc
+koc-linux-*
+koc-darwin-*
 /dist/
 *.test
 *.out

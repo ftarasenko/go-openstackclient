@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack"
 	"github.com/gophercloud/gophercloud/v2/openstack/config"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 )
@@ -67,10 +66,17 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 			return ao, eo, nil, fmt.Errorf("loading cloud %q from clouds.yaml: %w", o.Cloud, err)
 		}
 	} else {
-		var err error
-		ao, err = openstack.AuthOptionsFromEnv()
-		if err != nil {
-			return ao, eo, nil, fmt.Errorf("reading credentials from environment: %w", err)
+		// Build the auth options from OS_* / flags directly rather than via
+		// gophercloud's AuthOptionsFromEnv, which only understands OS_DOMAIN_NAME
+		// and rejects the standard split OS_USER_DOMAIN_NAME / OS_PROJECT_DOMAIN_NAME
+		// openrc (wrongly demanding OS_PROJECT_ID when only a project name +
+		// project domain are given). applyAuthOverrides and applyDomainScope below
+		// populate ao from o's fields.
+		if o.AuthURL == "" {
+			return ao, eo, nil, fmt.Errorf("no credentials found: set --os-cloud, or OS_AUTH_URL and the related OS_* variables")
+		}
+		if o.Password == "" && o.AppCredID == "" && o.AppCredName == "" {
+			return ao, eo, nil, fmt.Errorf("no credentials found: set OS_PASSWORD or application credentials (OS_APPLICATION_CREDENTIAL_ID/_SECRET)")
 		}
 		eo = gophercloud.EndpointOpts{Region: o.RegionName}
 	}

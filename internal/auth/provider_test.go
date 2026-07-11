@@ -105,6 +105,42 @@ func TestApplyDomainScope_DomainScopedToken(t *testing.T) {
 	}
 }
 
+func TestResolveAuth_EnvSplitDomainNoProjectID(t *testing.T) {
+	// The standard v3 openrc: project name + project domain, no OS_PROJECT_ID.
+	// gophercloud's AuthOptionsFromEnv would reject this; koc must not.
+	o := &Options{
+		AuthURL:           "https://keystone.example/v3",
+		Username:          "admin",
+		Password:          "secret",
+		ProjectName:       "admin",
+		ProjectDomainName: "Default",
+		UserDomainName:    "Default",
+	}
+	ao, _, _, err := o.resolveAuth()
+	if err != nil {
+		t.Fatalf("resolveAuth should succeed without OS_PROJECT_ID: %v", err)
+	}
+	if ao.IdentityEndpoint != "https://keystone.example/v3" || ao.Username != "admin" || ao.Password != "secret" {
+		t.Errorf("auth options not populated from env fields: %+v", ao)
+	}
+	scope := scopeJSON(t, &ao)
+	proj, ok := scope["project"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a project scope, got %#v", scope)
+	}
+	dom := proj["domain"].(map[string]any)
+	if proj["name"] != "admin" || dom["name"] != "Default" {
+		t.Errorf("unexpected project scope: %#v", proj)
+	}
+}
+
+func TestResolveAuth_EnvMissingAuthURL(t *testing.T) {
+	o := &Options{Username: "admin", Password: "x"}
+	if _, _, _, err := o.resolveAuth(); err == nil {
+		t.Error("expected an error when no cloud and no OS_AUTH_URL are set")
+	}
+}
+
 func TestApplyDomainScope_NoDomainFlagsLeavesScopeUntouched(t *testing.T) {
 	// Mirrors the clouds.yaml path: gophercloud already set TenantName and a
 	// DomainName; with no koc domain flags we must not clobber that scoping.
