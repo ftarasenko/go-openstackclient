@@ -2,22 +2,23 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "claude/**"
   pull_request:
 
 permissions:
   contents: read
 
-# Enforce the air-gap requirement in CI: builds and tests must reproduce
-# offline from the committed vendor/ tree.
-env:
-  GOFLAGS: -mod=vendor
-  GOPROXY: "off"
-  CGO_ENABLED: "0"
-
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # Enforce the air-gap requirement: build and test offline from the committed
+    # vendor/ tree with no module proxy.
+    env:
+      GOFLAGS: -mod=vendor
+      GOPROXY: "off"
+      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -42,14 +43,26 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -mod=vendor
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false
+
+      # Pin the exact golangci-lint version used in development from its release
+      # binary, avoiding the golangci-lint-action version matrix.
+      - name: Install golangci-lint v2.5.0
+        run: |
+          curl -sSfL \
+            https://github.com/golangci/golangci-lint/releases/download/v2.5.0/golangci-lint-2.5.0-linux-amd64.tar.gz \
+            | tar -xz
+          sudo mv golangci-lint-2.5.0-linux-amd64/golangci-lint /usr/local/bin/golangci-lint
+          golangci-lint version
+
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v2.5.0
+        run: golangci-lint run ./...
