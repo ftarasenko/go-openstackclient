@@ -20,7 +20,36 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Short: "Manage baremetal nodes",
 	}
 	cmd.AddCommand(newNodeListCommand(a, o))
+	cmd.AddCommand(newNodeShowCommand(a, o))
+	cmd.AddCommand(newNodeCreateCommand(a, o))
+	cmd.AddCommand(newNodeDeleteCommand(a, o))
+	cmd.AddCommand(newNodeSetCommand(a, o))
+	cmd.AddCommand(newNodeUnsetCommand(a, o))
+	cmd.AddCommand(newNodeMaintenanceCommand(a, o))
+	cmd.AddCommand(newNodePowerCommand(a, o))
+	cmd.AddCommand(newNodeBootDeviceCommand(a, o))
+	for _, sub := range newNodeProvisionCommands(a, o) {
+		cmd.AddCommand(sub)
+	}
 	return cmd
+}
+
+// nodeShowFields is the curated Field/Value view for a single node, matching the
+// most operationally useful attributes shown by `openstack baremetal node show`.
+func nodeShowFields(n *nodes.Node) ([]string, []any) {
+	fields := []string{
+		"uuid", "name", "power_state", "provision_state", "target_provision_state",
+		"maintenance", "maintenance_reason", "last_error", "driver", "resource_class",
+		"instance_uuid", "conductor_group", "conductor", "owner", "properties",
+		"driver_info", "extra", "created_at", "updated_at",
+	}
+	values := []any{
+		n.UUID, n.Name, n.PowerState, n.ProvisionState, n.TargetProvisionState,
+		n.Maintenance, n.MaintenanceReason, n.LastError, n.Driver, n.ResourceClass,
+		n.InstanceUUID, n.ConductorGroup, n.Conductor, n.Owner, n.Properties,
+		n.DriverInfo, n.Extra, n.CreatedAt, n.UpdatedAt,
+	}
+	return fields, values
 }
 
 // nodeListFlags holds the filters/pagination accepted by "node list".

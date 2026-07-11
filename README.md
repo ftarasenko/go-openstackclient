@@ -6,11 +6,29 @@ noun → verb → flags syntax so operators fluent in OSC need no retraining, bu
 ships as **one dependency-free binary** suitable for air-gapped / FSTEC-regulated
 deployment. No Python at runtime.
 
-> **Status: milestone 1 (scaffold).** This drop contains the cross-cutting
-> foundation — auth, TLS, output, microversions — plus one fully wired,
-> end-to-end command (`koc baremetal node list`) with tests. The remaining
-> service command surfaces (full baremetal, compute, identity, volume, dns,
-> image, network) land in subsequent milestones.
+> **Status: broad v1 surface.** The cross-cutting foundation (auth, TLS,
+> output, microversions) is in place, and the following service command trees
+> are implemented, each with httptest-based unit tests:
+>
+> - **baremetal** (ironic) — node lifecycle (create/delete/show/set/unset),
+>   provision transitions (manage/provide/deploy/undeploy/rebuild/inspect, with
+>   `--wait`), maintenance, power, boot device, ports, drivers, conductors
+> - **server** (nova) — full lifecycle, add/remove volume·floating-ip·security-group,
+>   console log/url, plus `compute service`, `hypervisor list`, `quota show`
+> - **compute** — flavor, keypair
+> - **identity** (keystone) — endpoint, domain, project, user, role
+>   (+assignments), service, region, catalog, application credential, token,
+>   group
+> - **volume** (cinder) — volume, snapshot, backup, type, service
+> - **dns** (designate) — zone, recordset
+> - **image** (glance) — image CRUD, `save`, project sharing
+> - **network** (neutron) — network, subnet, router, port, floating ip,
+>   security group (+rule), agent
+> - **placement** — resource provider (list/show/delete/trait), allocation, trait
+>
+> A few operations use raw `ServiceClient` requests where gophercloud v2 lacks a
+> typed verb (server floating-IP actions, quota defaults, image
+> activate/deactivate) — isolated behind small helpers and flagged in code.
 
 ## Build
 
@@ -38,10 +56,16 @@ GOFLAGS=-mod=vendor GOPROXY=off CGO_ENABLED=0 go build -trimpath \
 ## Usage
 
 ```sh
-koc baremetal node list
 koc baremetal node list -f json
-koc baremetal node list -c Name -c "Provisioning State" -f value
-koc baremetal node list --provision-state active --long
+koc baremetal node inspect cmp-039 --wait
+koc server list --all-projects --long
+koc server create --image ubuntu-cloudimage --flavor 1 --network private myvm
+koc server add floating ip myvm 10.0.0.5
+koc flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny
+koc project create demo --domain itkey
+koc volume create --size 1 test-volume
+koc network list --long
+koc resource provider show <uuid> --allocations -f json
 ```
 
 ### Authentication

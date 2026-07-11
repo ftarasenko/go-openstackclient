@@ -17,5 +17,8 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Aliases: []string{"bm"},
 	}
 	cmd.AddCommand(newNodeCommand(a, o))
+	cmd.AddCommand(newPortCommand(a, o))
+	cmd.AddCommand(newDriverCommand(a, o))
+	cmd.AddCommand(newConductorCommand(a, o))
 	return cmd
 }
