@@ -19,3 +19,18 @@ func newVolumeClient(ctx context.Context, a *auth.Options) (*gophercloud.Service
 	}
 	return client.Volume()
 }
+
+// newVolumeSession returns the volume client plus the authenticated bundle, so
+// `volume create --image <name>` can resolve the image name→ID via glance from
+// the same session.
+func newVolumeSession(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, *auth.Client, error) {
+	client, err := a.Authenticate(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	vol, err := client.Volume()
+	if err != nil {
+		return nil, nil, err
+	}
+	return vol, client, nil
+}

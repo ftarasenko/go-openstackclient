@@ -242,18 +242,23 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			f.configDriveSet = cmd.Flags().Changed("config-drive")
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
+				return err
+			}
+			// Resolve cross-service references (image → glance, network →
+			// neutron) to IDs before building the create request.
+			if err := resolveServerCreateRefs(ctx, session, f); err != nil {
 				return err
 			}
 			return runServerCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.image, "image", "", "image ID to boot from (name resolution requires the image service; pass an ID)")
+	fl.StringVar(&f.image, "image", "", "image ID or name to boot from")
 	fl.StringVar(&f.flavor, "flavor", "", "flavor ID or name (required)")
 	// --network and --nic are accepted as aliases for the same value: a network ID/name to attach.
-	fl.StringArrayVar(&f.networks, "network", nil, "network ID to attach; repeatable")
+	fl.StringArrayVar(&f.networks, "network", nil, "network ID or name to attach; repeatable")
 	fl.StringArrayVar(&f.networks, "nic", nil, "alias of --network")
 	fl.StringVar(&f.keyName, "key-name", "", "name of the keypair to inject")
 	fl.BoolVar(&f.configDrive, "config-drive", false, "enable a config drive")

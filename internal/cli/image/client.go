@@ -18,3 +18,18 @@ func newImageClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceC
 	}
 	return client.Image()
 }
+
+// newImageSession returns the image client plus the authenticated bundle, so
+// sharing commands can resolve a project name→ID via the identity service from
+// the same session.
+func newImageSession(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, *auth.Client, error) {
+	client, err := a.Authenticate(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	img, err := client.Image()
+	if err != nil {
+		return nil, nil, err
+	}
+	return img, client, nil
+}
