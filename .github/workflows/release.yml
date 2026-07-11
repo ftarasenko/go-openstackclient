@@ -4,8 +4,14 @@ on:
   push:
     tags:
       - "v*"
-  # Allow building artifacts on demand without cutting a release.
+  # Publish on demand by supplying the tag to create (the workflow creates the
+  # tag and GitHub Release server-side via GITHUB_TOKEN).
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create and publish (e.g. v0.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -50,7 +56,8 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          VERSION="$(git describe --tags --always --dirty)"
+          VERSION="${{ inputs.tag }}"
+          if [ -z "$VERSION" ]; then VERSION="$(git describe --tags --always --dirty)"; fi
           EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
           OUT="koc-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
@@ -70,7 +77,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -81,5 +88,6 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist/*
           generate_release_notes: true
