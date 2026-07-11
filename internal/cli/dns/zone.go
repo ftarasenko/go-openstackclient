@@ -83,7 +83,7 @@ func newZoneListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.typ, "type", "", "filter by zone type (PRIMARY/SECONDARY)")
 	fl.IntVar(&f.ttl, "ttl", 0, "filter by TTL")
 	fl.StringVar(&f.status, "status", "", "filter by status")
-	fl.IntVar(&f.limit, "limit", 0, "maximum number of zones to return")
+	fl.IntVar(&f.limit, "limit", 0, "page size for the API request (default 1000; all pages are still fetched)")
 	fl.StringVar(&f.marker, "marker", "", "ID of the last zone from the previous page")
 	return cmd
 }
@@ -95,7 +95,7 @@ func runZoneList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		Type:   f.typ,
 		TTL:    f.ttl,
 		Status: f.status,
-		Limit:  f.limit,
+		Limit:  dnsPageSize(f.limit),
 		Marker: f.marker,
 	}
 	pages, err := zones.List(client, opts).AllPages(ctx)

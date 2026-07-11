@@ -84,9 +84,24 @@ func newRecordSetListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.data, "data", "", "filter by record data")
 	fl.IntVar(&f.ttl, "ttl", 0, "filter by TTL")
 	fl.StringVar(&f.status, "status", "", "filter by status")
-	fl.IntVar(&f.limit, "limit", 0, "maximum number of recordsets to return")
+	fl.IntVar(&f.limit, "limit", 0, "page size for the API request (default 1000; all pages are still fetched)")
 	fl.StringVar(&f.marker, "marker", "", "ID of the last recordset from the previous page")
 	return cmd
+}
+
+// defaultDNSPageSize is the per-request page size used for designate list calls
+// when the caller does not pass --limit. designate paginates with small default
+// pages, so requesting larger pages (up to designate's typical max_limit of
+// 1000) cuts the number of round-trips; AllPages still fetches every page.
+const defaultDNSPageSize = 1000
+
+// dnsPageSize returns the effective API page size: the user's --limit when set,
+// otherwise the larger default.
+func dnsPageSize(limit int) int {
+	if limit > 0 {
+		return limit
+	}
+	return defaultDNSPageSize
 }
 
 func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, zoneRef string, f *recordSetListFlags, w io.Writer) error {
@@ -100,7 +115,7 @@ func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o 
 		Data:   f.data,
 		TTL:    f.ttl,
 		Status: f.status,
-		Limit:  f.limit,
+		Limit:  dnsPageSize(f.limit),
 		Marker: f.marker,
 	}
 	pages, err := recordsets.ListByZone(client, zoneID, opts).AllPages(ctx)
