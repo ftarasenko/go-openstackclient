@@ -51,9 +51,10 @@ func TestRunServiceShow_ResolvesNameAndGets(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	var listName, getPath string
-	fakeServer.Mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
-		listName = r.URL.Query().Get("name")
+	var getPath string
+	// resolveServiceID lists all services (keystone /v3/services ignores ?name=)
+	// and matches the name client-side; resolution is proven by the GET path below.
+	fakeServer.Mux.HandleFunc("/services", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"services":[{"id":"svc1","name":"nova","type":"compute"}]}`))
@@ -70,9 +71,6 @@ func TestRunServiceShow_ResolvesNameAndGets(t *testing.T) {
 	var buf bytes.Buffer
 	if err := runServiceShow(context.Background(), client, o, "nova", &buf); err != nil {
 		t.Fatalf("runServiceShow error: %v", err)
-	}
-	if listName != "nova" {
-		t.Errorf("resolve name = %q, want nova", listName)
 	}
 	if getPath != "/services/svc1" {
 		t.Errorf("get path = %q, want /services/svc1", getPath)

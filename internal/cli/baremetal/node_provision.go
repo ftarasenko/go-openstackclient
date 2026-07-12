@@ -51,6 +51,7 @@ func newNodeProvisionCommands(a *auth.Options, o *output.Options) []*cobra.Comma
 	for _, tr := range provisionTransitions() {
 		tr := tr
 		var wait bool
+		var waitTimeout time.Duration
 		cmd := &cobra.Command{
 			Use:   tr.verb + " <node>",
 			Short: tr.short,
@@ -64,19 +65,20 @@ func newNodeProvisionCommands(a *auth.Options, o *output.Options) []*cobra.Comma
 				if err != nil {
 					return err
 				}
-				return runNodeProvision(ctx, client, tr, args[0], wait, cmd.OutOrStdout())
+				return runNodeProvision(ctx, client, tr, args[0], wait, waitTimeout, cmd.OutOrStdout())
 			},
 		}
 		// --wait polls node.ProvisionState until the target stable state (or a
 		// failure state). Flag semantics follow upstream OSC; UNVERIFIED against
 		// KeyStack docs (docs.keystack.ru returned HTTP 403).
 		cmd.Flags().BoolVar(&wait, "wait", false, "wait until the provision-state transition completes")
+		cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", provisionPollTimeout, "maximum time to wait for --wait to complete")
 		cmds = append(cmds, cmd)
 	}
 	return cmds
 }
 
-func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr provisionTransition, id string, wait bool, w io.Writer) error {
+func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr provisionTransition, id string, wait bool, waitTimeout time.Duration, w io.Writer) error {
 	opts := nodes.ProvisionStateOpts{Target: tr.target}
 	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("requesting %s on node %s: %w", tr.verb, id, err)
@@ -87,7 +89,7 @@ func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr
 		}
 		return nil
 	}
-	if err := waitForProvisionState(ctx, client, id, tr.wantState); err != nil {
+	if err := waitForProvisionState(ctx, client, id, tr.wantState, waitTimeout); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "Node %s reached provision state %q\n", id, tr.wantState); err != nil {
@@ -111,8 +113,11 @@ const maxConsecutiveGetErrors = 5
 // an "active" node, inspect of a "manageable" node) before ironic has begun the
 // transition, and avoids hanging the full timeout when a transition settles into
 // an unexpected state (e.g. manage verify failure → "enroll").
-func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id string, want nodes.ProvisionState) error {
-	ctx, cancel := context.WithTimeout(ctx, provisionPollTimeout)
+func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id string, want nodes.ProvisionState, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = provisionPollTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(provisionPollInterval)
@@ -139,8 +144,15 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 				return nil
 			case isProvisionFailure(n.ProvisionState):
 				return fmt.Errorf("node %s entered failure state %q: %s", id, n.ProvisionState, n.LastError)
-			case settled && n.ProvisionState != string(want) && n.LastError != "":
-				return fmt.Errorf("node %s settled in unexpected state %q instead of %q: %s", id, n.ProvisionState, want, n.LastError)
+			case settled && n.ProvisionState != string(want):
+				// The transition has settled (target_provision_state cleared) into
+				// a state that isn't the one we wanted. This is terminal — waiting
+				// longer will not change it — so fail immediately instead of
+				// hanging the full timeout. Include last_error when present.
+				if n.LastError != "" {
+					return fmt.Errorf("node %s settled in unexpected state %q instead of %q: %s", id, n.ProvisionState, want, n.LastError)
+				}
+				return fmt.Errorf("node %s settled in unexpected state %q instead of %q", id, n.ProvisionState, want)
 			}
 		}
 		select {

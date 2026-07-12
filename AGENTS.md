@@ -169,6 +169,28 @@ output**. Cover at least the primary list plus one write verb per noun.
   `--wait` polls `provision_state` keyed off `target_provision_state` clearing —
   see `baremetal/node_provision.go`.
 
+## Commit messages (Conventional Commits 1.0.0)
+
+Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+
+```
+<type>[optional (scope)]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+- **Types** used in this repo: `feat` (new capability), `fix` (bug fix), `docs`,
+  `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Anything that
+  ships user-visible behavior is `feat`/`fix`, not `chore`.
+- **Scope** is optional and, when present, names the service/package — e.g.
+  `feat(keyvrm):`, `fix(auth):`, `ci(release):`.
+- **Description** is imperative, lower-case, no trailing period.
+- **Breaking changes**: append `!` after the type/scope (`feat(auth)!: …`) **and**
+  add a `BREAKING CHANGE: <what/why>` footer.
+- The subject line drives the version bump (see below), so classify honestly.
+
 ## Releases & CI
 
 - `.github/workflows/ci.yml` — offline vet + static build + `go test` + pinned
@@ -178,6 +200,49 @@ output**. Cover at least the primary list plus one write verb per noun.
   (with a `tag` input; the workflow creates the tag + Release server-side via
   `GITHUB_TOKEN`, since the environment blocks pushing tag refs).
 - `.github/workflows/delete-release.yml` — dispatch to delete a release + tag.
+
+### Release notes are generated from the commit log
+
+`release.yml` builds the GitHub Release body by running `scripts/release-notes.sh
+<tag>`, which walks the Conventional Commits between the previous tag and the tag
+being cut and groups them by type. GitHub's own `generate_release_notes` is
+**not** used: it categorizes merged PRs by label, and this repo commits straight
+to `master`, so it would yield only a compare link. Commit-type → heading:
+
+| Commit type            | Release-notes heading      |
+| ---------------------- | -------------------------- |
+| `!` / `BREAKING CHANGE`| `### ⚠️ Breaking changes`  |
+| `feat`                 | `### Features`             |
+| `fix`                  | `### Bug fixes`            |
+| `perf`                 | `### Performance`          |
+| `refactor`             | `### Refactoring`          |
+| `docs`                 | `### Documentation`        |
+| `build`/`ci`/`chore`   | `### Build & tooling`      |
+| (unrecognized)         | `### Other`                |
+
+**The quality of the notes is the quality of the subject lines** — each commit's
+`<description>` becomes one bullet verbatim (its scope is bolded). So keep
+commits focused and their subjects self-describing; a single mega-commit yields a
+single vague bullet.
+
+### Cutting a release (do this every time)
+
+1. **Find the range.** Last tag: `git describe --tags --abbrev=0`. New commits:
+   `git log --no-merges <lastTag>..HEAD`.
+2. **Pick the version** from the highest-impact commit (semver): `BREAKING
+   CHANGE`/`!` → MAJOR, `feat` → MINOR, `fix`/`perf` → PATCH. While the project is
+   `0.y.z` there is no stable API, so a breaking change bumps MINOR and any `feat`
+   bumps MINOR; a docs/ci/chore-only range is a PATCH.
+3. **Preview the notes** locally: `scripts/release-notes.sh vX.Y.Z`. If a bullet
+   reads badly, fix it by rewording the offending commit (e.g. `git commit
+   --amend` before it is tagged), not by hand-editing the release afterwards.
+4. **Trigger the build** via `workflow_dispatch` on `release.yml` with the `tag`
+   input — the environment blocks pushing tag refs, and it also blocks editing
+   releases through the API, so the workflow (running with its own
+   `GITHUB_TOKEN`) is the *only* way to create or update a release. The workflow
+   creates the tag, builds the six binaries, generates the notes, and publishes.
+   Re-dispatching the same tag regenerates the notes and updates the existing
+   release in place (the tag is not moved).
 
 ## Do / don't
 

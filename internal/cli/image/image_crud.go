@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -285,13 +286,15 @@ func newImageDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runImageDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
+	var errs []error
 	for _, id := range ids {
 		if err := images.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting image %s: %w", id, err)
+			errs = append(errs, fmt.Errorf("deleting image %s: %w", id, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted image %s\n", id); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

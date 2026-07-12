@@ -138,11 +138,14 @@ func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 }
 
 type portCreateFlags struct {
-	network     string
-	fixedIP     []string
-	macAddress  string
-	deviceOwner string
-	disable     bool
+	network       string
+	fixedIP       []string
+	macAddress    string
+	deviceOwner   string
+	description   string
+	securityGroup []string
+	enable        bool
+	disable       bool
 }
 
 func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -153,6 +156,9 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			if err := mutuallyExclusive(cmd.Flags(), "enable", "disable"); err != nil {
 				return err
 			}
 			ctx := cmd.Context()
@@ -168,6 +174,9 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable)")
 	fl.StringVar(&f.macAddress, "mac-address", "", "MAC address for the port")
 	fl.StringVar(&f.deviceOwner, "device-owner", "", "device owner for the port")
+	fl.StringVar(&f.description, "description", "", "description for the port")
+	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "security group to associate (name or ID, repeatable)")
+	fl.BoolVar(&f.enable, "enable", false, "create the port administratively up (default)")
 	fl.BoolVar(&f.disable, "disable", false, "create the port administratively down")
 	_ = cmd.MarkFlagRequired("network")
 	return cmd
@@ -183,9 +192,13 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Name:        name,
 		MACAddress:  f.macAddress,
 		DeviceOwner: f.deviceOwner,
+		Description: f.description,
 	}
-	if f.disable {
+	switch {
+	case f.disable:
 		opts.AdminStateUp = boolPtr(false)
+	case f.enable:
+		opts.AdminStateUp = boolPtr(true)
 	}
 	fixedIPs, err := buildFixedIPs(ctx, client, f.fixedIP)
 	if err != nil {
@@ -193,6 +206,13 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 	if fixedIPs != nil {
 		opts.FixedIPs = fixedIPs
+	}
+	if len(f.securityGroup) > 0 {
+		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
+		if err != nil {
+			return err
+		}
+		opts.SecurityGroups = &sgIDs
 	}
 	p, err := ports.Create(ctx, client, opts).Extract()
 	if err != nil {
@@ -257,8 +277,13 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, names
 }
 
 type portSetFlags struct {
-	name    string
-	fixedIP []string
+	name            string
+	fixedIP         []string
+	description     string
+	securityGroup   []string
+	noSecurityGroup bool
+	enable          bool
+	disable         bool
 }
 
 func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -282,6 +307,13 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new port name")
 	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable, replaces existing)")
+	fl.StringVar(&f.description, "description", "", "new port description")
+	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "security group to associate (name or ID, repeatable, replaces existing)")
+	fl.BoolVar(&f.noSecurityGroup, "no-security-group", false, "clear all security groups from the port")
+	fl.BoolVar(&f.enable, "enable", false, "set the port administratively up")
+	fl.BoolVar(&f.disable, "disable", false, "set the port administratively down")
+	cmd.MarkFlagsMutuallyExclusive("security-group", "no-security-group")
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 	return cmd
 }
 
@@ -296,12 +328,32 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		opts.Name = &f.name
 		changed = true
 	}
+	if flags.Changed("description") {
+		opts.Description = &f.description
+		changed = true
+	}
 	if flags.Changed("fixed-ip") {
 		fixedIPs, err := buildFixedIPs(ctx, client, f.fixedIP)
 		if err != nil {
 			return err
 		}
 		opts.FixedIPs = fixedIPs
+		changed = true
+	}
+	if state := enableDisable(flags, f.enable, f.disable); state != nil {
+		opts.AdminStateUp = state
+		changed = true
+	}
+	switch {
+	case f.noSecurityGroup:
+		opts.SecurityGroups = &[]string{}
+		changed = true
+	case flags.Changed("security-group"):
+		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
+		if err != nil {
+			return err
+		}
+		opts.SecurityGroups = &sgIDs
 		changed = true
 	}
 	if !changed {

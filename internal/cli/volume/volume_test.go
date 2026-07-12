@@ -207,6 +207,270 @@ func TestRunVolumeCreate_RejectsNonPositiveSize(t *testing.T) {
 	}
 }
 
+func TestRunVolumeList_LimitTruncates(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		// --limit is sent as the page size and --marker as the page marker.
+		th.TestFormValues(t, r, map[string]string{"limit": "1", "marker": "prev-id"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeListBody))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatTable}
+	f := &volumeListFlags{limit: 1, marker: "prev-id"}
+
+	var buf bytes.Buffer
+	if err := runVolumeList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runVolumeList returned error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "vol-a") {
+		t.Errorf("expected first volume in truncated output:\n%s", out)
+	}
+	if strings.Contains(out, "vol-b") {
+		t.Errorf("--limit 1 should truncate to a single row, got:\n%s", out)
+	}
+}
+
+func TestRunVolumeCreate_SourceCloneAndBootableAction(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const sourceID = "55555555-5555-5555-5555-555555555555"
+	const newID = "66666666-6666-6666-6666-666666666666"
+
+	var createBody, actionBody map[string]any
+	var actionPosted bool
+
+	fakeServer.Mux.HandleFunc("/volumes/"+sourceID, func(w http.ResponseWriter, _ *http.Request) {
+		// resolveVolumeID GETs the source reference first.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"volume": {"id": "` + sourceID + `", "name": "src"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("create method = %q, want POST", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &createBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"volume": {"id": "` + newID + `", "name": "clone", "status": "creating"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+newID+"/action", func(w http.ResponseWriter, r *http.Request) {
+		actionPosted = true
+		if r.Method != http.MethodPost {
+			t.Errorf("action method = %q, want POST", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &actionBody)
+		w.WriteHeader(http.StatusOK)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+newID, func(w http.ResponseWriter, _ *http.Request) {
+		// post-action refresh GET.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"volume": {"id": "` + newID + `", "name": "clone", "bootable": "true"}}`))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatJSON}
+	f := &volumeCreateFlags{size: 1, source: sourceID, bootable: true}
+
+	var buf bytes.Buffer
+	if err := runVolumeCreate(context.Background(), client, o, "clone", f, &buf); err != nil {
+		t.Fatalf("runVolumeCreate returned error: %v", err)
+	}
+
+	vol, ok := createBody["volume"].(map[string]any)
+	if !ok {
+		t.Fatalf("create body missing \"volume\": %#v", createBody)
+	}
+	if vol["source_volid"] != sourceID {
+		t.Errorf("body source_volid = %v, want %s", vol["source_volid"], sourceID)
+	}
+	if !actionPosted {
+		t.Fatal("expected os-set_bootable action to be POSTed")
+	}
+	setb, ok := actionBody["os-set_bootable"].(map[string]any)
+	if !ok {
+		t.Fatalf("action body missing os-set_bootable: %#v", actionBody)
+	}
+	if setb["bootable"] != true {
+		t.Errorf("os-set_bootable bootable = %v, want true", setb["bootable"])
+	}
+}
+
+func TestRunSnapshotCreate_PositionalNameAndVolumeFlag(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const volID = "77777777-7777-7777-7777-777777777777"
+	var gotBody map[string]any
+
+	fakeServer.Mux.HandleFunc("/volumes/"+volID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"volume": {"id": "` + volID + `", "name": "vol"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/snapshots", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"snapshot": {"id": "s-1", "name": "snap-name", "volume_id": "` + volID + `"}}`))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatJSON}
+	f := &snapshotCreateFlags{volume: volID, force: true}
+
+	var buf bytes.Buffer
+	if err := runSnapshotCreate(context.Background(), client, o, "snap-name", f, &buf); err != nil {
+		t.Fatalf("runSnapshotCreate returned error: %v", err)
+	}
+	snap, ok := gotBody["snapshot"].(map[string]any)
+	if !ok {
+		t.Fatalf("body missing \"snapshot\": %#v", gotBody)
+	}
+	if snap["name"] != "snap-name" {
+		t.Errorf("body name = %v, want snap-name (positional arg)", snap["name"])
+	}
+	if snap["volume_id"] != volID {
+		t.Errorf("body volume_id = %v, want %s (--volume)", snap["volume_id"], volID)
+	}
+	if snap["force"] != true {
+		t.Errorf("body force = %v, want true", snap["force"])
+	}
+}
+
+func TestRunSnapshotCreate_RequiresVolume(t *testing.T) {
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	err := runSnapshotCreate(context.Background(), nil, o, "snap", &snapshotCreateFlags{}, &buf)
+	if err == nil {
+		t.Fatal("expected error when --volume is missing, got nil")
+	}
+}
+
+func TestRunBackupCreate_ForceAndContainerBody(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const volID = "88888888-8888-8888-8888-888888888888"
+	var gotBody map[string]any
+
+	fakeServer.Mux.HandleFunc("/volumes/"+volID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"volume": {"id": "` + volID + `", "name": "vol"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/backups", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"backup": {"id": "b-1", "name": "bk", "volume_id": "` + volID + `"}}`))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatJSON}
+	f := &backupCreateFlags{name: "bk", force: true, container: "bucket"}
+
+	var buf bytes.Buffer
+	if err := runBackupCreate(context.Background(), client, o, volID, f, &buf); err != nil {
+		t.Fatalf("runBackupCreate returned error: %v", err)
+	}
+	bk, ok := gotBody["backup"].(map[string]any)
+	if !ok {
+		t.Fatalf("body missing \"backup\": %#v", gotBody)
+	}
+	if bk["force"] != true {
+		t.Errorf("body force = %v, want true", bk["force"])
+	}
+	if bk["container"] != "bucket" {
+		t.Errorf("body container = %v, want bucket", bk["container"])
+	}
+}
+
+func TestRunTypeSet_PostsExtraSpecs(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const typeID = "99999999-9999-9999-9999-999999999999"
+	var gotBody map[string]any
+
+	fakeServer.Mux.HandleFunc("/types/"+typeID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"volume_type": {"id": "` + typeID + `", "name": "ssd"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/types/"+typeID+"/extra_specs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"extra_specs": {"volume_backend_name": "lvm"}}`))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	f := &typeSetFlags{property: []string{"volume_backend_name=lvm"}}
+	if err := runTypeSet(context.Background(), client, typeID, f); err != nil {
+		t.Fatalf("runTypeSet returned error: %v", err)
+	}
+	specs, ok := gotBody["extra_specs"].(map[string]any)
+	if !ok {
+		t.Fatalf("body missing \"extra_specs\": %#v", gotBody)
+	}
+	if specs["volume_backend_name"] != "lvm" {
+		t.Errorf("extra_specs = %#v, want volume_backend_name=lvm", specs)
+	}
+}
+
+func TestRunTypeUnset_DeletesExtraSpecKey(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const typeID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	var deletedKey string
+
+	fakeServer.Mux.HandleFunc("/types/"+typeID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"volume_type": {"id": "` + typeID + `", "name": "ssd"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/types/"+typeID+"/extra_specs/volume_backend_name", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %q, want DELETE", r.Method)
+		}
+		deletedKey = "volume_backend_name"
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	f := &typeUnsetFlags{property: []string{"volume_backend_name"}}
+	if err := runTypeUnset(context.Background(), client, typeID, f); err != nil {
+		t.Fatalf("runTypeUnset returned error: %v", err)
+	}
+	if deletedKey != "volume_backend_name" {
+		t.Errorf("expected DELETE of extra-spec key volume_backend_name, got %q", deletedKey)
+	}
+}
+
 func TestRunVolumeUnset_ClearsLastKey(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

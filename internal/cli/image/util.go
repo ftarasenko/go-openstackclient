@@ -7,6 +7,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
+
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may
@@ -40,25 +42,42 @@ func parseKeyValMap(pairs []string) (map[string]string, error) {
 }
 
 // resolveImageID turns a user-supplied image reference (name or ID) into an image
-// ID. It first tries an exact name lookup via a filtered list; if exactly one
-// image matches, its ID is returned. Otherwise the reference is assumed to
-// already be an ID and passed through unchanged (glance Get accepts only IDs).
+// ID. A UUID reference is passed through untouched. Otherwise it tries an exact
+// name lookup via a filtered list; if exactly one image matches, its ID is
+// returned. Only a genuine zero-match falls back to treating the reference as a
+// literal ID (documented trade-off) — real List/Extract errors are propagated so
+// transient glance failures are not silently masked on write paths.
 func resolveImageID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
+	if resolve.IsUUID(ref) {
+		return ref, nil
+	}
 	pages, err := images.List(client, images.ListOpts{Name: ref}).AllPages(ctx)
 	if err != nil {
-		// Name lookup failed; fall back to treating the reference as an ID.
-		return ref, nil
+		return "", fmt.Errorf("listing images named %q: %w", ref, err)
 	}
 	all, err := images.ExtractImages(pages)
 	if err != nil {
-		return ref, nil
+		return "", fmt.Errorf("parsing image list for %q: %w", ref, err)
 	}
 	switch len(all) {
 	case 0:
+		// No image by that name; fall back to treating the reference as an ID.
 		return ref, nil
 	case 1:
 		return all[0].ID, nil
 	default:
 		return "", fmt.Errorf("multiple images named %q; specify an ID instead", ref)
 	}
+}
+
+// escapeJSONPointer escapes a single JSON Pointer reference token per RFC 6901:
+// '~' becomes "~0" and '/' becomes "~1". glance image properties are patched at
+// path "/<key>", so a key containing these characters must be escaped or the
+// resulting pointer is invalid. gophercloud's UpdateImageProperty builds the
+// path as fmt.Sprintf("/%s", Name) without escaping, so callers must pass an
+// already-escaped Name.
+func escapeJSONPointer(token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	token = strings.ReplaceAll(token, "/", "~1")
+	return token
 }

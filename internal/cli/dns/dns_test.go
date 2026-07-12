@@ -137,6 +137,145 @@ func TestRunZoneCreate_RequestBody(t *testing.T) {
 	}
 }
 
+func TestRunZoneCreate_SecondaryBodyHasMastersNoEmail(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/zones", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{
+          "id": "44444444-4444-4444-4444-444444444444",
+          "name": "secondary.example.",
+          "type": "SECONDARY",
+          "masters": ["192.0.2.53"],
+          "status": "PENDING",
+          "action": "CREATE"
+        }`))
+	})
+
+	client := dnsClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	f := &zoneCreateFlags{typ: "SECONDARY", masters: []string{"192.0.2.53"}}
+
+	var buf bytes.Buffer
+	if err := runZoneCreate(context.Background(), client, o, "secondary.example", f, &buf); err != nil {
+		t.Fatalf("runZoneCreate returned error: %v", err)
+	}
+
+	if gotBody["type"] != "SECONDARY" {
+		t.Errorf("body type = %v, want SECONDARY", gotBody["type"])
+	}
+	masters, ok := gotBody["masters"].([]any)
+	if !ok || len(masters) != 1 || masters[0] != "192.0.2.53" {
+		t.Errorf("body masters = %v, want [192.0.2.53]", gotBody["masters"])
+	}
+	if _, present := gotBody["email"]; present {
+		t.Errorf("body must not contain email for SECONDARY zones, got %v", gotBody["email"])
+	}
+}
+
+func TestRunZoneCreate_PrimaryRequiresEmail(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	// The request must never reach the server: validation fails first.
+	fakeServer.Mux.HandleFunc("/zones", func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("runZoneCreate should not issue a request for an invalid PRIMARY zone")
+	})
+
+	client := dnsClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	f := &zoneCreateFlags{typ: "PRIMARY"} // no email
+
+	var buf bytes.Buffer
+	err := runZoneCreate(context.Background(), client, o, "example.org", f, &buf)
+	if err == nil {
+		t.Fatal("runZoneCreate should fail when PRIMARY zone has no --email")
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Errorf("error = %q, want it to mention email", err.Error())
+	}
+}
+
+func TestRunZoneList_LimitTruncates(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/zones", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(zoneListBody))
+	})
+
+	client := dnsClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runZoneList(context.Background(), client, o, &zoneListFlags{limit: 1}, &buf); err != nil {
+		t.Fatalf("runZoneList returned error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "example.com.") {
+		t.Errorf("output missing first (kept) zone:\n%s", out)
+	}
+	if strings.Contains(out, "example.net.") {
+		t.Errorf("--limit 1 should truncate the second zone:\n%s", out)
+	}
+}
+
+func TestRunZoneSet_TTLZeroIsSent(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// resolveZoneID lists zones to map the reference to an ID.
+	fakeServer.Mux.HandleFunc("/zones", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(zoneListBody))
+	})
+
+	var gotMethod string
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+          "id": "11111111-1111-1111-1111-111111111111",
+          "name": "example.com.",
+          "type": "PRIMARY",
+          "ttl": 0,
+          "status": "PENDING",
+          "action": "UPDATE"
+        }`))
+	})
+
+	client := dnsClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	f := &zoneSetFlags{ttl: 0}
+
+	var buf bytes.Buffer
+	// emailSet=false, ttlSet=true, descSet=false
+	if err := runZoneSet(context.Background(), client, o, "11111111-1111-1111-1111-111111111111", f, false, true, false, &buf); err != nil {
+		t.Fatalf("runZoneSet returned error: %v", err)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("request method = %q, want PATCH", gotMethod)
+	}
+	ttl, present := gotBody["ttl"]
+	if !present {
+		t.Fatalf("body must contain ttl when --ttl is changed, got %v", gotBody)
+	}
+	if v, ok := ttl.(float64); !ok || int(v) != 0 {
+		t.Errorf("body ttl = %v, want 0", gotBody["ttl"])
+	}
+}
+
 const recordSetListBody = `{
   "recordsets": [
     {
@@ -310,7 +449,7 @@ func TestRunZoneSet_PatchesBody(t *testing.T) {
 	f := &zoneSetFlags{email: "new@example.com", ttl: 7200, description: "updated"}
 
 	var buf bytes.Buffer
-	if err := runZoneSet(context.Background(), client, o, "example.com", f, true, &buf); err != nil {
+	if err := runZoneSet(context.Background(), client, o, "example.com", f, true, true, true, &buf); err != nil {
 		t.Fatalf("runZoneSet returned error: %v", err)
 	}
 
@@ -341,7 +480,7 @@ func TestRunZoneSet_NoFieldsErrors(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	err := runZoneSet(context.Background(), client, o, "example.com", &zoneSetFlags{}, false, &buf)
+	err := runZoneSet(context.Background(), client, o, "example.com", &zoneSetFlags{}, false, false, false, &buf)
 	if err == nil {
 		t.Fatal("runZoneSet with no fields should error")
 	}

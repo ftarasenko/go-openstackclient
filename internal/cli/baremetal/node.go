@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
@@ -113,20 +115,27 @@ func newNodeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // service client so it can be exercised directly against a mock endpoint in
 // tests.
 func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *nodeListFlags, w io.Writer) error {
-	opts := nodes.ListOpts{
-		Limit:          f.limit,
-		Marker:         f.marker,
-		ProvisionState: nodes.ProvisionState(f.provisionState),
-		Driver:         f.driver,
-		ResourceClass:  f.resourceClass,
-		SortKey:        f.sortKey,
-		SortDir:        f.sortDir,
+	opts := nodeListQuery{
+		ListOpts: nodes.ListOpts{
+			Limit:          f.limit,
+			Marker:         f.marker,
+			ProvisionState: nodes.ProvisionState(f.provisionState),
+			Driver:         f.driver,
+			ResourceClass:  f.resourceClass,
+			SortKey:        f.sortKey,
+			SortDir:        f.sortDir,
+		},
 	}
+	// gophercloud's nodes.ListOpts models these as plain bools with `q:` tags, so
+	// BuildQueryString drops the false zero-value and the API returns ALL nodes —
+	// silently ignoring --maintenance=false / --associated=false. Carry the
+	// explicitly-set values as pointers so the wrapper below always emits the
+	// parameter, including the negative case.
 	if f.maintenanceSet {
-		opts.Maintenance = f.maintenance
+		opts.maintenance = &f.maintenance
 	}
 	if f.associatedSet {
-		opts.Associated = f.associated
+		opts.associated = &f.associated
 	}
 
 	pages, err := nodes.List(client, opts).AllPages(ctx)
@@ -140,6 +149,39 @@ func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	all = capResults(all, f.limit)
 
 	return o.WriteList(w, nodeListTable(all, f.long))
+}
+
+// nodeListQuery wraps nodes.ListOpts to force the boolean filters that
+// gophercloud's BuildQueryString would otherwise drop on their false
+// zero-value. When maintenance/associated are set, the parameter is appended
+// explicitly so both maintenance=true and maintenance=false reach the API.
+type nodeListQuery struct {
+	nodes.ListOpts
+	maintenance *bool
+	associated  *bool
+}
+
+// ToNodeListQuery implements nodes.ListOptsBuilder.
+func (q nodeListQuery) ToNodeListQuery() (string, error) {
+	s, err := q.ListOpts.ToNodeListQuery()
+	if err != nil {
+		return "", err
+	}
+	var extra []string
+	if q.maintenance != nil {
+		extra = append(extra, "maintenance="+strconv.FormatBool(*q.maintenance))
+	}
+	if q.associated != nil {
+		extra = append(extra, "associated="+strconv.FormatBool(*q.associated))
+	}
+	if len(extra) == 0 {
+		return s, nil
+	}
+	sep := "?"
+	if strings.Contains(s, "?") {
+		sep = "&"
+	}
+	return s + sep + strings.Join(extra, "&"), nil
 }
 
 // nodeListTable builds the output table. The default column set matches

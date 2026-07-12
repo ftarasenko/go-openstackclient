@@ -81,9 +81,10 @@ func TestRunEndpointCreate_ResolvesServiceAndBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	var svcListName, gotMethod string
-	fakeServer.Mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
-		svcListName = r.URL.Query().Get("name")
+	var gotMethod string
+	// resolveServiceID matches the name client-side; the resolved service_id in
+	// the endpoint create body below proves resolution worked.
+	fakeServer.Mux.HandleFunc("/services", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"services":[{"id":"svc1","name":"nova","type":"compute"}]}`))
@@ -102,9 +103,6 @@ func TestRunEndpointCreate_ResolvesServiceAndBody(t *testing.T) {
 	var buf bytes.Buffer
 	if err := runEndpointCreate(context.Background(), client, o, "nova", "public", "https://nova", f, &buf); err != nil {
 		t.Fatalf("runEndpointCreate error: %v", err)
-	}
-	if svcListName != "nova" {
-		t.Errorf("service resolve name = %q, want nova", svcListName)
 	}
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)

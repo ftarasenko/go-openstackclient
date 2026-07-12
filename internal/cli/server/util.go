@@ -91,7 +91,11 @@ func resolveServerID(ctx context.Context, client *gophercloud.ServiceClient, ref
 	if isUUID(ref) {
 		return ref, nil
 	}
-	pages, err := servers.List(client, servers.ListOpts{Name: ref}).AllPages(ctx)
+	// AllTenants lets an admin token resolve a server owned by another project
+	// (write verbs like delete/stop must work cross-project). Nova silently
+	// ignores all_tenants for non-admin tokens, so setting it here is safe and
+	// does not broaden a regular user's visibility.
+	pages, err := servers.List(client, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolving server %q: %w", ref, err)
 	}
@@ -117,8 +121,10 @@ func resolveServerID(ctx context.Context, client *gophercloud.ServiceClient, ref
 
 // resolveFlavorRef accepts either a flavor ID or a flavor name and returns the
 // flavor ID that nova expects in flavorRef. Flavor IDs are frequently short,
-// non-UUID strings (e.g. "1"), so this always consults the flavor list and
-// matches on either the ID or the name.
+// non-UUID strings (e.g. "1"), so this always consults the flavor list. An
+// exact ID match wins immediately; otherwise name matches are collected and an
+// ambiguous name (more than one match) is rejected rather than silently picking
+// the first — matching compute/flavor.go resolveFlavorID semantics.
 func resolveFlavorRef(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
 	pages, err := flavors.ListDetail(client, nil).AllPages(ctx)
 	if err != nil {
@@ -128,12 +134,23 @@ func resolveFlavorRef(ctx context.Context, client *gophercloud.ServiceClient, re
 	if err != nil {
 		return "", fmt.Errorf("resolving flavor %q: %w", ref, err)
 	}
+	var byName []string
 	for _, f := range all {
-		if f.ID == ref || f.Name == ref {
+		if f.ID == ref {
 			return f.ID, nil
 		}
+		if f.Name == ref {
+			byName = append(byName, f.ID)
+		}
 	}
-	return "", fmt.Errorf("no flavor found matching %q", ref)
+	switch len(byName) {
+	case 0:
+		return "", fmt.Errorf("no flavor found matching %q", ref)
+	case 1:
+		return byName[0], nil
+	default:
+		return "", fmt.Errorf("more than one flavor named %q; specify the ID", ref)
+	}
 }
 
 // formatNetworks renders a server's address map (keyed by network name) into a
