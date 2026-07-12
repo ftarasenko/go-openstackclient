@@ -37,7 +37,9 @@ func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command
 		Short: "List hypervisors",
 		Long: "List hypervisors. With --gauge, renders allocation gauges with " +
 			"threshold colors, auto-fitting the terminal width; --check-actual adds " +
-			"real CPU/RAM usage scraped from node_exporter.",
+			"real CPU/RAM usage scraped from node_exporter. A Health column surfaces " +
+			"down and disabled hosts (down rows are dimmed and their stale gauges " +
+			"suppressed), with a fleet up/down/disabled tally beneath the table.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := o.Validate(); err != nil {

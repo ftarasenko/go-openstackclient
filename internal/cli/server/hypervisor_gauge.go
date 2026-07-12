@@ -133,6 +133,53 @@ func colorize(s string, code int, enable bool) string {
 	return fmt.Sprintf("%s%dm%s%s0m", csi, code, s, csi)
 }
 
+// colorSeq is colorize for a raw SGR sequence, so multi-attribute codes like
+// "31;1" (bold red) and "2" (faint) work, not just a single color.
+func colorSeq(s, seq string, enable bool) string {
+	if !enable {
+		return s
+	}
+	return csi + seq + "m" + s + csi + "0m"
+}
+
+func isDown(r hostRow) bool     { return strings.EqualFold(r.state, "down") }
+func isDisabled(r hostRow) bool { return strings.EqualFold(r.status, "disabled") }
+
+// healthCell renders the combined state+status as one salient, colored token —
+// the primary operational signal, so it sits right after the name. "● up"
+// (green), "⚠ DISABLED" (yellow: up but out of scheduling — invisible before),
+// "✖ DOWN" / "✖ DOWN+DIS" (bold red). The icon is dropped in --ascii mode; the
+// three distinct icons keep the states apart even with color off.
+func healthCell(r hostRow, ascii, color bool) string {
+	down, disabled := isDown(r), isDisabled(r)
+	icon, label, seq := "●", "up", "32"
+	switch {
+	case down && disabled:
+		icon, label, seq = "✖", "DOWN+DIS", "31;1"
+	case down:
+		icon, label, seq = "✖", "DOWN", "31;1"
+	case disabled:
+		icon, label, seq = "⚠", "DISABLED", "33"
+	}
+	if ascii {
+		icon = ""
+	}
+	if icon != "" {
+		label = icon + " " + label
+	}
+	return colorSeq(label, seq, color)
+}
+
+// staleMarker replaces an allocation gauge for a down host: its usage figures
+// are stale and a green bar would read as live free capacity on a host that
+// cannot accept a single instance.
+func staleMarker(ascii bool) string {
+	if ascii {
+		return "-- stale --"
+	}
+	return "·· stale ··"
+}
+
 // colorByPct: green < warn, yellow >= warn, red >= crit.
 func colorByPct(s string, pct, warn, crit float64, enable bool) string {
 	switch {
@@ -201,15 +248,21 @@ type column struct {
 func gaugeColumns() []column {
 	return []column{
 		{"Name", profileCompact, false, func(r hostRow, _ *gaugeOpts, _ int, _ bool) string { return r.name }},
+		{"Health", profileCompact, false, func(r hostRow, o *gaugeOpts, _ int, c bool) string { return healthCell(r, o.ascii, c) }},
 		{"VMs", profileCompact, false, func(r hostRow, _ *gaugeOpts, _ int, _ bool) string { return strconv.Itoa(r.vms) }},
 		{"OC", profileCompact, false, func(r hostRow, _ *gaugeOpts, _ int, c bool) string { return colorOvercommit(r.overcommit, c) }},
 		{"RAM", profileCompact, false, func(r hostRow, o *gaugeOpts, bw int, c bool) string {
+			if isDown(r) {
+				return staleMarker(o.ascii)
+			}
 			return bar(r.ramPct, bw, o.ascii, c, o.warnPct, o.critPct)
 		}},
 		{"Disk", profileCompact, false, func(r hostRow, o *gaugeOpts, bw int, c bool) string {
+			if isDown(r) {
+				return staleMarker(o.ascii)
+			}
 			return bar(r.diskPct, bw, o.ascii, c, o.warnPct, o.critPct)
 		}},
-		{"St", profileCompact, false, func(r hostRow, _ *gaugeOpts, _ int, _ bool) string { return r.state }},
 		{"Aggregate", profileWide, false, func(r hostRow, _ *gaugeOpts, _ int, _ bool) string { return r.aggregate }},
 		{"Type", profileWide, false, func(r hostRow, _ *gaugeOpts, _ int, _ bool) string { return r.htype }},
 		{"vCPU(u/t)", profileWide, false, func(r hostRow, _ *gaugeOpts, _ int, _ bool) string {
@@ -226,6 +279,9 @@ func gaugeColumns() []column {
 			return fmt.Sprintf("%.0f%%", r.cpuAllocPct)
 		}},
 		{"CPU_phys", profileFull, true, func(r hostRow, o *gaugeOpts, bw int, c bool) string {
+			if isDown(r) {
+				return "n/a (down)"
+			}
 			if r.actualErr != "" {
 				return "err"
 			}
@@ -235,6 +291,9 @@ func gaugeColumns() []column {
 			return bar(r.cpuPhysPct, bw, o.ascii, c, o.warnPct, o.critPct)
 		}},
 		{"RAM_phys", profileFull, true, func(r hostRow, o *gaugeOpts, bw int, c bool) string {
+			if isDown(r) {
+				return "n/a (down)"
+			}
 			if r.actualErr != "" || r.ramPhysPct < 0 {
 				return "-"
 			}
@@ -288,6 +347,41 @@ func renderGauge(w io.Writer, rows []hostRow, o *gaugeOpts) {
 	}
 
 	writeGaugeTable(w, headers, cells)
+	writeHealthSummary(w, rows, o.ascii, color)
+}
+
+// writeHealthSummary prints a one-line fleet tally under the table, e.g.
+// "20 hypervisors · 19 up · 1 down · 2 disabled", highlighting down/disabled
+// when non-zero. state (up/down) and status (enabled/disabled) are orthogonal,
+// so a disabled-but-up host counts in both "up" and "disabled".
+func writeHealthSummary(w io.Writer, rows []hostRow, ascii, color bool) {
+	var down, disabled int
+	for _, r := range rows {
+		if isDown(r) {
+			down++
+		}
+		if isDisabled(r) {
+			disabled++
+		}
+	}
+	downStr := fmt.Sprintf("%d down", down)
+	disStr := fmt.Sprintf("%d disabled", disabled)
+	if down > 0 {
+		downStr = colorSeq(downStr, "31;1", color)
+	}
+	if disabled > 0 {
+		disStr = colorSeq(disStr, "33", color)
+	}
+	sep := "  ·  "
+	if ascii {
+		sep = "  |  "
+	}
+	parts := []string{
+		fmt.Sprintf("%d hypervisors", len(rows)),
+		fmt.Sprintf("%d up", len(rows)-down),
+		downStr, disStr,
+	}
+	_, _ = fmt.Fprintln(w, "\n"+strings.Join(parts, sep))
 }
 
 func renderCells(cols []column, rows []hostRow, o *gaugeOpts, barW int, color bool) ([]string, [][]string) {
@@ -301,10 +395,24 @@ func renderCells(cols []column, rows []hostRow, o *gaugeOpts, barW int, color bo
 		for j, c := range cols {
 			row[j] = c.render(r, o, barW, color)
 		}
+		// A down host's figures are stale; render the whole row faint — keeping
+		// the bright Health token — so the numbers do not read as live capacity.
+		// Strip each cell's own color first so the dim isn't cut short by a
+		// nested SGR reset.
+		if isDown(r) {
+			for j, c := range cols {
+				if c.header == "Health" {
+					continue
+				}
+				row[j] = colorSeq(stripANSI(row[j]), "2", color)
+			}
+		}
 		cells[i] = row
 	}
 	return headers, cells
 }
+
+func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
 // tableWidth computes the printed width of a borderless table with a 2-space
 // gutter between columns.

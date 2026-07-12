@@ -61,6 +61,47 @@ func sampleRows() []hostRow {
 	}
 }
 
+func healthRows() []hostRow {
+	return []hostRow{
+		{name: "hv-up", state: "up", status: "enabled", ramPct: 40, diskPct: 20, vms: 10, overcommit: 1.0},
+		{name: "hv-dis", state: "up", status: "disabled", ramPct: 10, diskPct: 5, vms: 0, overcommit: 0.1},
+		{name: "hv-x", state: "down", status: "enabled", ramPct: 6, diskPct: 0, vms: 3, overcommit: 0.19},
+	}
+}
+
+func TestRenderGauge_Health(t *testing.T) {
+	on := true
+	o := &gaugeOpts{width: 80, warnPct: 70, critPct: 90, color: &on}
+	var buf bytes.Buffer
+	renderGauge(&buf, healthRows(), o)
+	out := buf.String()
+
+	if !strings.Contains(out, "Health") {
+		t.Fatalf("missing Health column:\n%s", out)
+	}
+	// state+status collapse into one salient token, including the previously
+	// invisible up-but-disabled case.
+	for _, want := range []string{"● up", "⚠ DISABLED", "✖ DOWN"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing health token %q:\n%s", want, out)
+		}
+	}
+	// The down host's stale allocation must not render as a live gauge %.
+	if !strings.Contains(out, "stale") {
+		t.Errorf("down host should show a stale marker, not a gauge:\n%s", out)
+	}
+	// The down row is faint (SGR 2) while its Health token stays bold red.
+	if !strings.Contains(out, "\x1b[2m") {
+		t.Errorf("down row should be dimmed:\n%q", out)
+	}
+	// Fleet summary footer.
+	for _, want := range []string{"3 hypervisors", "2 up", "1 down", "1 disabled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestPickProfileByWidth(t *testing.T) {
 	cases := []struct {
 		w      int
@@ -103,8 +144,8 @@ func TestRenderGauge_CompactVsFull(t *testing.T) {
 	var buf bytes.Buffer
 	renderGauge(&buf, sampleRows(), o)
 	out := buf.String()
-	// compact profile: has Name/VMs/OC/RAM/Disk/St headers, but NOT wide-only cols.
-	if !strings.Contains(out, "Name") || !strings.Contains(out, "RAM") || !strings.Contains(out, "Disk") {
+	// compact profile: has Name/Health/VMs/OC/RAM/Disk headers, but NOT wide-only cols.
+	if !strings.Contains(out, "Name") || !strings.Contains(out, "Health") || !strings.Contains(out, "RAM") || !strings.Contains(out, "Disk") {
 		t.Errorf("compact missing core columns:\n%s", out)
 	}
 	if strings.Contains(out, "CPU Model") || strings.Contains(out, "Aggregate") {
