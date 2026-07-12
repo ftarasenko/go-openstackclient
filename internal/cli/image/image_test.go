@@ -16,6 +16,230 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// TestResolveImageID_PropagatesListError asserts that a transient glance List
+// failure is surfaced (not swallowed and masked as the literal ref).
+func TestResolveImageID_PropagatesListError(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/images", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	client := imageClient(fakeServer)
+	if _, err := resolveImageID(context.Background(), client, "cirros"); err == nil {
+		t.Fatal("resolveImageID returned nil error on a failing List; want it propagated")
+	}
+}
+
+// TestResolveImageID_UUIDPassthrough asserts a UUID reference is returned
+// untouched without any glance call.
+func TestResolveImageID_UUIDPassthrough(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/images", func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("UUID reference must not trigger a glance List")
+	})
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	client := imageClient(fakeServer)
+	got, err := resolveImageID(context.Background(), client, id)
+	if err != nil {
+		t.Fatalf("resolveImageID returned error: %v", err)
+	}
+	if got != id {
+		t.Errorf("resolveImageID = %q, want %q", got, id)
+	}
+}
+
+// TestRunImageDelete_AggregatesFailures asserts that a mid-list delete failure
+// does not abort the remaining deletes and that all failures are joined.
+func TestRunImageDelete_AggregatesFailures(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const okID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	const badID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	const okID2 = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+
+	var deleted []string
+	fakeServer.Mux.HandleFunc("/images/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/images/")
+		if id == badID {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		deleted = append(deleted, id)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := imageClient(fakeServer)
+	var buf bytes.Buffer
+	err := runImageDelete(context.Background(), client, []string{okID, badID, okID2}, &buf)
+	if err == nil {
+		t.Fatal("runImageDelete returned nil error; want aggregated failure")
+	}
+	if !strings.Contains(err.Error(), badID) {
+		t.Errorf("error missing failed id %s: %v", badID, err)
+	}
+	// The delete after the failure must still have been attempted.
+	if len(deleted) != 2 || deleted[0] != okID || deleted[1] != okID2 {
+		t.Errorf("attempted deletes = %v, want both good IDs", deleted)
+	}
+}
+
+// TestRunImageSet_ProtectedPatch asserts --protected emits a replace of
+// /protected in the glance JSON patch body.
+func TestRunImageSet_ProtectedPatch(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const imageID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	var patch []map[string]any
+	fakeServer.Mux.HandleFunc("/images/"+imageID, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &patch); err != nil {
+			t.Fatalf("decoding patch body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"` + imageID + `","name":"x","protected":true}`))
+	})
+
+	client := imageClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runImageSet(context.Background(), client, o, imageID, &imageSetFlags{protected: true}, &buf); err != nil {
+		t.Fatalf("runImageSet returned error: %v", err)
+	}
+
+	var found bool
+	for _, op := range patch {
+		if op["op"] == "replace" && op["path"] == "/protected" && op["value"] == true {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("patch body missing replace /protected=true: %v", patch)
+	}
+}
+
+// TestRunImageSet_PropertyPointerEscape asserts a property key containing '/'
+// and '~' is RFC 6901-escaped in the patch path.
+func TestRunImageSet_PropertyPointerEscape(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const imageID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+	var patch []map[string]any
+	fakeServer.Mux.HandleFunc("/images/"+imageID, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &patch)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"` + imageID + `","name":"x"}`))
+	})
+
+	client := imageClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &imageSetFlags{property: []string{"a/b~c=v"}}
+	if err := runImageSet(context.Background(), client, o, imageID, f, &buf); err != nil {
+		t.Fatalf("runImageSet returned error: %v", err)
+	}
+
+	var gotPath any
+	for _, op := range patch {
+		if op["op"] == "add" {
+			gotPath = op["path"]
+		}
+	}
+	if gotPath != "/a~1b~0c" {
+		t.Errorf("escaped path = %v, want /a~1b~0c", gotPath)
+	}
+}
+
+// TestRunImageMemberSet_AcceptStatus asserts member accept issues a PUT with
+// status "accepted".
+func TestRunImageMemberSet_AcceptStatus(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const imageID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+	const memberID = "proj-xyz"
+
+	var gotMethod string
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/images/"+imageID+"/members/"+memberID, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"image_id": "` + imageID + `",
+			"member_id": "` + memberID + `",
+			"status": "accepted",
+			"schema": "/v2/schemas/member"
+		}`))
+	})
+
+	client := imageClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runImageMemberSet(context.Background(), client, o, imageID, memberID, "accepted", &buf); err != nil {
+		t.Fatalf("runImageMemberSet returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("member update method = %q, want PUT", gotMethod)
+	}
+	if body["status"] != "accepted" {
+		t.Errorf("request body status = %v, want accepted", body["status"])
+	}
+	if !strings.Contains(buf.String(), "accepted") {
+		t.Errorf("output missing accepted status:\n%s", buf.String())
+	}
+}
+
+// TestRunImageMemberList_Table asserts member list renders member rows.
+func TestRunImageMemberList_Table(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const imageID = "10101010-1010-1010-1010-101010101010"
+	var gotMethod string
+	fakeServer.Mux.HandleFunc("/images/"+imageID+"/members", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"members":[
+			{"image_id":"` + imageID + `","member_id":"proj-a","status":"accepted"},
+			{"image_id":"` + imageID + `","member_id":"proj-b","status":"pending"}
+		]}`))
+	})
+
+	client := imageClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runImageMemberList(context.Background(), client, o, imageID, &buf); err != nil {
+		t.Fatalf("runImageMemberList returned error: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("member list method = %q, want GET", gotMethod)
+	}
+	out := buf.String()
+	for _, want := range []string{"proj-a", "proj-b", "accepted", "pending"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 // imageClient returns a service client wired to the mock server with the glance
 // service type, mirroring how auth.Client.Image does (no microversion header).
 func imageClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {

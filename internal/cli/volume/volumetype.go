@@ -2,6 +2,7 @@ package volume
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -27,6 +28,8 @@ func newTypeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newTypeShowCommand(a, o))
 	cmd.AddCommand(newTypeCreateCommand(a, o))
 	cmd.AddCommand(newTypeDeleteCommand(a, o))
+	cmd.AddCommand(newTypeSetCommand(a, o))
+	cmd.AddCommand(newTypeUnsetCommand(a, o))
 	return cmd
 }
 
@@ -184,17 +187,111 @@ func newTypeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTypeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+	var errs []error
 	for _, ref := range refs {
 		id, err := resolveVolumeTypeID(ctx, client, ref)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := volumetypes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume type %q: %w", ref, err)
+			errs = append(errs, fmt.Errorf("deleting volume type %q: %w", ref, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume type: %s\n", ref); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
+	return errors.Join(errs...)
+}
+
+type typeSetFlags struct {
+	property []string
+}
+
+func newTypeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &typeSetFlags{}
+	cmd := &cobra.Command{
+		Use:   "set <type>",
+		Short: "Set extra-spec properties on a volume type",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newVolumeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runTypeSet(ctx, client, args[0], f)
+		},
+	}
+	cmd.Flags().StringArrayVar(&f.property, "property", nil, "set an extra-spec key=value (repeatable)")
+	return cmd
+}
+
+func runTypeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *typeSetFlags) error {
+	if len(f.property) == 0 {
+		return fmt.Errorf("nothing to set: specify at least one --property key=value")
+	}
+	specs, err := parseKeyValMap(f.property)
+	if err != nil {
+		return fmt.Errorf("parsing --property: %w", err)
+	}
+	id, err := resolveVolumeTypeID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	// CreateExtraSpecs POSTs {"extra_specs":{...}} to /types/{id}/extra_specs,
+	// which cinder treats as create-or-update for the given keys.
+	if _, err := volumetypes.CreateExtraSpecs(ctx, client, id, volumetypes.ExtraSpecsOpts(specs)).Extract(); err != nil {
+		return fmt.Errorf("setting extra-specs on volume type %q: %w", ref, err)
+	}
 	return nil
+}
+
+type typeUnsetFlags struct {
+	property []string
+}
+
+func newTypeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &typeUnsetFlags{}
+	cmd := &cobra.Command{
+		Use:   "unset <type>",
+		Short: "Remove extra-spec properties from a volume type",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newVolumeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runTypeUnset(ctx, client, args[0], f)
+		},
+	}
+	cmd.Flags().StringArrayVar(&f.property, "property", nil, "remove an extra-spec by key (repeatable)")
+	return cmd
+}
+
+func runTypeUnset(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *typeUnsetFlags) error {
+	if len(f.property) == 0 {
+		return fmt.Errorf("nothing to unset: specify at least one --property key")
+	}
+	id, err := resolveVolumeTypeID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	// Cinder deletes one extra-spec per request (DELETE
+	// /types/{id}/extra_specs/{key}), so issue one call per key.
+	var errs []error
+	for _, key := range f.property {
+		if err := volumetypes.DeleteExtraSpec(ctx, client, id, key).ExtractErr(); err != nil {
+			errs = append(errs, fmt.Errorf("removing extra-spec %q from volume type %q: %w", key, ref, err))
+		}
+	}
+	return errors.Join(errs...)
 }

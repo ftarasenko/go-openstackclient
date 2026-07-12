@@ -58,7 +58,7 @@ func TestWaitForProvisionState_WaitsThenSucceeds(t *testing.T) {
 	)
 
 	client := baremetalClient(fakeServer, "latest")
-	if err := waitForProvisionState(context.Background(), client, id, "active"); err != nil {
+	if err := waitForProvisionState(context.Background(), client, id, "active", time.Minute); err != nil {
 		t.Fatalf("waitForProvisionState returned error: %v", err)
 	}
 }
@@ -79,12 +79,41 @@ func TestWaitForProvisionState_FailsOnUnexpectedSettledState(t *testing.T) {
 	)
 
 	client := baremetalClient(fakeServer, "latest")
-	err := waitForProvisionState(context.Background(), client, id, "manageable")
+	err := waitForProvisionState(context.Background(), client, id, "manageable", time.Minute)
 	if err == nil {
 		t.Fatal("expected error for unexpected settled state, got nil")
 	}
 	if !strings.Contains(err.Error(), "credentials verification failed") {
 		t.Errorf("error should include last_error, got: %v", err)
+	}
+}
+
+// TestWaitForProvisionState_FailsOnUnexpectedSettledStateNoLastError verifies
+// that a node which settles (target_provision_state cleared) into a state other
+// than the wanted one is treated as a terminal failure even when last_error is
+// empty, instead of hanging until the timeout expires.
+func TestWaitForProvisionState_FailsOnUnexpectedSettledStateNoLastError(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisionPollInterval = prev }(provisionPollInterval)
+	provisionPollInterval = time.Millisecond
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	// Settles into "available" instead of the wanted "manageable", with no
+	// last_error. A generous timeout ensures the test fails (hangs) unless the
+	// terminal-state detection returns promptly.
+	serveNodeGetSequence(fakeServer, id,
+		nodeGetBody("available", "", ""),
+	)
+
+	client := baremetalClient(fakeServer, "latest")
+	err := waitForProvisionState(context.Background(), client, id, "manageable", time.Minute)
+	if err == nil {
+		t.Fatal("expected error for unexpected settled state, got nil")
+	}
+	if !strings.Contains(err.Error(), "unexpected state") || !strings.Contains(err.Error(), "available") {
+		t.Errorf("error should name the unexpected settled state, got: %v", err)
 	}
 }
 
@@ -101,7 +130,7 @@ func TestWaitForProvisionState_FailsOnFailureState(t *testing.T) {
 	)
 
 	client := baremetalClient(fakeServer, "latest")
-	err := waitForProvisionState(context.Background(), client, id, "active")
+	err := waitForProvisionState(context.Background(), client, id, "active", time.Minute)
 	if err == nil {
 		t.Fatal("expected error for failure state, got nil")
 	}

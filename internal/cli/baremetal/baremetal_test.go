@@ -145,7 +145,7 @@ func TestRunNodeProvision_InspectRequest(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runNodeProvision(context.Background(), client, tr, "cmp-039", false, &buf); err != nil {
+	if err := runNodeProvision(context.Background(), client, tr, "cmp-039", false, 0, &buf); err != nil {
 		t.Fatalf("runNodeProvision returned error: %v", err)
 	}
 

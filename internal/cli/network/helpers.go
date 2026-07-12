@@ -110,6 +110,20 @@ func resolveSecGroupID(ctx context.Context, client *gophercloud.ServiceClient, n
 	return pickID(nameOrID, len(all), func(i int) string { return all[i].ID }, "security group")
 }
 
+// resolveSecGroupIDs resolves a list of security group names or IDs to IDs,
+// preserving order.
+func resolveSecGroupIDs(ctx context.Context, client *gophercloud.ServiceClient, nameOrIDs []string) ([]string, error) {
+	ids := make([]string, 0, len(nameOrIDs))
+	for _, nameOrID := range nameOrIDs {
+		id, err := resolveSecGroupID(ctx, client, nameOrID)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 // pickID applies the shared name-or-ID resolution policy: exactly one match by
 // name wins, zero matches falls back to treating the argument as an ID, and
 // more than one match is ambiguous.
