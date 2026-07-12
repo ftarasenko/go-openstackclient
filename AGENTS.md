@@ -244,12 +244,19 @@ single vague bullet.
    reads badly, fix it by rewording the offending commit (e.g. `git commit
    --amend` before it is tagged), not by hand-editing the release afterwards.
 4. **Trigger the build** via `workflow_dispatch` on `release.yml` with the `tag`
-   input — the environment blocks pushing tag refs, and it also blocks editing
-   releases through the API, so the workflow (running with its own
-   `GITHUB_TOKEN`) is the *only* way to create or update a release. The workflow
-   creates the tag, builds the six binaries, generates the notes, and publishes.
-   Re-dispatching the same tag regenerates the notes and updates the existing
-   release in place (the tag is not moved).
+   input — the environment blocks pushing tag refs, so the workflow (running with
+   its own `GITHUB_TOKEN`) creates the tag server-side, builds the six binaries,
+   generates the notes, and publishes.
+5. **Versions are immutable.** A published tag is never moved or re-released —
+   `release.yml` refuses to run if the tag already exists, and there is no
+   `mode: replace`. Once `vX.Y.Z` is out, the next change ships as a new version;
+   re-cutting the same number would swap the bytes under a name consumers (e.g.
+   Homebrew, which keys on the version string) have already cached and would not
+   re-download. If a release **fails before it fully publishes** (e.g. a transient
+   `uploads.github.com` flake → GoReleaser aborts before pushing the cask), it
+   never reached consumers, so free the version for a clean re-cut by deleting it
+   first: dispatch `delete-release.yml` with the tag, then re-dispatch
+   `release.yml`. Do not paper over a partial release by re-running the same tag.
 
 ## Do / don't
 
