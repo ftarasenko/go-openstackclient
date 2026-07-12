@@ -2,6 +2,7 @@ package volume
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -47,6 +48,8 @@ type snapshotListFlags struct {
 	name        string
 	status      string
 	volume      string
+	limit       int
+	marker      string
 }
 
 func newSnapshotListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -72,6 +75,8 @@ func newSnapshotListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "filter by snapshot name")
 	fl.StringVar(&f.status, "status", "", "filter by snapshot status")
 	fl.StringVar(&f.volume, "volume", "", "filter by source volume ID")
+	fl.IntVar(&f.limit, "limit", 0, "maximum number of snapshots to return")
+	fl.StringVar(&f.marker, "marker", "", "list snapshots after this ID (pagination)")
 	return cmd
 }
 
@@ -81,6 +86,8 @@ func runSnapshotList(ctx context.Context, client *gophercloud.ServiceClient, o *
 		Name:       f.name,
 		Status:     f.status,
 		VolumeID:   f.volume,
+		Limit:      f.limit,
+		Marker:     f.marker,
 	}
 	pages, err := snapshots.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -89,6 +96,10 @@ func runSnapshotList(ctx context.Context, client *gophercloud.ServiceClient, o *
 	all, err := snapshots.ExtractSnapshots(pages)
 	if err != nil {
 		return fmt.Errorf("parsing snapshot list: %w", err)
+	}
+	// Limit is only the page size to cinder; enforce it as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Description", "Status", "Size"}}
 	for _, s := range all {
@@ -130,7 +141,7 @@ func runSnapshotShow(ctx context.Context, client *gophercloud.ServiceClient, o *
 }
 
 type snapshotCreateFlags struct {
-	name        string
+	volume      string
 	description string
 	force       bool
 }
@@ -138,7 +149,7 @@ type snapshotCreateFlags struct {
 func newSnapshotCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &snapshotCreateFlags{}
 	cmd := &cobra.Command{
-		Use:   "create <volume>",
+		Use:   "create <snapshot-name>",
 		Short: "Create a snapshot of a volume",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -154,20 +165,24 @@ func newSnapshotCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.name, "name", "", "snapshot name")
+	fl.StringVar(&f.volume, "volume", "", "source volume (ID or name) to snapshot (required)")
 	fl.StringVar(&f.description, "description", "", "snapshot description")
 	fl.BoolVar(&f.force, "force", false, "snapshot a volume even if attached/in-use")
+	_ = cmd.MarkFlagRequired("volume")
 	return cmd
 }
 
-func runSnapshotCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, volumeRef string, f *snapshotCreateFlags, w io.Writer) error {
-	volID, err := resolveVolumeID(ctx, client, volumeRef)
+func runSnapshotCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *snapshotCreateFlags, w io.Writer) error {
+	if f.volume == "" {
+		return fmt.Errorf("--volume is required")
+	}
+	volID, err := resolveVolumeID(ctx, client, f.volume)
 	if err != nil {
 		return err
 	}
 	opts := snapshots.CreateOpts{
 		VolumeID:    volID,
-		Name:        f.name,
+		Name:        name,
 		Description: f.description,
 		Force:       f.force,
 	}
@@ -199,17 +214,20 @@ func newSnapshotDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runSnapshotDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+	var errs []error
 	for _, ref := range refs {
 		id, err := resolveSnapshotID(ctx, client, ref)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := snapshots.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting snapshot %q: %w", ref, err)
+			errs = append(errs, fmt.Errorf("deleting snapshot %q: %w", ref, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted snapshot: %s\n", ref); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

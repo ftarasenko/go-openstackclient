@@ -19,16 +19,18 @@ import (
 // KeyStack reference (docs.keystack.ru returned HTTP 403 at implementation
 // time); falls back to upstream OSC semantics.
 type imageSetFlags struct {
-	name       string
-	property   []string
-	minDisk    int
-	minDiskSet bool
-	minRAM     int
-	minRAMSet  bool
-	public     bool
-	private    bool
-	activate   bool
-	deactivate bool
+	name        string
+	property    []string
+	minDisk     int
+	minDiskSet  bool
+	minRAM      int
+	minRAMSet   bool
+	public      bool
+	private     bool
+	protected   bool
+	unprotected bool
+	activate    bool
+	deactivate  bool
 }
 
 func newImageSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -62,9 +64,12 @@ func newImageSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.IntVar(&f.minRAM, "min-ram", 0, "set the minimum RAM in MB")
 	fl.BoolVar(&f.public, "public", false, "make the image public")
 	fl.BoolVar(&f.private, "private", false, "make the image private")
+	fl.BoolVar(&f.protected, "protected", false, "prevent the image from being deleted")
+	fl.BoolVar(&f.unprotected, "unprotected", false, "allow the image to be deleted")
 	fl.BoolVar(&f.activate, "activate", false, "activate (reactivate) the image")
 	fl.BoolVar(&f.deactivate, "deactivate", false, "deactivate the image")
 	cmd.MarkFlagsMutuallyExclusive("public", "private")
+	cmd.MarkFlagsMutuallyExclusive("protected", "unprotected")
 	cmd.MarkFlagsMutuallyExclusive("activate", "deactivate")
 	return cmd
 }
@@ -85,13 +90,21 @@ func runImageSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	} else if f.private {
 		ops = append(ops, images.UpdateVisibility{Visibility: images.ImageVisibilityPrivate})
 	}
+	if f.protected {
+		ops = append(ops, images.ReplaceImageProtected{NewProtected: true})
+	} else if f.unprotected {
+		ops = append(ops, images.ReplaceImageProtected{NewProtected: false})
+	}
 	for _, p := range f.property {
 		k, v, err := parseKeyVal(p)
 		if err != nil {
 			return fmt.Errorf("parsing --property: %w", err)
 		}
 		// "add" doubles as "replace" for a scalar path in the glance JSON patch.
-		ops = append(ops, images.UpdateImageProperty{Op: images.AddOp, Name: k, Value: v})
+		// gophercloud builds the patch path as "/<Name>" without RFC 6901
+		// escaping, so escape the key here to keep the JSON pointer valid when it
+		// contains '/' or '~'.
+		ops = append(ops, images.UpdateImageProperty{Op: images.AddOp, Name: escapeJSONPointer(k), Value: v})
 	}
 
 	// activate/deactivate use dedicated glance action endpoints; there is no typed
@@ -175,7 +188,9 @@ func runImageUnset(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 	var ops images.UpdateOpts
 	for _, k := range f.property {
-		ops = append(ops, images.UpdateImageProperty{Op: images.RemoveOp, Name: k})
+		// Escape the key per RFC 6901 so a '/' or '~' produces a valid pointer
+		// (gophercloud builds the path as "/<Name>" without escaping).
+		ops = append(ops, images.UpdateImageProperty{Op: images.RemoveOp, Name: escapeJSONPointer(k)})
 	}
 	img, err := images.Update(ctx, client, id, ops).Extract()
 	if err != nil {

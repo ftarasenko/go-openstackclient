@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -35,19 +36,38 @@ func newQuotaShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			project := ""
+			// The reference may be a project name or ID. Nova's quotasets
+			// endpoint keys on the project ID and quietly returns the DEFAULT
+			// quotas for an unknown string, so an unresolved name would silently
+			// report defaults. Resolve to an ID via keystone first.
+			ref := ""
 			if len(args) == 1 {
-				project = args[0]
+				ref = args[0]
 			} else if a.ProjectID != "" {
-				project = a.ProjectID
+				ref = a.ProjectID
+			} else {
+				ref = a.ProjectName
 			}
-			if project == "" {
-				return fmt.Errorf("no project given: pass a project ID or set OS_PROJECT_ID")
+			if ref == "" {
+				return fmt.Errorf("no project given: pass a project name/ID or set OS_PROJECT_ID/OS_PROJECT_NAME")
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			// newComputeSession also yields the auth bundle so the identity
+			// client is only derived when a non-UUID name must be resolved.
+			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
+			}
+			project := ref
+			if !isUUID(ref) {
+				identity, err := session.Identity()
+				if err != nil {
+					return err
+				}
+				project, err = resolve.ProjectID(ctx, identity, ref)
+				if err != nil {
+					return err
+				}
 			}
 			return runQuotaShow(ctx, client, o, project, useDefault, cmd.OutOrStdout())
 		},

@@ -10,6 +10,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -104,6 +105,8 @@ type serverListFlags struct {
 	name        string
 	status      string
 	host        string
+	limit       int
+	marker      string
 }
 
 func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -131,6 +134,8 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "filter by server name (regular expression)")
 	fl.StringVar(&f.status, "status", "", "filter by server status, e.g. ACTIVE")
 	fl.StringVar(&f.host, "host", "", "filter by hypervisor host name")
+	fl.IntVar(&f.limit, "limit", 0, "maximum number of servers to return")
+	fl.StringVar(&f.marker, "marker", "", "list servers after this server ID (pagination marker)")
 	return cmd
 }
 
@@ -140,6 +145,8 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Status:     f.status,
 		Host:       f.host,
 		AllTenants: f.all || f.allProjects,
+		Marker:     f.marker,
+		Limit:      f.limit,
 	}
 	pages, err := servers.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -148,6 +155,11 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	all, err := servers.ExtractServers(pages)
 	if err != nil {
 		return fmt.Errorf("parsing server list: %w", err)
+	}
+	// Nova treats limit only as a page size, so AllPages may return more than
+	// requested; enforce --limit as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
 	}
 	return o.WriteList(w, serverListTable(all, f.long))
 }
@@ -345,19 +357,24 @@ func newServerDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+	// Attempt every ref; collect failures so one bad server does not prevent the
+	// rest from being deleted, then report all errors together.
+	var errs []error
 	for _, ref := range refs {
 		id, err := resolveServerID(ctx, client, ref)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := servers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting server %q: %w", ref, err)
+			errs = append(errs, fmt.Errorf("deleting server %q: %w", ref, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted server %s\n", ref); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // serverSetFlags holds the mutable attributes accepted by "server set".

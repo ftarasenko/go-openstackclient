@@ -2,6 +2,7 @@ package baremetal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -143,15 +144,19 @@ func newNodeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
+	// Attempt every id (as OSC does) rather than aborting on the first failure;
+	// report the successes and join the failures into a single error.
+	var errs []error
 	for _, id := range ids {
 		if err := nodes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting baremetal node %s: %w", id, err)
+			errs = append(errs, fmt.Errorf("deleting baremetal node %s: %w", id, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted node %s\n", id); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // nodeSetFlags holds the mutable attributes accepted by "node set".
@@ -249,7 +254,7 @@ func appendKVOps(ops *nodes.UpdateOpts, prefix string, pairs []string, flag stri
 		if err != nil {
 			return fmt.Errorf("parsing %s: %w", flag, err)
 		}
-		*ops = append(*ops, nodes.UpdateOperation{Op: nodes.AddOp, Path: prefix + k, Value: v})
+		*ops = append(*ops, nodes.UpdateOperation{Op: nodes.AddOp, Path: prefix + escapeJSONPointer(k), Value: v})
 	}
 	return nil
 }
@@ -307,13 +312,13 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		remove("/instance_uuid")
 	}
 	for _, k := range f.property {
-		remove("/properties/" + k)
+		remove("/properties/" + escapeJSONPointer(k))
 	}
 	for _, k := range f.driverInfo {
-		remove("/driver_info/" + k)
+		remove("/driver_info/" + escapeJSONPointer(k))
 	}
 	for _, k := range f.extra {
-		remove("/extra/" + k)
+		remove("/extra/" + escapeJSONPointer(k))
 	}
 	if len(ops) == 0 {
 		return fmt.Errorf("node unset requires at least one attribute flag")
