@@ -66,7 +66,7 @@ type Options struct {
 // Client for the target cluster.
 func Load(o Options) (*Client, error) {
 	path := resolveKubeconfigPath(o.Kubeconfig)
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: operator-controlled kubeconfig path (--kubeconfig/$KUBECONFIG)
 	if err != nil {
 		return nil, fmt.Errorf("reading kubeconfig %q: %w", path, err)
 	}
@@ -214,7 +214,7 @@ func pemFromDataOrFile(data, file string) ([]byte, error) {
 		return b, nil
 	}
 	if file != "" {
-		return os.ReadFile(file)
+		return os.ReadFile(file) //nolint:gosec // G304: cert/CA path from the operator's own kubeconfig
 	}
 	return nil, nil
 }
