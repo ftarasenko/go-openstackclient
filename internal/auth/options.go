@@ -64,10 +64,46 @@ type Options struct {
 	ClientKey  string
 	Insecure   bool
 
+	// In-memory client certificate/key (PEM), used when the material comes from a
+	// source other than a file — notably --creds-from-vault, which loads the
+	// openrc's mTLS cert/key from the sibling ssl_certificates KV secret. When
+	// set, these take precedence over the ClientCert/ClientKey file paths.
+	ClientCertPEM []byte
+	ClientKeyPEM  []byte
+
 	// Per-service microversions.
 	BaremetalAPIVersion string
 	ComputeAPIVersion   string
 	VolumeAPIVersion    string
+
+	// KeyVRM (in-house service registered in the Keystone catalog as type
+	// "keyvrm"). An explicit endpoint override bypasses catalog discovery,
+	// following OSC's OS_<SERVICE>_ENDPOINT_OVERRIDE convention.
+	KeyVRMEndpoint string
+
+	// koc-specific credential sources (no python-openstackclient equivalent).
+	// These are mutually exclusive. CredsFromNS reads a standalone Ironic's
+	// basic-auth secret from a Kubernetes namespace (baremetal only, no
+	// Keystone); CredsFromVault reads an openrc-style KV v2 secret from Vault and
+	// feeds the normal Keystone flow. See internal/auth/credsfrom.go.
+	CredsFromNS    string
+	CredsFromVault string
+
+	// Kubernetes access (for CredsFromNS).
+	Kubeconfig  string
+	KubeContext string
+
+	// Vault access (for CredsFromVault). Names mirror the standard VAULT_* CLI.
+	VaultAddr        string
+	VaultNamespace   string
+	VaultToken       string
+	VaultRoleID      string
+	VaultSecretID    string
+	VaultApprolePath string
+	VaultKVMount     string
+	VaultKVPrefix    string
+	VaultCACert      string
+	VaultInsecure    bool
 
 	// Diagnostics.
 	Debug bool
@@ -132,8 +168,45 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.VolumeAPIVersion, "os-volume-api-version", envOr("OS_VOLUME_API_VERSION", defaultVolumeMicroversion),
 		"volume (cinder) API microversion (env OS_VOLUME_API_VERSION)")
 
+	fs.StringVar(&o.KeyVRMEndpoint, "keyvrm-endpoint", os.Getenv("OS_KEYVRM_ENDPOINT_OVERRIDE"),
+		"override the KeyVRM endpoint instead of catalog discovery (env OS_KEYVRM_ENDPOINT_OVERRIDE)")
+
 	fs.BoolVar(&o.Debug, "debug", envBool("OS_DEBUG"),
 		"log HTTP requests and responses to stderr (tokens redacted)")
+
+	// koc-specific credential sources. UNVERIFIED against KeyStack: these have no
+	// python-openstackclient equivalent; they load credentials from the LCM
+	// (k0s) cluster / Vault so operators can skip clouds.yaml/OS_* setup.
+	fs.StringVar(&o.CredsFromNS, "creds-from-ns", os.Getenv("KOC_CREDS_FROM_NS"),
+		"load a standalone Ironic's basic-auth credentials from this Kubernetes namespace (baremetal only)")
+	fs.StringVar(&o.CredsFromVault, "creds-from-vault", os.Getenv("KOC_CREDS_FROM_VAULT"),
+		"load OpenStack credentials from this Vault KV v2 openrc secret; path may start with the mount (secret_v2/…) or / for absolute, else it is relative to --vault-kv-prefix")
+
+	fs.StringVar(&o.Kubeconfig, "kubeconfig", os.Getenv("KUBECONFIG"),
+		"path to the kubeconfig for --creds-from-ns (env KUBECONFIG; default ~/.kube/config)")
+	fs.StringVar(&o.KubeContext, "kube-context", os.Getenv("KUBE_CONTEXT"),
+		"kubeconfig context for --creds-from-ns (default: current-context)")
+
+	fs.StringVar(&o.VaultAddr, "vault-addr", os.Getenv("VAULT_ADDR"),
+		"Vault address for --creds-from-vault (env VAULT_ADDR)")
+	fs.StringVar(&o.VaultNamespace, "vault-namespace", os.Getenv("VAULT_NAMESPACE"),
+		"Vault Enterprise namespace, sent as X-Vault-Namespace (env VAULT_NAMESPACE)")
+	fs.StringVar(&o.VaultToken, "vault-token", os.Getenv("VAULT_TOKEN"),
+		"Vault token; if set, AppRole login is skipped (env VAULT_TOKEN; falls back to ~/.vault-token from `vault login`)")
+	fs.StringVar(&o.VaultRoleID, "vault-role-id", os.Getenv("VAULT_ROLE_ID"),
+		"Vault AppRole role_id (env VAULT_ROLE_ID)")
+	fs.StringVar(&o.VaultSecretID, "vault-secret-id", os.Getenv("VAULT_SECRET_ID"),
+		"Vault AppRole secret_id (env VAULT_SECRET_ID)")
+	fs.StringVar(&o.VaultApprolePath, "vault-approle-path", envOr("VAULT_APPROLE_PATH", "approle"),
+		"Vault AppRole auth mount path (env VAULT_APPROLE_PATH)")
+	fs.StringVar(&o.VaultKVMount, "vault-kv-mount", envOr("VAULT_KV_MOUNT", "secret_v2"),
+		"Vault KV v2 mount for --creds-from-vault (env VAULT_KV_MOUNT)")
+	fs.StringVar(&o.VaultKVPrefix, "vault-kv-prefix", os.Getenv("VAULT_KV_PREFIX"),
+		"default path prefix prepended to a relative --creds-from-vault path (env VAULT_KV_PREFIX)")
+	fs.StringVar(&o.VaultCACert, "vault-cacert", os.Getenv("VAULT_CACERT"),
+		"path to a CA bundle for the Vault TLS endpoint (env VAULT_CACERT)")
+	fs.BoolVar(&o.VaultInsecure, "vault-insecure", envBool("VAULT_SKIP_VERIFY"),
+		"disable TLS verification for Vault (env VAULT_SKIP_VERIFY)")
 }
 
 // insecureExplicit reports whether --insecure or OS_INSECURE was explicitly

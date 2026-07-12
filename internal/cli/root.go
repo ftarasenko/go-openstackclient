@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/dns"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/identity"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/image"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/keyvrm"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/network"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/placement"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/server"
@@ -47,6 +48,7 @@ func NewRootCommand(version string) *cobra.Command {
 	// hypervisor/quota), so they return a slice.
 	root.AddCommand(baremetal.NewCommand(authOpts, outOpts))
 	root.AddCommand(image.NewCommand(authOpts, outOpts))
+	root.AddCommand(keyvrm.NewCommand(authOpts, outOpts))
 	root.AddCommand(server.NewCommands(authOpts, outOpts)...)
 	root.AddCommand(compute.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(identity.NewCommand(authOpts, outOpts)...)

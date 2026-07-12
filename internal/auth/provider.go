@@ -19,12 +19,39 @@ type Client struct {
 	Endpoint gophercloud.EndpointOpts
 
 	opts *Options
+
+	// ironic is set only in --creds-from-ns mode: a standalone basic-auth Ironic
+	// client with no Keystone provider. When non-nil, Provider is nil and only
+	// Baremetal() is available.
+	ironic *ironicCreds
 }
 
 // Authenticate builds a single authenticated ProviderClient following the
 // documented precedence (clouds.yaml → OS_* env → application credentials) and
 // wires the resolved TLS config into it.
 func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
+	if o.CredsFromNS != "" && o.CredsFromVault != "" {
+		return nil, fmt.Errorf("--creds-from-ns and --creds-from-vault are mutually exclusive")
+	}
+
+	// Vault: fetch an openrc secret and fold its OS_* values into o, then fall
+	// through to the normal Keystone flow below (works for every service).
+	if o.CredsFromVault != "" {
+		if err := o.applyVaultOpenrc(ctx); err != nil {
+			return nil, fmt.Errorf("loading credentials from vault: %w", err)
+		}
+	}
+
+	// Namespace: a standalone metal3 Ironic uses HTTP basic auth, not Keystone,
+	// so short-circuit and return a baremetal-only client.
+	if o.CredsFromNS != "" {
+		ic, err := o.loadIronicCreds(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("loading ironic credentials from namespace %q: %w", o.CredsFromNS, err)
+		}
+		return &Client{ironic: ic, opts: o}, nil
+	}
+
 	ao, eo, baseTLS, err := o.resolveAuth()
 	if err != nil {
 		return nil, err
