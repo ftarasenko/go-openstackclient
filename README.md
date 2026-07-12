@@ -14,7 +14,8 @@ deployment. No Python at runtime.
 >   provision transitions (manage/provide/deploy/undeploy/rebuild/inspect, with
 >   `--wait`), maintenance, power, boot device, ports, drivers, conductors
 > - **server** (nova) — full lifecycle, add/remove volume·floating-ip·security-group,
->   console log/url, plus `compute service`, `hypervisor list`, `quota show`
+>   console log/url, plus `compute service`, `hypervisor list` (with color
+>   allocation **gauges**), `quota show`
 > - **compute** — flavor, keypair
 > - **identity** (keystone) — endpoint, domain, project, user, role
 >   (+assignments), service, region, catalog, application credential, token,
@@ -25,10 +26,18 @@ deployment. No Python at runtime.
 > - **network** (neutron) — network, subnet, router, port, floating ip,
 >   security group (+rule), agent
 > - **placement** — resource provider (list/show/delete/trait), allocation, trait
+> - **keyvrm** (Keystack Virtual Resource Manager — in-house) — app-config,
+>   host-aggregate-config, availability-zone, event, recommendation
+>
+> In addition to the standard Keystone flow, credentials can be sourced from a
+> standalone Ironic in a Kubernetes namespace (`--creds-from-ns`) or an
+> openrc-style secret in Vault (`--creds-from-vault`).
 >
 > A few operations use raw `ServiceClient` requests where gophercloud v2 lacks a
 > typed verb (server floating-IP actions, quota defaults, image
 > activate/deactivate) — isolated behind small helpers and flagged in code.
+> KeyVRM has no gophercloud package at all and uses the raw request layer end to
+> end.
 
 ## Build
 
@@ -70,6 +79,8 @@ koc project create demo --domain itkey
 koc volume create --size 1 test-volume
 koc network list --long
 koc resource provider show <uuid> --allocations -f json
+koc hypervisor list --gauge --sort ram --aggregate compute-hp
+koc keyvrm recommendation list
 ```
 
 ### Authentication
@@ -84,6 +95,24 @@ derive service clients. Credentials are resolved in this precedence order:
 
 Both domain-scoped and project-scoped tokens are supported
 (`--os-domain-name` vs. `--os-project-name` + `--os-project-domain-name`).
+
+#### Alternative credential sources
+
+Two koc-specific, mutually exclusive flags source credentials outside the normal
+`OS_*` / `clouds.yaml` flow (both use minimal in-repo REST clients — no client-go
+or Vault SDK — to preserve the air-gap invariant):
+
+- `--creds-from-ns <namespace>` reads a metal3 ironic-standalone-operator
+  instance's basic-auth secret from a Kubernetes namespace and builds a
+  **standalone Ironic** client (baremetal only, no Keystone).
+  `--kubeconfig` / `--kube-context` select the cluster.
+- `--creds-from-vault <path>` reads an openrc-style KV v2 secret from Vault and
+  folds its `OS_*` into the normal Keystone flow (all services). The path may
+  start with the KV mount (`secret_v2/…`), a leading `/` (absolute), or be
+  relative to `--vault-kv-prefix`. Vault is reached via `--vault-*` flags /
+  `VAULT_*` env; when those are absent on a cluster node, the address, namespace,
+  role_id, KV mount/prefix and AppRole secret-id are auto-discovered from the LCM
+  `k0s-system/lcm-config` ConfigMap and the `cert-manager/vault-approle` secret.
 
 ### TLS / mutual TLS
 
@@ -127,14 +156,32 @@ Ironic emits `X-OpenStack-Ironic-API-Version`; nova/cinder use the generic
 
 `--debug` logs each HTTP request/response to stderr with auth tokens redacted.
 
+### Hypervisor allocation gauges
+
+`koc hypervisor list --gauge` renders vCPU/RAM/Disk allocation as color bars with
+warning/critical thresholds (`--warn-pct`/`--crit-pct`), overcommit ratios, an
+`--aggregate` filter and `--sort`/`--reverse`. Column profiles auto-fit the
+terminal width (detected via `golang.org/x/term`; override with `--width`),
+`--ascii` falls back to plain bars, and `--color` forces `auto`/`always`/`never`.
+Allocation figures come from placement (nova dropped these fields at microversion
+2.88); nova supplies VMs/type/state/cpu_model/host_ip. `--check-actual` compares
+real CPU/RAM usage scraped from each host's node_exporter (`--ne-*` flags tune the
+scheme/port/suffix/concurrency/timeout). `-f json`/`csv` emit the raw numbers via
+the output layer.
+
 ## Layout
 
 ```
 cmd/koc/main.go            cobra root entrypoint, version
 internal/auth/             clouds.Parse + provider + TLS + per-service clients
+                           + --creds-from-ns / --creds-from-vault sources
+internal/kube/             minimal read-only k8s REST client (no client-go)
+internal/vault/            minimal Vault REST client (AppRole/token + KV v2)
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
 internal/cli/              root command wiring
+internal/cli/resolve/      cross-service name→ID resolution
 internal/cli/baremetal/    baremetal (ironic) command group
+internal/cli/keyvrm/       KeyVRM in-house catalog service (raw request layer)
 ```
 
 ## Development
