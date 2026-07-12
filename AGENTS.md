@@ -13,7 +13,7 @@ dependency-free binary for air-gapped / FSTEC-regulated deployment.
 - **Module**: `github.com/ftarasenko/go-openstackclient` (binary name: `koc`)
 - **Go**: see `go.mod` (currently `go 1.25`); target ≥ 1.22
 - **SDK**: gophercloud **v2** (`github.com/gophercloud/gophercloud/v2`) — never v1 or the dead rackspace fork
-- **CLI**: cobra + pflag
+- **CLI**: cobra + pflag; `golang.org/x/term` for terminal-width detection (rich gauges)
 - **Deps are vendored** (`vendor/` is committed) — builds must reproduce offline
 
 ## Build / test / lint (run before every commit)
@@ -48,12 +48,16 @@ issues**, `go test ./...` green, and the offline static build succeeds.
 ```
 cmd/koc/main.go            cobra root entrypoint; version var; signal-cancelled context
 internal/auth/             one authenticated ProviderClient per invocation + per-service clients
-  options.go               global flags (auth/TLS/microversion/output/debug), env-defaulted
-  provider.go              Authenticate(): clouds.yaml OR OS_*; domain/scope resolution
+  options.go               global flags (auth/TLS/microversion/output/debug + creds-from-*), env-defaulted
+  provider.go              Authenticate(): clouds.yaml OR OS_* OR --creds-from-*; domain/scope resolution
   tls.go                   explicit *tls.Config (CA bundle, mTLS, --insecure, TLS 1.2 min)
   services.go              auth.Client factory methods: Compute()/Identity()/Volume()/...
+  credsfrom.go             --creds-from-ns/-vault: standalone basic-auth ironic + Vault openrc → OS_*
   debug.go                 --debug transport: redacts tokens+secrets, elides large bodies
+internal/kube/             minimal read-only k8s REST client (kubeconfig + secret/Ironic reads); no client-go
+internal/vault/            minimal Vault REST client (AppRole login / token + KV v2 read + X-Vault-Namespace)
 internal/output/           -f/--format {table,json,yaml,value,csv} and -c/--column layer
+internal/cli/keyvrm/       KeyVRM (in-house catalog service); typed request layer (types.go/requests.go) + cobra verbs
 internal/cli/              root.go wires every service's command group onto the root
 internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
@@ -61,7 +65,19 @@ internal/cli/<service>/    one package per service; one file per noun; a client.
 
 Services: `baremetal` (ironic), `server`+`compute` (nova), `identity` (keystone),
 `volume` (cinder), `dns` (designate), `image` (glance), `network` (neutron),
-`placement`.
+`placement`, `keyvrm` (Keystack Virtual Resource Manager — in-house).
+
+`keyvrm` is the first **non-standard catalog service**: its endpoint is resolved
+by catalog type `keyvrm` (there is no gophercloud package), it authenticates with
+the plain Keystone token, and requests use the raw `ServiceClient.Get/Put/Post`
+pattern decoding into koc-owned DTO structs.
+
+> **Feature parity:** `koc keyvrm …` mirrors the Python `kvrm` CLI
+> (`~/code/project_k/keyvrm-cli`) over the `keyvrm-sdk` API
+> (`~/code/project_k/keyvrm/package/keyvrm_sdk`). When either changes (new
+> endpoints, DTO fields, or verbs), re-check and update `internal/cli/keyvrm/`
+> (`requests.go`/`types.go` for the API, the verb files for the CLI) to keep them
+> in sync. See `docs/proposals/keyvrm.md` for the command mapping.
 
 ## Command pattern (follow it exactly for new commands)
 
@@ -105,6 +121,19 @@ secondary client lazily (see `server/client.go` `newComputeSession`).
   literal ref (documented trade-off in README "Known limitations").
 - **Output** is the single source of truth for formatting — extend
   `internal/output`, don't format inline.
+- **Credential sources** (koc-specific, no OSC equivalent; mutually exclusive):
+  `--creds-from-ns <ns>` reads a metal3 ironic-standalone-operator instance's
+  basic-auth secret from a k8s namespace and builds a standalone ironic client
+  (baremetal only, no Keystone); `--creds-from-vault <path>` reads an openrc-style
+  KV v2 secret from Vault (AppRole or token) and folds its `OS_*` into the normal
+  Keystone flow (all services). The Vault path is absolute (leading `/`) or
+  relative to `--vault-kv-prefix`. Both use `internal/kube` / `internal/vault`
+  (minimal REST, no client-go / Vault SDK — preserves the air-gap invariant).
+  When `--vault-*` connection flags are absent, the Vault address/namespace/
+  role_id/KV mount/prefix are auto-discovered from the LCM `k0s-system/lcm-config`
+  ConfigMap and the AppRole secret-id from `cert-manager/vault-approle`, so on a
+  cluster node `--creds-from-vault <path>` needs no Vault flags (explicit flags /
+  `VAULT_*` env always win; Vault TLS uses system roots).
 
 ## Testing
 

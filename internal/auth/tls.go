@@ -41,8 +41,15 @@ func (o *Options) resolveTLSConfig(base *tls.Config) (*tls.Config, bool, error) 
 		cfg.RootCAs = pool
 	}
 
-	// Mutual TLS: client certificate + key must be provided together.
+	// Mutual TLS: client certificate + key must be provided together. In-memory
+	// PEM (e.g. loaded from Vault by --creds-from-vault) wins over file paths.
 	switch {
+	case len(o.ClientCertPEM) > 0 && len(o.ClientKeyPEM) > 0:
+		cert, err := tls.X509KeyPair(o.ClientCertPEM, o.ClientKeyPEM)
+		if err != nil {
+			return nil, false, fmt.Errorf("loading in-memory client certificate/key: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
 	case o.ClientCert != "" && o.ClientKey != "":
 		cert, err := tls.LoadX509KeyPair(o.ClientCert, o.ClientKey)
 		if err != nil {

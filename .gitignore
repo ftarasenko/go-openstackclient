@@ -2,9 +2,12 @@
 /koc
 koc-linux-*
 koc-darwin-*
+koc-windows-*
 /dist/
+*.sha256
 *.test
 *.out
+*.prof
 coverage.*
 
 # Editor / OS
