@@ -82,10 +82,7 @@ func runConductorList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return fmt.Errorf("parsing baremetal conductor list: %w", err)
 	}
-	// Limit is only the page size to ironic; enforce it as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
-	}
+	all = capResults(all, f.limit)
 	return o.WriteList(w, conductorListTable(all, f.long))
 }
 

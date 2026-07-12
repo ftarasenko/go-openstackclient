@@ -19,6 +19,16 @@ func parseKeyVal(s string) (string, string, error) {
 	return key, s[i+1:], nil
 }
 
+// capResults enforces --limit as a hard result cap for ironic list commands,
+// where the API treats "limit" only as a page size and AllPages fetches every
+// page. A non-positive limit means "no cap".
+func capResults[T any](items []T, limit int) []T {
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
+}
+
 // escapeJSONPointer escapes a single JSON-pointer reference token per RFC 6901:
 // '~' becomes '~0' and '/' becomes '~1'. Apply it to user-supplied key segments
 // before appending them to a JSON-pointer path prefix (e.g. "/properties/") so

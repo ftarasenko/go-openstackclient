@@ -53,9 +53,5 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 // shared by every network subcommand. The network service uses no microversion
 // header, so sc.Microversion is left empty (handled in auth.Client.Network).
 func newNetworkClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.Network()
+	return a.NewServiceClient(ctx, (*auth.Client).Network)
 }

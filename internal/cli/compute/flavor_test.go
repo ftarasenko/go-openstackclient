@@ -183,6 +183,217 @@ func TestRunFlavorCreate_RequestBodyAndOutput(t *testing.T) {
 	}
 }
 
+const flavorGetBody = `{
+  "flavor": {
+    "id": "1",
+    "name": "m1.tiny",
+    "ram": 512,
+    "disk": 1,
+    "vcpus": 1,
+    "OS-FLV-EXT-DATA:ephemeral": 0,
+    "swap": "",
+    "rxtx_factor": 1.0,
+    "os-flavor-access:is_public": true,
+    "description": "tiny flavor"
+  }
+}`
+
+func TestRunFlavorShow_RequestAndOutput(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// resolveFlavorID always lists /flavors/detail first.
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+
+	var gotMethod, gotAPIVersion, gotPath string
+	fakeServer.Mux.HandleFunc("/flavors/1", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotAPIVersion = r.Header.Get("OpenStack-API-Version")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorGetBody))
+	})
+
+	client := computeClient(fakeServer, "2.61")
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runFlavorShow(context.Background(), client, o, "1", &buf); err != nil {
+		t.Fatalf("runFlavorShow returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodGet {
+		t.Errorf("request method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/flavors/1" {
+		t.Errorf("request path = %q, want /flavors/1", gotPath)
+	}
+	if gotAPIVersion != "compute 2.61" {
+		t.Errorf("OpenStack-API-Version = %q, want %q", gotAPIVersion, "compute 2.61")
+	}
+
+	out := buf.String()
+	for _, want := range []string{"m1.tiny", "512", "tiny flavor", "Description"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRunFlavorDelete_RequestMethod(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+
+	var gotMethod, gotAPIVersion, gotPath string
+	fakeServer.Mux.HandleFunc("/flavors/2", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotAPIVersion = r.Header.Get("OpenStack-API-Version")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "2.1")
+
+	var buf bytes.Buffer
+	if err := runFlavorDelete(context.Background(), client, []string{"2"}, &buf); err != nil {
+		t.Fatalf("runFlavorDelete returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodDelete {
+		t.Errorf("request method = %q, want DELETE", gotMethod)
+	}
+	if gotPath != "/flavors/2" {
+		t.Errorf("request path = %q, want /flavors/2", gotPath)
+	}
+	if gotAPIVersion != "compute 2.1" {
+		t.Errorf("OpenStack-API-Version = %q, want %q", gotAPIVersion, "compute 2.1")
+	}
+}
+
+func TestRunFlavorSet_RequestBody(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+
+	var gotMethod, gotAPIVersion, gotPath string
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors/1/os-extra_specs", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotAPIVersion = r.Header.Get("OpenStack-API-Version")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"extra_specs": {"hw:cpu_policy": "dedicated"}}`))
+	})
+
+	client := computeClient(fakeServer, "2.1")
+
+	var buf bytes.Buffer
+	if err := runFlavorSet(context.Background(), client, "1", []string{"hw:cpu_policy=dedicated"}, &buf); err != nil {
+		t.Fatalf("runFlavorSet returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("request method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/flavors/1/os-extra_specs" {
+		t.Errorf("request path = %q, want /flavors/1/os-extra_specs", gotPath)
+	}
+	if gotAPIVersion != "compute 2.1" {
+		t.Errorf("OpenStack-API-Version = %q, want %q", gotAPIVersion, "compute 2.1")
+	}
+	specs, ok := gotBody["extra_specs"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body missing 'extra_specs' object: %#v", gotBody)
+	}
+	if specs["hw:cpu_policy"] != "dedicated" {
+		t.Errorf("extra_specs[hw:cpu_policy] = %v, want dedicated", specs["hw:cpu_policy"])
+	}
+}
+
+func TestRunFlavorSet_NoPropertiesSkipsRequest(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// No handlers registered: any HTTP call would fail the test.
+	client := computeClient(fakeServer, "2.1")
+	var buf bytes.Buffer
+	if err := runFlavorSet(context.Background(), client, "1", nil, &buf); err != nil {
+		t.Fatalf("runFlavorSet with no props returned error: %v", err)
+	}
+}
+
+func TestRunFlavorUnset_RequestMethod(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+
+	var gotMethod, gotAPIVersion, gotPath string
+	fakeServer.Mux.HandleFunc("/flavors/1/os-extra_specs/hw:cpu_policy", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotAPIVersion = r.Header.Get("OpenStack-API-Version")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	client := computeClient(fakeServer, "2.1")
+
+	var buf bytes.Buffer
+	if err := runFlavorUnset(context.Background(), client, "1", []string{"hw:cpu_policy"}, &buf); err != nil {
+		t.Fatalf("runFlavorUnset returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodDelete {
+		t.Errorf("request method = %q, want DELETE", gotMethod)
+	}
+	if gotPath != "/flavors/1/os-extra_specs/hw:cpu_policy" {
+		t.Errorf("request path = %q, want /flavors/1/os-extra_specs/hw:cpu_policy", gotPath)
+	}
+	if gotAPIVersion != "compute 2.1" {
+		t.Errorf("OpenStack-API-Version = %q, want %q", gotAPIVersion, "compute 2.1")
+	}
+}
+
+func TestRunFlavorUnset_NoKeysSkipsRequest(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	client := computeClient(fakeServer, "2.1")
+	var buf bytes.Buffer
+	if err := runFlavorUnset(context.Background(), client, "1", nil, &buf); err != nil {
+		t.Fatalf("runFlavorUnset with no keys returned error: %v", err)
+	}
+}
+
 func assertJSONNum(t *testing.T, m map[string]any, key string, want float64) {
 	t.Helper()
 	v, ok := m[key].(float64)

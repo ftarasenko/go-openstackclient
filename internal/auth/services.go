@@ -1,12 +1,45 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
 )
+
+// NewServiceClient authenticates once (clouds.yaml / OS_* / --creds-from-*) and
+// derives a single service client via derive — one of the Client factory
+// methods below, passed as a method value, e.g.
+// a.NewServiceClient(ctx, (*auth.Client).Compute). It is the shared body behind
+// every command package's newXxxClient helper.
+func (o *Options) NewServiceClient(ctx context.Context,
+	derive func(*Client) (*gophercloud.ServiceClient, error),
+) (*gophercloud.ServiceClient, error) {
+	client, err := o.Authenticate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return derive(client)
+}
+
+// NewServiceSession is NewServiceClient for commands that also need the
+// authenticated Client to lazily derive a second service (cross-service name→ID
+// resolution), e.g. `server create --image`/`--network`.
+func (o *Options) NewServiceSession(ctx context.Context,
+	derive func(*Client) (*gophercloud.ServiceClient, error),
+) (*gophercloud.ServiceClient, *Client, error) {
+	client, err := o.Authenticate(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	sc, err := derive(client)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sc, client, nil
+}
 
 // This file is the single place per-service clients are derived from the one
 // authenticated ProviderClient. Each factory sets the service microversion
