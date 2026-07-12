@@ -8,7 +8,9 @@ linters:
   default: standard
   enable:
     - bodyclose
+    - contextcheck
     - errcheck
+    - gosec
     - govet
     - ineffassign
     - misspell
@@ -18,6 +20,11 @@ linters:
     - unused
   exclusions:
     generated: lax
+    rules:
+      # gosec on test files is noise (fixture TLS, throwaway files, etc.).
+      - path: _test\.go
+        linters:
+          - gosec
     paths:
       - vendor
 
