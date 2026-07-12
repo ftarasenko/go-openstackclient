@@ -20,130 +20,70 @@ import (
 // accept either a name or an ID for domain/project/user/role/group/service.
 
 func resolveDomainID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	if nameOrID == "" {
-		return "", nil
-	}
-	pages, err := domains.List(client, domains.ListOpts{Name: nameOrID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolving domain %q: %w", nameOrID, err)
-	}
-	all, err := domains.ExtractDomains(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing domain list: %w", err)
-	}
-	switch len(all) {
-	case 0:
-		return nameOrID, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("domain name %q is ambiguous: %d matches", nameOrID, len(all))
-	}
+	return resolveByName("domain", "", nameOrID, func() ([]domains.Domain, error) {
+		pages, err := domains.List(client, domains.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return domains.ExtractDomains(pages)
+	}, func(d domains.Domain) string { return d.ID })
 }
 
 func resolveProjectID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
-	if nameOrID == "" {
-		return "", nil
-	}
-	pages, err := projects.List(client, projects.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolving project %q: %w", nameOrID, err)
-	}
-	all, err := projects.ExtractProjects(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing project list: %w", err)
-	}
-	switch len(all) {
-	case 0:
-		return nameOrID, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("project name %q is ambiguous: %d matches (try --domain)", nameOrID, len(all))
-	}
+	return resolveByName("project", " (try --domain)", nameOrID, func() ([]projects.Project, error) {
+		pages, err := projects.List(client, projects.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return projects.ExtractProjects(pages)
+	}, func(p projects.Project) string { return p.ID })
 }
 
 func resolveUserID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
-	if nameOrID == "" {
-		return "", nil
-	}
-	pages, err := users.List(client, users.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolving user %q: %w", nameOrID, err)
-	}
-	all, err := users.ExtractUsers(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing user list: %w", err)
-	}
-	switch len(all) {
-	case 0:
-		return nameOrID, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("user name %q is ambiguous: %d matches (try --domain)", nameOrID, len(all))
-	}
+	return resolveByName("user", " (try --domain)", nameOrID, func() ([]users.User, error) {
+		pages, err := users.List(client, users.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return users.ExtractUsers(pages)
+	}, func(u users.User) string { return u.ID })
 }
 
 func resolveRoleID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
-	if nameOrID == "" {
-		return "", nil
-	}
-	pages, err := roles.List(client, roles.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolving role %q: %w", nameOrID, err)
-	}
-	all, err := roles.ExtractRoles(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing role list: %w", err)
-	}
-	switch len(all) {
-	case 0:
-		return nameOrID, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("role name %q is ambiguous: %d matches", nameOrID, len(all))
-	}
+	return resolveByName("role", "", nameOrID, func() ([]roles.Role, error) {
+		pages, err := roles.List(client, roles.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return roles.ExtractRoles(pages)
+	}, func(r roles.Role) string { return r.ID })
 }
 
 func resolveGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
-	if nameOrID == "" {
-		return "", nil
-	}
-	pages, err := groups.List(client, groups.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolving group %q: %w", nameOrID, err)
-	}
-	all, err := groups.ExtractGroups(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing group list: %w", err)
-	}
-	switch len(all) {
-	case 0:
-		return nameOrID, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("group name %q is ambiguous: %d matches", nameOrID, len(all))
-	}
+	return resolveByName("group", "", nameOrID, func() ([]groups.Group, error) {
+		pages, err := groups.List(client, groups.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return groups.ExtractGroups(pages)
+	}, func(g groups.Group) string { return g.ID })
 }
 
+// resolveServiceID does not use the shared resolveByName generic: the keystone
+// /v3/services endpoint filters only by `type`, not by name — passing ?name= is
+// ignored and the server returns the full catalog, which would make every name
+// look ambiguous. So it lists everything and matches the name client-side.
 func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
 	if nameOrID == "" {
 		return "", nil
 	}
-	// The keystone /v3/services endpoint filters only by `type`, not by name:
-	// passing ?name= is ignored and the server returns the full catalog, which
-	// would make every name look ambiguous. List everything and match the name
-	// client-side, mirroring the other local-match resolvers.
 	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
 	}
 	all, err := services.ExtractServices(pages)
 	if err != nil {
-		return "", fmt.Errorf("parsing service list: %w", err)
+		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
 	}
 	var matches []string
 	for _, s := range all {
@@ -158,6 +98,30 @@ func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, na
 		return matches[0], nil
 	default:
 		return "", fmt.Errorf("service name %q is ambiguous: %d matches", nameOrID, len(matches))
+	}
+}
+
+// resolveByName backs every keystone name→ID resolver: an empty ref yields "",
+// a name-filtered list of one match wins, zero matches falls back to treating
+// the ref as an ID, and multiple matches are ambiguous. hint is appended to the
+// ambiguity error (e.g. " (try --domain)" for domain-scoped nouns).
+func resolveByName[T any](kind, hint, nameOrID string,
+	list func() ([]T, error), idOf func(T) string,
+) (string, error) {
+	if nameOrID == "" {
+		return "", nil
+	}
+	all, err := list()
+	if err != nil {
+		return "", fmt.Errorf("resolving %s %q: %w", kind, nameOrID, err)
+	}
+	switch len(all) {
+	case 0:
+		return nameOrID, nil
+	case 1:
+		return idOf(all[0]), nil
+	default:
+		return "", fmt.Errorf("%s name %q is ambiguous: %d matches%s", kind, nameOrID, len(all), hint)
 	}
 }
 

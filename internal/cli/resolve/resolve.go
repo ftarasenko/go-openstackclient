@@ -31,52 +31,53 @@ func IsUUID(ref string) bool { return uuidRe.MatchString(ref) }
 // ImageID resolves a glance image name (or ID) to an image ID using the given
 // image service client.
 func ImageID(ctx context.Context, imageClient *gophercloud.ServiceClient, ref string) (string, error) {
-	if ref == "" || IsUUID(ref) {
-		return ref, nil
-	}
-	pages, err := images.List(imageClient, images.ListOpts{Name: ref}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up image %q: %w", ref, err)
-	}
-	all, err := images.ExtractImages(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing image list for %q: %w", ref, err)
-	}
-	return pick("image", ref, len(all), func(i int) string { return all[i].ID })
+	return byName(ctx, "image", ref, func(ctx context.Context) ([]images.Image, error) {
+		pages, err := images.List(imageClient, images.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return images.ExtractImages(pages)
+	}, func(i images.Image) string { return i.ID })
 }
 
 // NetworkID resolves a neutron network name (or ID) to a network ID using the
 // given network service client.
 func NetworkID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	if ref == "" || IsUUID(ref) {
-		return ref, nil
-	}
-	pages, err := networks.List(networkClient, networks.ListOpts{Name: ref}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up network %q: %w", ref, err)
-	}
-	all, err := networks.ExtractNetworks(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing network list for %q: %w", ref, err)
-	}
-	return pick("network", ref, len(all), func(i int) string { return all[i].ID })
+	return byName(ctx, "network", ref, func(ctx context.Context) ([]networks.Network, error) {
+		pages, err := networks.List(networkClient, networks.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return networks.ExtractNetworks(pages)
+	}, func(n networks.Network) string { return n.ID })
 }
 
 // ProjectID resolves a keystone project name (or ID) to a project ID using the
 // given identity service client.
 func ProjectID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
+	return byName(ctx, "project", ref, func(ctx context.Context) ([]projects.Project, error) {
+		pages, err := projects.List(identityClient, projects.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return projects.ExtractProjects(pages)
+	}, func(p projects.Project) string { return p.ID })
+}
+
+// byName is the shared engine for the cross-service resolvers: an empty ref or a
+// UUID short-circuits without an API call; otherwise fetch runs a name-filtered
+// list and pick applies the match policy.
+func byName[T any](ctx context.Context, kind, ref string,
+	fetch func(context.Context) ([]T, error), idOf func(T) string,
+) (string, error) {
 	if ref == "" || IsUUID(ref) {
 		return ref, nil
 	}
-	pages, err := projects.List(identityClient, projects.ListOpts{Name: ref}).AllPages(ctx)
+	all, err := fetch(ctx)
 	if err != nil {
-		return "", fmt.Errorf("looking up project %q: %w", ref, err)
+		return "", fmt.Errorf("looking up %s %q: %w", kind, ref, err)
 	}
-	all, err := projects.ExtractProjects(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing project list for %q: %w", ref, err)
-	}
-	return pick("project", ref, len(all), func(i int) string { return all[i].ID })
+	return pick(kind, ref, len(all), func(i int) string { return idOf(all[i]) })
 }
 
 // pick applies the shared match policy: one → its ID, zero → ref passthrough,

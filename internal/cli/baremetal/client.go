@@ -11,9 +11,5 @@ import (
 // newBaremetalClient authenticates once and derives the ironic service client
 // shared by every baremetal subcommand.
 func newBaremetalClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.Baremetal()
+	return a.NewServiceClient(ctx, (*auth.Client).Baremetal)
 }

@@ -28,7 +28,7 @@ const (
 	lcmConfigName         = "lcm-config"
 	lcmConfigKey          = "lcm-config.yaml"
 	vaultApproleSecretNS  = "cert-manager"
-	vaultApproleSecret    = "vault-approle"
+	vaultApproleSecret    = "vault-approle" //nolint:gosec // G101: name of a k8s Secret object, not a credential value
 	vaultApproleSecretKey = "secret-id"
 )
 
@@ -372,7 +372,7 @@ func readVaultTokenFile() string {
 		}
 		path = filepath.Join(home, ".vault-token")
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304: operator-controlled Vault token path (flag/env/~/.vault-token)
 	if err != nil {
 		return ""
 	}

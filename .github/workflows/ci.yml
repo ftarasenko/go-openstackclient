@@ -20,10 +20,13 @@ jobs:
       GOPROXY: "off"
       CGO_ENABLED: "0"
     steps:
-      - uses: actions/checkout@v4
+      # Third-party actions are pinned to full commit SHAs (supply-chain
+      # hygiene for the air-gapped/FSTEC target); the trailing comment records
+      # the human-readable version each SHA corresponds to.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false
@@ -31,6 +34,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # A -mod=vendor build fails with "inconsistent vendoring" if vendor/ or
+      # vendor/modules.txt drifts from go.mod, so this step doubles as the
+      # air-gap vendor-consistency gate.
       - name: Build static binary (offline, from vendor/)
         run: |
           go build -trimpath \
@@ -45,23 +51,33 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOFLAGS: -mod=vendor
+      GOPROXY: "off"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false
 
-      # Pin the exact golangci-lint version used in development from its release
-      # binary, avoiding the golangci-lint-action version matrix.
-      - name: Install golangci-lint v2.5.0
+      # Pin the exact golangci-lint version used in development and verify the
+      # download against the release's published SHA-256 checksums before
+      # extracting, so a corrupted or swapped asset fails the build.
+      - name: Install golangci-lint v2.5.0 (checksum-verified)
+        env:
+          GOPROXY: "" # allow the tool download (build/test stay offline)
         run: |
-          curl -sSfL \
-            https://github.com/golangci/golangci-lint/releases/download/v2.5.0/golangci-lint-2.5.0-linux-amd64.tar.gz \
-            | tar -xz
-          sudo mv golangci-lint-2.5.0-linux-amd64/golangci-lint /usr/local/bin/golangci-lint
+          VER=2.5.0
+          TARBALL="golangci-lint-${VER}-linux-amd64.tar.gz"
+          BASE="https://github.com/golangci/golangci-lint/releases/download/v${VER}"
+          curl -sSfL "${BASE}/${TARBALL}" -o "${TARBALL}"
+          curl -sSfL "${BASE}/golangci-lint-${VER}-checksums.txt" -o checksums.txt
+          # sha256sum -c matches by the filename recorded in checksums.txt, so the
+          # tarball must be on disk under its canonical name.
+          grep " ${TARBALL}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${TARBALL}"
+          sudo mv "golangci-lint-${VER}-linux-amd64/golangci-lint" /usr/local/bin/golangci-lint
           golangci-lint version
 
       - name: golangci-lint

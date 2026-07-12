@@ -13,9 +13,5 @@ import (
 // microversion so gophercloud emits the generic
 // "OpenStack-API-Version: placement <mv>" header.
 func newPlacementClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.Placement()
+	return a.NewServiceClient(ctx, (*auth.Client).Placement)
 }

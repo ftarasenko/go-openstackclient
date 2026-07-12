@@ -12,24 +12,12 @@ import (
 // by every image subcommand. The image API has no microversion header, so the
 // client's Microversion is left empty (Type == "image").
 func newImageClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.Image()
+	return a.NewServiceClient(ctx, (*auth.Client).Image)
 }
 
 // newImageSession returns the image client plus the authenticated bundle, so
 // sharing commands can resolve a project name→ID via the identity service from
 // the same session.
 func newImageSession(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, *auth.Client, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	img, err := client.Image()
-	if err != nil {
-		return nil, nil, err
-	}
-	return img, client, nil
+	return a.NewServiceSession(ctx, (*auth.Client).Image)
 }

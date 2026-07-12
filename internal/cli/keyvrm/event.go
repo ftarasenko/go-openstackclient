@@ -1,8 +1,11 @@
 package keyvrm
 
 import (
+	"context"
 	"fmt"
+	"io"
 
+	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -56,16 +59,7 @@ func newEventRecommendationCommand(a *auth.Options, o *output.Options) *cobra.Co
 				return err
 			}
 			opts := listOpts{Limit: f.limit, Offset: f.offset, filters: map[string]string{"status": f.status}}
-			p, err := listEventRecommendations(cmd.Context(), sc, args[0], opts)
-			if err != nil {
-				return err
-			}
-			rows := make([][]any, len(p.Data))
-			for i, r := range p.Data {
-				rows[i] = recRow(r)
-			}
-			writeTotal(p.Total, p.Limit, p.Offset)
-			return o.WriteList(cmd.OutOrStdout(), output.Table{Columns: recColumns, Rows: rows})
+			return runEventRecList(cmd.Context(), sc, o, args[0], opts, cmd.OutOrStdout())
 		},
 	}
 	list.Flags().StringVar(&f.status, "status", "", "filter by recommendation status")
@@ -91,4 +85,19 @@ func newEventRecommendationCommand(a *auth.Options, o *output.Options) *cobra.Co
 
 	cmd.AddCommand(list, run)
 	return cmd
+}
+
+// runEventRecList is the test seam for "event recommendation list <event-id>":
+// it lists an event's recommendations and renders them through the output layer.
+func runEventRecList(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, eventID string, opts listOpts, w io.Writer) error {
+	p, err := listEventRecommendations(ctx, sc, eventID, opts)
+	if err != nil {
+		return err
+	}
+	rows := make([][]any, len(p.Data))
+	for i, r := range p.Data {
+		rows[i] = recRow(r)
+	}
+	writeTotal(p.Total, p.Limit, p.Offset)
+	return o.WriteList(w, output.Table{Columns: recColumns, Rows: rows})
 }

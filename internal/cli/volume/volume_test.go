@@ -12,9 +12,22 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
+	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
+
+// assertVolumeMicroversion checks cinder emits the volume microversion via both
+// the generic and volume-specific headers, mirroring the list test above.
+func assertVolumeMicroversion(t *testing.T, r *http.Request, mv string) {
+	t.Helper()
+	if got := r.Header.Get("X-OpenStack-Volume-API-Version"); got != mv {
+		t.Errorf("X-OpenStack-Volume-API-Version = %q, want %q", got, mv)
+	}
+	if got := r.Header.Get("OpenStack-API-Version"); got != "volume "+mv {
+		t.Errorf("OpenStack-API-Version = %q, want %q", got, "volume "+mv)
+	}
+}
 
 // volumeClient returns a service client wired to the mock server with the
 // cinder service type + microversion, mirroring auth.Client.Volume().
@@ -558,5 +571,253 @@ func TestRunServiceList_RequestAndOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("service list output missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+const volumeGetBody = `{
+  "volume": {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "name": "vol-a",
+    "description": "primary",
+    "status": "available",
+    "size": 10,
+    "volume_type": "ssd",
+    "bootable": "false",
+    "availability_zone": "nova",
+    "attachments": [],
+    "metadata": {"k": "v"}
+  }
+}`
+
+func TestRunVolumeShow_ByID(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gets int
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		assertVolumeMicroversion(t, r, "3.59")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		gets++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runVolumeShow(context.Background(), client, o, id, &buf); err != nil {
+		t.Fatalf("runVolumeShow returned error: %v", err)
+	}
+	// Resolver GET short-circuits, then the show GET: the /volumes/<id> path is
+	// the only endpoint hit, so no name-filtered list is issued.
+	if gets < 2 {
+		t.Errorf("expected >=2 GETs on /volumes/%s (resolve + show), got %d", id, gets)
+	}
+	out := buf.String()
+	for _, want := range []string{"id", "name", "vol-a", "available", "primary", id} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRunVolumeShow_ByName(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	// A GET keyed by the *name* 404s, forcing the name-filtered list path.
+	fakeServer.Mux.HandleFunc("/volumes/vol-a", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	var listed bool
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		listed = true
+		th.TestFormValues(t, r, map[string]string{"name": "vol-a"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeListBody))
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+	var buf bytes.Buffer
+	if err := runVolumeShow(context.Background(), client, o, "vol-a", &buf); err != nil {
+		t.Fatalf("runVolumeShow returned error: %v", err)
+	}
+	if !listed {
+		t.Error("expected a name-filtered list on /volumes/detail")
+	}
+	if !strings.Contains(buf.String(), id) {
+		t.Errorf("show output missing resolved id:\n%s", buf.String())
+	}
+}
+
+func TestRunVolumeDelete_ByID(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotDelete bool
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet: // resolver short-circuit
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(volumeGetBody))
+		case http.MethodDelete:
+			gotDelete = true
+			assertVolumeMicroversion(t, r, "3.59")
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Errorf("unexpected method %q", r.Method)
+		}
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	var buf bytes.Buffer
+	if err := runVolumeDelete(context.Background(), client, []string{id}, &buf); err != nil {
+		t.Fatalf("runVolumeDelete returned error: %v", err)
+	}
+	if !gotDelete {
+		t.Error("expected a DELETE on /volumes/<id>")
+	}
+	if !strings.Contains(buf.String(), "Deleted volume: "+id) {
+		t.Errorf("delete output missing confirmation:\n%s", buf.String())
+	}
+}
+
+// volumeSetCmd builds a cobra command carrying the "volume set" flags, marking
+// the requested flags as Changed via Set so runVolumeSet's Changed() checks fire.
+func volumeSetCmd(t *testing.T, f *volumeSetFlags, set map[string]string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "set"}
+	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "")
+	fl.StringVar(&f.description, "description", "", "")
+	fl.StringArrayVar(&f.property, "property", nil, "")
+	fl.IntVar(&f.size, "size", 0, "")
+	for k, v := range set {
+		if err := fl.Set(k, v); err != nil {
+			t.Fatalf("setting flag %q: %v", k, err)
+		}
+	}
+	return cmd
+}
+
+func TestRunVolumeSet_RenameAndExtend(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotExtend, gotUpdate map[string]any
+	var gotActionMethod, gotUpdateMethod string
+	fakeServer.Mux.HandleFunc("/volumes/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotActionMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotExtend)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet: // resolver short-circuit
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(volumeGetBody))
+		case http.MethodPut:
+			gotUpdateMethod = r.Method
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &gotUpdate)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(volumeGetBody))
+		default:
+			t.Errorf("unexpected method %q", r.Method)
+		}
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, map[string]string{"name": "renamed", "size": "20"})
+	if err := runVolumeSet(context.Background(), client, id, f, cmd); err != nil {
+		t.Fatalf("runVolumeSet returned error: %v", err)
+	}
+
+	if gotActionMethod != http.MethodPost {
+		t.Errorf("extend method = %q, want POST", gotActionMethod)
+	}
+	ext, ok := gotExtend["os-extend"].(map[string]any)
+	if !ok || ext["new_size"] != float64(20) {
+		t.Errorf("extend body = %#v, want os-extend.new_size=20", gotExtend)
+	}
+	if gotUpdateMethod != http.MethodPut {
+		t.Errorf("update method = %q, want PUT", gotUpdateMethod)
+	}
+	vol, ok := gotUpdate["volume"].(map[string]any)
+	if !ok || vol["name"] != "renamed" {
+		t.Errorf("update body = %#v, want volume.name=renamed", gotUpdate)
+	}
+}
+
+func TestRunVolumeSet_PropertyMergesMetadata(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotUpdate map[string]any
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			// Both the resolver and the metadata-merge read hit this; return the
+			// existing metadata {k:v}.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(volumeGetBody))
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &gotUpdate)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(volumeGetBody))
+		default:
+			t.Errorf("unexpected method %q", r.Method)
+		}
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, map[string]string{"property": "new=1"})
+	if err := runVolumeSet(context.Background(), client, id, f, cmd); err != nil {
+		t.Fatalf("runVolumeSet returned error: %v", err)
+	}
+	vol, ok := gotUpdate["volume"].(map[string]any)
+	if !ok {
+		t.Fatalf("PUT body missing volume: %#v", gotUpdate)
+	}
+	meta, ok := vol["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("PUT body missing metadata: %#v", vol)
+	}
+	// Existing key preserved, new key merged in.
+	if meta["k"] != "v" || meta["new"] != "1" {
+		t.Errorf("merged metadata = %#v, want {k:v, new:1}", meta)
+	}
+}
+
+func TestRunVolumeSet_NothingToSet(t *testing.T) {
+	// Validation happens before any network use, so a nil client is fine.
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, nil)
+	err := runVolumeSet(context.Background(), nil, "x", f, cmd)
+	if err == nil {
+		t.Fatal("expected error when no set flags are provided, got nil")
 	}
 }

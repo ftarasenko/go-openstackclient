@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -48,11 +47,10 @@ func resolveServerCreateRefs(ctx context.Context, session *auth.Client, f *serve
 	return nil
 }
 
-var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// isUUID reports whether s looks like a canonical UUID.
+// isUUID reports whether s looks like a canonical UUID. It reuses the shared
+// resolver's matcher so there is one definition of "looks like a UUID".
 func isUUID(s string) bool {
-	return uuidRe.MatchString(s)
+	return resolve.IsUUID(s)
 }
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may

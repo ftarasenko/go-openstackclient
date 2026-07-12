@@ -19,7 +19,7 @@ import (
 func (o *Options) resolveTLSConfig(base *tls.Config) (*tls.Config, bool, error) {
 	cfg := base
 	if cfg == nil {
-		cfg = &tls.Config{}
+		cfg = &tls.Config{MinVersion: tls.VersionTLS12}
 	} else {
 		cfg = cfg.Clone()
 	}
