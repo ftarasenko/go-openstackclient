@@ -4,47 +4,34 @@ on:
   push:
     tags:
       - "v*"
-  # Publish on demand by supplying the tag to create (the workflow creates the
-  # tag and GitHub Release server-side via GITHUB_TOKEN).
+  # Publish on demand by supplying the tag to create. This environment blocks
+  # pushing tag refs from a workstation (see AGENTS.md), so the workflow creates
+  # the tag server-side with its own GITHUB_TOKEN, then hands it to GoReleaser.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to create and publish (e.g. v0.1.0)"
+        description: "Release tag to create and publish (e.g. v0.3.1)"
         required: true
         type: string
 
 permissions:
-  contents: write
+  contents: write # create the tag + GitHub Release in this repo
 
-# Air-gap requirement: release binaries build offline from the committed vendor/.
+# Air-gap requirement: the compiled artifact builds offline from the committed
+# vendor/. GoReleaser itself is fetched by the action (CI is not air-gapped).
 env:
   GOFLAGS: -mod=vendor
   GOPROXY: "off"
   CGO_ENABLED: "0"
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
     steps:
       # Actions pinned to commit SHAs (supply-chain hygiene); comment = version.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0 # needed for git describe
+          fetch-depth: 0 # full history + tags for git describe / release notes
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -52,52 +39,41 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Build static binary
+      # workflow_dispatch: create the tag at HEAD and push it (CI's GITHUB_TOKEN
+      # can push tag refs; the local/agent env cannot). On re-dispatch the tag
+      # already exists — reuse it, do NOT move it. Then check it out detached so
+      # HEAD == the tag commit, which GoReleaser requires. On a tag-push trigger
+      # the checkout is already at the tag, so this step is skipped.
+      - name: Create/reuse tag and check it out
+        if: github.event_name == 'workflow_dispatch'
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ inputs.tag }}
         run: |
-          VERSION="${{ inputs.tag }}"
-          if [ -z "$VERSION" ]; then VERSION="$(git describe --tags --always --dirty)"; fi
-          EXT=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          OUT="koc-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=${VERSION}" \
-            -o "dist/${OUT}" ./cmd/koc
-          file "dist/${OUT}"
-          ( cd dist && sha256sum "${OUT}" > "${OUT}.sha256" )
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag $TAG already exists; reusing it (not moved)"
+          else
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "refs/tags/$TAG"
+          fi
+          git checkout --detach "$TAG"
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: koc-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
-          if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # full history + tags for release-notes.sh
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: dist
-          merge-multiple: true
-
+      # Release body = Conventional-Commits notes from the committed script (the
+      # single source of truth). Written OUTSIDE the work tree so GoReleaser does
+      # not refuse on a dirty git state.
       - name: Build release notes from Conventional Commits
-        run: |
-          scripts/release-notes.sh "${{ inputs.tag || github.ref_name }}" \
-            | tee RELEASE_NOTES.md
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: scripts/release-notes.sh "$TAG" | tee "$RUNNER_TEMP/RELEASE_NOTES.md"
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      # Builds the 6-target matrix, publishes the GitHub Release, and pushes
+      # Casks/koc.rb to ftarasenko/homebrew-tap (needs the cross-repo PAT).
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: dist/*
-          body_path: RELEASE_NOTES.md
+          version: "~> v2"
+          args: release --clean --release-notes=${{ runner.temp }}/RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

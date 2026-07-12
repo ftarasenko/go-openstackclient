@@ -195,10 +195,17 @@ Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommit
 
 - `.github/workflows/ci.yml` — offline vet + static build + `go test` + pinned
   golangci-lint, on push to `main`/`claude/**` and PRs.
-- `.github/workflows/release.yml` — builds static binaries for **linux, darwin,
-  windows × amd64/arm64** (+ `.sha256`) on a `v*` tag or `workflow_dispatch`
-  (with a `tag` input; the workflow creates the tag + Release server-side via
-  `GITHUB_TOKEN`, since the environment blocks pushing tag refs).
+- `.github/workflows/release.yml` — drives **GoReleaser** (`.goreleaser.yaml`) on
+  a `v*` tag or `workflow_dispatch` (with a `tag` input; the workflow creates the
+  tag server-side via `GITHUB_TOKEN`, since the environment blocks pushing tag
+  refs). GoReleaser builds the six static binaries (linux/darwin/windows ×
+  amd64/arm64), a `checksums.txt`, and the GitHub Release, then publishes a
+  **Homebrew cask** (`Casks/koc.rb`) to `ftarasenko/homebrew-tap` — so
+  `brew install ftarasenko/tap/koc` works. Pushing to the tap needs a cross-repo
+  fine-grained PAT stored as the `HOMEBREW_TAP_TOKEN` repo secret (the built-in
+  `GITHUB_TOKEN` cannot push to a second repo). The `go build` stays offline via
+  `-mod=vendor`; the release body is **not** GoReleaser's changelog (disabled) —
+  it is supplied via `--release-notes` from `scripts/release-notes.sh` (below).
 - `.github/workflows/delete-release.yml` — dispatch to delete a release + tag.
 
 ### Release notes are generated from the commit log
