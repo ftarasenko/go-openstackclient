@@ -55,14 +55,16 @@ emit() { # heading, array-name
 }
 
 {
-  emit "### ⚠️ Breaking changes" "${breaking[@]}"
-  emit "### Features" "${feat[@]}"
-  emit "### Bug fixes" "${fix[@]}"
-  emit "### Performance" "${perf[@]}"
-  emit "### Refactoring" "${refactor[@]}"
-  emit "### Documentation" "${docs[@]}"
-  emit "### Build & tooling" "${tooling[@]}"
-  emit "### Other" "${other[@]}"
+  # ${arr[@]+"${arr[@]}"} expands to nothing when the array is empty, instead of
+  # tripping "unbound variable" under `set -u` on bash 3.2 (macOS default).
+  emit "### ⚠️ Breaking changes" ${breaking[@]+"${breaking[@]}"}
+  emit "### Features" ${feat[@]+"${feat[@]}"}
+  emit "### Bug fixes" ${fix[@]+"${fix[@]}"}
+  emit "### Performance" ${perf[@]+"${perf[@]}"}
+  emit "### Refactoring" ${refactor[@]+"${refactor[@]}"}
+  emit "### Documentation" ${docs[@]+"${docs[@]}"}
+  emit "### Build & tooling" ${tooling[@]+"${tooling[@]}"}
+  emit "### Other" ${other[@]+"${other[@]}"}
   if [ -n "$PREV" ]; then
     printf '**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
   fi
