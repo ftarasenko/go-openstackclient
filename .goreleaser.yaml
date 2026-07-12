@@ -12,6 +12,19 @@
 # not fork.
 version: 2
 
+# Generate shell completions from the CLI itself (cobra ships the `completion`
+# command) so they can be bundled into the release archives. Runs once, offline
+# from vendor/. NOTE: these ride inside the tarballs for manual install; the
+# Homebrew *cask* stages only the binary and cannot auto-wire completions into
+# the shell's fpath (a formula could — casks have no completion stanza). Users
+# installing via brew run `koc completion <shell>` themselves (see README).
+before:
+  hooks:
+    - mkdir -p completions
+    - sh -c 'go run -mod=vendor ./cmd/koc completion bash > completions/koc.bash'
+    - sh -c 'go run -mod=vendor ./cmd/koc completion zsh  > completions/koc.zsh'
+    - sh -c 'go run -mod=vendor ./cmd/koc completion fish > completions/koc.fish'
+
 builds:
   - id: koc
     main: ./cmd/koc
@@ -31,6 +44,11 @@ archives:
     ids: [koc]
     formats: [tar.gz]
     name_template: "koc_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - src: completions/*
+        dst: completions
     format_overrides:
       - goos: windows
         formats: [zip]
