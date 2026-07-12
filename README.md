@@ -39,6 +39,24 @@ deployment. No Python at runtime.
 > KeyVRM has no gophercloud package at all and uses the raw request layer end to
 > end.
 
+## Install
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew install ftarasenko/tap/koc
+```
+
+No `--cask` flag is needed — nothing else in the tap shares the name. The binary
+is unsigned, so the cask strips the macOS quarantine flag on install; on Apple
+Silicon Go already ad-hoc-signs the binary so it runs.
+
+### Prebuilt binaries
+
+Each release publishes static binaries for **linux/amd64, linux/arm64,
+darwin/amd64, darwin/arm64, windows/amd64, windows/arm64** with a
+`checksums.txt`, attached to the [GitHub release](https://github.com/ftarasenko/go-openstackclient/releases).
+
 ## Build
 
 Fully static, stripped binary:
@@ -51,9 +69,11 @@ CGO_ENABLED=0 go build -trimpath \
 
 or just `make build`.
 
-Tagged releases (push a `v*` tag) build and publish static binaries for
-**linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64 and
-windows/arm64** via the release workflow.
+Releases are cut by GoReleaser (`.goreleaser.yaml`): the `release` workflow builds
+the six static binaries, publishes the GitHub release, and pushes the Homebrew
+cask to `ftarasenko/homebrew-tap`. Trigger it via `workflow_dispatch` with the
+`tag` input (this environment blocks pushing tag refs from a workstation; the
+workflow creates the tag server-side) — see AGENTS.md "Cutting a release".
 
 ### Air-gapped / offline build
 
