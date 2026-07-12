@@ -42,72 +42,71 @@ func mutuallyExclusive(flags interface{ Changed(string) bool }, a, b string) err
 	return nil
 }
 
-// resolveNetworkID resolves a network name or ID to an ID. It first filters by
-// name; a single match wins. When no network matches by name the argument is
-// assumed to already be an ID and returned unchanged (matching OSC's
-// name-or-ID lookup). Multiple name matches are ambiguous and error.
+// resolveNetworkID resolves a network name or ID to an ID. It filters by name;
+// a single match wins. When no network matches by name the argument is assumed
+// to already be an ID and returned unchanged (matching OSC's name-or-ID
+// lookup). Multiple name matches are ambiguous and error. The sibling
+// resolvers (subnet/router/port/security group) follow the same policy.
 func resolveNetworkID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	pages, err := networks.List(client, networks.ListOpts{Name: nameOrID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up network %q: %w", nameOrID, err)
-	}
-	all, err := networks.ExtractNetworks(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing network lookup for %q: %w", nameOrID, err)
-	}
-	return pickID(nameOrID, len(all), func(i int) string { return all[i].ID }, "network")
+	return resolveByName(client, "network", nameOrID, func(c *gophercloud.ServiceClient) ([]networks.Network, error) {
+		pages, err := networks.List(c, networks.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return networks.ExtractNetworks(pages)
+	}, func(n networks.Network) string { return n.ID })
 }
 
-// resolveSubnetID resolves a subnet name or ID to an ID.
 func resolveSubnetID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	pages, err := subnets.List(client, subnets.ListOpts{Name: nameOrID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up subnet %q: %w", nameOrID, err)
-	}
-	all, err := subnets.ExtractSubnets(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing subnet lookup for %q: %w", nameOrID, err)
-	}
-	return pickID(nameOrID, len(all), func(i int) string { return all[i].ID }, "subnet")
+	return resolveByName(client, "subnet", nameOrID, func(c *gophercloud.ServiceClient) ([]subnets.Subnet, error) {
+		pages, err := subnets.List(c, subnets.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return subnets.ExtractSubnets(pages)
+	}, func(s subnets.Subnet) string { return s.ID })
 }
 
-// resolveRouterID resolves a router name or ID to an ID.
 func resolveRouterID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	pages, err := routers.List(client, routers.ListOpts{Name: nameOrID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up router %q: %w", nameOrID, err)
-	}
-	all, err := routers.ExtractRouters(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing router lookup for %q: %w", nameOrID, err)
-	}
-	return pickID(nameOrID, len(all), func(i int) string { return all[i].ID }, "router")
+	return resolveByName(client, "router", nameOrID, func(c *gophercloud.ServiceClient) ([]routers.Router, error) {
+		pages, err := routers.List(c, routers.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return routers.ExtractRouters(pages)
+	}, func(r routers.Router) string { return r.ID })
 }
 
-// resolvePortID resolves a port name or ID to an ID.
 func resolvePortID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	pages, err := ports.List(client, ports.ListOpts{Name: nameOrID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up port %q: %w", nameOrID, err)
-	}
-	all, err := ports.ExtractPorts(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing port lookup for %q: %w", nameOrID, err)
-	}
-	return pickID(nameOrID, len(all), func(i int) string { return all[i].ID }, "port")
+	return resolveByName(client, "port", nameOrID, func(c *gophercloud.ServiceClient) ([]ports.Port, error) {
+		pages, err := ports.List(c, ports.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return ports.ExtractPorts(pages)
+	}, func(p ports.Port) string { return p.ID })
 }
 
-// resolveSecGroupID resolves a security group name or ID to an ID.
 func resolveSecGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	pages, err := groups.List(client, groups.ListOpts{Name: nameOrID}).AllPages(ctx)
+	return resolveByName(client, "security group", nameOrID, func(c *gophercloud.ServiceClient) ([]groups.SecGroup, error) {
+		pages, err := groups.List(c, groups.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return groups.ExtractGroups(pages)
+	}, func(g groups.SecGroup) string { return g.ID })
+}
+
+// resolveByName runs a name-filtered list and applies pickID; it backs every
+// neutron name→ID resolver.
+func resolveByName[T any](client *gophercloud.ServiceClient, kind, nameOrID string,
+	list func(*gophercloud.ServiceClient) ([]T, error), idOf func(T) string,
+) (string, error) {
+	all, err := list(client)
 	if err != nil {
-		return "", fmt.Errorf("looking up security group %q: %w", nameOrID, err)
+		return "", fmt.Errorf("looking up %s %q: %w", kind, nameOrID, err)
 	}
-	all, err := groups.ExtractGroups(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing security group lookup for %q: %w", nameOrID, err)
-	}
-	return pickID(nameOrID, len(all), func(i int) string { return all[i].ID }, "security group")
+	return pickID(nameOrID, len(all), func(i int) string { return idOf(all[i]) }, kind)
 }
 
 // pickID applies the shared name-or-ID resolution policy: exactly one match by

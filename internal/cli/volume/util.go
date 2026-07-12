@@ -60,88 +60,107 @@ func oneID(kind, ref string, ids []string) (string, error) {
 // volume ID. It tries a direct GET first (the common case: an ID), then falls
 // back to a name lookup, mirroring `openstack volume ...` which accepts either.
 func resolveVolumeID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	if v, err := volumes.Get(ctx, client, ref).Extract(); err == nil {
-		return v.ID, nil
-	}
-	pages, err := volumes.List(client, volumes.ListOpts{Name: ref}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up volume %q: %w", ref, err)
-	}
-	all, err := volumes.ExtractVolumes(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing volume list: %w", err)
-	}
-	ids := make([]string, 0, len(all))
-	for _, v := range all {
-		if v.Name == ref {
-			ids = append(ids, v.ID)
-		}
-	}
-	return oneID("volume", ref, ids)
+	return resolveByNameOrGet("volume", ref,
+		func() (string, bool) {
+			if v, err := volumes.Get(ctx, client, ref).Extract(); err == nil {
+				return v.ID, true
+			}
+			return "", false
+		},
+		func() ([]volumes.Volume, error) {
+			pages, err := volumes.List(client, volumes.ListOpts{Name: ref}).AllPages(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return volumes.ExtractVolumes(pages)
+		},
+		func(v volumes.Volume) string { return v.Name },
+		func(v volumes.Volume) string { return v.ID },
+	)
 }
 
 // resolveSnapshotID resolves a snapshot ID or name to an ID.
 func resolveSnapshotID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	if s, err := snapshots.Get(ctx, client, ref).Extract(); err == nil {
-		return s.ID, nil
-	}
-	pages, err := snapshots.List(client, snapshots.ListOpts{Name: ref}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up snapshot %q: %w", ref, err)
-	}
-	all, err := snapshots.ExtractSnapshots(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing snapshot list: %w", err)
-	}
-	ids := make([]string, 0, len(all))
-	for _, s := range all {
-		if s.Name == ref {
-			ids = append(ids, s.ID)
-		}
-	}
-	return oneID("snapshot", ref, ids)
+	return resolveByNameOrGet("snapshot", ref,
+		func() (string, bool) {
+			if s, err := snapshots.Get(ctx, client, ref).Extract(); err == nil {
+				return s.ID, true
+			}
+			return "", false
+		},
+		func() ([]snapshots.Snapshot, error) {
+			pages, err := snapshots.List(client, snapshots.ListOpts{Name: ref}).AllPages(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return snapshots.ExtractSnapshots(pages)
+		},
+		func(s snapshots.Snapshot) string { return s.Name },
+		func(s snapshots.Snapshot) string { return s.ID },
+	)
 }
 
 // resolveBackupID resolves a backup ID or name to an ID.
 func resolveBackupID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	if b, err := backups.Get(ctx, client, ref).Extract(); err == nil {
-		return b.ID, nil
-	}
-	pages, err := backups.List(client, backups.ListOpts{Name: ref}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up backup %q: %w", ref, err)
-	}
-	all, err := backups.ExtractBackups(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing backup list: %w", err)
-	}
-	ids := make([]string, 0, len(all))
-	for _, b := range all {
-		if b.Name == ref {
-			ids = append(ids, b.ID)
-		}
-	}
-	return oneID("backup", ref, ids)
+	return resolveByNameOrGet("backup", ref,
+		func() (string, bool) {
+			if b, err := backups.Get(ctx, client, ref).Extract(); err == nil {
+				return b.ID, true
+			}
+			return "", false
+		},
+		func() ([]backups.Backup, error) {
+			pages, err := backups.List(client, backups.ListOpts{Name: ref}).AllPages(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return backups.ExtractBackups(pages)
+		},
+		func(b backups.Backup) string { return b.Name },
+		func(b backups.Backup) string { return b.ID },
+	)
 }
 
 // resolveVolumeTypeID resolves a volume-type ID or name to an ID.
 func resolveVolumeTypeID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	if t, err := volumetypes.Get(ctx, client, ref).Extract(); err == nil {
-		return t.ID, nil
+	return resolveByNameOrGet("volume type", ref,
+		func() (string, bool) {
+			if t, err := volumetypes.Get(ctx, client, ref).Extract(); err == nil {
+				return t.ID, true
+			}
+			return "", false
+		},
+		func() ([]volumetypes.VolumeType, error) {
+			pages, err := volumetypes.List(client, volumetypes.ListOpts{Name: ref}).AllPages(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return volumetypes.ExtractVolumeTypes(pages)
+		},
+		func(t volumetypes.VolumeType) string { return t.Name },
+		func(t volumetypes.VolumeType) string { return t.ID },
+	)
+}
+
+// resolveByNameOrGet backs the cinder name-or-ID resolvers: a direct GET (the
+// common case where ref is already an ID) wins; otherwise a name-filtered list
+// is matched exactly and oneID enforces exactly-one-result.
+func resolveByNameOrGet[T any](kind, ref string,
+	get func() (string, bool), list func() ([]T, error),
+	nameOf func(T) string, idOf func(T) string,
+) (string, error) {
+	if id, ok := get(); ok {
+		return id, nil
 	}
-	pages, err := volumetypes.List(client, volumetypes.ListOpts{Name: ref}).AllPages(ctx)
+	all, err := list()
 	if err != nil {
-		return "", fmt.Errorf("looking up volume type %q: %w", ref, err)
-	}
-	all, err := volumetypes.ExtractVolumeTypes(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing volume type list: %w", err)
+		return "", fmt.Errorf("looking up %s %q: %w", kind, ref, err)
 	}
 	ids := make([]string, 0, len(all))
 	for _, t := range all {
-		if t.Name == ref {
-			ids = append(ids, t.ID)
+		if nameOf(t) == ref {
+			ids = append(ids, idOf(t))
 		}
 	}
-	return oneID("volume type", ref, ids)
+	return oneID(kind, ref, ids)
 }
