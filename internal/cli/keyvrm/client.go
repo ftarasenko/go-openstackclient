@@ -13,11 +13,7 @@ import (
 // newKeyVRMClient authenticates once and derives the KeyVRM service client
 // (Keystone catalog type "keyvrm") shared by every keyvrm subcommand.
 func newKeyVRMClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.KeyVRM()
+	return a.NewServiceClient(ctx, (*auth.Client).KeyVRM)
 }
 
 // writeTotal emits server-side pagination metadata to stderr, so it never
