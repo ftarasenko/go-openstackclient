@@ -12,9 +12,5 @@ import (
 // client shared by every dns subcommand. The DNS client uses Type="dns" and no
 // microversion header, so sc.Microversion is left empty by the factory.
 func newDNSClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
-	client, err := a.Authenticate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.DNS()
+	return a.NewServiceClient(ctx, (*auth.Client).DNS)
 }
