@@ -560,7 +560,7 @@ func runConsoleLogShow(ctx context.Context, client *gophercloud.ServiceClient, r
 }
 
 func newConsoleURLShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var novnc bool
+	var novnc, xvpvnc, spice, serial, mks bool
 	var consoleType string
 	cmd := &cobra.Command{
 		Use:   "url show <server>",
@@ -570,12 +570,9 @@ func newConsoleURLShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			t := consoleType
-			if novnc {
-				t = "novnc"
-			}
-			if t == "" {
-				t = "novnc"
+			t, err := consoleTypeFromFlags(novnc, xvpvnc, spice, serial, mks, consoleType)
+			if err != nil {
+				return err
 			}
 			ctx := cmd.Context()
 			client, err := newComputeClient(ctx, a)
@@ -586,9 +583,47 @@ func newConsoleURLShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 		},
 	}
 	fl := cmd.Flags()
+	// Discrete OSC-style flags, one per console type; mutually exclusive.
 	fl.BoolVar(&novnc, "novnc", false, "request a noVNC console (default)")
+	fl.BoolVar(&xvpvnc, "xvpvnc", false, "request an XVP VNC console")
+	fl.BoolVar(&spice, "spice", false, "request a SPICE HTML5 console")
+	fl.BoolVar(&serial, "serial", false, "request a serial console")
+	fl.BoolVar(&mks, "mks", false, "request a WebMKS console")
+	// --type is a hidden back-compat alias for the pre-existing scheme; the
+	// discrete flags above are preferred and take precedence.
 	fl.StringVar(&consoleType, "type", "", "console type: novnc, xvpvnc, spice-html5, serial, webmks")
+	_ = fl.MarkHidden("type")
 	return cmd
+}
+
+// consoleTypeFromFlags maps the mutually-exclusive discrete console flags (and
+// the hidden --type alias) to the remoteconsoles console-type string. When none
+// is set it defaults to noVNC. The discrete flags win over --type.
+func consoleTypeFromFlags(novnc, xvpvnc, spice, serial, mks bool, consoleType string) (string, error) {
+	set := map[string]bool{
+		string(remoteconsoles.ConsoleTypeNoVNC):      novnc,
+		string(remoteconsoles.ConsoleTypeXVPVNC):     xvpvnc,
+		string(remoteconsoles.ConsoleTypeSPICEHTML5): spice,
+		string(remoteconsoles.ConsoleTypeSerial):     serial,
+		string(remoteconsoles.ConsoleTypeWebMKS):     mks,
+	}
+	var chosen []string
+	for t, on := range set {
+		if on {
+			chosen = append(chosen, t)
+		}
+	}
+	switch len(chosen) {
+	case 0:
+		if consoleType != "" {
+			return consoleType, nil
+		}
+		return string(remoteconsoles.ConsoleTypeNoVNC), nil
+	case 1:
+		return chosen[0], nil
+	default:
+		return "", fmt.Errorf("--novnc/--xvpvnc/--spice/--serial/--mks are mutually exclusive")
+	}
 }
 
 func runConsoleURLShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, consoleType string, w io.Writer) error {

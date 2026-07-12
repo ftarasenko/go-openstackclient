@@ -69,14 +69,36 @@ func resolveGroupID(ctx context.Context, client *gophercloud.ServiceClient, name
 	}, func(g groups.Group) string { return g.ID })
 }
 
+// resolveServiceID does not use the shared resolveByName generic: the keystone
+// /v3/services endpoint filters only by `type`, not by name — passing ?name= is
+// ignored and the server returns the full catalog, which would make every name
+// look ambiguous. So it lists everything and matches the name client-side.
 func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName("service", "", nameOrID, func() ([]services.Service, error) {
-		pages, err := services.List(client, services.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
+	if nameOrID == "" {
+		return "", nil
+	}
+	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
+	}
+	all, err := services.ExtractServices(pages)
+	if err != nil {
+		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
+	}
+	var matches []string
+	for _, s := range all {
+		if s.Name == nameOrID {
+			matches = append(matches, s.ID)
 		}
-		return services.ExtractServices(pages)
-	}, func(s services.Service) string { return s.ID })
+	}
+	switch len(matches) {
+	case 0:
+		return nameOrID, nil
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("service name %q is ambiguous: %d matches", nameOrID, len(matches))
+	}
 }
 
 // resolveByName backs every keystone name→ID resolver: an empty ref yields "",

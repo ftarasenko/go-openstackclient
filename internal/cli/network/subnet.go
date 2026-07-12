@@ -231,7 +231,9 @@ type subnetSetFlags struct {
 	name           string
 	dnsNameservers []string
 	gateway        string
+	noGateway      bool
 	dhcp           bool
+	noDHCP         bool
 }
 
 func newSubnetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -256,7 +258,11 @@ func newSubnetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "new subnet name")
 	fl.StringArrayVar(&f.dnsNameservers, "dns-nameserver", nil, "set DNS nameserver(s), replacing existing (repeatable)")
 	fl.StringVar(&f.gateway, "gateway", "", "set the subnet gateway IP")
-	fl.BoolVar(&f.dhcp, "dhcp", false, "enable DHCP (use --dhcp=false to disable)")
+	fl.BoolVar(&f.noGateway, "no-gateway", false, "clear the subnet gateway IP")
+	fl.BoolVar(&f.dhcp, "dhcp", false, "enable DHCP")
+	fl.BoolVar(&f.noDHCP, "no-dhcp", false, "disable DHCP")
+	cmd.MarkFlagsMutuallyExclusive("dhcp", "no-dhcp")
+	cmd.MarkFlagsMutuallyExclusive("gateway", "no-gateway")
 	return cmd
 }
 
@@ -275,12 +281,22 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		opts.DNSNameservers = &f.dnsNameservers
 		changed = true
 	}
-	if f.gateway != "" {
+	switch {
+	case f.noGateway:
+		// A pointer to the empty string clears the gateway (neutron drops it).
+		empty := ""
+		opts.GatewayIP = &empty
+		changed = true
+	case f.gateway != "":
 		opts.GatewayIP = &f.gateway
 		changed = true
 	}
-	if flags.Changed("dhcp") {
-		opts.EnableDHCP = boolPtr(f.dhcp)
+	switch {
+	case f.noDHCP:
+		opts.EnableDHCP = boolPtr(false)
+		changed = true
+	case f.dhcp:
+		opts.EnableDHCP = boolPtr(true)
 		changed = true
 	}
 	if !changed {

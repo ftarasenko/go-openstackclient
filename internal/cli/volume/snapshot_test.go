@@ -144,9 +144,9 @@ func TestRunSnapshotCreate_RequestBody(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	o := &output.Options{Format: output.FormatJSON}
-	f := &snapshotCreateFlags{name: "snap-new", description: "d", force: true}
+	f := &snapshotCreateFlags{volume: volID, description: "d", force: true}
 	var buf bytes.Buffer
-	if err := runSnapshotCreate(context.Background(), client, o, volID, f, &buf); err != nil {
+	if err := runSnapshotCreate(context.Background(), client, o, "snap-new", f, &buf); err != nil {
 		t.Fatalf("runSnapshotCreate returned error: %v", err)
 	}
 	if gotMethod != http.MethodPost {

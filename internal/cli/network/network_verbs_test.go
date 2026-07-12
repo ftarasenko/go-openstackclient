@@ -226,9 +226,10 @@ func TestRunSubnetSet_NameAndDHCP(t *testing.T) {
 
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
-	f := &subnetSetFlags{name: "newname", dhcp: false}
+	// enable_dhcp=false is driven by --no-dhcp (f.noDHCP), not a false f.dhcp.
+	f := &subnetSetFlags{name: "newname", noDHCP: true}
 	var buf bytes.Buffer
-	if err := runSubnetSet(context.Background(), client, o, "sub-1", f, fakeFlags{"name": true, "dhcp": true}, &buf); err != nil {
+	if err := runSubnetSet(context.Background(), client, o, "sub-1", f, fakeFlags{"name": true, "no-dhcp": true}, &buf); err != nil {
 		t.Fatalf("runSubnetSet: %v", err)
 	}
 }

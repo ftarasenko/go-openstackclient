@@ -310,3 +310,75 @@ func TestRunProviderAllocationDelete_Request(t *testing.T) {
 		t.Errorf("output missing consumer uuid:\n%s", buf.String())
 	}
 }
+
+// TestRunProviderDelete_CollectsFailures verifies the provider delete seam
+// attempts every UUID and joins failures instead of aborting on the first.
+func TestRunProviderDelete_CollectsFailures(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	bad := "11111111-1111-1111-1111-111111111111"
+	good := "22222222-2222-2222-2222-222222222222"
+	var deleted []string
+	fakeServer.Mux.HandleFunc("/resource_providers/"+bad, func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, bad)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	fakeServer.Mux.HandleFunc("/resource_providers/"+good, func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, good)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := placementClient(fakeServer, "1.0")
+
+	var buf bytes.Buffer
+	err := runProviderDelete(context.Background(), client, []string{bad, good}, &buf)
+	if err == nil {
+		t.Fatalf("runProviderDelete = nil, want error for %s", bad)
+	}
+	if len(deleted) != 2 {
+		t.Errorf("attempted deletes = %v, want both ids attempted", deleted)
+	}
+	if !strings.Contains(err.Error(), bad) {
+		t.Errorf("error missing failed id %s: %v", bad, err)
+	}
+	if !strings.Contains(buf.String(), good) {
+		t.Errorf("output missing successfully deleted id %s:\n%s", good, buf.String())
+	}
+}
+
+// TestRunProviderAllocationDelete_CollectsFailures verifies the allocation
+// delete seam attempts every consumer and joins failures.
+func TestRunProviderAllocationDelete_CollectsFailures(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	bad := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	good := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	var deleted []string
+	fakeServer.Mux.HandleFunc("/allocations/"+bad, func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, bad)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	fakeServer.Mux.HandleFunc("/allocations/"+good, func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, good)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := placementClient(fakeServer, "1.0")
+
+	var buf bytes.Buffer
+	err := runProviderAllocationDelete(context.Background(), client, []string{bad, good}, &buf)
+	if err == nil {
+		t.Fatalf("runProviderAllocationDelete = nil, want error for %s", bad)
+	}
+	if len(deleted) != 2 {
+		t.Errorf("attempted deletes = %v, want both consumers attempted", deleted)
+	}
+	if !strings.Contains(err.Error(), bad) {
+		t.Errorf("error missing failed consumer %s: %v", bad, err)
+	}
+	if !strings.Contains(buf.String(), good) {
+		t.Errorf("output missing successfully deleted consumer %s:\n%s", good, buf.String())
+	}
+}

@@ -2,6 +2,7 @@ package placement
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -34,13 +35,15 @@ func newProviderAllocationDeleteCommand(a *auth.Options, o *output.Options) *cob
 }
 
 func runProviderAllocationDelete(ctx context.Context, client *gophercloud.ServiceClient, consumers []string, w io.Writer) error {
+	var errs []error
 	for _, c := range consumers {
 		if err := allocations.Delete(ctx, client, c).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting allocations for consumer %s: %w", c, err)
+			errs = append(errs, fmt.Errorf("deleting allocations for consumer %s: %w", c, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted allocations for consumer %s\n", c); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
