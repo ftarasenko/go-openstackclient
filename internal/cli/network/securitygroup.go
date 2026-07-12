@@ -385,8 +385,9 @@ func newSecurityGroupRuleCreateCommand(a *auth.Options, o *output.Options) *cobr
 	fl.BoolVar(&f.egress, "egress", false, "rule applies to outgoing traffic")
 	fl.StringVar(&f.dstPort, "dst-port", "", "destination port or range (e.g. 80 or 8000:9000)")
 	fl.StringVar(&f.remoteIP, "remote-ip", "", "remote IP prefix (CIDR) to match")
-	fl.StringVar(&f.ethertype, "ethertype", "", "IPv4 or IPv6 (default IPv4)")
+	fl.StringVar(&f.ethertype, "ethertype", "", "IPv4 or IPv6 (inferred from --remote-ip/--protocol when unset, else IPv4)")
 	fl.StringVar(&f.remoteGroup, "remote-group", "", "remote security group (name or ID) to match")
+	cmd.MarkFlagsMutuallyExclusive("remote-ip", "remote-group")
 	return cmd
 }
 
@@ -399,13 +400,15 @@ func runSecurityGroupRuleCreate(ctx context.Context, client *gophercloud.Service
 	if f.egress {
 		direction = rules.DirEgress
 	}
-	etherType := rules.EtherType4
+	var etherType rules.RuleEtherType
 	if f.ethertype != "" {
 		normalized, err := normalizeEtherType(f.ethertype)
 		if err != nil {
 			return err
 		}
 		etherType = normalized
+	} else {
+		etherType = inferEtherType(f.remoteIP, f.protocol)
 	}
 	opts := rules.CreateOpts{
 		Direction:      direction,
@@ -449,6 +452,21 @@ func normalizeEtherType(v string) (rules.RuleEtherType, error) {
 	default:
 		return "", fmt.Errorf("invalid --ethertype %q: want IPv4 or IPv6", v)
 	}
+}
+
+// inferEtherType picks a default ethertype when --ethertype was not given. An
+// IPv6 remote CIDR (contains ':') or an IPv6-specific protocol
+// (icmpv6/ipv6-*) implies IPv6; everything else defaults to IPv4, matching the
+// upstream OSC behavior.
+func inferEtherType(remoteIP, protocol string) rules.RuleEtherType {
+	if strings.Contains(remoteIP, ":") {
+		return rules.EtherType6
+	}
+	p := strings.ToLower(protocol)
+	if p == "icmpv6" || strings.HasPrefix(p, "ipv6-") {
+		return rules.EtherType6
+	}
+	return rules.EtherType4
 }
 
 // normalizeProtocol lowercases the protocol so values like "TCP" become the

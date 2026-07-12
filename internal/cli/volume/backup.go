@@ -2,6 +2,7 @@ package volume
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -50,6 +51,8 @@ type backupListFlags struct {
 	name        string
 	status      string
 	volume      string
+	limit       int
+	marker      string
 }
 
 func newBackupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -75,6 +78,8 @@ func newBackupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "filter by backup name")
 	fl.StringVar(&f.status, "status", "", "filter by backup status")
 	fl.StringVar(&f.volume, "volume", "", "filter by source volume ID")
+	fl.IntVar(&f.limit, "limit", 0, "maximum number of backups to return")
+	fl.StringVar(&f.marker, "marker", "", "list backups after this ID (pagination)")
 	return cmd
 }
 
@@ -84,6 +89,8 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Name:       f.name,
 		Status:     f.status,
 		VolumeID:   f.volume,
+		Limit:      f.limit,
+		Marker:     f.marker,
 	}
 	pages, err := backups.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -92,6 +99,10 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	all, err := backups.ExtractBackups(pages)
 	if err != nil {
 		return fmt.Errorf("parsing backup list: %w", err)
+	}
+	// Limit is only the page size to cinder; enforce it as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Description", "Status", "Size"}}
 	for _, b := range all {
@@ -136,6 +147,9 @@ type backupCreateFlags struct {
 	name        string
 	description string
 	incremental bool
+	force       bool
+	snapshot    string
+	container   string
 }
 
 func newBackupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -160,6 +174,9 @@ func newBackupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "backup name")
 	fl.StringVar(&f.description, "description", "", "backup description")
 	fl.BoolVar(&f.incremental, "incremental", false, "create an incremental backup")
+	fl.BoolVar(&f.force, "force", false, "back up a volume even if attached/in-use")
+	fl.StringVar(&f.snapshot, "snapshot", "", "source snapshot (ID or name) to back up")
+	fl.StringVar(&f.container, "container", "", "backup container/bucket to store the backup in")
 	return cmd
 }
 
@@ -173,6 +190,16 @@ func runBackupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		Name:        f.name,
 		Description: f.description,
 		Incremental: f.incremental,
+		Force:       f.force,
+		Container:   f.container,
+	}
+	// Resolve a --snapshot reference (ID or name) to a snapshot ID.
+	if f.snapshot != "" {
+		snapID, err := resolveSnapshotID(ctx, client, f.snapshot)
+		if err != nil {
+			return err
+		}
+		opts.SnapshotID = snapID
 	}
 	b, err := backups.Create(ctx, client, opts).Extract()
 	if err != nil {
@@ -202,19 +229,22 @@ func newBackupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runBackupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+	var errs []error
 	for _, ref := range refs {
 		id, err := resolveBackupID(ctx, client, ref)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := backups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting backup %q: %w", ref, err)
+			errs = append(errs, fmt.Errorf("deleting backup %q: %w", ref, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted backup: %s\n", ref); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type backupRestoreFlags struct {
