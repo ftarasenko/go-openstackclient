@@ -5,6 +5,7 @@ package volume
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -71,6 +72,8 @@ type volumeListFlags struct {
 	long        bool
 	name        string
 	status      string
+	limit       int
+	marker      string
 }
 
 func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -96,6 +99,8 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.StringVar(&f.name, "name", "", "filter by volume name")
 	fl.StringVar(&f.status, "status", "", "filter by volume status")
+	fl.IntVar(&f.limit, "limit", 0, "maximum number of volumes to return")
+	fl.StringVar(&f.marker, "marker", "", "list volumes after this ID (pagination)")
 	return cmd
 }
 
@@ -104,6 +109,8 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		AllTenants: f.allProjects,
 		Name:       f.name,
 		Status:     f.status,
+		Limit:      f.limit,
+		Marker:     f.marker,
 	}
 	pages, err := volumes.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -112,6 +119,10 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	all, err := volumes.ExtractVolumes(pages)
 	if err != nil {
 		return fmt.Errorf("parsing volume list: %w", err)
+	}
+	// Limit is only the page size to cinder; enforce it as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
 	}
 	return o.WriteList(w, volumeListTable(all, f.long))
 }
@@ -191,8 +202,11 @@ type volumeCreateFlags struct {
 	volumeType       string
 	image            string
 	snapshot         string
+	source           string
 	availabilityZone string
 	property         []string
+	bootable         bool
+	nonBootable      bool
 }
 
 func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -204,6 +218,9 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
+			}
+			if f.bootable && f.nonBootable {
+				return fmt.Errorf("--bootable and --non-bootable are mutually exclusive")
 			}
 			ctx := cmd.Context()
 			client, session, err := newVolumeSession(ctx, a)
@@ -239,20 +256,31 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.volumeType, "type", "", "volume type")
 	fl.StringVar(&f.image, "image", "", "source image (ID or name) to create a bootable volume from")
 	fl.StringVar(&f.snapshot, "snapshot", "", "source snapshot (ID or name)")
+	fl.StringVar(&f.source, "source", "", "source volume (ID or name) to clone from")
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "availability zone")
 	fl.StringArrayVar(&f.property, "property", nil, "set a property key=value (repeatable)")
+	fl.BoolVar(&f.bootable, "bootable", false, "mark the created volume as bootable")
+	fl.BoolVar(&f.nonBootable, "non-bootable", false, "mark the created volume as non-bootable")
 	return cmd
 }
 
 func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *volumeCreateFlags, w io.Writer) error {
-	// Cinder derives the size from the source snapshot, so --size is only
+	// Cinder derives the size from the source snapshot/volume, so --size is only
 	// required for image-from and blank creates.
-	if f.snapshot == "" && f.size <= 0 {
+	if f.snapshot == "" && f.source == "" && f.size <= 0 {
 		return fmt.Errorf("--size must be a positive number of GiB")
 	}
 	meta, err := parseKeyValMap(f.property)
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)
+	}
+	// Resolve a --source clone reference (ID or name) to a volume ID.
+	var sourceVolID string
+	if f.source != "" {
+		sourceVolID, err = resolveVolumeID(ctx, client, f.source)
+		if err != nil {
+			return err
+		}
 	}
 	opts := volumes.CreateOpts{
 		Name:             name,
@@ -261,6 +289,7 @@ func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		VolumeType:       f.volumeType,
 		ImageID:          f.image,
 		SnapshotID:       f.snapshot,
+		SourceVolID:      sourceVolID,
 		AvailabilityZone: f.availabilityZone,
 		Metadata:         meta,
 	}
@@ -268,8 +297,33 @@ func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return fmt.Errorf("creating volume: %w", err)
 	}
+	// CreateOpts has no bootable field, so apply the requested bootable flag as a
+	// follow-up cinder volume action once the volume exists.
+	if f.bootable || f.nonBootable {
+		if err := setVolumeBootable(ctx, client, v.ID, f.bootable); err != nil {
+			return fmt.Errorf("setting bootable flag on volume %q: %w", v.ID, err)
+		}
+		v, err = volumes.Get(ctx, client, v.ID).Extract()
+		if err != nil {
+			return fmt.Errorf("getting volume %q: %w", v.ID, err)
+		}
+	}
 	fields, values := volumeShowFields(v)
 	return o.WriteSingle(w, fields, values)
+}
+
+// setVolumeBootable issues the cinder "os-set_bootable" volume action. The
+// gophercloud volumes package has no typed verb for it, so we POST the raw
+// action body ourselves; replace this with a typed call if one is added.
+func setVolumeBootable(ctx context.Context, client *gophercloud.ServiceClient, id string, bootable bool) error {
+	body := map[string]any{"os-set_bootable": map[string]any{"bootable": bootable}}
+	url := client.ServiceURL("volumes", id, "action")
+	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
 
 func newVolumeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -292,19 +346,22 @@ func newVolumeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runVolumeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+	var errs []error
 	for _, ref := range refs {
 		id, err := resolveVolumeID(ctx, client, ref)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := volumes.Delete(ctx, client, id, nil).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume %q: %w", ref, err)
+			errs = append(errs, fmt.Errorf("deleting volume %q: %w", ref, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume: %s\n", ref); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // volumeSetFlags holds the mutations accepted by "volume set".

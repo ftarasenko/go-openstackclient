@@ -19,6 +19,16 @@ func parseKeyVal(s string) (string, string, error) {
 	return key, s[i+1:], nil
 }
 
+// escapeJSONPointer escapes a single JSON-pointer reference token per RFC 6901:
+// '~' becomes '~0' and '/' becomes '~1'. Apply it to user-supplied key segments
+// before appending them to a JSON-pointer path prefix (e.g. "/properties/") so
+// keys containing '/' or '~' address the intended member.
+func escapeJSONPointer(s string) string {
+	s = strings.ReplaceAll(s, "~", "~0")
+	s = strings.ReplaceAll(s, "/", "~1")
+	return s
+}
+
 // parseKeyValMap turns a slice of "key=value" flag values into a map.
 func parseKeyValMap(pairs []string) (map[string]any, error) {
 	if len(pairs) == 0 {

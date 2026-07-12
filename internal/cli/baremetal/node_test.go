@@ -195,6 +195,109 @@ func TestRunNodeList_LimitCapsResults(t *testing.T) {
 	}
 }
 
+func TestNodeListFilters_MaintenanceAndAssociatedFalseAreSent(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotRawQuery string
+	fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+		gotRawQuery = r.URL.RawQuery
+		th.TestFormValues(t, r, map[string]string{
+			"maintenance": "false",
+			"associated":  "false",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"nodes": []}`))
+	})
+
+	client := baremetalClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+	// Both flags explicitly set to their false (inverting) value.
+	f := &nodeListFlags{maintenanceSet: true, maintenance: false, associatedSet: true, associated: false}
+
+	var buf bytes.Buffer
+	if err := runNodeList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runNodeList returned error: %v", err)
+	}
+	if !strings.Contains(gotRawQuery, "maintenance=false") {
+		t.Errorf("request query %q must contain maintenance=false", gotRawQuery)
+	}
+	if !strings.Contains(gotRawQuery, "associated=false") {
+		t.Errorf("request query %q must contain associated=false", gotRawQuery)
+	}
+}
+
+func TestNodeListFilters_MaintenanceTrueStillSent(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+		th.TestFormValues(t, r, map[string]string{"maintenance": "true"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"nodes": []}`))
+	})
+
+	client := baremetalClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+	f := &nodeListFlags{maintenanceSet: true, maintenance: true}
+
+	var buf bytes.Buffer
+	if err := runNodeList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runNodeList returned error: %v", err)
+	}
+}
+
+func TestEscapeJSONPointer(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"plain", "plain"},
+		{"a/b", "a~1b"},
+		{"a~b", "a~0b"},
+		{"a~/b", "a~0~1b"},
+		{"~/", "~0~1"},
+	} {
+		if got := escapeJSONPointer(tc.in); got != tc.want {
+			t.Errorf("escapeJSONPointer(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestRunNodeDelete_ContinuesAfterFailure(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// good-1 deletes fine; bad fails with 404; good-2 must still be attempted.
+	fakeServer.Mux.HandleFunc("/nodes/good-1", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	fakeServer.Mux.HandleFunc("/nodes/bad", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	var good2Called bool
+	fakeServer.Mux.HandleFunc("/nodes/good-2", func(w http.ResponseWriter, _ *http.Request) {
+		good2Called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := baremetalClient(fakeServer, "latest")
+	var buf bytes.Buffer
+	err := runNodeDelete(context.Background(), client, []string{"good-1", "bad", "good-2"}, &buf)
+	if err == nil {
+		t.Fatal("expected error from failed delete, got nil")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error should name the failed id, got: %v", err)
+	}
+	if !good2Called {
+		t.Error("delete should continue to good-2 after bad failed")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Deleted node good-1") || !strings.Contains(out, "Deleted node good-2") {
+		t.Errorf("both successful deletes should be reported, got:\n%s", out)
+	}
+}
+
 func TestNodeListFilters_MarkerAndProvisionState(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

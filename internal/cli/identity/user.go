@@ -113,14 +113,15 @@ func runUserShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 }
 
 type userWriteFlags struct {
-	domain      string
-	password    string
-	project     string
-	description string
-	name        string
-	enable      bool
-	enableSet   bool
-	disableSet  bool
+	domain        string
+	password      string
+	project       string
+	projectDomain string
+	description   string
+	name          string
+	enable        bool
+	enableSet     bool
+	disableSet    bool
 }
 
 func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -150,6 +151,7 @@ func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.domain, "domain", "", "domain to create the user in (name or ID)")
 	fl.StringVar(&f.password, "password", "", "user password")
 	fl.StringVar(&f.project, "project", "", "default project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID; defaults to --domain)")
 	fl.StringVar(&f.description, "description", "", "user description")
 	fl.BoolVar(&f.enable, "enable", true, "enable the user (default)")
 	fl.BoolVar(new(bool), "disable", false, "disable the user")
@@ -161,7 +163,16 @@ func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	projectID, err := resolveProjectID(ctx, client, f.project, domainID)
+	// The default project may live in a different domain than the user; resolve
+	// it with its own qualifier, falling back to the user's domain.
+	projectDomainID := domainID
+	if f.projectDomain != "" {
+		projectDomainID, err = resolveDomainID(ctx, client, f.projectDomain)
+		if err != nil {
+			return err
+		}
+	}
+	projectID, err := resolveProjectID(ctx, client, f.project, projectDomainID)
 	if err != nil {
 		return err
 	}

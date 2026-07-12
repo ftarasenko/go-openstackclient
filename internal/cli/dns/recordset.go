@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -125,6 +126,10 @@ func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	all, err := recordsets.ExtractRecordSets(pages)
 	if err != nil {
 		return fmt.Errorf("parsing recordset list: %w", err)
+	}
+	// Limit is only the page size to designate; enforce it as a hard result cap.
+	if f.limit > 0 && len(all) > f.limit {
+		all = all[:f.limit]
 	}
 	return o.WriteList(w, recordSetListTable(all))
 }
@@ -261,19 +266,22 @@ func runRecordSetDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, ref := range rsRefs {
 		rsID, err := resolveRecordSetID(ctx, client, zoneID, ref)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if err := recordsets.Delete(ctx, client, zoneID, rsID).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting recordset %s: %w", ref, err)
+			errs = append(errs, fmt.Errorf("deleting recordset %s: %w", ref, err))
+			continue
 		}
 		if _, err := fmt.Fprintf(w, "Deleted recordset %s\n", ref); err != nil {
 			return err
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // recordSetSetFlags holds the mutable attributes accepted by "recordset set".

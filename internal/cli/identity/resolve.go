@@ -133,7 +133,11 @@ func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, na
 	if nameOrID == "" {
 		return "", nil
 	}
-	pages, err := services.List(client, services.ListOpts{Name: nameOrID}).AllPages(ctx)
+	// The keystone /v3/services endpoint filters only by `type`, not by name:
+	// passing ?name= is ignored and the server returns the full catalog, which
+	// would make every name look ambiguous. List everything and match the name
+	// client-side, mirroring the other local-match resolvers.
+	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
 	}
@@ -141,13 +145,19 @@ func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, na
 	if err != nil {
 		return "", fmt.Errorf("parsing service list: %w", err)
 	}
-	switch len(all) {
+	var matches []string
+	for _, s := range all {
+		if s.Name == nameOrID {
+			matches = append(matches, s.ID)
+		}
+	}
+	switch len(matches) {
 	case 0:
 		return nameOrID, nil
 	case 1:
-		return all[0].ID, nil
+		return matches[0], nil
 	default:
-		return "", fmt.Errorf("service name %q is ambiguous: %d matches", nameOrID, len(all))
+		return "", fmt.Errorf("service name %q is ambiguous: %d matches", nameOrID, len(matches))
 	}
 }
 

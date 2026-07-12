@@ -131,6 +131,8 @@ type floatingIPCreateFlags struct {
 	floatingIPAddress string
 	subnet            string
 	description       string
+	port              string
+	fixedIPAddr       string
 }
 
 func newFloatingIPCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -155,6 +157,8 @@ func newFloatingIPCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl.StringVar(&f.floatingIPAddress, "floating-ip-address", "", "specific floating IP address to allocate")
 	fl.StringVar(&f.subnet, "subnet", "", "subnet on which to allocate the floating IP (name or ID)")
 	fl.StringVar(&f.description, "description", "", "description for the floating IP")
+	fl.StringVar(&f.port, "port", "", "port to associate the floating IP with at creation (name or ID)")
+	fl.StringVar(&f.fixedIPAddr, "fixed-ip-address", "", "fixed IP of the associated port to bind the floating IP to")
 	return cmd
 }
 
@@ -167,6 +171,7 @@ func runFloatingIPCreate(ctx context.Context, client *gophercloud.ServiceClient,
 		FloatingNetworkID: networkID,
 		FloatingIP:        f.floatingIPAddress,
 		Description:       f.description,
+		FixedIP:           f.fixedIPAddr,
 	}
 	if f.subnet != "" {
 		subnetID, err := resolveSubnetID(ctx, client, f.subnet)
@@ -174,6 +179,13 @@ func runFloatingIPCreate(ctx context.Context, client *gophercloud.ServiceClient,
 			return err
 		}
 		opts.SubnetID = subnetID
+	}
+	if f.port != "" {
+		portID, err := resolvePortID(ctx, client, f.port)
+		if err != nil {
+			return err
+		}
+		opts.PortID = portID
 	}
 	fip, err := floatingips.Create(ctx, client, opts).Extract()
 	if err != nil {

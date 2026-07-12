@@ -24,6 +24,7 @@ func newRouterCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newRouterCreateCommand(a, o))
 	cmd.AddCommand(newRouterDeleteCommand(a, o))
 	cmd.AddCommand(newRouterSetCommand(a, o))
+	cmd.AddCommand(newRouterUnsetCommand(a, o))
 	cmd.AddCommand(newRouterAddCommand(a, o))
 	cmd.AddCommand(newRouterRemoveCommand(a, o))
 	return cmd
@@ -265,7 +266,49 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	return o.WriteSingle(w, fields, values)
 }
 
-// newRouterAddCommand builds "router add subnet <router> <subnet>".
+func newRouterUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var externalGateway bool
+	cmd := &cobra.Command{
+		Use:   "unset <router>",
+		Short: "Unset router properties",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newNetworkClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runRouterUnset(ctx, client, o, args[0], externalGateway, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().BoolVar(&externalGateway, "external-gateway", false, "clear the router's external gateway")
+	return cmd
+}
+
+func runRouterUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, externalGateway bool, w io.Writer) error {
+	if !externalGateway {
+		return fmt.Errorf("router unset requires --external-gateway")
+	}
+	id, err := resolveRouterID(ctx, client, nameOrID)
+	if err != nil {
+		return err
+	}
+	// An empty GatewayInfo object serializes to "external_gateway_info": {},
+	// which neutron interprets as clearing the external gateway.
+	opts := routers.UpdateOpts{GatewayInfo: &routers.GatewayInfo{}}
+	r, err := routers.Update(ctx, client, id, opts).Extract()
+	if err != nil {
+		return fmt.Errorf("clearing external gateway on router %s: %w", nameOrID, err)
+	}
+	fields, values := routerShowFields(r)
+	return o.WriteSingle(w, fields, values)
+}
+
+// newRouterAddCommand builds "router add subnet <router> <subnet>" and
+// "router add port <router> <port>".
 func newRouterAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -285,6 +328,22 @@ func newRouterAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			return runRouterAddSubnet(ctx, client, args[0], args[1], cmd.OutOrStdout())
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "port <router> <port>",
+		Short: "Add a port to a router (attach an internal interface)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newNetworkClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runRouterAddPort(ctx, client, args[0], args[1], cmd.OutOrStdout())
 		},
 	})
 	return cmd
@@ -308,7 +367,26 @@ func runRouterAddSubnet(ctx context.Context, client *gophercloud.ServiceClient, 
 	return nil
 }
 
-// newRouterRemoveCommand builds "router remove subnet <router> <subnet>".
+func runRouterAddPort(ctx context.Context, client *gophercloud.ServiceClient, routerArg, portArg string, w io.Writer) error {
+	routerID, err := resolveRouterID(ctx, client, routerArg)
+	if err != nil {
+		return err
+	}
+	portID, err := resolvePortID(ctx, client, portArg)
+	if err != nil {
+		return err
+	}
+	if _, err := routers.AddInterface(ctx, client, routerID, routers.AddInterfaceOpts{PortID: portID}).Extract(); err != nil {
+		return fmt.Errorf("adding port %s to router %s: %w", portArg, routerArg, err)
+	}
+	if _, err := fmt.Fprintf(w, "Added interface for port %s to router %s\n", portArg, routerArg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// newRouterRemoveCommand builds "router remove subnet <router> <subnet>" and
+// "router remove port <router> <port>".
 func newRouterRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove",
@@ -330,6 +408,22 @@ func newRouterRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runRouterRemoveSubnet(ctx, client, args[0], args[1], cmd.OutOrStdout())
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "port <router> <port>",
+		Short: "Remove a port from a router (detach an internal interface)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newNetworkClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runRouterRemovePort(ctx, client, args[0], args[1], cmd.OutOrStdout())
+		},
+	})
 	return cmd
 }
 
@@ -346,6 +440,24 @@ func runRouterRemoveSubnet(ctx context.Context, client *gophercloud.ServiceClien
 		return fmt.Errorf("removing subnet %s from router %s: %w", subnetArg, routerArg, err)
 	}
 	if _, err := fmt.Fprintf(w, "Removed interface for subnet %s from router %s\n", subnetArg, routerArg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runRouterRemovePort(ctx context.Context, client *gophercloud.ServiceClient, routerArg, portArg string, w io.Writer) error {
+	routerID, err := resolveRouterID(ctx, client, routerArg)
+	if err != nil {
+		return err
+	}
+	portID, err := resolvePortID(ctx, client, portArg)
+	if err != nil {
+		return err
+	}
+	if _, err := routers.RemoveInterface(ctx, client, routerID, routers.RemoveInterfaceOpts{PortID: portID}).Extract(); err != nil {
+		return fmt.Errorf("removing port %s from router %s: %w", portArg, routerArg, err)
+	}
+	if _, err := fmt.Fprintf(w, "Removed interface for port %s from router %s\n", portArg, routerArg); err != nil {
 		return err
 	}
 	return nil
