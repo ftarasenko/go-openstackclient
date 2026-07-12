@@ -17,8 +17,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
@@ -99,6 +101,9 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 
 // WriteSingle renders a single resource as a Field/Value view (e.g. "node show").
 func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error {
+	if len(values) != len(fields) {
+		return fmt.Errorf("internal error: %d field(s) but %d value(s)", len(fields), len(values))
+	}
 	if err := o.validateColumns(fields); err != nil {
 		return err
 	}
@@ -266,12 +271,14 @@ func writeCSV(w io.Writer, cols []string, rows [][]any) error {
 }
 
 // writeValue emits tab-separated values with no header, one row per line, for
-// scripting (`-f value`).
+// scripting (`-f value`). Because the record and field separators are newline
+// and tab, any tab/newline embedded in a value is collapsed to a space so the
+// output stays one-record-per-line and column counts are stable.
 func writeValue(w io.Writer, rows [][]any) error {
 	for _, r := range rows {
 		cells := make([]string, len(r))
 		for i, v := range r {
-			cells[i] = cell(v)
+			cells[i] = oneLine(cell(v))
 		}
 		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing value output: %w", err)
@@ -281,9 +288,12 @@ func writeValue(w io.Writer, rows [][]any) error {
 }
 
 func writeTable(w io.Writer, cols []string, rows [][]any) error {
+	// Column widths are measured in runes (not bytes) so multi-byte content
+	// (e.g. Cyrillic names on a KeyStack cloud) aligns with the ASCII border,
+	// matching fmt's rune-based %-*s padding used below.
 	widths := make([]int, len(cols))
 	for i, c := range cols {
-		widths[i] = len(c)
+		widths[i] = utf8.RuneCountInString(c)
 	}
 	strRows := make([][]string, len(rows))
 	for ri, r := range rows {
@@ -293,10 +303,10 @@ func writeTable(w io.Writer, cols []string, rows [][]any) error {
 			if ci < len(r) {
 				v = r[ci]
 			}
-			s := cell(v)
+			s := oneLine(cell(v))
 			sr[ci] = s
-			if len(s) > widths[ci] {
-				widths[ci] = len(s)
+			if n := utf8.RuneCountInString(s); n > widths[ci] {
+				widths[ci] = n
 			}
 		}
 		strRows[ri] = sr
@@ -339,10 +349,64 @@ func writeTable(w io.Writer, cols []string, rows [][]any) error {
 	return border()
 }
 
-// cell renders a single value for text-based output. Complex values (maps,
-// slices) are rendered as compact JSON so table/csv/value output stays on one
-// line, matching OSC's behavior for structured fields.
+// ansiRe matches ANSI/VT escape sequences: CSI (ESC [ …), OSC (ESC ] … BEL/ST),
+// and the two-byte ESC-prefixed forms. Server-supplied strings are run through
+// this so a hostile or buggy endpoint cannot embed cursor moves, screen clears,
+// or color codes in a resource name and rewrite the operator's terminal.
+var ansiRe = regexp.MustCompile("\x1b(?:\\[[0-9;?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|[@-Z\\\\-_])")
+
+// stripControl removes ANSI escapes and C0/C1 control characters from
+// text-format output. Tab and newline are preserved here (they carry meaning in
+// CSV, and are collapsed to spaces by oneLine for table/value output); every
+// other control rune — including the terminal-hijacking ESC, CR, and BEL — is
+// dropped. JSON/YAML output does not pass through here; their encoders escape
+// control characters safely.
+func stripControl(s string) string {
+	if strings.IndexFunc(s, isDangerousControl) < 0 {
+		return s
+	}
+	s = ansiRe.ReplaceAllString(s, "")
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' {
+			return r
+		}
+		if isDangerousControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func isDangerousControl(r rune) bool {
+	if r == '\t' || r == '\n' {
+		return false
+	}
+	return r < 0x20 || (r >= 0x7f && r < 0xa0)
+}
+
+// oneLine collapses tab/newline/carriage-return to spaces so a value renders on
+// a single physical row in the table and value formats.
+func oneLine(s string) string {
+	if !strings.ContainsAny(s, "\t\n\r") {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// cell renders a single value for text-based output, with control characters
+// and ANSI escapes stripped (see stripControl). Complex values (maps, slices)
+// are rendered as compact JSON so table/csv/value output stays on one line,
+// matching OSC's behavior for structured fields.
 func cell(v any) string {
+	return stripControl(cellRaw(v))
+}
+
+func cellRaw(v any) string {
 	switch t := v.(type) {
 	case nil:
 		return ""
