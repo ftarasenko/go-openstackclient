@@ -137,6 +137,15 @@ func gatherActuals(ctx context.Context, rows []hostRow, o neOpts) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
+			// A down host's node_exporter is unreachable; skip the scrape (and its
+			// timeout) and let the renderer show "n/a (down)" rather than "err",
+			// which would read as a monitoring misconfiguration.
+			if isDown(*r) {
+				r.actualErr = "down"
+				r.cpuPhysPct, r.ramPhysPct = -1, -1
+				return
+			}
+
 			addr := neAddress(*r, o)
 			if addr == "" {
 				r.actualErr = "no address"
