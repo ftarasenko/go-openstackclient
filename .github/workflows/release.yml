@@ -40,23 +40,27 @@ jobs:
           cache: false
 
       # workflow_dispatch: create the tag at HEAD and push it (CI's GITHUB_TOKEN
-      # can push tag refs; the local/agent env cannot). On re-dispatch the tag
-      # already exists — reuse it, do NOT move it. Then check it out detached so
-      # HEAD == the tag commit, which GoReleaser requires. On a tag-push trigger
-      # the checkout is already at the tag, so this step is skipped.
-      - name: Create/reuse tag and check it out
+      # can push tag refs; the local/agent env cannot), then check it out detached
+      # so HEAD == the tag commit, which GoReleaser requires. On a tag-push
+      # trigger the checkout is already at the tag, so this step is skipped.
+      #
+      # Versions are IMMUTABLE: a published tag is never moved or re-released. If
+      # the tag already exists we stop — bump the version instead. To recover a
+      # release that failed before it fully published, delete it first via the
+      # delete-release workflow, which frees the version for a clean re-cut.
+      - name: Create tag and check it out
         if: github.event_name == 'workflow_dispatch'
         env:
           TAG: ${{ inputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "tag $TAG already exists; reusing it (not moved)"
-          else
-            git tag -a "$TAG" -m "$TAG"
-            git push origin "refs/tags/$TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists; releases are immutable. Bump the version, or delete it via the delete-release workflow before re-cutting."
+            exit 1
           fi
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
           git checkout --detach "$TAG"
 
       # Release body = Conventional-Commits notes from the committed script (the

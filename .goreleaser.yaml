@@ -56,11 +56,6 @@ archives:
 checksum:
   name_template: checksums.txt
 
-# Re-dispatching the same tag updates the existing release in place (see
-# AGENTS.md "Cutting a release"); replace its artifacts rather than erroring.
-release:
-  mode: replace
-
 # Release body comes from scripts/release-notes.sh via --release-notes; do not
 # let GoReleaser also compute a changelog.
 changelog:
