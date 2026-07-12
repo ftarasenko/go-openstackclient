@@ -14,8 +14,26 @@ import (
 
 func newEventCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{Use: "event", Short: "KeyVRM host-aggregate events"}
-	cmd.AddCommand(newEventShow(a, o), newEventRecommendationCommand(a, o))
+	cmd.AddCommand(newEventShow(a, o), newEventRecommendationCommand(a, o), newEventListHint())
 	return cmd
+}
+
+// newEventListHint catches the natural-but-wrong `keyvrm event list`. KeyVRM has
+// no global events endpoint — events exist only within a host aggregate
+// (GET /host_aggregates/{id}/events), so listing is `host-aggregate-config event
+// list <ha-id>`. koc-specific UX sugar (the Python kvrm CLI has no `event list`
+// either): return an actionable error instead of cobra's bare "unknown command".
+func newEventListHint() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List events (scoped to a host aggregate — see host-aggregate-config event list)",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("events are listed per host aggregate, not globally; run:\n" +
+				"  koc keyvrm host-aggregate-config list             # find the <ha-id>\n" +
+				"  koc keyvrm host-aggregate-config event list <ha-id>")
+		},
+	}
 }
 
 func newEventShow(a *auth.Options, o *output.Options) *cobra.Command {
