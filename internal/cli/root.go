@@ -4,6 +4,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -42,6 +43,19 @@ func NewRootCommand(version string) *cobra.Command {
 	outOpts.AddFlags(pf)
 
 	root.SetVersionTemplate(fmt.Sprintf("koc %s\n", version))
+
+	// Subcommand help otherwise repeats every global flag under "Global Flags:"
+	// — dozens of auth/TLS/Vault lines on every leaf command. Collapse that
+	// inherited-flags block to a one-line pointer; the full list still renders on
+	// `koc --help`, where the persistent flags are local (not inherited) so this
+	// block is not emitted. Editing cobra's own default template (rather than
+	// hard-coding a copy) keeps us robust to version drift: if the block ever
+	// moves, Replace is a no-op and the default is used unchanged.
+	tmpl := strings.Replace(root.UsageTemplate(),
+		"Global Flags:\n{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}",
+		"Global Flags:\n  Run \"koc --help\" to list the global auth, TLS, and output flags.",
+		1)
+	root.SetUsageTemplate(tmpl)
 
 	// Each service registers its noun commands. Some services expose several
 	// top-level nouns (e.g. compute → flavor/keypair; server → server/compute/

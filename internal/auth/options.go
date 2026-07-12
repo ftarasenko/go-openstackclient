@@ -207,6 +207,19 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"path to a CA bundle for the Vault TLS endpoint (env VAULT_CACERT)")
 	fs.BoolVar(&o.VaultInsecure, "vault-insecure", envBool("VAULT_SKIP_VERIFY"),
 		"disable TLS verification for Vault (env VAULT_SKIP_VERIFY)")
+
+	// Advanced knobs for the Vault / Kubernetes credential sources. They stay
+	// fully functional (and env-defaulted, and documented in the README) but are
+	// hidden from --help so the everyday flag list is not buried — they matter
+	// only alongside --creds-from-vault / --creds-from-ns.
+	for _, name := range []string{
+		"vault-addr", "vault-namespace", "vault-token", "vault-role-id",
+		"vault-secret-id", "vault-approle-path", "vault-kv-mount",
+		"vault-kv-prefix", "vault-cacert", "vault-insecure",
+		"kubeconfig", "kube-context",
+	} {
+		_ = fs.MarkHidden(name)
+	}
 }
 
 // insecureExplicit reports whether --insecure or OS_INSECURE was explicitly
