@@ -179,6 +179,113 @@ func TestRunProviderTraitList_RequestAndOutput(t *testing.T) {
 	}
 }
 
+const providerShowBody = `{
+  "uuid": "11111111-1111-1111-1111-111111111111",
+  "name": "rp-a",
+  "generation": 3,
+  "root_provider_uuid": "11111111-1111-1111-1111-111111111111",
+  "parent_provider_uuid": ""
+}`
+
+func TestRunProviderShow_RequestAndOutput(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	id := "11111111-1111-1111-1111-111111111111"
+	var gotMethod, gotAPIVersion, gotPath string
+	fakeServer.Mux.HandleFunc("/resource_providers/"+id, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAPIVersion = r.Header.Get("OpenStack-API-Version")
+		gotPath = r.URL.Path
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(providerShowBody))
+	})
+
+	client := placementClient(fakeServer, "1.0")
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runProviderShow(context.Background(), client, o, id, &providerShowFlags{}, &buf); err != nil {
+		t.Fatalf("runProviderShow returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodGet {
+		t.Errorf("request method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/resource_providers/"+id {
+		t.Errorf("request path = %q, want %q", gotPath, "/resource_providers/"+id)
+	}
+	if gotAPIVersion != "placement 1.0" {
+		t.Errorf("OpenStack-API-Version = %q, want %q", gotAPIVersion, "placement 1.0")
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"uuid", "name", "generation", "root_provider_uuid", "parent_provider_uuid",
+		"rp-a", "11111111-1111-1111-1111-111111111111", "3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRunProviderDelete_Request(t *testing.T) {
+	tests := []struct {
+		name string
+		ids  []string
+	}{
+		{name: "single", ids: []string{"11111111-1111-1111-1111-111111111111"}},
+		{
+			name: "multiple",
+			ids: []string{
+				"11111111-1111-1111-1111-111111111111",
+				"22222222-2222-2222-2222-222222222222",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			gotMethod := map[string]string{}
+			gotAPIVersion := map[string]string{}
+			for _, id := range tc.ids {
+				id := id
+				fakeServer.Mux.HandleFunc("/resource_providers/"+id, func(w http.ResponseWriter, r *http.Request) {
+					gotMethod[id] = r.Method
+					gotAPIVersion[id] = r.Header.Get("OpenStack-API-Version")
+					th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+					w.WriteHeader(http.StatusNoContent)
+				})
+			}
+
+			client := placementClient(fakeServer, "1.0")
+
+			var buf bytes.Buffer
+			if err := runProviderDelete(context.Background(), client, tc.ids, &buf); err != nil {
+				t.Fatalf("runProviderDelete returned error: %v", err)
+			}
+
+			out := buf.String()
+			for _, id := range tc.ids {
+				if gotMethod[id] != http.MethodDelete {
+					t.Errorf("request method for %s = %q, want DELETE", id, gotMethod[id])
+				}
+				if gotAPIVersion[id] != "placement 1.0" {
+					t.Errorf("OpenStack-API-Version for %s = %q, want %q", id, gotAPIVersion[id], "placement 1.0")
+				}
+				if !strings.Contains(out, id) {
+					t.Errorf("output missing deleted uuid %s:\n%s", id, out)
+				}
+			}
+		})
+	}
+}
+
 func TestRunProviderAllocationDelete_Request(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

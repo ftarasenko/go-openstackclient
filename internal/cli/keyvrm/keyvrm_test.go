@@ -115,6 +115,147 @@ func TestRunAppConfigSet_PutsOnlyChangedFields(t *testing.T) {
 	}
 }
 
+func TestRunAppConfigShow_RequestAndOutput(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/v1/app_config", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		th.AssertEquals(t, "/v1/app_config", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"enabled":true,"period":120,"nova_enabled_filters":"RamFilter","ha_power_fence_mode":"ipmi","executor_timeout":300}`)
+	})
+
+	sc := keyvrmTestClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+
+	var buf bytes.Buffer
+	if err := runAppConfigShow(context.Background(), sc, o, &buf); err != nil {
+		t.Fatalf("runAppConfigShow: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"true", "120", "RamFilter", "ipmi", "300"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q missing %q", out, want)
+		}
+	}
+}
+
+func TestRunAZList_RequestAndOutput(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery string
+	fakeServer.Mux.HandleFunc("/v1/azones", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		th.AssertEquals(t, "/v1/azones", r.URL.Path)
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"name":"az1","aggregates_count":3,"aggregates_event_counts":{"active":2,"warning":1,"error":0,"noop":4}}],"total":1,"limit":50,"offset":5}`)
+	})
+
+	sc := keyvrmTestClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+
+	var buf bytes.Buffer
+	if err := runAZList(context.Background(), sc, o, listOpts{Limit: 50, Offset: 5}, &buf); err != nil {
+		t.Fatalf("runAZList: %v", err)
+	}
+	if !strings.Contains(gotQuery, "limit=50") || !strings.Contains(gotQuery, "offset=5") {
+		t.Errorf("query = %q", gotQuery)
+	}
+	out := buf.String()
+	for _, want := range []string{"az1", "3", "2", "1", "4"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q missing %q", out, want)
+		}
+	}
+}
+
+func TestRunHAShow_RequestAndOutput(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/v1/host_aggregates/ha-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		th.AssertEquals(t, "/v1/host_aggregates/ha-1", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"ha-1","availability_zone_name":"az1","host_aggregate_name":"agg1","marker":"HA","no_op_mode":false,"lb_period":60,"created_at":"2026-01-01T00:00:00Z"}`)
+	})
+
+	sc := keyvrmTestClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+
+	var buf bytes.Buffer
+	if err := runHAShow(context.Background(), sc, o, "ha-1", &buf); err != nil {
+		t.Fatalf("runHAShow: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"ha-1", "az1", "agg1", "HA"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q missing %q", out, want)
+		}
+	}
+}
+
+func TestRunHASet_PutsOnlyChangedFields(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/v1/host_aggregates/ha-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "PUT")
+		th.AssertEquals(t, "/v1/host_aggregates/ha-1", r.URL.Path)
+		th.TestJSONRequest(t, r, `{"marker":"LB","lb_period":90}`)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"ha-1","availability_zone_name":"az1","host_aggregate_name":"agg1","marker":"LB","no_op_mode":false,"lb_period":90,"created_at":"2026-01-01T00:00:00Z"}`)
+	})
+
+	sc := keyvrmTestClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+	body := map[string]any{"marker": "LB", "lb_period": 90}
+
+	var buf bytes.Buffer
+	if err := runHASet(context.Background(), sc, o, "ha-1", body, &buf); err != nil {
+		t.Fatalf("runHASet: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "LB") || !strings.Contains(out, "90") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestRunEventRecList_RequestAndOutput(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery string
+	fakeServer.Mux.HandleFunc("/v1/host_aggregate_events/ev-1/recommendations", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		th.AssertEquals(t, "/v1/host_aggregate_events/ev-1/recommendations", r.URL.Path)
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"id":"rec-1","host_aggregate_event_id":"ev-1","vm_uuid":"vm-9","source_hv_name":"hv-a","destination_hv_name":"hv-b","status":"pending","type":"evacuate","evacuate_priority":2}],"total":1,"limit":50,"offset":0}`)
+	})
+
+	sc := keyvrmTestClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+	opts := listOpts{Limit: 50, filters: map[string]string{"status": "pending"}}
+
+	var buf bytes.Buffer
+	if err := runEventRecList(context.Background(), sc, o, "ev-1", opts, &buf); err != nil {
+		t.Fatalf("runEventRecList: %v", err)
+	}
+	if !strings.Contains(gotQuery, "status=pending") {
+		t.Errorf("query = %q", gotQuery)
+	}
+	out := buf.String()
+	for _, want := range []string{"rec-1", "vm-9", "hv-a", "hv-b", "pending", "evacuate"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q missing %q", out, want)
+		}
+	}
+}
+
 func TestRunRecommendationTrigger(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
