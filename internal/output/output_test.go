@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func sampleTable() Table {
@@ -133,5 +134,78 @@ func TestCell_StructuredValues(t *testing.T) {
 	}
 	if got := cell(nil); got != "" {
 		t.Errorf("nil cell = %q, want empty", got)
+	}
+}
+
+func TestStripControl_ANSIAndControlChars(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain passthrough", "node-a", "node-a"},
+		{"cyrillic passthrough", "проект", "проект"},
+		{"strip CSI color", "\x1b[31mred\x1b[0m", "red"},
+		{"strip screen clear + cursor home", "a\x1b[2J\x1b[1;1Hadmin", "aadmin"},
+		{"strip OSC title set", "x\x1b]0;pwned\x07y", "xy"},
+		{"strip carriage return", "real\rfake", "realfake"},
+		{"strip BEL and NUL", "a\x07b\x00c", "abc"},
+		{"keep tab and newline", "a\tb\nc", "a\tb\nc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripControl(tt.in); got != tt.want {
+				t.Errorf("stripControl(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCell_SanitizesServerSuppliedString(t *testing.T) {
+	if got := cell("vm\x1b[2Kadmin"); got != "vmadmin" {
+		t.Errorf("cell did not strip ANSI: %q", got)
+	}
+}
+
+func TestWriteValue_CollapsesEmbeddedTabAndNewline(t *testing.T) {
+	// A single value containing a tab and newline must not add columns or rows.
+	o := &Options{Format: FormatValue}
+	var buf bytes.Buffer
+	tbl := Table{Columns: []string{"A", "B"}, Rows: [][]any{{"x\ty\nz", "end"}}}
+	if err := o.WriteList(&buf, tbl); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("embedded newline leaked extra rows: %q", buf.String())
+	}
+	if got := lines[0]; got != "x y z\tend" {
+		t.Errorf("value row = %q, want tab/newline collapsed to spaces", got)
+	}
+}
+
+func TestWriteTable_RuneWidthAlignment(t *testing.T) {
+	// Cyrillic (multi-byte, single-width) content must align with the border.
+	o := &Options{Format: FormatTable}
+	var buf bytes.Buffer
+	tbl := Table{Columns: []string{"Name"}, Rows: [][]any{{"проект"}, {"abcdefgh"}}}
+	if err := o.WriteList(&buf, tbl); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	// All border/content lines must be the same display (rune) width.
+	want := utf8.RuneCountInString(lines[0])
+	for i, ln := range lines {
+		if n := utf8.RuneCountInString(ln); n != want {
+			t.Errorf("line %d width = %d runes, want %d:\n%s", i, n, want, buf.String())
+		}
+	}
+}
+
+func TestWriteSingle_MismatchedFieldsValues(t *testing.T) {
+	o := &Options{Format: FormatTable}
+	var buf bytes.Buffer
+	if err := o.WriteSingle(&buf, []string{"A", "B"}, []any{"only-one"}); err == nil {
+		t.Error("expected error when values shorter than fields, got nil (panic risk)")
 	}
 }
