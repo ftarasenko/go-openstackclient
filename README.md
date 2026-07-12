@@ -51,6 +51,19 @@ No `--cask` flag is needed — nothing else in the tap shares the name. The bina
 is unsigned, so the cask strips the macOS quarantine flag on install; on Apple
 Silicon Go already ad-hoc-signs the binary so it runs.
 
+### Shell completion
+
+`koc` ships cobra's completion generator for bash, zsh, fish and powershell:
+
+```sh
+koc completion zsh > "${fpath[1]}/_koc"   # zsh: then restart the shell
+source <(koc completion bash)             # bash: current shell only
+```
+
+Release archives also bundle `completions/koc.{bash,zsh,fish}`. (The Homebrew
+cask installs only the binary — casks have no completion stanza — so `brew`
+users wire it up with the command above.)
+
 ### Prebuilt binaries
 
 Each release publishes static binaries for **linux/amd64, linux/arm64,

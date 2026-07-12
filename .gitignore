@@ -19,3 +19,4 @@ coverage.*
 # Local credentials — never commit
 clouds.yaml
 secure.yaml
+/completions/
