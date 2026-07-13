@@ -228,6 +228,21 @@ func formatNetworks(addresses map[string]any) string {
 	return strings.Join(parts, "; ")
 }
 
+// formatAttachedVolumes renders a server's attached-volume list into a compact
+// comma-separated string of volume IDs, mirroring the "volumes_attached" field
+// of `openstack server show`. Nova exposes these via
+// "os-extended-volumes:volumes_attached".
+func formatAttachedVolumes(vols []servers.AttachedVolume) string {
+	if len(vols) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(vols))
+	for _, v := range vols {
+		ids = append(ids, v.ID)
+	}
+	return strings.Join(ids, ", ")
+}
+
 // flavorName extracts a human-readable flavor name from the server's embedded
 // flavor object (the "original_name" key, present from microversion 2.47).
 func flavorName(flavor map[string]any) string {
