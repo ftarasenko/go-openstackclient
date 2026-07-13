@@ -45,6 +45,7 @@ type portListFlags struct {
 	router      string
 	network     string
 	deviceOwner string
+	fixedIP     []string
 }
 
 func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -69,6 +70,8 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.router, "router", "", "list only ports attached to this router (name or ID)")
 	fl.StringVar(&f.network, "network", "", "list only ports on this network (name or ID)")
 	fl.StringVar(&f.deviceOwner, "device-owner", "", "list only ports with this device owner")
+	// OSC form: --fixed-ip subnet=<subnet>,ip-address=<ip>,ip-substring=<substr>; repeatable.
+	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "filter by fixed IP: subnet=/ip-address=/ip-substring= pairs; repeatable")
 	return cmd
 }
 
@@ -87,6 +90,13 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			return err
 		}
 		opts.NetworkID = networkID
+	}
+	for _, spec := range f.fixedIP {
+		fip, err := parseFixedIPFilter(ctx, client, spec)
+		if err != nil {
+			return err
+		}
+		opts.FixedIPs = append(opts.FixedIPs, fip)
 	}
 	pages, err := ports.List(client, opts).AllPages(ctx)
 	if err != nil {
