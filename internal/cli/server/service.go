@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
@@ -116,13 +118,28 @@ type serviceSetFlags struct {
 	disableReason string
 	up            bool
 	down          bool
+	// KeyStack os-services admin_state extension (KCP-1886 / KCP-7988):
+	// a single PUT that sets the service's admin_state, optional error_details
+	// (for the "Error" state), and optional status/reason. Unknown to vanilla
+	// nova, which rejects the body with HTTP 400.
+	adminState   string
+	errorDetails string
+	status       string
+	reason       string
+}
+
+// keystackAdminStates enumerates the admin_state values KeyStack's os-services
+// extension accepts (KCP-1886, plus "Unstable" from KCP-7988). Mirrors the
+// choices offered by the downstream python-openstackclient "service set".
+var keystackAdminStates = []string{
+	"Enabled", "Disabled", "MaintenanceMode", "Error", "Fenced", "Unstable",
 }
 
 func newComputeServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &serviceSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <host> <binary>",
-		Short: "Set attributes of a compute service (enable/disable, up/down)",
+		Short: "Set attributes of a compute service (enable/disable, up/down, KeyStack admin-state)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -133,6 +150,17 @@ func newComputeServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 			}
 			if f.up && f.down {
 				return fmt.Errorf("--up and --down are mutually exclusive")
+			}
+			if f.adminState != "" {
+				if f.enable || f.disable || f.up || f.down {
+					return fmt.Errorf("--admin-state cannot be combined with --enable/--disable/--up/--down")
+				}
+				if !slices.Contains(keystackAdminStates, f.adminState) {
+					return fmt.Errorf("invalid --admin-state %q: want one of %s", f.adminState, strings.Join(keystackAdminStates, ", "))
+				}
+			}
+			if f.errorDetails != "" && f.adminState == "" {
+				return fmt.Errorf("--error-details requires --admin-state")
 			}
 			ctx := cmd.Context()
 			client, err := newComputeClient(ctx, a)
@@ -148,6 +176,13 @@ func newComputeServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	fl.StringVar(&f.disableReason, "disable-reason", "", "reason for disabling the service")
 	fl.BoolVar(&f.up, "up", false, "clear the forced-down flag")
 	fl.BoolVar(&f.down, "down", false, "force the service down (fenced by operator)")
+	// KeyStack-only os-services admin_state extension (UNVERIFIED against
+	// KeyStack docs, which were unreachable; mirrors downstream OSC/nova). Not
+	// available on vanilla nova, which rejects the request with HTTP 400.
+	fl.StringVar(&f.adminState, "admin-state", "", "KeyStack: set the service admin state ("+strings.Join(keystackAdminStates, ", ")+")")
+	fl.StringVar(&f.errorDetails, "error-details", "", "KeyStack: details for the \"Error\" admin state (requires --admin-state)")
+	fl.StringVar(&f.status, "status", "", "KeyStack: enable/disable status to set alongside --admin-state")
+	fl.StringVar(&f.reason, "reason", "", "KeyStack: disabled reason to set alongside --admin-state")
 	return cmd
 }
 
@@ -155,6 +190,29 @@ func runComputeServiceSet(ctx context.Context, client *gophercloud.ServiceClient
 	id, err := resolveServiceID(ctx, client, host, binary)
 	if err != nil {
 		return err
+	}
+
+	// KeyStack admin_state path (KCP-1886/KCP-7988): a distinct os-services
+	// update carrying admin_state (+ optional error_details/status/reason),
+	// mutually exclusive with the standard enable/disable/up/down mutations.
+	if f.adminState != "" {
+		body := serviceUpdateBody{"admin_state": f.adminState}
+		if f.errorDetails != "" {
+			body["error_details"] = f.errorDetails
+		}
+		if f.status != "" {
+			body["status"] = f.status
+		}
+		if f.reason != "" {
+			body["disabled_reason"] = f.reason
+		}
+		if _, err := services.Update(ctx, client, id, body).Extract(); err != nil {
+			return keystackExtErr(fmt.Errorf("setting admin state on compute service %s/%s: %w", host, binary, err), "os-services admin_state")
+		}
+		if _, err := fmt.Fprintf(w, "Set admin state %s on compute service %s on host %s\n", f.adminState, binary, host); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	body := serviceUpdateBody{}
