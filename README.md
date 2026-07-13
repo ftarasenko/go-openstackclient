@@ -106,6 +106,8 @@ koc baremetal node list -f json
 koc baremetal node inspect cmp-039 --wait
 koc server list --all-projects --long
 koc server create --image ubuntu-cloudimage --flavor 1 --network private myvm
+koc server create --image ubuntu-cloudimage --flavor 1 --nic net-id=<uuid> \
+  --boot-from-volume 20 --boot-volume-type ssd --config-drive myvm
 koc server add floating ip myvm 10.0.0.5
 koc flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny
 koc project create demo --domain itkey
