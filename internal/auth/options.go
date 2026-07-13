@@ -205,8 +205,14 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"default path prefix prepended to a relative --creds-from-vault path (env VAULT_KV_PREFIX)")
 	fs.StringVar(&o.VaultCACert, "vault-cacert", os.Getenv("VAULT_CACERT"),
 		"path to a CA bundle for the Vault TLS endpoint (env VAULT_CACERT)")
+	// --insecure-vault skips TLS verification for the Vault endpoint used by
+	// --creds-from-vault. The global --insecure governs only the OpenStack/
+	// Keystone TLS, not Vault, so this is a separate opt-out. --vault-insecure is
+	// kept as a hidden back-compat alias (both bind to the same value).
+	fs.BoolVar(&o.VaultInsecure, "insecure-vault", envBool("VAULT_SKIP_VERIFY"),
+		"disable TLS verification for the Vault endpoint used by --creds-from-vault (env VAULT_SKIP_VERIFY)")
 	fs.BoolVar(&o.VaultInsecure, "vault-insecure", envBool("VAULT_SKIP_VERIFY"),
-		"disable TLS verification for Vault (env VAULT_SKIP_VERIFY)")
+		"deprecated alias of --insecure-vault (env VAULT_SKIP_VERIFY)")
 
 	// Advanced knobs for the Vault / Kubernetes credential sources. They stay
 	// fully functional (and env-defaulted, and documented in the README) but are
