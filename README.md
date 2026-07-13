@@ -252,12 +252,14 @@ items are deferred and worth noting:
 ## KeyStack documentation caveat
 
 Command and flag names should be verified against the KeyStack command
-reference at <https://docs.keystack.ru/>. At implementation time that site
-returned HTTP 403 and was not reachable from the build environment, so the
-`baremetal node list` surface here follows **upstream OSC semantics** and is
-**unverified against KeyStack docs**. Where KeyStack later proves to differ,
-KeyStack wins and the divergence will be captured in a code comment citing the
-doc URL.
+reference at <https://docs.keystack.ru/>. That site returns HTTP 403; the
+documentation source is mirrored locally (Sphinx/reST) and is the working
+reference. The KeyStack-specific extensions (`compute service set
+--admin-state`, `server` dynamic server groups / `--availability-zone` /
+`server list` created/deleted filters, `server evacuate --preserve-ephemeral`)
+are verified against it. Other surfaces (e.g. `baremetal node list`) still
+follow **upstream OSC semantics** and remain unverified; where KeyStack later
+proves to differ, KeyStack wins.
 
 ## Tech
 

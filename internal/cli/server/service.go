@@ -176,9 +176,8 @@ func newComputeServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	fl.StringVar(&f.disableReason, "disable-reason", "", "reason for disabling the service")
 	fl.BoolVar(&f.up, "up", false, "clear the forced-down flag")
 	fl.BoolVar(&f.down, "down", false, "force the service down (fenced by operator)")
-	// KeyStack-only os-services admin_state extension (UNVERIFIED against
-	// KeyStack docs, which were unreachable; mirrors downstream OSC/nova). Not
-	// available on vanilla nova, which rejects the request with HTTP 400.
+	// KeyStack os-services admin_state extension (KCP-1886/7988); vanilla nova
+	// rejects the unknown body field with HTTP 400.
 	fl.StringVar(&f.adminState, "admin-state", "", "KeyStack: set the service admin state ("+strings.Join(keystackAdminStates, ", ")+")")
 	fl.StringVar(&f.errorDetails, "error-details", "", "KeyStack: details for the \"Error\" admin state (requires --admin-state)")
 	fl.StringVar(&f.status, "status", "", "KeyStack: enable/disable status to set alongside --admin-state")

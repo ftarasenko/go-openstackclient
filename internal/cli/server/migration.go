@@ -93,8 +93,8 @@ func newServerMigrationListCommand(a *auth.Options, o *output.Options) *cobra.Co
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of migrations to return")
 	fl.StringVar(&f.changesSince, "changes-since", "", "only migrations changed at/after this ISO-8601 time (nova 2.59+)")
 	fl.StringVar(&f.changesBefore, "changes-before", "", "only migrations changed at/before this ISO-8601 time (nova 2.66+)")
-	// KeyStack-only filters (UNVERIFIED against KeyStack docs; mirror downstream
-	// nova, need nova 2.66+). Rejected by vanilla nova.
+	// KeyStack migration-list filters (KCP-9165/7192), nova 2.66+; rejected by
+	// vanilla nova.
 	fl.StringVar(&f.createdSince, "created-since", "", "KeyStack: only migrations created at/after this ISO-8601 time")
 	fl.StringVar(&f.createdBefore, "created-before", "", "KeyStack: only migrations created at/before this ISO-8601 time")
 	fl.StringVar(&f.project, "project", "", "filter by project ID (nova 2.80+)")
