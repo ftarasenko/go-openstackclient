@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/url"
 	"sort"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
@@ -274,28 +273,21 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	s, err := servers.Get(ctx, client, id).Extract()
+	// Show every attribute nova returns, matching the breadth of `openstack
+	// server show`. The typed servers.Server struct exposes only a curated
+	// subset (and drops the OS-EXT-* admin attributes), so decode the raw
+	// object instead. Narrow the view with -c/--column or -f json/yaml.
+	var body struct {
+		Server map[string]any `json:"server"`
+	}
+	resp, err := client.Get(ctx, client.ServiceURL("servers", id), &body, &gophercloud.RequestOpts{OkCodes: []int{200}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		return fmt.Errorf("showing server %q: %w", ref, err)
 	}
-	fields := []string{
-		"ID", "Name", "Status", "Networks", "Image", "Flavor", "Key Name",
-		"Availability Zone", "Host", "Task State", "Power State",
-		"Volumes Attached",
-		"Created", "Updated", "Project ID", "User ID", "Metadata", "Security Groups",
-	}
-	secGroups := make([]string, 0, len(s.SecurityGroups))
-	for _, g := range s.SecurityGroups {
-		if n, ok := g["name"].(string); ok {
-			secGroups = append(secGroups, n)
-		}
-	}
-	values := []any{
-		s.ID, s.Name, s.Status, formatNetworks(s.Addresses), imageID(s.Image), flavorName(s.Flavor), s.KeyName,
-		s.AvailabilityZone, s.Host, s.TaskState, s.PowerState,
-		formatAttachedVolumes(s.AttachedVolumes),
-		s.Created.String(), s.Updated.String(), s.TenantID, s.UserID, s.Metadata, strings.Join(secGroups, ", "),
-	}
+	fields, values := showAllServerFields(body.Server)
 	return o.WriteSingle(w, fields, values)
 }
 
