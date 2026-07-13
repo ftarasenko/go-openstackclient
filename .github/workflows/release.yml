@@ -29,12 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Actions pinned to commit SHAs (supply-chain hygiene); comment = version.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0 # full history + tags for git describe / release notes
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: false
@@ -74,7 +74,7 @@ jobs:
       # Builds the 6-target matrix, publishes the GitHub Release, and pushes
       # Casks/koc.rb to ftarasenko/homebrew-tap (needs the cross-repo PAT).
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "~> v2"
           args: release --clean --release-notes=${{ runner.temp }}/RELEASE_NOTES.md
