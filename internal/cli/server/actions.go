@@ -748,3 +748,64 @@ func runServerRemoveServerGroup(ctx context.Context, client *gophercloud.Service
 	}
 	return nil
 }
+
+// newServerEvacuateCommand implements "server evacuate <server>" — rebuild a
+// server on a new host after its hypervisor has failed. host/password are
+// standard nova; --preserve-ephemeral is a KeyStack extension (added to the
+// evacuate action body downstream) that vanilla nova rejects with HTTP 400.
+func newServerEvacuateCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var host, password string
+	var preserveEphemeral bool
+	cmd := &cobra.Command{
+		Use:   "evacuate <server>",
+		Short: "Evacuate a server from a failed host to another host",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerEvacuate(ctx, client, args[0], host, password, preserveEphemeral, cmd.OutOrStdout())
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&host, "host", "", "target host to evacuate to (omit to let the scheduler choose)")
+	fl.StringVar(&password, "password", "", "set this admin password on the evacuated server")
+	fl.BoolVar(&preserveEphemeral, "preserve-ephemeral", false, "KeyStack: preserve the ephemeral partition during evacuation")
+	return cmd
+}
+
+func runServerEvacuate(ctx context.Context, client *gophercloud.ServiceClient, ref, host, password string, preserveEphemeral bool, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	// Build the evacuate action body directly rather than via gophercloud's
+	// servers.EvacuateOpts, which is frozen at the pre-2.14 shape (it always
+	// emits onSharedStorage and lacks preserve_ephemeral); nova negotiates
+	// "latest", where that body is rejected.
+	action := map[string]any{}
+	if host != "" {
+		action["host"] = host
+	}
+	if password != "" {
+		action["adminPass"] = password
+	}
+	if preserveEphemeral {
+		action["preserve_ephemeral"] = true
+	}
+	if err := serverActionNegotiated(ctx, client, id, map[string]any{"evacuate": action}); err != nil {
+		if preserveEphemeral {
+			return keystackExtErr(fmt.Errorf("evacuating server %q: %w", ref, err), "evacuate preserve_ephemeral")
+		}
+		return fmt.Errorf("evacuating server %q: %w", ref, err)
+	}
+	if _, err := fmt.Fprintf(w, "Requested evacuation of server %s\n", ref); err != nil {
+		return err
+	}
+	return nil
+}

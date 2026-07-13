@@ -53,6 +53,8 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newServerResizeCommand(a, o),
 		newServerRebuildCommand(a, o),
 		newServerMigrateCommand(a, o),
+		newServerMigrationCommand(a, o),
+		newServerEvacuateCommand(a, o),
 		newServerAddCommand(a, o),
 		newServerRemoveCommand(a, o),
 		newServerConsoleCommand(a, o),
