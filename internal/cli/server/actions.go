@@ -657,3 +657,94 @@ func runConsoleURLShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	}
 	return o.WriteSingle(w, []string{"Type", "Protocol", "URL"}, []any{rc.Type, rc.Protocol, rc.URL})
 }
+
+// serverActionNegotiated posts a server action at the compute client's
+// negotiated microversion (default "latest"), unlike serverActionRaw which
+// pins to 2.43 for the floating-IP actions removed at 2.44. Used by the
+// KeyStack dynamic server-group actions (addServerGroup / removeServerGroup).
+func serverActionNegotiated(ctx context.Context, client *gophercloud.ServiceClient, id string, body map[string]any) error {
+	url := client.ServiceURL("servers", id, "action")
+	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
+}
+
+// newServerAddServerGroupCommand implements "server add server-group <server>
+// <server-group-id>" — the KeyStack dynamic-server-group extension (KCP-703),
+// which adds a running server to a server group via the addServerGroup action.
+// Vanilla nova has no such action and rejects it with HTTP 400.
+func newServerAddServerGroupCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "server-group <server> <server-group-id>",
+		Short: "Add a server to a server group (KeyStack dynamic server groups)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerAddServerGroup(ctx, client, args[0], args[1], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+func runServerAddServerGroup(ctx context.Context, client *gophercloud.ServiceClient, ref, groupID string, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"addServerGroup": map[string]any{"server_group_id": groupID}}
+	if err := serverActionNegotiated(ctx, client, id, body); err != nil {
+		return keystackExtErr(fmt.Errorf("adding server %q to server group %q: %w", ref, groupID, err), "dynamic server groups (addServerGroup)")
+	}
+	if _, err := fmt.Fprintf(w, "Added server %s to server group %s\n", ref, groupID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// newServerRemoveServerGroupCommand implements "server remove server-group
+// <server>" — the KeyStack removeServerGroup action (KCP-703). Nova infers the
+// group from the server, so no group ID is required.
+func newServerRemoveServerGroupCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "server-group <server>",
+		Short: "Remove a server from its server group (KeyStack dynamic server groups)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerRemoveServerGroup(ctx, client, args[0], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+func runServerRemoveServerGroup(ctx context.Context, client *gophercloud.ServiceClient, ref string, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"removeServerGroup": nil}
+	if err := serverActionNegotiated(ctx, client, id, body); err != nil {
+		return keystackExtErr(fmt.Errorf("removing server %q from its server group: %w", ref, err), "dynamic server groups (removeServerGroup)")
+	}
+	if _, err := fmt.Fprintf(w, "Removed server %s from its server group\n", ref); err != nil {
+		return err
+	}
+	return nil
+}

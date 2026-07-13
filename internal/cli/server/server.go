@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -69,7 +70,7 @@ func newServerAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	floating.AddCommand(newServerAddFloatingIPCommand(a, o))
 	security := &cobra.Command{Use: "security", Short: "Security group attachment"}
 	security.AddCommand(newServerAddSecurityGroupCommand(a, o))
-	cmd.AddCommand(newServerAddVolumeCommand(a, o), floating, security)
+	cmd.AddCommand(newServerAddVolumeCommand(a, o), floating, security, newServerAddServerGroupCommand(a, o))
 	return cmd
 }
 
@@ -80,7 +81,7 @@ func newServerRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	floating.AddCommand(newServerRemoveFloatingIPCommand(a, o))
 	security := &cobra.Command{Use: "security", Short: "Security group detachment"}
 	security.AddCommand(newServerRemoveSecurityGroupCommand(a, o))
-	cmd.AddCommand(newServerRemoveVolumeCommand(a, o), floating, security)
+	cmd.AddCommand(newServerRemoveVolumeCommand(a, o), floating, security, newServerRemoveServerGroupCommand(a, o))
 	return cmd
 }
 
@@ -108,6 +109,54 @@ type serverListFlags struct {
 	host        string
 	limit       int
 	marker      string
+	// KeyStack server-list extensions (KCP-1768 time filters, KCP-2417 deleted):
+	// created-/deleted-* are extra query params nova 2.66+ does not implement
+	// upstream; --deleted restricts the list to deleted servers. All are sent
+	// only when set, so the default query is byte-identical to vanilla nova.
+	deleted       bool
+	createdSince  string
+	createdBefore string
+	deletedSince  string
+	deletedBefore string
+}
+
+// serverListQuery augments gophercloud's servers.ListOpts with the KeyStack
+// server-list filters, which have no typed fields. It satisfies ListOptsBuilder
+// by appending the extra params to the base query string.
+type serverListQuery struct {
+	servers.ListOpts
+	Deleted       bool
+	CreatedSince  string
+	CreatedBefore string
+	DeletedSince  string
+	DeletedBefore string
+}
+
+func (q serverListQuery) ToServerListQuery() (string, error) {
+	base, err := q.ListOpts.ToServerListQuery()
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	vals := u.Query()
+	if q.Deleted {
+		vals.Set("deleted", "true")
+	}
+	for key, val := range map[string]string{
+		"created-since":  q.CreatedSince,
+		"created-before": q.CreatedBefore,
+		"deleted-since":  q.DeletedSince,
+		"deleted-before": q.DeletedBefore,
+	} {
+		if val != "" {
+			vals.Set(key, val)
+		}
+	}
+	u.RawQuery = vals.Encode()
+	return u.String(), nil
 }
 
 func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -137,20 +186,38 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.host, "host", "", "filter by hypervisor host name")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of servers to return")
 	fl.StringVar(&f.marker, "marker", "", "list servers after this server ID (pagination marker)")
+	// KeyStack-only filters (UNVERIFIED against KeyStack docs; mirror downstream
+	// nova, need nova 2.66+). Ignored/rejected by vanilla nova. Times are ISO
+	// 8601, e.g. 2016-03-04T06:27:59Z.
+	fl.BoolVar(&f.deleted, "deleted", false, "only list deleted servers (admin)")
+	fl.StringVar(&f.createdSince, "created-since", "", "KeyStack: only servers created at/after this ISO-8601 time")
+	fl.StringVar(&f.createdBefore, "created-before", "", "KeyStack: only servers created at/before this ISO-8601 time")
+	fl.StringVar(&f.deletedSince, "deleted-since", "", "KeyStack: only servers deleted at/after this ISO-8601 time (use with --deleted)")
+	fl.StringVar(&f.deletedBefore, "deleted-before", "", "KeyStack: only servers deleted at/before this ISO-8601 time (use with --deleted)")
 	return cmd
 }
 
 func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *serverListFlags, w io.Writer) error {
-	opts := servers.ListOpts{
-		Name:       f.name,
-		Status:     f.status,
-		Host:       f.host,
-		AllTenants: f.all || f.allProjects,
-		Marker:     f.marker,
-		Limit:      f.limit,
+	opts := serverListQuery{
+		ListOpts: servers.ListOpts{
+			Name:       f.name,
+			Status:     f.status,
+			Host:       f.host,
+			AllTenants: f.all || f.allProjects,
+			Marker:     f.marker,
+			Limit:      f.limit,
+		},
+		Deleted:       f.deleted,
+		CreatedSince:  f.createdSince,
+		CreatedBefore: f.createdBefore,
+		DeletedSince:  f.deletedSince,
+		DeletedBefore: f.deletedBefore,
 	}
 	pages, err := servers.List(client, opts).AllPages(ctx)
 	if err != nil {
+		if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
+			return keystackExtErr(fmt.Errorf("listing servers: %w", err), "created/deleted server-list filters")
+		}
 		return fmt.Errorf("listing servers: %w", err)
 	}
 	all, err := servers.ExtractServers(pages)
@@ -448,6 +515,10 @@ func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 type serverSetFlags struct {
 	name       string
 	properties []string
+	// availabilityZone drives the KeyStack per-instance AZ update (KCP-1211):
+	// a server PUT carrying availability_zone (nova 2.90+). Vanilla nova's
+	// server-update schema rejects the field with HTTP 400.
+	availabilityZone string
 }
 
 func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -471,6 +542,9 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new name for the server")
 	fl.StringArrayVar(&f.properties, "property", nil, "metadata to set as key=value; repeatable")
+	// KeyStack-only per-instance AZ change (UNVERIFIED against KeyStack docs;
+	// mirrors downstream OSC/nova, needs nova 2.90+). Rejected by vanilla nova.
+	fl.StringVar(&f.availabilityZone, "availability-zone", "", "KeyStack: move the server to a new availability zone")
 	return cmd
 }
 
@@ -482,6 +556,18 @@ func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	if f.name != "" {
 		if _, err := servers.Update(ctx, client, id, servers.UpdateOpts{Name: f.name}).Extract(); err != nil {
 			return fmt.Errorf("updating server %q: %w", ref, err)
+		}
+	}
+	if f.availabilityZone != "" {
+		// gophercloud's servers.UpdateOpts has no availability_zone field, so
+		// issue the raw PUT /servers/{id} the KeyStack extension expects.
+		body := map[string]any{"server": map[string]any{"availability_zone": f.availabilityZone}}
+		resp, err := client.Put(ctx, client.ServiceURL("servers", id), body, nil, &gophercloud.RequestOpts{OkCodes: []int{200}})
+		if resp != nil {
+			defer func() { _ = resp.Body.Close() }()
+		}
+		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+			return keystackExtErr(fmt.Errorf("updating availability zone on server %q: %w", ref, err), "per-instance availability_zone update")
 		}
 	}
 	if len(f.properties) > 0 {
