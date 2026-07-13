@@ -673,6 +673,34 @@ func TestRunConsoleURLShow_RequestAndOutput(t *testing.T) {
 	}
 }
 
+// TestServerConsoleCommandPaths guards the OSC two-word noun paths
+// "console log show <server>" and "console url show <server>": a flat
+// "log show <server>" Use string makes cobra name the command "log" and treat
+// "show" as a positional arg, so the documented invocation fails with
+// "accepts 1 arg(s), received 2". Find must resolve each path to a "show" leaf
+// with exactly the server ref left over.
+func TestServerConsoleCommandPaths(t *testing.T) {
+	console := newServerConsoleCommand(nil, nil)
+	for _, tc := range []struct{ path []string }{
+		{[]string{"log", "show", "srv-1"}},
+		{[]string{"url", "show", "srv-1"}},
+	} {
+		leaf, rest, err := console.Find(tc.path)
+		if err != nil {
+			t.Fatalf("Find(%v): %v", tc.path, err)
+		}
+		if leaf.Name() != "show" {
+			t.Errorf("Find(%v) resolved to %q, want leaf %q", tc.path, leaf.Name(), "show")
+		}
+		if err := leaf.Args(leaf, rest); err != nil {
+			t.Errorf("Find(%v) left args %v, which fail the leaf's Args check: %v", tc.path, rest, err)
+		}
+		if len(rest) != 1 || rest[0] != "srv-1" {
+			t.Errorf("Find(%v) remaining args = %v, want [srv-1]", tc.path, rest)
+		}
+	}
+}
+
 func TestRunComputeServiceSet_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
