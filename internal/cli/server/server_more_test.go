@@ -100,6 +100,9 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 
 	var gotMethod string
 	var gotServer map[string]any
+	// Nova's POST /servers response deliberately carries only id + adminPass (as
+	// the real API does) — name/status must come from the follow-up Get, so this
+	// asserts we no longer render the empty create-response fields.
 	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		assertNovaMicroversion(t, r, "2.79")
@@ -107,7 +110,12 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 		gotServer, _ = body["server"].(map[string]any)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"web-3","status":"BUILD","adminPass":"s3cr3t"}}`))
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","adminPass":"s3cr3t"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/servers/new-id", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"web-3","status":"ACTIVE","addresses":{"private":[{"addr":"10.0.0.5"}]}}}`))
 	})
 
 	client := computeClient(fakeServer, "2.79")
@@ -121,9 +129,6 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
 	}
-	if gotServer["name"] != "web-3" {
-		t.Errorf("body server.name = %v, want web-3", gotServer["name"])
-	}
 	if gotServer["flavorRef"] != "2" {
 		t.Errorf("body server.flavorRef = %v, want 2 (resolved from name)", gotServer["flavorRef"])
 	}
@@ -131,7 +136,9 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 		t.Errorf("body server.imageRef = %v, want img-uuid", gotServer["imageRef"])
 	}
 	out := buf.String()
-	for _, want := range []string{"new-id", "web-3", "BUILD", "s3cr3t"} {
+	// new-id + s3cr3t come from the create response; web-3 (name), ACTIVE
+	// (status) and 10.0.0.5 (network) come from the follow-up Get.
+	for _, want := range []string{"new-id", "web-3", "ACTIVE", "10.0.0.5", "s3cr3t"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("create output missing %q\n---\n%s", want, out)
 		}
@@ -170,6 +177,11 @@ func TestRunServerCreate_BootFromVolume(t *testing.T) {
 		gotServer, _ = decodeBody(t, r)["server"].(map[string]any)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","adminPass":"pw"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/servers/new-id", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"koc","status":"BUILD"}}`))
 	})
 
