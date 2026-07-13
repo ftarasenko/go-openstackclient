@@ -258,6 +258,36 @@ func TestRunPortList_RequestAndOutput(t *testing.T) {
 	}
 }
 
+func TestRunPortList_FixedIPFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotFixedIPs []string
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		gotFixedIPs = r.URL.Query()["fixed_ips"]
+		writeJSON(t, w, http.StatusOK, `{"ports":[{"id":"port-1","name":"p","status":"ACTIVE"}]}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portListFlags{fixedIP: []string{"ip-address=94.141.105.93"}}
+	if err := runPortList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	want := "ip_address=94.141.105.93"
+	found := false
+	for _, v := range gotFixedIPs {
+		if v == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("fixed_ips query = %v, want an entry %q", gotFixedIPs, want)
+	}
+}
+
 func TestRunPortShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
