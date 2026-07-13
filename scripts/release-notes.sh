@@ -14,8 +14,11 @@ REPO="${GITHUB_REPOSITORY:-ftarasenko/go-openstackclient}"
 # otherwise HEAD (first-time cut, before action-gh-release creates the tag).
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then END="$TAG"; else END="HEAD"; fi
 
-# Previous tag = highest semver tag that is not the tag we are cutting.
-PREV="$(git tag --sort=-v:refname | grep -vFx "$TAG" | head -n1 || true)"
+# Previous tag = the highest tag strictly older than TAG (its semver
+# predecessor), so notes regenerate correctly for ANY tag, not just the newest.
+# When TAG does not exist yet (first-time cut) it is absent from the list, so awk
+# prints every tag and tail picks the newest — the right predecessor.
+PREV="$(git tag --sort=v:refname | awk -v t="$TAG" '$0==t{exit} {print}' | tail -n1)"
 if [ -n "$PREV" ]; then REV="${PREV}..${END}"; else REV="$END"; fi
 
 # Collect "<type>|<scope>|<breaking>|<subject>" per commit.

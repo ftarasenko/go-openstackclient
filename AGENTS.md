@@ -205,7 +205,8 @@ Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommit
   fine-grained PAT stored as the `HOMEBREW_TAP_TOKEN` repo secret (the built-in
   `GITHUB_TOKEN` cannot push to a second repo). The `go build` stays offline via
   `-mod=vendor`; the release body is **not** GoReleaser's changelog (disabled) —
-  it is supplied via `--release-notes` from `scripts/release-notes.sh` (below).
+  after publish the workflow sets it with `gh release edit --notes-file` from
+  `scripts/release-notes.sh` (GoReleaser v2 ignores `--release-notes`; see below).
 - `.github/workflows/delete-release.yml` — dispatch to delete a release + tag.
 
 ### Release notes are generated from the commit log
