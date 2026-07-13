@@ -212,6 +212,7 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	fields := []string{
 		"ID", "Name", "Status", "Networks", "Image", "Flavor", "Key Name",
 		"Availability Zone", "Host", "Task State", "Power State",
+		"Volumes Attached",
 		"Created", "Updated", "Project ID", "User ID", "Metadata", "Security Groups",
 	}
 	secGroups := make([]string, 0, len(s.SecurityGroups))
@@ -223,6 +224,7 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	values := []any{
 		s.ID, s.Name, s.Status, formatNetworks(s.Addresses), imageID(s.Image), flavorName(s.Flavor), s.KeyName,
 		s.AvailabilityZone, s.Host, s.TaskState, s.PowerState,
+		formatAttachedVolumes(s.AttachedVolumes),
 		s.Created.String(), s.Updated.String(), s.TenantID, s.UserID, s.Metadata, strings.Join(secGroups, ", "),
 	}
 	return o.WriteSingle(w, fields, values)

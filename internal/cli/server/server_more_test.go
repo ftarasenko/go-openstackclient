@@ -65,7 +65,8 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 			"OS-EXT-AZ:availability_zone":"nova",
 			"addresses":{"private":[{"addr":"10.0.0.5","version":4}]},
 			"flavor":{"original_name":"m1.small"},
-			"image":{"id":"img-123"}
+			"image":{"id":"img-123"},
+			"os-extended-volumes:volumes_attached":[{"id":"vol-aaa"},{"id":"vol-bbb"}]
 		}}`))
 	})
 
@@ -80,7 +81,7 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	out := buf.String()
-	for _, want := range []string{serverUUID, "web-1", "ACTIVE", "mykey", "private=10.0.0.5", "m1.small", "img-123"} {
+	for _, want := range []string{serverUUID, "web-1", "ACTIVE", "mykey", "private=10.0.0.5", "m1.small", "img-123", "vol-aaa, vol-bbb"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output missing %q\n---\n%s", want, out)
 		}
