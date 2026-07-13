@@ -94,6 +94,7 @@ func NewCommands(a *auth.Options, o *output.Options) []*cobra.Command {
 		newComputeCommand(a, o),
 		newHypervisorCommand(a, o),
 		newQuotaCommand(a, o),
+		newAggregateCommand(a, o),
 	}
 }
 
