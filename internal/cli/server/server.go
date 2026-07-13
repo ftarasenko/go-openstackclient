@@ -290,7 +290,10 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.networks, "network", nil, "network to attach: an ID/name, or net-id=/net-name=/port-id=/v4-fixed-ip= pairs; repeatable")
 	fl.StringArrayVar(&f.nics, "nic", nil, "alias of --network")
 	fl.StringVar(&f.keyName, "key-name", "", "name of the keypair to inject")
-	fl.BoolVar(&f.configDrive, "config-drive", false, "enable a config drive")
+	// Boolean: "--config-drive" (bare) enables it; "--config-drive=true|false"
+	// sets it explicitly. The space form "--config-drive true" is not supported —
+	// pflag cannot both default the bare flag and consume a separate value.
+	fl.BoolVar(&f.configDrive, "config-drive", false, "enable a config drive (bare, or --config-drive=true|false)")
 	fl.StringArrayVar(&f.securityGroups, "security-group", nil, "security group name; repeatable")
 	fl.StringArrayVar(&f.properties, "property", nil, "server metadata as key=value; repeatable")
 	// --boot-from-volume <size-GB> boots the server from a new volume of the
