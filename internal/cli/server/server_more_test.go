@@ -63,8 +63,10 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 			"status":"ACTIVE",
 			"key_name":"mykey",
 			"OS-EXT-AZ:availability_zone":"nova",
+			"OS-EXT-SRV-ATTR:host":"cmp-1",
+			"OS-EXT-STS:vm_state":"active",
 			"addresses":{"private":[{"addr":"10.0.0.5","version":4}]},
-			"flavor":{"original_name":"m1.small"},
+			"flavor":{"original_name":"m1.small","extra_specs":{"hw:cpu_policy":"dedicated"}},
 			"image":{"id":"img-123"},
 			"os-extended-volumes:volumes_attached":[{"id":"vol-aaa"},{"id":"vol-bbb"}]
 		}}`))
@@ -81,7 +83,16 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	out := buf.String()
-	for _, want := range []string{serverUUID, "web-1", "ACTIVE", "mykey", "private=10.0.0.5", "m1.small", "img-123", "vol-aaa, vol-bbb"} {
+	// All attributes are shown (not a curated subset): the OS-EXT-* admin
+	// fields must appear, addresses/flavor/volumes are flattened OSC-style, and
+	// nested flavor extra_specs are dotted.
+	for _, want := range []string{
+		serverUUID, "web-1", "ACTIVE", "mykey",
+		"OS-EXT-SRV-ATTR:host", "cmp-1", "OS-EXT-STS:vm_state", "active",
+		"private=10.0.0.5", "original_name='m1.small'",
+		"extra_specs.hw:cpu_policy='dedicated'", "id='img-123'",
+		"id='vol-aaa'", "id='vol-bbb'",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output missing %q\n---\n%s", want, out)
 		}
