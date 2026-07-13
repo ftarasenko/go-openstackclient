@@ -212,6 +212,7 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	fields := []string{
 		"ID", "Name", "Status", "Networks", "Image", "Flavor", "Key Name",
 		"Availability Zone", "Host", "Task State", "Power State",
+		"Volumes Attached",
 		"Created", "Updated", "Project ID", "User ID", "Metadata", "Security Groups",
 	}
 	secGroups := make([]string, 0, len(s.SecurityGroups))
@@ -223,6 +224,7 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	values := []any{
 		s.ID, s.Name, s.Status, formatNetworks(s.Addresses), imageID(s.Image), flavorName(s.Flavor), s.KeyName,
 		s.AvailabilityZone, s.Host, s.TaskState, s.PowerState,
+		formatAttachedVolumes(s.AttachedVolumes),
 		s.Created.String(), s.Updated.String(), s.TenantID, s.UserID, s.Metadata, strings.Join(secGroups, ", "),
 	}
 	return o.WriteSingle(w, fields, values)
@@ -354,6 +356,11 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		// block_device_mapping_v2 entry (boot_index 0, image → volume) and clear
 		// the top-level imageRef, which nova rejects as a conflicting root device
 		// when a boot-index-0 block device is also present (matches OSC).
+		//
+		// The created volume is left unnamed: nova's block_device_mapping_v2 has
+		// no field for the resulting volume's display name, so naming it would
+		// require pre-creating the volume via cinder and booting from it by ID.
+		// That is out of scope here; the volume takes cinder's default name.
 		opts.BlockDevice = []servers.BlockDevice{{
 			BootIndex:       0,
 			SourceType:      servers.SourceImage,
@@ -376,8 +383,22 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return fmt.Errorf("creating server %q: %w", name, err)
 	}
-	fields := []string{"ID", "Name", "Status", "Admin Password"}
-	values := []any{s.ID, s.Name, s.Status, s.AdminPass}
+	// Nova's create response carries only the ID and the generated admin
+	// password — name, status and networks are absent, so the raw response
+	// renders a table with blank Name/Status. Re-fetch the server to show a
+	// meaningful summary, preserving the admin password (Get never returns it).
+	// A failed follow-up Get is non-fatal: the create already succeeded, so fall
+	// back to the fields we hold.
+	adminPass := s.AdminPass
+	detail, gerr := servers.Get(ctx, client, s.ID).Extract()
+	if gerr != nil {
+		return o.WriteSingle(w, []string{"ID", "Name", "Admin Password"}, []any{s.ID, name, adminPass})
+	}
+	fields := []string{"ID", "Name", "Status", "Networks", "Image", "Flavor", "Admin Password"}
+	values := []any{
+		detail.ID, detail.Name, detail.Status, formatNetworks(detail.Addresses),
+		imageID(detail.Image), flavorName(detail.Flavor), adminPass,
+	}
 	return o.WriteSingle(w, fields, values)
 }
 
