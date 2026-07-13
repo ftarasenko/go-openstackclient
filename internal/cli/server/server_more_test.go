@@ -65,7 +65,8 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 			"OS-EXT-AZ:availability_zone":"nova",
 			"addresses":{"private":[{"addr":"10.0.0.5","version":4}]},
 			"flavor":{"original_name":"m1.small"},
-			"image":{"id":"img-123"}
+			"image":{"id":"img-123"},
+			"os-extended-volumes:volumes_attached":[{"id":"vol-aaa"},{"id":"vol-bbb"}]
 		}}`))
 	})
 
@@ -80,7 +81,7 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	out := buf.String()
-	for _, want := range []string{serverUUID, "web-1", "ACTIVE", "mykey", "private=10.0.0.5", "m1.small", "img-123"} {
+	for _, want := range []string{serverUUID, "web-1", "ACTIVE", "mykey", "private=10.0.0.5", "m1.small", "img-123", "vol-aaa, vol-bbb"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output missing %q\n---\n%s", want, out)
 		}
@@ -100,6 +101,9 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 
 	var gotMethod string
 	var gotServer map[string]any
+	// Nova's POST /servers response deliberately carries only id + adminPass (as
+	// the real API does) — name/status must come from the follow-up Get, so this
+	// asserts we no longer render the empty create-response fields.
 	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		assertNovaMicroversion(t, r, "2.79")
@@ -107,7 +111,12 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 		gotServer, _ = body["server"].(map[string]any)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"web-3","status":"BUILD","adminPass":"s3cr3t"}}`))
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","adminPass":"s3cr3t"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/servers/new-id", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"web-3","status":"ACTIVE","addresses":{"private":[{"addr":"10.0.0.5"}]}}}`))
 	})
 
 	client := computeClient(fakeServer, "2.79")
@@ -121,9 +130,6 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
 	}
-	if gotServer["name"] != "web-3" {
-		t.Errorf("body server.name = %v, want web-3", gotServer["name"])
-	}
 	if gotServer["flavorRef"] != "2" {
 		t.Errorf("body server.flavorRef = %v, want 2 (resolved from name)", gotServer["flavorRef"])
 	}
@@ -131,7 +137,9 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 		t.Errorf("body server.imageRef = %v, want img-uuid", gotServer["imageRef"])
 	}
 	out := buf.String()
-	for _, want := range []string{"new-id", "web-3", "BUILD", "s3cr3t"} {
+	// new-id + s3cr3t come from the create response; web-3 (name), ACTIVE
+	// (status) and 10.0.0.5 (network) come from the follow-up Get.
+	for _, want := range []string{"new-id", "web-3", "ACTIVE", "10.0.0.5", "s3cr3t"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("create output missing %q\n---\n%s", want, out)
 		}
@@ -170,6 +178,11 @@ func TestRunServerCreate_BootFromVolume(t *testing.T) {
 		gotServer, _ = decodeBody(t, r)["server"].(map[string]any)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","adminPass":"pw"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/servers/new-id", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"koc","status":"BUILD"}}`))
 	})
 
@@ -669,6 +682,34 @@ func TestRunConsoleURLShow_RequestAndOutput(t *testing.T) {
 	for _, want := range []string{"novnc", "vnc", "http://vnc.example/?token=abc"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("console url output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// TestServerConsoleCommandPaths guards the OSC two-word noun paths
+// "console log show <server>" and "console url show <server>": a flat
+// "log show <server>" Use string makes cobra name the command "log" and treat
+// "show" as a positional arg, so the documented invocation fails with
+// "accepts 1 arg(s), received 2". Find must resolve each path to a "show" leaf
+// with exactly the server ref left over.
+func TestServerConsoleCommandPaths(t *testing.T) {
+	console := newServerConsoleCommand(nil, nil)
+	for _, tc := range []struct{ path []string }{
+		{[]string{"log", "show", "srv-1"}},
+		{[]string{"url", "show", "srv-1"}},
+	} {
+		leaf, rest, err := console.Find(tc.path)
+		if err != nil {
+			t.Fatalf("Find(%v): %v", tc.path, err)
+		}
+		if leaf.Name() != "show" {
+			t.Errorf("Find(%v) resolved to %q, want leaf %q", tc.path, leaf.Name(), "show")
+		}
+		if err := leaf.Args(leaf, rest); err != nil {
+			t.Errorf("Find(%v) left args %v, which fail the leaf's Args check: %v", tc.path, rest, err)
+		}
+		if len(rest) != 1 || rest[0] != "srv-1" {
+			t.Errorf("Find(%v) remaining args = %v, want [srv-1]", tc.path, rest)
 		}
 	}
 }

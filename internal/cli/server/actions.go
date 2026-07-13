@@ -518,14 +518,22 @@ func newServerConsoleCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		Use:   "console",
 		Short: "Server console commands",
 	}
-	cmd.AddCommand(newConsoleLogShowCommand(a, o), newConsoleURLShowCommand(a, o))
+	// Two-word OSC nouns ("console log show", "console url show") are modeled as
+	// nested parent commands so cobra resolves them unambiguously — otherwise a
+	// flat "log show <server>" Use string names the command "log" and treats
+	// "show" as a positional arg, breaking the documented invocation.
+	logParent := &cobra.Command{Use: "log", Short: "Server console log"}
+	logParent.AddCommand(newConsoleLogShowCommand(a, o))
+	urlParent := &cobra.Command{Use: "url", Short: "Server remote console URL"}
+	urlParent.AddCommand(newConsoleURLShowCommand(a, o))
+	cmd.AddCommand(logParent, urlParent)
 	return cmd
 }
 
 func newConsoleLogShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var lines int
 	cmd := &cobra.Command{
-		Use:   "log show <server>",
+		Use:   "show <server>",
 		Short: "Show console log output for a server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -563,7 +571,7 @@ func newConsoleURLShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 	var novnc, xvpvnc, spice, serial, mks bool
 	var consoleType string
 	cmd := &cobra.Command{
-		Use:   "url show <server>",
+		Use:   "show <server>",
 		Short: "Show a remote console URL for a server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
