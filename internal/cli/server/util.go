@@ -30,7 +30,8 @@ func resolveServerCreateRefs(ctx context.Context, session *auth.Client, f *serve
 		}
 		f.image = id
 	}
-	for i, n := range f.networks {
+	for i := range f.nicSpecs {
+		n := f.nicSpecs[i].netRef
 		if n == "" || isUUID(n) {
 			continue
 		}
@@ -42,9 +43,54 @@ func resolveServerCreateRefs(ctx context.Context, session *auth.Client, f *serve
 		if err != nil {
 			return err
 		}
-		f.networks[i] = id
+		f.nicSpecs[i].netRef = id
 	}
 	return nil
+}
+
+// nicSpec is a parsed --nic / --network value. netRef holds a network ID or
+// name (resolved to a UUID by resolveServerCreateRefs); port and fixedIP are
+// optional.
+type nicSpec struct {
+	netRef  string
+	port    string
+	fixedIP string
+}
+
+// parseNIC parses one --nic / --network value. A bare value (no '=') is treated
+// as a network ID or name, for backward compatibility. Otherwise it accepts the
+// upstream OSC comma-separated key=value form, e.g.
+// "net-id=<id>,v4-fixed-ip=<ip>" or "port-id=<id>". Recognized keys:
+// net-id/net-name/network/uuid → network ref (id or name), port-id/port →
+// neutron port, v4-fixed-ip/v6-fixed-ip/fixed-ip → fixed address.
+func parseNIC(s string) (nicSpec, error) {
+	if !strings.Contains(s, "=") {
+		return nicSpec{netRef: s}, nil
+	}
+	var spec nicSpec
+	for _, part := range strings.Split(s, ",") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		k, v, err := parseKeyVal(part)
+		if err != nil {
+			return nicSpec{}, fmt.Errorf("invalid --nic %q: %w", s, err)
+		}
+		switch strings.TrimSpace(k) {
+		case "net-id", "net-name", "network", "uuid":
+			spec.netRef = v
+		case "port-id", "port":
+			spec.port = v
+		case "v4-fixed-ip", "v6-fixed-ip", "fixed-ip":
+			spec.fixedIP = v
+		default:
+			return nicSpec{}, fmt.Errorf("invalid --nic %q: unknown key %q", s, k)
+		}
+	}
+	if spec.netRef == "" && spec.port == "" {
+		return nicSpec{}, fmt.Errorf("invalid --nic %q: needs net-id, net-name, or port-id", s)
+	}
+	return spec, nil
 }
 
 // isUUID reports whether s looks like a canonical UUID. It reuses the shared

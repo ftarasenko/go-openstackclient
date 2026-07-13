@@ -151,6 +151,122 @@ func TestRunServerCreate_FlavorRequired(t *testing.T) {
 	}
 }
 
+// TestRunServerCreate_BootFromVolume asserts that --boot-from-volume moves the
+// image into a block_device_mapping_v2 entry (boot_index 0, image → volume)
+// with the requested size and volume type, clears the top-level imageRef, and
+// still carries the resolved network.
+func TestRunServerCreate_BootFromVolume(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavors":[{"id":"2","name":"m1.small"}]}`))
+	})
+
+	var gotServer map[string]any
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
+		gotServer, _ = decodeBody(t, r)["server"].(map[string]any)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"koc","status":"BUILD"}}`))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+	f := &serverCreateFlags{
+		image:          "img-uuid",
+		flavor:         "m1.small",
+		bootFromVolume: 10,
+		bootVolumeType: "ssd",
+		nicSpecs:       []nicSpec{{netRef: "net-uuid"}},
+	}
+
+	var buf bytes.Buffer
+	if err := runServerCreate(context.Background(), client, o, "koc", f, &buf); err != nil {
+		t.Fatalf("runServerCreate: %v", err)
+	}
+	if v, ok := gotServer["imageRef"]; ok && v != "" {
+		t.Errorf("body server.imageRef = %v, want empty (image moved into bdm)", v)
+	}
+	bdms, ok := gotServer["block_device_mapping_v2"].([]any)
+	if !ok || len(bdms) != 1 {
+		t.Fatalf("block_device_mapping_v2 = %v, want one entry", gotServer["block_device_mapping_v2"])
+	}
+	bdm, _ := bdms[0].(map[string]any)
+	if bdm["source_type"] != "image" || bdm["destination_type"] != "volume" {
+		t.Errorf("bdm source/destination = %v/%v, want image/volume", bdm["source_type"], bdm["destination_type"])
+	}
+	if bdm["uuid"] != "img-uuid" {
+		t.Errorf("bdm uuid = %v, want img-uuid", bdm["uuid"])
+	}
+	if bdm["volume_size"] != float64(10) {
+		t.Errorf("bdm volume_size = %v, want 10", bdm["volume_size"])
+	}
+	if bdm["volume_type"] != "ssd" {
+		t.Errorf("bdm volume_type = %v, want ssd", bdm["volume_type"])
+	}
+	if bdm["boot_index"] != float64(0) {
+		t.Errorf("bdm boot_index = %v, want 0", bdm["boot_index"])
+	}
+}
+
+// TestRunServerCreate_BootFromVolumeValidation covers the guard rails around the
+// boot-from-volume flags.
+func TestRunServerCreate_BootFromVolumeValidation(t *testing.T) {
+	o := &output.Options{Format: output.FormatTable}
+	cases := []struct {
+		name string
+		f    *serverCreateFlags
+		want string
+	}{
+		{"no image", &serverCreateFlags{flavor: "m1.small", bootFromVolume: 10}, "--boot-from-volume requires --image"},
+		{"type without size", &serverCreateFlags{flavor: "m1.small", image: "img", bootVolumeType: "ssd"}, "--boot-volume-type requires --boot-from-volume"},
+		{"negative size", &serverCreateFlags{flavor: "m1.small", image: "img", bootFromVolume: -1}, "must not be negative"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := runServerCreate(context.Background(), nil, o, "koc", tc.f, &buf)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseNIC covers the bare form, the OSC key=value form, and error cases.
+func TestParseNIC(t *testing.T) {
+	ok := []struct {
+		in   string
+		want nicSpec
+	}{
+		{"net-uuid", nicSpec{netRef: "net-uuid"}},
+		{"private", nicSpec{netRef: "private"}},
+		{"net-id=abc", nicSpec{netRef: "abc"}},
+		{"net-name=private", nicSpec{netRef: "private"}},
+		{"net-id=abc,v4-fixed-ip=10.0.0.5", nicSpec{netRef: "abc", fixedIP: "10.0.0.5"}},
+		{"port-id=port-uuid", nicSpec{port: "port-uuid"}},
+	}
+	for _, tc := range ok {
+		got, err := parseNIC(tc.in)
+		if err != nil {
+			t.Errorf("parseNIC(%q) error: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("parseNIC(%q) = %+v, want %+v", tc.in, got, tc.want)
+		}
+	}
+	bad := []string{"net-id=abc,bogus=1", "v4-fixed-ip=10.0.0.5"}
+	for _, in := range bad {
+		if _, err := parseNIC(in); err == nil {
+			t.Errorf("parseNIC(%q) = nil error, want error", in)
+		}
+	}
+}
+
 func TestRunServerDelete_MultipleServers(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

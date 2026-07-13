@@ -234,11 +234,14 @@ type serverCreateFlags struct {
 	flavor         string
 	networks       []string
 	nics           []string
+	nicSpecs       []nicSpec
 	keyName        string
 	configDrive    bool
 	configDriveSet bool
 	securityGroups []string
 	properties     []string
+	bootFromVolume int
+	bootVolumeType string
 	min            int
 	max            int
 }
@@ -256,8 +259,15 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			f.configDriveSet = cmd.Flags().Changed("config-drive")
 			// --network and --nic are aliases bound to separate slices so
 			// mixing them does not clobber values. Merge --nic after --network,
-			// preserving order, before resolution and use.
-			f.networks = append(f.networks, f.nics...)
+			// preserving order, then parse each into a nicSpec (accepting both a
+			// bare network ref and the OSC "net-id=<id>,..." key=value form).
+			for _, raw := range append(append([]string{}, f.networks...), f.nics...) {
+				spec, err := parseNIC(raw)
+				if err != nil {
+					return err
+				}
+				f.nicSpecs = append(f.nicSpecs, spec)
+			}
 			ctx := cmd.Context()
 			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
@@ -274,13 +284,24 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.image, "image", "", "image ID or name to boot from")
 	fl.StringVar(&f.flavor, "flavor", "", "flavor ID or name (required)")
-	// --network and --nic are accepted as aliases for the same value: a network ID/name to attach.
-	fl.StringArrayVar(&f.networks, "network", nil, "network ID or name to attach; repeatable")
+	// --network and --nic are accepted as aliases: each value is a network ID or
+	// name, or the upstream OSC form "net-id=<id>,v4-fixed-ip=<ip>" /
+	// "port-id=<id>" (net-name is resolved to an ID like a bare name).
+	fl.StringArrayVar(&f.networks, "network", nil, "network to attach: an ID/name, or net-id=/net-name=/port-id=/v4-fixed-ip= pairs; repeatable")
 	fl.StringArrayVar(&f.nics, "nic", nil, "alias of --network")
 	fl.StringVar(&f.keyName, "key-name", "", "name of the keypair to inject")
-	fl.BoolVar(&f.configDrive, "config-drive", false, "enable a config drive")
+	// Boolean: "--config-drive" (bare) enables it; "--config-drive=true|false"
+	// sets it explicitly. The space form "--config-drive true" is not supported —
+	// pflag cannot both default the bare flag and consume a separate value.
+	fl.BoolVar(&f.configDrive, "config-drive", false, "enable a config drive (bare, or --config-drive=true|false)")
 	fl.StringArrayVar(&f.securityGroups, "security-group", nil, "security group name; repeatable")
 	fl.StringArrayVar(&f.properties, "property", nil, "server metadata as key=value; repeatable")
+	// --boot-from-volume <size-GB> boots the server from a new volume of the
+	// given size created from --image (block_device_mapping_v2, boot_index 0).
+	// --boot-volume-type sets that volume's cinder type (needs compute API 2.67+;
+	// the default microversion is "latest", so it is available by default).
+	fl.IntVar(&f.bootFromVolume, "boot-from-volume", 0, "boot from a new volume of this size in GB, created from --image")
+	fl.StringVar(&f.bootVolumeType, "boot-volume-type", "", "cinder volume type for the --boot-from-volume root volume")
 	fl.IntVar(&f.min, "min", 0, "minimum number of servers to launch")
 	fl.IntVar(&f.max, "max", 0, "maximum number of servers to launch")
 	return cmd
@@ -289,6 +310,15 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *serverCreateFlags, w io.Writer) error {
 	if f.flavor == "" {
 		return fmt.Errorf("--flavor is required")
+	}
+	if f.bootFromVolume < 0 {
+		return fmt.Errorf("--boot-from-volume size must not be negative")
+	}
+	if f.bootFromVolume > 0 && f.image == "" {
+		return fmt.Errorf("--boot-from-volume requires --image (the volume is created from that image)")
+	}
+	if f.bootVolumeType != "" && f.bootFromVolume == 0 {
+		return fmt.Errorf("--boot-volume-type requires --boot-from-volume")
 	}
 	flavorRef, err := resolveFlavorRef(ctx, client, f.flavor)
 	if err != nil {
@@ -312,12 +342,27 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		cd := f.configDrive
 		opts.ConfigDrive = &cd
 	}
-	if len(f.networks) > 0 {
-		nets := make([]servers.Network, 0, len(f.networks))
-		for _, n := range f.networks {
-			nets = append(nets, servers.Network{UUID: n})
+	if len(f.nicSpecs) > 0 {
+		nets := make([]servers.Network, 0, len(f.nicSpecs))
+		for _, n := range f.nicSpecs {
+			nets = append(nets, servers.Network{UUID: n.netRef, Port: n.port, FixedIP: n.fixedIP})
 		}
 		opts.Networks = nets
+	}
+	if f.bootFromVolume > 0 {
+		// Boot from a new volume created from the image: move the image into a
+		// block_device_mapping_v2 entry (boot_index 0, image → volume) and clear
+		// the top-level imageRef, which nova rejects as a conflicting root device
+		// when a boot-index-0 block device is also present (matches OSC).
+		opts.BlockDevice = []servers.BlockDevice{{
+			BootIndex:       0,
+			SourceType:      servers.SourceImage,
+			UUID:            f.image,
+			DestinationType: servers.DestinationVolume,
+			VolumeSize:      f.bootFromVolume,
+			VolumeType:      f.bootVolumeType,
+		}}
+		opts.ImageRef = ""
 	}
 
 	// key_name is not a field of servers.CreateOpts; it is injected by wrapping
