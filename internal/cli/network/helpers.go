@@ -167,6 +167,43 @@ func parseFixedIP(ctx context.Context, client *gophercloud.ServiceClient, spec s
 	return ip, nil
 }
 
+// parseFixedIPFilter parses an OSC-style --fixed-ip value for `port list` into
+// a ports.FixedIPOpts filter. The value is a comma-separated list of key=value
+// pairs; recognized keys are "subnet" (name or ID, resolved to an ID),
+// "ip-address" and "ip-substring". Unlike parseFixedIP (which builds a ports.IP
+// for create), this targets the neutron fixed_ips query filter.
+func parseFixedIPFilter(ctx context.Context, client *gophercloud.ServiceClient, spec string) (ports.FixedIPOpts, error) {
+	var f ports.FixedIPOpts
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, err := splitKV(part)
+		if err != nil {
+			return f, fmt.Errorf("parsing --fixed-ip %q: %w", spec, err)
+		}
+		switch k {
+		case "subnet":
+			sid, err := resolveSubnetID(ctx, client, v)
+			if err != nil {
+				return f, err
+			}
+			f.SubnetID = sid
+		case "ip-address", "ip_address":
+			f.IPAddress = v
+		case "ip-substring", "ip_substring":
+			f.IPAddressSubstr = v
+		default:
+			return f, fmt.Errorf("parsing --fixed-ip %q: unknown key %q", spec, k)
+		}
+	}
+	if f == (ports.FixedIPOpts{}) {
+		return f, fmt.Errorf("--fixed-ip %q requires ip-address, ip-substring, or subnet", spec)
+	}
+	return f, nil
+}
+
 // parseAllocationPool parses an OSC-style --allocation-pool value
 // ("start=<ip>,end=<ip>") into a subnets.AllocationPool.
 func parseAllocationPool(spec string) (subnets.AllocationPool, error) {
