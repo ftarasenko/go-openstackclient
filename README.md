@@ -148,6 +148,9 @@ or Vault SDK — to preserve the air-gap invariant):
   `VAULT_*` env; when those are absent on a cluster node, the address, namespace,
   role_id, KV mount/prefix and AppRole secret-id are auto-discovered from the LCM
   `k0s-system/lcm-config` ConfigMap and the `cert-manager/vault-approle` secret.
+  Vault TLS uses the system roots (or `--vault-cacert`); pass `--insecure-vault`
+  (env `VAULT_SKIP_VERIFY`) to skip Vault TLS verification. The global
+  `--insecure` governs only the OpenStack/Keystone TLS, not Vault.
 
 ### TLS / mutual TLS
 

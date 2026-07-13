@@ -160,6 +160,34 @@ func TestFillVaultOption_Precedence(t *testing.T) {
 	}
 }
 
+// TestInsecureVaultFlag verifies --insecure-vault and its --vault-insecure
+// back-compat alias both set VaultInsecure, which the Vault client turns into
+// InsecureSkipVerify.
+func TestInsecureVaultFlag(t *testing.T) {
+	t.Setenv("VAULT_SKIP_VERIFY", "")
+	for _, arg := range []string{"--insecure-vault", "--vault-insecure"} {
+		o := &Options{}
+		fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+		o.AddFlags(fs)
+		if err := fs.Parse([]string{arg}); err != nil {
+			t.Fatalf("parse %s: %v", arg, err)
+		}
+		if !o.VaultInsecure {
+			t.Errorf("%s did not set VaultInsecure", arg)
+		}
+	}
+	// Default (no flag) stays secure.
+	o := &Options{}
+	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+	o.AddFlags(fs)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if o.VaultInsecure {
+		t.Error("VaultInsecure should default to false")
+	}
+}
+
 func TestReadVaultTokenFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("VAULT_TOKEN_FILE", "")
