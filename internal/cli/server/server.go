@@ -188,9 +188,8 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.host, "host", "", "filter by hypervisor host name")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of servers to return")
 	fl.StringVar(&f.marker, "marker", "", "list servers after this server ID (pagination marker)")
-	// KeyStack-only filters (UNVERIFIED against KeyStack docs; mirror downstream
-	// nova, need nova 2.66+). Ignored/rejected by vanilla nova. Times are ISO
-	// 8601, e.g. 2016-03-04T06:27:59Z.
+	// KeyStack server-list filters (KCP-1768/2417), nova 2.66+; rejected by
+	// vanilla nova. Times are ISO 8601, e.g. 2016-03-04T06:27:59Z.
 	fl.BoolVar(&f.deleted, "deleted", false, "only list deleted servers (admin)")
 	fl.StringVar(&f.createdSince, "created-since", "", "KeyStack: only servers created at/after this ISO-8601 time")
 	fl.StringVar(&f.createdBefore, "created-before", "", "KeyStack: only servers created at/before this ISO-8601 time")
@@ -544,9 +543,10 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new name for the server")
 	fl.StringArrayVar(&f.properties, "property", nil, "metadata to set as key=value; repeatable")
-	// KeyStack-only per-instance AZ change (UNVERIFIED against KeyStack docs;
-	// mirrors downstream OSC/nova, needs nova 2.90+). Rejected by vanilla nova.
+	// KeyStack per-instance AZ change (KCP-1211), nova 2.90+; rejected by vanilla
+	// nova. The fork spells the flag with an underscore, kept as an alias.
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "KeyStack: move the server to a new availability zone")
+	fl.StringVar(&f.availabilityZone, "availability_zone", "", "alias of --availability-zone")
 	return cmd
 }
 
