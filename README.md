@@ -178,6 +178,14 @@ case-insensitive, order-preserving):
 - `value` — plain, **tab-separated**, no headers, for scripting
 - `csv` — RFC 4180 with a header row
 
+Table output fits the terminal width: over-long cells wrap across lines when
+stdout is a TTY (piped output stays unbounded, matching `openstack`). `--max-width
+<n>` caps the width explicitly and `--fit-width` forces fitting even when piped.
+A very large opaque cell (base64 `user_data`, cert bundles) is elided in the
+table to a `<N bytes; …>` placeholder; the full value is always available via
+`-f json/yaml`, `-f value`, or by naming it with `-c <column>`. `server show
+--user-data` prints just the base64-decoded `user_data`.
+
 ### Microversions
 
 Each service client sets its own microversion; defaults negotiate the latest the
