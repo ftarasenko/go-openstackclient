@@ -202,6 +202,85 @@ func TestWriteTable_RuneWidthAlignment(t *testing.T) {
 	}
 }
 
+func TestWriteSingle_ElidesOversizedCell(t *testing.T) {
+	blob := strings.Repeat("a", maxTableCell+500)
+	o := &Options{Format: FormatTable}
+	var buf bytes.Buffer
+	if err := o.WriteSingle(&buf, []string{"user_data"}, []any{blob}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, blob) {
+		t.Errorf("oversized cell was not elided:\n%s", out)
+	}
+	if !strings.Contains(out, "bytes; use -f yaml") {
+		t.Errorf("elision placeholder missing:\n%s", out)
+	}
+}
+
+func TestWriteSingle_NoElisionWhenColumnSelected(t *testing.T) {
+	blob := strings.Repeat("a", maxTableCell+500)
+	// An explicit -c selection means the user asked for this field: show it in full.
+	o := &Options{Format: FormatTable, Columns: []string{"user_data"}}
+	var buf bytes.Buffer
+	if err := o.WriteSingle(&buf, []string{"user_data"}, []any{blob}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), blob) {
+		t.Error("column-selected oversized cell should be shown in full")
+	}
+}
+
+func TestWriteSingle_NoElisionInYAML(t *testing.T) {
+	blob := strings.Repeat("a", maxTableCell+500)
+	o := &Options{Format: FormatYAML}
+	var buf bytes.Buffer
+	if err := o.WriteSingle(&buf, []string{"user_data"}, []any{blob}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), blob) {
+		t.Error("machine formats must never elide")
+	}
+}
+
+func TestWriteTable_MaxWidthWrapsAndBounds(t *testing.T) {
+	const maxW = 40
+	val := strings.Repeat("word ", 30) // long, space-separated → wraps
+	o := &Options{Format: FormatTable, MaxWidth: maxW}
+	var buf bytes.Buffer
+	if err := o.WriteSingle(&buf, []string{"Field"}, []any{strings.TrimSpace(val)}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if n := utf8.RuneCountInString(ln); n > maxW {
+			t.Errorf("line exceeds --max-width %d (got %d):\n%s", maxW, n, out)
+		}
+	}
+	// The content survives, just spread across multiple physical rows.
+	if !strings.Contains(out, "word") {
+		t.Errorf("wrapped content lost:\n%s", out)
+	}
+}
+
+func TestWrapText(t *testing.T) {
+	if got := wrapText("short", 0); len(got) != 1 || got[0] != "short" {
+		t.Errorf("width 0 should not wrap: %q", got)
+	}
+	// Hard-break a token longer than the width.
+	got := wrapText("aaaaaaaaaa", 4)
+	if len(got) != 3 || got[0] != "aaaa" || got[2] != "aa" {
+		t.Errorf("hard-break wrong: %q", got)
+	}
+	// Prefer wrapping at spaces.
+	got = wrapText("aa bb cc dd", 5)
+	for _, ln := range got {
+		if utf8.RuneCountInString(ln) > 5 {
+			t.Errorf("line over width: %q", got)
+		}
+	}
+}
+
 func TestWriteSingle_MismatchedFieldsValues(t *testing.T) {
 	o := &Options{Format: FormatTable}
 	var buf bytes.Buffer

@@ -17,12 +17,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/pflag"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,11 +40,21 @@ const (
 
 var allFormats = []string{FormatTable, FormatJSON, FormatYAML, FormatValue, FormatCSV}
 
+// maxTableCell caps how many runes a single table cell may hold before the
+// table formatter elides it to a "<N bytes; …>" placeholder. Oversized opaque
+// blobs (base64 user_data, cert bundles) would otherwise dominate the table and,
+// pre-cap, blew a single `server show` up to >1 MB. Machine formats (json/yaml/
+// value/csv) never elide, and an explicit `-c <column>` selection disables
+// elision for the chosen columns, so the full value is always reachable.
+const maxTableCell = 1024
+
 // Options holds the formatting flags shared by all commands. It is registered
 // once on the root command's persistent flags and threaded into every command.
 type Options struct {
-	Format  string
-	Columns []string
+	Format   string
+	Columns  []string
+	MaxWidth int  // --max-width: hard cap on table width; 0 = auto (fit to TTY)
+	FitWidth bool // --fit-width: fit the table to the display width even when piped
 }
 
 // AddFlags registers -f/--format and -c/--column on the given flag set.
@@ -50,6 +63,10 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		fmt.Sprintf("output format, one of: %s", strings.Join(allFormats, ", ")))
 	fs.StringArrayVarP(&o.Columns, "column", "c", nil,
 		"specify the column(s) to include; can be repeated (default: all)")
+	fs.IntVar(&o.MaxWidth, "max-width", 0,
+		"maximum display width for table output; 0 fits to the terminal (or is unbounded when piped)")
+	fs.BoolVar(&o.FitWidth, "fit-width", false,
+		"fit table output to the display width even when not a terminal")
 }
 
 // Validate checks that the requested format is supported.
@@ -95,7 +112,7 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 	case FormatValue:
 		return writeValue(w, rows)
 	default:
-		return writeTable(w, cols, rows)
+		return writeTable(w, cols, rows, o.fitWidth(w), 8, len(o.Columns) == 0)
 	}
 }
 
@@ -154,7 +171,7 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 		for i, f := range fields {
 			rows[i] = []any{f, values[i]}
 		}
-		return writeTable(w, []string{"Field", "Value"}, rows)
+		return writeTable(w, []string{"Field", "Value"}, rows, o.fitWidth(w), 16, len(o.Columns) == 0)
 	}
 }
 
@@ -287,13 +304,19 @@ func writeValue(w io.Writer, rows [][]any) error {
 	return nil
 }
 
-func writeTable(w io.Writer, cols []string, rows [][]any) error {
+// writeTable renders an ASCII table. When fitWidth > 0 the column widths are
+// shrunk (and over-long cells wrapped across physical lines) so the table fits
+// within fitWidth, mirroring python-openstackclient/cliff; fitWidth == 0 leaves
+// the table unbounded (piped output). When elide is true, cells longer than
+// maxTableCell are replaced by a placeholder so a single opaque blob cannot
+// dominate the table. minWidth is the floor a wrapped column is shrunk to.
+func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int, elide bool) error {
 	// Column widths are measured in runes (not bytes) so multi-byte content
 	// (e.g. Cyrillic names on a KeyStack cloud) aligns with the ASCII border,
 	// matching fmt's rune-based %-*s padding used below.
-	widths := make([]int, len(cols))
+	natural := make([]int, len(cols))
 	for i, c := range cols {
-		widths[i] = utf8.RuneCountInString(c)
+		natural[i] = utf8.RuneCountInString(c)
 	}
 	strRows := make([][]string, len(rows))
 	for ri, r := range rows {
@@ -304,12 +327,40 @@ func writeTable(w io.Writer, cols []string, rows [][]any) error {
 				v = r[ci]
 			}
 			s := oneLine(cell(v))
+			if elide {
+				s = elideCell(s)
+			}
 			sr[ci] = s
-			if n := utf8.RuneCountInString(s); n > widths[ci] {
-				widths[ci] = n
+			if n := utf8.RuneCountInString(s); n > natural[ci] {
+				natural[ci] = n
 			}
 		}
 		strRows[ri] = sr
+	}
+
+	assigned := natural
+	if fitWidth > 0 {
+		assigned = shrinkWidths(natural, fitWidth, minWidth)
+	}
+
+	// Wrap the header and every cell to its assigned width, then set the final
+	// column widths to the widest wrapped line so the borders stay tight.
+	widths := make([]int, len(cols))
+	wrapHeader := make([][]string, len(cols))
+	for i, c := range cols {
+		wrapHeader[i] = wrapText(c, assigned[i])
+		widths[i] = maxLineWidth(wrapHeader[i])
+	}
+	wrapRows := make([][][]string, len(strRows))
+	for ri, sr := range strRows {
+		wr := make([][]string, len(cols))
+		for ci := range cols {
+			wr[ci] = wrapText(sr[ci], assigned[ci])
+			if n := maxLineWidth(wr[ci]); n > widths[ci] {
+				widths[ci] = n
+			}
+		}
+		wrapRows[ri] = wr
 	}
 
 	border := func() error {
@@ -322,31 +373,194 @@ func writeTable(w io.Writer, cols []string, rows [][]any) error {
 		_, err := fmt.Fprintln(w, b.String())
 		return err
 	}
-	line := func(cells []string) error {
-		var b strings.Builder
-		b.WriteByte('|')
-		for i, c := range cells {
-			fmt.Fprintf(&b, " %-*s |", widths[i], c)
+	// row prints a logical row whose cells may each span several physical lines,
+	// padding shorter cells with blanks so every column stays aligned.
+	row := func(cells [][]string) error {
+		h := 1
+		for _, c := range cells {
+			if len(c) > h {
+				h = len(c)
+			}
 		}
-		_, err := fmt.Fprintln(w, b.String())
-		return err
+		for li := 0; li < h; li++ {
+			var b strings.Builder
+			b.WriteByte('|')
+			for ci := range cells {
+				var s string
+				if li < len(cells[ci]) {
+					s = cells[ci][li]
+				}
+				fmt.Fprintf(&b, " %-*s |", widths[ci], s)
+			}
+			if _, err := fmt.Fprintln(w, b.String()); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	if err := border(); err != nil {
 		return err
 	}
-	if err := line(cols); err != nil {
+	if err := row(wrapHeader); err != nil {
 		return err
 	}
 	if err := border(); err != nil {
 		return err
 	}
-	for _, sr := range strRows {
-		if err := line(sr); err != nil {
+	for _, wr := range wrapRows {
+		if err := row(wr); err != nil {
 			return err
 		}
 	}
 	return border()
+}
+
+// fitWidth resolves the width the table should be fitted to: an explicit
+// --max-width wins; otherwise a TTY is fitted to its size (or --fit-width forces
+// fitting when piped), falling back to $COLUMNS then 80. Piped output with no
+// explicit request returns 0 (unbounded), matching OSC.
+func (o *Options) fitWidth(w io.Writer) int {
+	if o.MaxWidth > 0 {
+		return o.MaxWidth
+	}
+	isTTY, width := terminalSize(w)
+	if !o.FitWidth && !isTTY {
+		return 0
+	}
+	if width <= 0 {
+		width = columnsEnv()
+	}
+	if width <= 0 {
+		width = 80
+	}
+	return width
+}
+
+// terminalSize reports whether w is a terminal and, if so, its width in columns.
+func terminalSize(w io.Writer) (isTTY bool, width int) {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false, 0
+	}
+	fd := int(f.Fd())
+	if !term.IsTerminal(fd) {
+		return false, 0
+	}
+	if wd, _, err := term.GetSize(fd); err == nil && wd > 0 {
+		return true, wd
+	}
+	return true, 0
+}
+
+func columnsEnv() int {
+	if c := os.Getenv("COLUMNS"); c != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(c)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// shrinkWidths reduces column widths so the rendered table fits termWidth,
+// following cliff's algorithm: columns already narrower than the per-column
+// optimum are left untouched, and the surplus width is divided among the
+// wider ("shrinkable") columns, each floored at minWidth. If the table already
+// fits, the natural widths are returned unchanged.
+func shrinkWidths(natural []int, termWidth, minWidth int) []int {
+	ncols := len(natural)
+	total := 1
+	for _, wd := range natural {
+		total += wd + 3
+	}
+	if total <= termWidth || ncols == 0 {
+		return natural
+	}
+	usable := termWidth - 1 - 3*ncols
+	if usable < 0 {
+		usable = 0
+	}
+	optimal := usable / ncols
+	shrinkRemaining := usable
+	var shrink []int
+	for i, wd := range natural {
+		if wd <= optimal {
+			shrinkRemaining -= wd
+		} else {
+			shrink = append(shrink, i)
+		}
+	}
+	if len(shrink) == 0 {
+		return natural
+	}
+	out := make([]int, ncols)
+	copy(out, natural)
+	shrinkTo := shrinkRemaining / len(shrink)
+	for _, i := range shrink[:len(shrink)-1] {
+		out[i] = max(minWidth, shrinkTo)
+		shrinkRemaining -= shrinkTo
+	}
+	last := shrink[len(shrink)-1]
+	out[last] = max(minWidth, shrinkRemaining)
+	return out
+}
+
+// elideCell replaces a cell longer than maxTableCell with a placeholder naming
+// its size and how to see the full value.
+func elideCell(s string) string {
+	if utf8.RuneCountInString(s) <= maxTableCell {
+		return s
+	}
+	return fmt.Sprintf("<%d bytes; use -f yaml or -c <column> to show full value>", len(s))
+}
+
+func maxLineWidth(lines []string) int {
+	n := 0
+	for _, ln := range lines {
+		if w := utf8.RuneCountInString(ln); w > n {
+			n = w
+		}
+	}
+	return n
+}
+
+// wrapText breaks s into physical lines no wider than width (in runes),
+// preferring to wrap at spaces but hard-breaking tokens longer than width.
+// A width <= 0, or a string already within width, is returned as a single line.
+func wrapText(s string, width int) []string {
+	if width <= 0 || utf8.RuneCountInString(s) <= width {
+		return []string{s}
+	}
+	var lines []string
+	var cur []rune
+	flush := func() {
+		lines = append(lines, string(cur))
+		cur = cur[:0]
+	}
+	for _, word := range strings.Split(s, " ") {
+		wr := []rune(word)
+		for len(wr) > width {
+			if len(cur) > 0 {
+				flush()
+			}
+			lines = append(lines, string(wr[:width]))
+			wr = wr[width:]
+		}
+		switch {
+		case len(cur) == 0:
+			cur = append(cur, wr...)
+		case len(cur)+1+len(wr) <= width:
+			cur = append(cur, ' ')
+			cur = append(cur, wr...)
+		default:
+			flush()
+			cur = append(cur, wr...)
+		}
+	}
+	if len(cur) > 0 || len(lines) == 0 {
+		lines = append(lines, string(cur))
+	}
+	return lines
 }
 
 // ansiRe matches ANSI/VT escape sequences: CSI (ESC [ …), OSC (ESC ] … BEL/ST),
