@@ -10,6 +10,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -249,6 +250,7 @@ func serverListTable(list []servers.Server, long bool) output.Table {
 }
 
 func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var userData bool
 	cmd := &cobra.Command{
 		Use:   "show <server>",
 		Short: "Show details of a server",
@@ -262,13 +264,17 @@ func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runServerShow(ctx, client, o, args[0], cmd.OutOrStdout())
+			return runServerShow(ctx, client, o, args[0], userData, cmd.OutOrStdout())
 		},
 	}
+	// user_data is a large base64 blob elided from the default table; --user-data
+	// dumps just the decoded cloud-init/script so it can be piped or read.
+	cmd.Flags().BoolVar(&userData, "user-data", false,
+		"output only the server's user_data, base64-decoded")
 	return cmd
 }
 
-func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
+func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, userData bool, w io.Writer) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -287,8 +293,27 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("showing server %q: %w", ref, err)
 	}
+	if userData {
+		return writeServerUserData(body.Server, w)
+	}
 	fields, values := showAllServerFields(body.Server)
 	return o.WriteSingle(w, fields, values)
+}
+
+// writeServerUserData decodes the server's base64 user_data and writes it raw.
+// It errors when the server carries no user_data; a value that is not valid
+// base64 is written through unchanged (nova stores it verbatim).
+func writeServerUserData(server map[string]any, w io.Writer) error {
+	raw, _ := server["OS-EXT-SRV-ATTR:user_data"].(string)
+	if raw == "" {
+		return fmt.Errorf("server has no user_data")
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil {
+		_, err := w.Write(decoded)
+		return err
+	}
+	_, err := io.WriteString(w, raw)
+	return err
 }
 
 // serverCreateFlags holds the parameters accepted by "server create".

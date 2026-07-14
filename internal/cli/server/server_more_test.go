@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -76,7 +77,7 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runServerShow(context.Background(), client, o, serverUUID, &buf); err != nil {
+	if err := runServerShow(context.Background(), client, o, serverUUID, false, &buf); err != nil {
 		t.Fatalf("runServerShow: %v", err)
 	}
 	if gotMethod != http.MethodGet {
@@ -96,6 +97,49 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+func TestRunServerShow_UserDataDecoded(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const plain = "#cloud-config\npassword: hunter2\n"
+	encoded := base64.StdEncoding.EncodeToString([]byte(plain))
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"server":{"id":"` + serverUUID +
+			`","name":"web-1","OS-EXT-SRV-ATTR:user_data":"` + encoded + `"}}`))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runServerShow(context.Background(), client, o, serverUUID, true, &buf); err != nil {
+		t.Fatalf("runServerShow: %v", err)
+	}
+	if got := buf.String(); got != plain {
+		t.Errorf("--user-data output = %q, want decoded %q", got, plain)
+	}
+}
+
+func TestRunServerShow_UserDataAbsentErrors(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"server":{"id":"` + serverUUID + `","name":"web-1"}}`))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runServerShow(context.Background(), client, o, serverUUID, true, &buf); err == nil {
+		t.Error("expected error when server has no user_data")
 	}
 }
 
