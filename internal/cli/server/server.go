@@ -296,7 +296,10 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if userData {
 		return writeServerUserData(body.Server, w)
 	}
-	fields, values := showAllServerFields(body.Server)
+	// json/yaml keep the raw structured values so they can be parsed; the
+	// text views (table/csv/value) flatten them OSC-style.
+	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
+	fields, values := showServerFields(body.Server, flatten)
 	return o.WriteSingle(w, fields, values)
 }
 

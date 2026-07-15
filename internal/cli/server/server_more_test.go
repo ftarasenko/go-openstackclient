@@ -100,6 +100,92 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 	}
 }
 
+// showFixture is a server whose raw nova body exercises the OSC-parity
+// rendering: aliased/dropped attributes, an empty (volume-booted) image, a
+// numeric power_state, and nested flavor/volumes.
+const showFixture = `{"server":{
+	"id":"` + serverUUID + `","name":"web-1",
+	"tenant_id":"proj-1","metadata":{},"links":[{"rel":"self","href":"http://x"}],
+	"image":"","OS-EXT-STS:power_state":1,
+	"flavor":{"original_name":"m1.small","vcpus":2},
+	"os-extended-volumes:volumes_attached":[{"id":"vol-aaa"}]
+}}`
+
+func TestRunServerShow_JSONStructuredAndAliased(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(showFixture))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	if err := runServerShow(context.Background(), client, o, serverUUID, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json output not parseable: %v\n%s", err, buf.String())
+	}
+	// #1: nested attributes stay structured, not flattened to strings.
+	if _, ok := got["flavor"].(map[string]any); !ok {
+		t.Errorf("flavor should be a JSON object, got %T", got["flavor"])
+	}
+	if _, ok := got["volumes_attached"].([]any); !ok {
+		t.Errorf("volumes_attached should be a JSON array, got %T", got["volumes_attached"])
+	}
+	// #2: aliased/dropped keys.
+	for _, want := range []string{"project_id", "properties", "volumes_attached"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("missing aliased key %q", want)
+		}
+	}
+	for _, gone := range []string{"tenant_id", "metadata", "links", "os-extended-volumes:volumes_attached"} {
+		if _, ok := got[gone]; ok {
+			t.Errorf("key %q should be renamed/dropped", gone)
+		}
+	}
+	// #3: power_state stays numeric in JSON; empty image becomes the N/A note.
+	if got["OS-EXT-STS:power_state"] != float64(1) {
+		t.Errorf("power_state = %v, want raw 1 in JSON", got["OS-EXT-STS:power_state"])
+	}
+	if got["image"] != "N/A (booted from volume)" {
+		t.Errorf("image = %v, want N/A note", got["image"])
+	}
+}
+
+func TestRunServerShow_TableHumanized(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(showFixture))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runServerShow(context.Background(), client, o, serverUUID, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// #3: table humanizes power_state and the empty image.
+	for _, want := range []string{"Running", "N/A (booted from volume)", "project_id"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table missing %q:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"tenant_id", "| links", "| metadata"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("table should not contain %q:\n%s", gone, out)
+		}
+	}
+}
+
 func TestRunServerShow_UserDataDecoded(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
