@@ -7,6 +7,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/endpoints"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/services"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -86,11 +87,47 @@ func runEndpointList(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return fmt.Errorf("parsing endpoint list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Region", "Service ID", "Interface", "Enabled", "URL"}, Rows: make([][]any, 0, len(all))}
+	// Upstream `openstack endpoint list` renders the service name and type, not
+	// the raw service_id the endpoints API returns, so resolve them from the
+	// catalog with a single /services list keyed by ID.
+	catalog, err := serviceCatalog(ctx, client)
+	if err != nil {
+		return fmt.Errorf("listing services: %w", err)
+	}
+	// Column order mirrors upstream OSC: Service Name/Type after Region, then
+	// Enabled before Interface.
+	t := output.Table{Columns: []string{"ID", "Region", "Service Name", "Service Type", "Enabled", "Interface", "URL"}, Rows: make([][]any, 0, len(all))}
 	for _, e := range all {
-		t.Rows = append(t.Rows, []any{e.ID, e.Region, e.ServiceID, string(e.Availability), e.Enabled, e.URL})
+		svc := catalog[e.ServiceID]
+		t.Rows = append(t.Rows, []any{e.ID, e.Region, svc.name, svc.typ, e.Enabled, string(e.Availability), e.URL})
 	}
 	return o.WriteList(w, t)
+}
+
+// serviceInfo carries the human-facing name and type of a catalog service.
+type serviceInfo struct {
+	name string
+	typ  string
+}
+
+// serviceCatalog lists the identity catalog once and indexes it by service ID
+// so endpoint rows can be enriched with the service name and type the way
+// upstream OSC does. A service_id with no matching entry (e.g. a deleted
+// service) yields the zero serviceInfo, i.e. blank cells, matching OSC.
+func serviceCatalog(ctx context.Context, client *gophercloud.ServiceClient) (map[string]serviceInfo, error) {
+	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all, err := services.ExtractServices(pages)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]serviceInfo, len(all))
+	for _, s := range all {
+		m[s.ID] = serviceInfo{name: s.Name, typ: s.Type}
+	}
+	return m, nil
 }
 
 func newEndpointShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -117,9 +154,15 @@ func runEndpointShow(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return fmt.Errorf("showing endpoint %q: %w", id, err)
 	}
+	// Enrich with the service name and type like upstream OSC; a lookup failure
+	// (e.g. the service was deleted) leaves them blank rather than failing show.
+	var svcName, svcType string
+	if s, err := services.Get(ctx, client, e.ServiceID).Extract(); err == nil {
+		svcName, svcType = s.Name, s.Type
+	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Region", "Service ID", "Interface", "Enabled", "URL", "Description"},
-		[]any{e.ID, e.Region, e.ServiceID, string(e.Availability), e.Enabled, e.URL, e.Description})
+		[]string{"ID", "Region", "Service ID", "Service Name", "Service Type", "Interface", "Enabled", "URL", "Description"},
+		[]any{e.ID, e.Region, e.ServiceID, svcName, svcType, string(e.Availability), e.Enabled, e.URL, e.Description})
 }
 
 type endpointWriteFlags struct {
