@@ -26,6 +26,12 @@ func TestRunEndpointList_RequestAndTableOutput(t *testing.T) {
 			{"id":"e1","region":"RegionOne","service_id":"svc1","interface":"public","enabled":true,"url":"https://nova"}
 		]}`))
 	})
+	// endpoint list resolves service_id → name/type via the catalog.
+	fakeServer.Mux.HandleFunc("/services", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"services":[{"id":"svc1","name":"nova","type":"compute"}]}`))
+	})
 
 	client := identityClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
@@ -40,10 +46,14 @@ func TestRunEndpointList_RequestAndTableOutput(t *testing.T) {
 	if gotPath != "/endpoints" {
 		t.Errorf("path = %q, want /endpoints", gotPath)
 	}
-	for _, want := range []string{"e1", "RegionOne", "svc1", "public", "https://nova"} {
+	// The raw service_id is replaced by the resolved name and type.
+	for _, want := range []string{"e1", "RegionOne", "nova", "compute", "public", "https://nova"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("output missing %q\n---\n%s", want, buf.String())
 		}
+	}
+	if strings.Contains(buf.String(), "svc1") {
+		t.Errorf("output should not contain raw service_id\n---\n%s", buf.String())
 	}
 }
 
@@ -59,6 +69,12 @@ func TestRunEndpointShow_RequestAndOutput(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"endpoint":{"id":"e1","region":"RegionOne","service_id":"svc1","interface":"public","enabled":true,"url":"https://nova"}}`))
 	})
+	// endpoint show enriches with the service name/type via a per-service Get.
+	fakeServer.Mux.HandleFunc("/services/svc1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"service":{"id":"svc1","name":"nova","type":"compute"}}`))
+	})
 
 	client := identityClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
@@ -72,8 +88,10 @@ func TestRunEndpointShow_RequestAndOutput(t *testing.T) {
 	if gotPath != "/endpoints/e1" {
 		t.Errorf("path = %q, want /endpoints/e1", gotPath)
 	}
-	if !strings.Contains(buf.String(), "https://nova") {
-		t.Errorf("output missing url\n---\n%s", buf.String())
+	for _, want := range []string{"https://nova", "nova", "compute"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("output missing %q\n---\n%s", want, buf.String())
+		}
 	}
 }
 
