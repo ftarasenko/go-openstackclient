@@ -636,6 +636,101 @@ func TestRunRecordSetDelete_ResolvesAndDeletes(t *testing.T) {
 	}
 }
 
+// recordSetListDuplicateNameBody has two recordsets that share a name but differ
+// by RRTYPE (A and AAAA) — a legal designate configuration. A name-based verb
+// must refuse to guess which one to act on.
+const recordSetListDuplicateNameBody = `{
+  "recordsets": [
+    {
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "zone_id": "11111111-1111-1111-1111-111111111111",
+      "name": "www.example.com.",
+      "type": "A",
+      "records": ["192.0.2.1"],
+      "ttl": 3600,
+      "status": "ACTIVE",
+      "action": "NONE"
+    },
+    {
+      "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "zone_id": "11111111-1111-1111-1111-111111111111",
+      "name": "www.example.com.",
+      "type": "AAAA",
+      "records": ["2001:db8::1"],
+      "ttl": 3600,
+      "status": "ACTIVE",
+      "action": "NONE"
+    }
+  ]
+}`
+
+// TestRunRecordSetDelete_ByIDSkipsListing verifies that deleting by recordset ID
+// issues the DELETE directly without first listing the zone's recordsets (the
+// "list all instead of deleting just one" regression).
+func TestRunRecordSetDelete_ByIDSkipsListing(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	registerZoneList(fakeServer)
+	// A GET against the recordsets collection means we listed the whole zone
+	// to resolve an ID we already had — that is the bug under test.
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets", func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("recordset delete by ID must not list the zone's recordsets")
+	})
+
+	var gotMethod, gotURL string
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotURL = r.URL.Path
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := dnsClient(fakeServer)
+
+	var buf bytes.Buffer
+	if err := runRecordSetDelete(context.Background(), client, "example.com", []string{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}, &buf); err != nil {
+		t.Fatalf("runRecordSetDelete returned error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("request method = %q, want DELETE", gotMethod)
+	}
+	if gotURL != "/zones/11111111-1111-1111-1111-111111111111/recordsets/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Errorf("delete URL = %q, want nested under the given ids", gotURL)
+	}
+}
+
+// TestRunRecordSetDelete_AmbiguousNameErrors verifies that a name matching more
+// than one recordset (same name, different RRTYPE) is rejected instead of
+// silently deleting an arbitrary match.
+func TestRunRecordSetDelete_AmbiguousNameErrors(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	registerZoneList(fakeServer)
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(recordSetListDuplicateNameBody))
+	})
+	// No DELETE handler: an ambiguous name must never reach a delete request.
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets/", func(_ http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			t.Fatalf("ambiguous name must not issue a DELETE (%s)", r.URL.Path)
+		}
+	})
+
+	client := dnsClient(fakeServer)
+
+	var buf bytes.Buffer
+	err := runRecordSetDelete(context.Background(), client, "example.com", []string{"www.example.com"}, &buf)
+	if err == nil {
+		t.Fatal("runRecordSetDelete should error on an ambiguous recordset name")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("error = %v, want it to report the ambiguity", err)
+	}
+}
+
 func TestRunRecordSetSet_PutBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
