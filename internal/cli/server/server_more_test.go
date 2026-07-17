@@ -1003,3 +1003,85 @@ func TestRunHypervisorList_RequestAndOutput(t *testing.T) {
 		}
 	}
 }
+
+const hypervisorDetailBody = `{"hypervisors":[
+	{"id":"1","hypervisor_hostname":"cmp1","hypervisor_type":"QEMU","hypervisor_version":2010000,
+	 "state":"up","status":"enabled","host_ip":"10.0.0.11","vcpus":32,"vcpus_used":8,
+	 "memory_mb":131072,"memory_mb_used":16384,"free_ram_mb":114688,"local_gb":500,"local_gb_used":100,
+	 "free_disk_gb":400,"disk_available_least":380,"running_vms":4,"current_workload":0,
+	 "cpu_info":{"vendor":"Intel","arch":"x86_64","model":"Skylake"},
+	 "service":{"id":"7","host":"cmp1","disabled_reason":""}},
+	{"id":"2","hypervisor_hostname":"cmp2","hypervisor_type":"QEMU","hypervisor_version":2010000,
+	 "state":"down","status":"disabled","vcpus":32,"vcpus_used":0,"memory_mb":131072,"memory_mb_used":0,
+	 "service":{"id":"8","host":"cmp2","disabled_reason":"maintenance"}}
+]}`
+
+func TestRunHypervisorShow_ByHostname(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotMethod, gotVer string
+	fakeServer.Mux.HandleFunc("/os-hypervisors/detail", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotVer = r.Header.Get("OpenStack-API-Version")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(hypervisorDetailBody))
+	})
+	// os-aggregates is looked up best-effort; return an aggregate covering cmp1.
+	fakeServer.Mux.HandleFunc("/os-aggregates", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"aggregates":[{"id":1,"name":"az-1","hosts":["cmp1"]}]}`))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runHypervisorShow(context.Background(), client, o, "cmp1", &buf); err != nil {
+		t.Fatalf("runHypervisorShow: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want GET", gotMethod)
+	}
+	// Usage fields were dropped at nova 2.88; the detail request must pin the
+	// default microversion so they come back populated.
+	if gotVer != "" {
+		t.Errorf("OpenStack-API-Version = %q, want empty (default 2.1)", gotVer)
+	}
+	out := buf.String()
+	for _, want := range []string{"cmp1", "QEMU", "10.0.0.11", "az-1", "Skylake", "Intel", "x86_64", "131072", "maintenance"} {
+		if want == "maintenance" {
+			continue // belongs to cmp2, must NOT appear
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("hypervisor show output missing %q\n---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "maintenance") {
+		t.Errorf("hypervisor show for cmp1 leaked cmp2 data:\n%s", out)
+	}
+}
+
+func TestRunHypervisorShow_NotFound(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/os-hypervisors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(hypervisorDetailBody))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	err := runHypervisorShow(context.Background(), client, o, "nope", &buf)
+	if err == nil {
+		t.Fatal("runHypervisorShow should error for an unknown hypervisor")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want not-found", err)
+	}
+}

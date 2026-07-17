@@ -8,6 +8,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/recordsets"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
+
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 )
 
 // withTrailingDot returns the DNS-canonical form of a name (designate zone and
@@ -42,10 +44,22 @@ func resolveZoneID(ctx context.Context, client *gophercloud.ServiceClient, ref s
 }
 
 // resolveRecordSetID turns a recordset reference (a name or an ID) into a
-// recordset ID within the given zone, matching on name (tolerating a missing
-// trailing dot) or on an exact ID.
+// recordset ID within the given zone. It mirrors the shared name→ID policy in
+// internal/cli/resolve: a UUID is returned untouched with no API call, and a
+// name is resolved with a server-side name filter (not by listing the whole
+// zone) so a targeted verb such as "recordset delete" acts on exactly the named
+// recordset.
+//
+// A recordset name is *not* unique within a zone — an A and an AAAA record can
+// both be named "www.example.com." — so a name that matches more than one
+// recordset is rejected rather than silently resolving to an arbitrary match;
+// the caller must disambiguate with the recordset ID.
 func resolveRecordSetID(ctx context.Context, client *gophercloud.ServiceClient, zoneID, ref string) (string, error) {
-	pages, err := recordsets.ListByZone(client, zoneID, recordsets.ListOpts{}).AllPages(ctx)
+	if resolve.IsUUID(ref) {
+		return ref, nil
+	}
+	want := withTrailingDot(ref)
+	pages, err := recordsets.ListByZone(client, zoneID, recordsets.ListOpts{Name: want}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolving recordset %q: %w", ref, err)
 	}
@@ -53,11 +67,24 @@ func resolveRecordSetID(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return "", fmt.Errorf("resolving recordset %q: %w", ref, err)
 	}
-	want := withTrailingDot(ref)
+	// designate's ?name= filter can match loosely; keep only exact-name hits.
+	var matches []recordsets.RecordSet
 	for _, rs := range all {
-		if rs.ID == ref || rs.Name == ref || rs.Name == want {
-			return rs.ID, nil
+		if rs.Name == want || rs.Name == ref {
+			matches = append(matches, rs)
 		}
 	}
-	return "", fmt.Errorf("recordset %q not found in zone %s", ref, zoneID)
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("recordset %q not found in zone %s", ref, zoneID)
+	case 1:
+		return matches[0].ID, nil
+	default:
+		types := make([]string, 0, len(matches))
+		for _, rs := range matches {
+			types = append(types, rs.Type)
+		}
+		return "", fmt.Errorf("recordset name %q is ambiguous in zone %s (matches types %s); specify the recordset ID instead",
+			ref, zoneID, strings.Join(types, ", "))
+	}
 }
