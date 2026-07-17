@@ -24,7 +24,99 @@ func newHypervisorCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Short: "Compute hypervisor commands",
 	}
 	cmd.AddCommand(newHypervisorListCommand(a, o))
+	cmd.AddCommand(newHypervisorShowCommand(a, o))
 	return cmd
+}
+
+func newHypervisorShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <hypervisor>",
+		Short: "Show details of a hypervisor",
+		Long: "Show details of a single hypervisor, addressed by its ID or its " +
+			"hypervisor hostname (mirrors `openstack hypervisor show`).",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			compute, _, err := newComputeSession(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runHypervisorShow(ctx, compute, o, args[0], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+// runHypervisorShow resolves a hypervisor by ID or hostname and renders its
+// full detail. Like the gauge path, it queries with the default microversion
+// (2.1) rather than the negotiated "latest": nova removed the usage fields
+// (vcpus, memory_mb, local_gb, cpu_info, host_ip, …) at microversion 2.88, so a
+// negotiated-latest request would report them as 0. 2.1 keeps every field and is
+// supported by every nova, which also avoids the UUID-vs-integer hypervisor ID
+// split introduced at 2.53.
+func runHypervisorShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
+	hvClient := *client
+	hvClient.Microversion = ""
+
+	pages, err := hypervisors.List(&hvClient, nil).AllPages(ctx)
+	if err != nil {
+		return fmt.Errorf("listing hypervisors: %w", err)
+	}
+	all, err := hypervisors.ExtractHypervisors(pages)
+	if err != nil {
+		return fmt.Errorf("parsing hypervisor list: %w", err)
+	}
+
+	var matches []hypervisors.Hypervisor
+	for _, h := range all {
+		if h.ID == ref || h.HypervisorHostname == ref {
+			matches = append(matches, h)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return fmt.Errorf("hypervisor %q not found", ref)
+	case 1:
+	default:
+		return fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, len(matches))
+	}
+	h := matches[0]
+
+	// Aggregates are looked up best-effort; a cloud that hides os-aggregates or a
+	// non-admin token simply yields no aggregate column.
+	var aggrs []string
+	if apages, aerr := aggregates.List(client).AllPages(ctx); aerr == nil {
+		if aggs, xerr := aggregates.ExtractAggregates(apages); xerr == nil {
+			for _, ag := range aggs {
+				if contains(ag.Hosts, h.HypervisorHostname) {
+					aggrs = append(aggrs, ag.Name)
+				}
+			}
+		}
+	}
+
+	fields := []string{
+		"id", "hypervisor_hostname", "hypervisor_type", "hypervisor_version",
+		"host_ip", "state", "status", "aggregates",
+		"vcpus", "vcpus_used", "memory_mb", "memory_mb_used", "free_ram_mb",
+		"local_gb", "local_gb_used", "free_disk_gb", "disk_available_least",
+		"running_vms", "current_workload",
+		"cpu_info_vendor", "cpu_info_arch", "cpu_info_model",
+		"service_host", "service_id", "service_disabled_reason",
+	}
+	values := []any{
+		h.ID, h.HypervisorHostname, h.HypervisorType, h.HypervisorVersion,
+		h.HostIP, h.State, h.Status, strings.Join(aggrs, ", "),
+		h.VCPUs, h.VCPUsUsed, h.MemoryMB, h.MemoryMBUsed, h.FreeRamMB,
+		h.LocalGB, h.LocalGBUsed, h.FreeDiskGB, h.DiskAvailableLeast,
+		h.RunningVMs, h.CurrentWorkload,
+		h.CPUInfo.Vendor, h.CPUInfo.Arch, h.CPUInfo.Model,
+		h.Service.Host, h.Service.ID, h.Service.DisabledReason,
+	}
+	return o.WriteSingle(w, fields, values)
 }
 
 func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
