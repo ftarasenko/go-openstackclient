@@ -38,6 +38,20 @@ builds:
       - -s -w -X main.version={{ .Version }}
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64] # -> 6 combos, matches the previous hand-rolled matrix
+    # Authenticode-sign each binary in place right after it is built, BEFORE it is
+    # archived — so the .exe *inside* the Windows .zip carries a valid signature
+    # (SmartScreen / "Unknown publisher" keys off the binary, not the container).
+    # A post-build hook (not binary_signs) keeps signing in place without
+    # registering a duplicate artifact. scripts/authenticode-sign.sh self-gates:
+    # it signs only *.exe via osslsigncode and is a no-op for linux/darwin and
+    # whenever WINDOWS_CERT_FILE is unset (a --snapshot build, or a release cut
+    # before the cert is provisioned) — so a cert-less run ships unsigned binaries
+    # instead of failing. CI populates WINDOWS_CERT_FILE / WINDOWS_CERT_PASSWORD
+    # from repo secrets and installs osslsigncode (see release.yml).
+    hooks:
+      post:
+        - cmd: ./scripts/authenticode-sign.sh "{{ .Path }}"
+          output: true
 
 archives:
   - id: koc
@@ -49,6 +63,8 @@ archives:
       - README.md
       - src: completions/*
         dst: completions
+    # Windows ships as a .zip (not a bare .exe) so it can carry LICENSE + README
+    # alongside the Authenticode-signed koc.exe; tar.gz is unfriendly on Windows.
     format_overrides:
       - goos: windows
         formats: [zip]

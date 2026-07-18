@@ -69,6 +69,25 @@ users wire it up with the command above.)
 Each release publishes static binaries for **linux/amd64, linux/arm64,
 darwin/amd64, darwin/arm64, windows/amd64, windows/arm64** with a
 `checksums.txt`, attached to the [GitHub release](https://github.com/ftarasenko/go-openstackclient/releases).
+Linux and macOS builds ship as `tar.gz`; Windows ships as a `.zip` (see below).
+Every archive bundles `LICENSE`, `README.md`, and `completions/`.
+
+### Windows
+
+Windows releases ship as `koc_<version>_windows_<arch>.zip` — a `.zip` rather
+than a bare `.exe` so the archive can carry `LICENSE` and `README.md` next to the
+binary. The `koc.exe` inside is **Authenticode-signed**, so Windows
+SmartScreen / "Unknown publisher" prompts are avoided and the publisher is
+verifiable. Unzip anywhere on `PATH`, then check the signature:
+
+```powershell
+# PowerShell: Valid == trusted, signed, timestamped
+Get-AuthenticodeSignature .\koc.exe | Format-List Status, SignerCertificate
+```
+
+(Signing is provisioned in CI; if a release is cut before the code-signing
+certificate is configured, that release's binaries are unsigned — verify against
+`checksums.txt` in that case.)
 
 ## Build
 

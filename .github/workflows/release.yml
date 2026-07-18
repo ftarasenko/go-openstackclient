@@ -71,6 +71,28 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: scripts/release-notes.sh "$TAG" | tee "$RUNNER_TEMP/RELEASE_NOTES.md"
 
+      # Authenticode signing for the Windows binaries. Decodes the PKCS#12
+      # code-signing cert from the WINDOWS_CERT_BASE64 secret to a temp file and
+      # installs osslsigncode, then exports WINDOWS_CERT_FILE / WINDOWS_CERT_PASSWORD
+      # for the GoReleaser build post-hook (scripts/authenticode-sign.sh). If the
+      # secret is unset this is a no-op and the hook ships unsigned Windows
+      # binaries (it self-gates on WINDOWS_CERT_FILE) — the release still succeeds.
+      - name: Set up Windows code signing
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if [ -z "${WINDOWS_CERT_BASE64:-}" ]; then
+            echo "::warning::WINDOWS_CERT_BASE64 secret not set — Windows binaries will be UNSIGNED."
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y osslsigncode
+          cert="$RUNNER_TEMP/koc-codesign.p12"
+          printf '%s' "$WINDOWS_CERT_BASE64" | base64 -d > "$cert"
+          echo "WINDOWS_CERT_FILE=$cert" >> "$GITHUB_ENV"
+          echo "WINDOWS_CERT_PASSWORD=$WINDOWS_CERT_PASSWORD" >> "$GITHUB_ENV"
+
       # Builds the 6-target matrix, publishes the GitHub Release, and pushes
       # Casks/koc.rb to ftarasenko/homebrew-tap (needs the cross-repo PAT).
       - name: Run GoReleaser
