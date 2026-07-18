@@ -209,6 +209,27 @@ Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommit
   `scripts/release-notes.sh` (GoReleaser v2 ignores `--release-notes`; see below).
 - `.github/workflows/delete-release.yml` — dispatch to delete a release + tag.
 
+### Windows packaging & Authenticode signing
+
+The Windows targets ship as a **`.zip`** (not a bare `.exe`) so the archive can
+bundle `LICENSE` + `README.md` next to `koc.exe` (`format_overrides` in
+`.goreleaser.yaml`; `tar.gz` is unfriendly on Windows). The `koc.exe` is
+**Authenticode-signed** by a GoReleaser build **post-hook** that runs
+`scripts/authenticode-sign.sh` (osslsigncode) on each binary *before* archiving —
+so the signed exe is what lands in the zip. A post-hook (rather than
+`binary_signs`) signs in place without registering a duplicate artifact; the
+script signs only `*.exe` and passes linux/darwin through untouched.
+
+Signing is gated on `WINDOWS_CERT_FILE`: the `release.yml` "Set up Windows code
+signing" step decodes the `WINDOWS_CERT_BASE64` secret (a base64-encoded PKCS#12
+code-signing cert) to a temp file, installs `osslsigncode`, and exports
+`WINDOWS_CERT_FILE` / `WINDOWS_CERT_PASSWORD` (from the `WINDOWS_CERT_PASSWORD`
+secret). If those secrets are absent the step warns and the signing script
+no-ops — the release still succeeds with **unsigned** Windows binaries
+(verify via `checksums.txt`). To enable signing, add repo secrets:
+`WINDOWS_CERT_BASE64` (`base64 -w0 cert.p12`) and `WINDOWS_CERT_PASSWORD`. The
+timestamp URL defaults to DigiCert; override with `WINDOWS_CERT_TS_URL`.
+
 ### Release notes are generated from the commit log
 
 `release.yml` builds the GitHub Release body by running `scripts/release-notes.sh
