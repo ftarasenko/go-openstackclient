@@ -61,7 +61,12 @@ type migrationListFlags struct {
 
 func newServerMigrationCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{Use: "migration", Short: "In-progress and completed server migrations"}
-	cmd.AddCommand(newServerMigrationListCommand(a, o))
+	cmd.AddCommand(
+		newServerMigrationListCommand(a, o),
+		newServerMigrationShowCommand(a, o),
+		newServerMigrationAbortCommand(a, o),
+		newServerMigrationForceCommand(a, o),
+	)
 	return cmd
 }
 
@@ -170,6 +175,184 @@ func runServerMigrationList(ctx context.Context, client *gophercloud.ServiceClie
 		all = all[:f.limit]
 	}
 	return o.WriteList(w, migrationTable(all, f.long))
+}
+
+// serverMigration is the single migration returned by GET
+// /servers/{id}/migrations/{mid} (os-server-migrations, nova 2.23+). Unlike the
+// os-migrations list it carries live-migration progress (disk/memory byte
+// counters) and names the instance as server_uuid.
+type serverMigration struct {
+	ID                   int    `json:"id"`
+	UUID                 string `json:"uuid"`
+	Status               string `json:"status"`
+	ServerUUID           string `json:"server_uuid"`
+	SourceCompute        string `json:"source_compute"`
+	SourceNode           string `json:"source_node"`
+	DestCompute          string `json:"dest_compute"`
+	DestHost             string `json:"dest_host"`
+	DestNode             string `json:"dest_node"`
+	MemoryTotalBytes     int64  `json:"memory_total_bytes"`
+	MemoryProcessedBytes int64  `json:"memory_processed_bytes"`
+	MemoryRemainingBytes int64  `json:"memory_remaining_bytes"`
+	DiskTotalBytes       int64  `json:"disk_total_bytes"`
+	DiskProcessedBytes   int64  `json:"disk_processed_bytes"`
+	DiskRemainingBytes   int64  `json:"disk_remaining_bytes"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
+	ProjectID            string `json:"project_id"`
+	UserID               string `json:"user_id"`
+}
+
+func newServerMigrationShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <server> <migration>",
+		Short: "Show an in-progress or completed server migration",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerMigrationShow(ctx, client, o, args[0], args[1], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+// gophercloud v2 has no os-server-migrations package, so "server migration
+// show" is a raw GET against /servers/{id}/migrations/{migration_id}, decoding
+// into the serverMigration DTO (another AGENTS.md-sanctioned raw fallback).
+func runServerMigrationShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, serverRef, migrationID string, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, serverRef)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Migration serverMigration `json:"migration"`
+	}
+	u := client.ServiceURL("servers", id, "migrations", migrationID)
+	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
+	if r != nil {
+		_ = r.Body.Close()
+	}
+	if err != nil {
+		return fmt.Errorf("showing migration %s of server %q: %w", migrationID, serverRef, err)
+	}
+	m := resp.Migration
+	fields := []string{
+		"ID", "UUID", "Status", "Server UUID",
+		"Source Compute", "Source Node", "Dest Compute", "Dest Host", "Dest Node",
+		"Memory Total Bytes", "Memory Processed Bytes", "Memory Remaining Bytes",
+		"Disk Total Bytes", "Disk Processed Bytes", "Disk Remaining Bytes",
+		"Created At", "Updated At", "Project ID", "User ID",
+	}
+	values := []any{
+		m.ID, m.UUID, m.Status, m.ServerUUID,
+		m.SourceCompute, m.SourceNode, m.DestCompute, m.DestHost, m.DestNode,
+		m.MemoryTotalBytes, m.MemoryProcessedBytes, m.MemoryRemainingBytes,
+		m.DiskTotalBytes, m.DiskProcessedBytes, m.DiskRemainingBytes,
+		m.CreatedAt, m.UpdatedAt, m.ProjectID, m.UserID,
+	}
+	return o.WriteSingle(w, fields, values)
+}
+
+// newServerMigrationAbortCommand implements "server migration abort <server>
+// <migration>" — cancel an in-progress live migration via DELETE
+// /servers/{id}/migrations/{migration_id} (os-server-migrations, nova 2.24+).
+func newServerMigrationAbortCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "abort <server> <migration>",
+		Short: "Abort an in-progress live migration",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerMigrationAbort(ctx, client, args[0], args[1], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+func runServerMigrationAbort(ctx context.Context, client *gophercloud.ServiceClient, serverRef, migrationID string, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, serverRef)
+	if err != nil {
+		return err
+	}
+	u := client.ServiceURL("servers", id, "migrations", migrationID)
+	r, err := client.Delete(ctx, u, &gophercloud.RequestOpts{OkCodes: []int{202}})
+	if r != nil {
+		_ = r.Body.Close()
+	}
+	if err != nil {
+		return fmt.Errorf("aborting migration %s of server %q: %w", migrationID, serverRef, err)
+	}
+	if _, err := fmt.Fprintf(w, "Requested abort of migration %s of server %s\n", migrationID, serverRef); err != nil {
+		return err
+	}
+	return nil
+}
+
+// newServerMigrationForceCommand models the two-word OSC verb "server migration
+// force complete" as a nested "force" parent so cobra resolves it unambiguously
+// (mirrors "server console log show").
+func newServerMigrationForceCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{Use: "force", Short: "Force-control an in-progress migration"}
+	cmd.AddCommand(newServerMigrationForceCompleteCommand(a, o))
+	return cmd
+}
+
+// newServerMigrationForceCompleteCommand implements "server migration force
+// complete <server> <migration>" — force an in-progress live migration to
+// complete now via POST /servers/{id}/migrations/{migration_id}/action with
+// {"force_complete": null} (os-server-migrations, nova 2.22+).
+func newServerMigrationForceCompleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "complete <server> <migration>",
+		Short: "Force an in-progress live migration to complete",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerMigrationForceComplete(ctx, client, args[0], args[1], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+func runServerMigrationForceComplete(ctx context.Context, client *gophercloud.ServiceClient, serverRef, migrationID string, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, serverRef)
+	if err != nil {
+		return err
+	}
+	u := client.ServiceURL("servers", id, "migrations", migrationID, "action")
+	body := map[string]any{"force_complete": nil}
+	r, err := client.Post(ctx, u, body, nil, &gophercloud.RequestOpts{OkCodes: []int{202}})
+	if r != nil {
+		_ = r.Body.Close()
+	}
+	if err != nil {
+		return fmt.Errorf("forcing completion of migration %s of server %q: %w", migrationID, serverRef, err)
+	}
+	if _, err := fmt.Fprintf(w, "Requested force-complete of migration %s of server %s\n", migrationID, serverRef); err != nil {
+		return err
+	}
+	return nil
 }
 
 func migrationTable(list []migration, long bool) output.Table {
