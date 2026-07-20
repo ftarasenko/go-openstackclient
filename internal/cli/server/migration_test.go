@@ -132,9 +132,9 @@ func TestRunServerMigrate_Cold(t *testing.T) {
 
 // TestRunServerMigrate_LiveDefault covers the default (shared-storage) live
 // migration: nova >= 2.25 requires block_migration, which must default to
-// "auto"; host is omitted when no target is given, and disk_over_commit (2.24-)
-// is not sent. This is the case that previously 400'd with a null host and no
-// block_migration.
+// "auto"; host is a required property so it is sent as null when no target is
+// given, and disk_over_commit (2.24-) is not sent. This is the case that
+// previously 400'd — first with no block_migration, then with host omitted.
 func TestRunServerMigrate_LiveDefault(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
@@ -157,8 +157,8 @@ func TestRunServerMigrate_LiveDefault(t *testing.T) {
 	if action["block_migration"] != "auto" {
 		t.Errorf("block_migration = %v, want \"auto\"", action["block_migration"])
 	}
-	if _, ok := action["host"]; ok {
-		t.Errorf("host must be omitted when no target given: %v", action)
+	if v, ok := action["host"]; !ok || v != nil {
+		t.Errorf("host must be sent as null when no target given: %v", action)
 	}
 	if _, ok := action["disk_over_commit"]; ok {
 		t.Errorf("disk_over_commit must not be sent at microversion >= 2.25: %v", action)

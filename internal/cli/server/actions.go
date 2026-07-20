@@ -216,8 +216,10 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 // "server migrate --live-migration". nova requires block_migration: it defaults
 // to "auto" at microversion >= 2.25 (nova picks block vs shared from the
 // instance's storage — the right default for shared storage), and false below;
-// --block-migration / --shared-migration force it. host is part of the body but
-// nullable/optional at >= 2.30, so it is included only when a target is given.
+// --block-migration / --shared-migration force it. host is a *required*
+// property of os-migrateLive at every microversion (nova 400s "'host' is a
+// required property" without it) — it is nullable, so it is always sent, as
+// null when no target host is given to let the scheduler choose.
 // disk_over_commit exists only at <= 2.24, so it is sent there and dropped (with
 // a note) at higher microversions.
 func liveMigrateBody(client *gophercloud.ServiceClient, f *serverMigrateFlags, w io.Writer) (map[string]any, error) {
@@ -235,6 +237,8 @@ func liveMigrateBody(client *gophercloud.ServiceClient, f *serverMigrateFlags, w
 	}
 	if f.host != "" {
 		live["host"] = f.host
+	} else {
+		live["host"] = nil
 	}
 	if !supports225 {
 		live["disk_over_commit"] = f.diskOverCommit
