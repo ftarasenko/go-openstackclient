@@ -30,12 +30,21 @@ func NewRootCommand(version string) *cobra.Command {
 	outOpts := &output.Options{}
 
 	root := &cobra.Command{
-		Use:           "koc",
-		Short:         "koc — a single-binary OpenStack CLI for KeyStack",
-		Long:          "koc is a statically-linked Go replacement for python-openstackclient,\nmirroring the upstream `openstack` noun-verb command syntax.",
-		Version:       version,
-		SilenceUsage:  true,
+		Use:     "koc",
+		Short:   "koc — a single-binary OpenStack CLI for KeyStack",
+		Long:    "koc is a statically-linked Go replacement for python-openstackclient,\nmirroring the upstream `openstack` noun-verb command syntax.",
+		Version: version,
+		// main.go is the single error printer (it prefixes "koc:" and swallows
+		// context.Canceled), so keep errors silenced here to avoid a duplicate.
 		SilenceErrors: true,
+		// Usage is silenced only once we enter the run phase (see
+		// PersistentPreRunE): cobra validates args/flags *before* PersistentPreRunE
+		// runs, so a bad arg count or unknown flag still prints the full usage
+		// block, while a runtime RunE failure (auth/API error) does not.
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
+			return nil
+		},
 	}
 
 	pf := root.PersistentFlags()
