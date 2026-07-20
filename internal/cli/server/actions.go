@@ -110,11 +110,87 @@ func newServerUnlockCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		})
 }
 
+// serverMigrateFlags holds the options accepted by "server migrate". Cold
+// migration is the default; --live-migration switches to a live migration and
+// unlocks its block-migration / disk-overcommit knobs.
+type serverMigrateFlags struct {
+	live           bool
+	host           string
+	blockMigration bool
+	diskOverCommit bool
+}
+
 func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return newSimpleActionCommand(a, o, "migrate", "Cold-migrate a server to another host", "Migrated",
-		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Migrate(ctx, c, id).ExtractErr()
-		})
+	f := &serverMigrateFlags{}
+	cmd := &cobra.Command{
+		Use:   "migrate <server>",
+		Short: "Migrate a server to another host (cold by default; --live-migration for live)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			if !f.live && (f.blockMigration || f.diskOverCommit) {
+				return fmt.Errorf("--block-migration and --disk-overcommit require --live-migration")
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerMigrate(ctx, client, args[0], f, cmd.OutOrStdout())
+		},
+	}
+	fl := cmd.Flags()
+	fl.BoolVar(&f.live, "live-migration", false, "perform a live (non-disruptive) migration instead of a cold one")
+	fl.StringVar(&f.host, "host", "", "target host (omit to let the scheduler choose)")
+	fl.BoolVar(&f.blockMigration, "block-migration", false, "live migration only: migrate local disks by block migration")
+	fl.BoolVar(&f.diskOverCommit, "disk-overcommit", false, "live migration only: allow disk over-commit on the destination")
+	return cmd
+}
+
+func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *serverMigrateFlags, w io.Writer) error {
+	id, err := resolveServerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	if f.live {
+		opts := servers.LiveMigrateOpts{}
+		if f.host != "" {
+			opts.Host = &f.host
+		}
+		if f.blockMigration {
+			bm := true
+			opts.BlockMigration = &bm
+		}
+		if f.diskOverCommit {
+			doc := true
+			opts.DiskOverCommit = &doc
+		}
+		if err := servers.LiveMigrate(ctx, client, id, opts).ExtractErr(); err != nil {
+			return fmt.Errorf("live-migrating server %q: %w", ref, err)
+		}
+		if _, err := fmt.Fprintf(w, "Requested live migration of server %s\n", ref); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Cold migration. gophercloud's servers.Migrate posts {"migrate": null} with
+	// no host; when a target host is requested (nova 2.56+) build the action body
+	// directly so the host reaches nova.
+	if f.host != "" {
+		body := map[string]any{"migrate": map[string]any{"host": f.host}}
+		if err := serverActionNegotiated(ctx, client, id, body); err != nil {
+			return fmt.Errorf("migrating server %q: %w", ref, err)
+		}
+	} else if err := servers.Migrate(ctx, client, id).ExtractErr(); err != nil {
+		return fmt.Errorf("migrating server %q: %w", ref, err)
+	}
+	if _, err := fmt.Fprintf(w, "Migrated server %s\n", ref); err != nil {
+		return err
+	}
+	return nil
 }
 
 // reboot -----------------------------------------------------------------------
