@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,12 +125,13 @@ const (
 // migration is the default; --live-migration switches to a live migration and
 // unlocks its block-migration / disk-overcommit knobs.
 type serverMigrateFlags struct {
-	live           bool
-	host           string
-	blockMigration bool
-	diskOverCommit bool
-	wait           bool
-	waitTimeout    time.Duration
+	live            bool
+	host            string
+	blockMigration  bool
+	sharedMigration bool
+	diskOverCommit  bool
+	wait            bool
+	waitTimeout     time.Duration
 }
 
 func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -141,6 +143,9 @@ func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
+			}
+			if f.blockMigration && f.sharedMigration {
+				return fmt.Errorf("--block-migration and --shared-migration are mutually exclusive")
 			}
 			if !f.live && (f.blockMigration || f.diskOverCommit) {
 				return fmt.Errorf("--block-migration and --disk-overcommit require --live-migration")
@@ -156,8 +161,9 @@ func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl := cmd.Flags()
 	fl.BoolVar(&f.live, "live-migration", false, "perform a live (non-disruptive) migration instead of a cold one")
 	fl.StringVar(&f.host, "host", "", "target host (omit to let the scheduler choose)")
-	fl.BoolVar(&f.blockMigration, "block-migration", false, "live migration only: migrate local disks by block migration")
-	fl.BoolVar(&f.diskOverCommit, "disk-overcommit", false, "live migration only: allow disk over-commit on the destination")
+	fl.BoolVar(&f.blockMigration, "block-migration", false, "live migration only: force a block migration (copy local disks)")
+	fl.BoolVar(&f.sharedMigration, "shared-migration", false, "live migration only: force a shared-storage migration (no disk copy)")
+	fl.BoolVar(&f.diskOverCommit, "disk-overcommit", false, "live migration only: allow disk over-commit on the destination (compute API <= 2.24)")
 	fl.BoolVar(&f.wait, "wait", false, "wait for the migration to finish (server reaches ACTIVE, or VERIFY_RESIZE for a cold migration)")
 	fl.DurationVar(&f.waitTimeout, "wait-timeout", migratePollTimeout, "maximum time to wait for --wait to complete")
 	return cmd
@@ -169,19 +175,18 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 		return err
 	}
 	if f.live {
-		opts := servers.LiveMigrateOpts{}
-		if f.host != "" {
-			opts.Host = &f.host
+		// Build the os-migrateLive body directly rather than via gophercloud's
+		// servers.LiveMigrateOpts: its BlockMigration is a *bool (omitempty), so it
+		// cannot send the "auto" string nova requires at microversion >= 2.25 and
+		// drops block_migration entirely when unset — while always emitting
+		// host:null — which nova 400s with "'block_migration' is a required
+		// property".
+		live, err := liveMigrateBody(client, f, w)
+		if err != nil {
+			return err
 		}
-		if f.blockMigration {
-			bm := true
-			opts.BlockMigration = &bm
-		}
-		if f.diskOverCommit {
-			doc := true
-			opts.DiskOverCommit = &doc
-		}
-		if err := servers.LiveMigrate(ctx, client, id, opts).ExtractErr(); err != nil {
+		body := map[string]any{"os-migrateLive": live}
+		if err := serverActionNegotiated(ctx, client, id, body); err != nil {
 			return fmt.Errorf("live-migrating server %q: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Requested live migration of server %s\n", ref); err != nil {
@@ -205,6 +210,71 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 		return err
 	}
 	return waitForMigration(ctx, client, ref, id, f, w)
+}
+
+// liveMigrateBody builds the os-migrateLive action body, mirroring OSC's
+// "server migrate --live-migration". nova requires block_migration: it defaults
+// to "auto" at microversion >= 2.25 (nova picks block vs shared from the
+// instance's storage — the right default for shared storage), and false below;
+// --block-migration / --shared-migration force it. host is part of the body but
+// nullable/optional at >= 2.30, so it is included only when a target is given.
+// disk_over_commit exists only at <= 2.24, so it is sent there and dropped (with
+// a note) at higher microversions.
+func liveMigrateBody(client *gophercloud.ServiceClient, f *serverMigrateFlags, w io.Writer) (map[string]any, error) {
+	live := map[string]any{}
+	supports225 := computeSupportsMicroversion(client, "2.25")
+	switch {
+	case f.blockMigration:
+		live["block_migration"] = true
+	case f.sharedMigration:
+		live["block_migration"] = false
+	case supports225:
+		live["block_migration"] = "auto"
+	default:
+		live["block_migration"] = false
+	}
+	if f.host != "" {
+		live["host"] = f.host
+	}
+	if !supports225 {
+		live["disk_over_commit"] = f.diskOverCommit
+	} else if f.diskOverCommit {
+		if _, err := fmt.Fprintln(w, "warning: --disk-overcommit is only honored at compute API microversion <= 2.24; ignoring"); err != nil {
+			return nil, err
+		}
+	}
+	return live, nil
+}
+
+// computeSupportsMicroversion reports whether the compute client's negotiated
+// microversion is at least want. "latest" (koc's default) supports everything;
+// an unset microversion is nova's 2.1 baseline and supports nothing newer.
+func computeSupportsMicroversion(client *gophercloud.ServiceClient, want string) bool {
+	if client.Microversion == "latest" {
+		return true
+	}
+	hMaj, hMin, ok := parseMicroversion(client.Microversion)
+	if !ok {
+		return false
+	}
+	wMaj, wMin, _ := parseMicroversion(want)
+	if hMaj != wMaj {
+		return hMaj > wMaj
+	}
+	return hMin >= wMin
+}
+
+func parseMicroversion(v string) (major, minor int, ok bool) {
+	majStr, minStr, found := strings.Cut(v, ".")
+	if !found {
+		return 0, 0, false
+	}
+	major, err1 := strconv.Atoi(majStr)
+	minor, err2 := strconv.Atoi(minStr)
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }
 
 // waitForMigration polls the server until its migration settles, when --wait is
