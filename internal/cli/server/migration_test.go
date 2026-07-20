@@ -130,9 +130,12 @@ func TestRunServerMigrate_Cold(t *testing.T) {
 	}
 }
 
-// TestRunServerMigrate_Live covers the live-migration path: os-migrateLive with
-// host, block_migration and disk_over_commit, and the live confirmation.
-func TestRunServerMigrate_Live(t *testing.T) {
+// TestRunServerMigrate_LiveDefault covers the default (shared-storage) live
+// migration: nova >= 2.25 requires block_migration, which must default to
+// "auto"; host is omitted when no target is given, and disk_over_commit (2.24-)
+// is not sent. This is the case that previously 400'd with a null host and no
+// block_migration.
+func TestRunServerMigrate_LiveDefault(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
@@ -144,25 +147,101 @@ func TestRunServerMigrate_Live(t *testing.T) {
 
 	client := computeClient(fakeServer, "2.90")
 	var buf bytes.Buffer
-	f := &serverMigrateFlags{live: true, host: "cmp-2", blockMigration: true, diskOverCommit: true}
-	if err := runServerMigrate(context.Background(), client, serverUUID, f, &buf); err != nil {
-		t.Fatalf("runServerMigrate live: %v", err)
+	if err := runServerMigrate(context.Background(), client, serverUUID, &serverMigrateFlags{live: true}, &buf); err != nil {
+		t.Fatalf("runServerMigrate live default: %v", err)
 	}
 	action, ok := gotBody["os-migrateLive"].(map[string]any)
 	if !ok {
 		t.Fatalf("body missing os-migrateLive object: %v", gotBody)
 	}
+	if action["block_migration"] != "auto" {
+		t.Errorf("block_migration = %v, want \"auto\"", action["block_migration"])
+	}
+	if _, ok := action["host"]; ok {
+		t.Errorf("host must be omitted when no target given: %v", action)
+	}
+	if _, ok := action["disk_over_commit"]; ok {
+		t.Errorf("disk_over_commit must not be sent at microversion >= 2.25: %v", action)
+	}
+	if !strings.Contains(buf.String(), "Requested live migration of server "+serverUUID) {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+// TestRunServerMigrate_LiveBlockWithHost covers --block-migration + --host: an
+// explicit block migration to a named target host.
+func TestRunServerMigrate_LiveBlockWithHost(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotBody = decodeBody(t, r)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "2.90")
+	var buf bytes.Buffer
+	f := &serverMigrateFlags{live: true, host: "cmp-2", blockMigration: true}
+	if err := runServerMigrate(context.Background(), client, serverUUID, f, &buf); err != nil {
+		t.Fatalf("runServerMigrate live block: %v", err)
+	}
+	action := gotBody["os-migrateLive"].(map[string]any)
 	if action["host"] != "cmp-2" {
 		t.Errorf("host = %v, want cmp-2", action["host"])
 	}
 	if action["block_migration"] != true {
 		t.Errorf("block_migration = %v, want true", action["block_migration"])
 	}
-	if action["disk_over_commit"] != true {
-		t.Errorf("disk_over_commit = %v, want true", action["disk_over_commit"])
+}
+
+// TestRunServerMigrate_LiveShared covers --shared-migration forcing
+// block_migration=false regardless of the "auto" default.
+func TestRunServerMigrate_LiveShared(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotBody = decodeBody(t, r)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "2.90")
+	var buf bytes.Buffer
+	if err := runServerMigrate(context.Background(), client, serverUUID, &serverMigrateFlags{live: true, sharedMigration: true}, &buf); err != nil {
+		t.Fatalf("runServerMigrate live shared: %v", err)
 	}
-	if !strings.Contains(buf.String(), "Requested live migration of server "+serverUUID) {
-		t.Errorf("output = %q", buf.String())
+	action := gotBody["os-migrateLive"].(map[string]any)
+	if action["block_migration"] != false {
+		t.Errorf("block_migration = %v, want false", action["block_migration"])
+	}
+}
+
+// TestRunServerMigrate_LiveLegacyMicroversion covers a pinned pre-2.25 compute
+// API: block_migration defaults to false (not "auto") and disk_over_commit is
+// required, so it is always sent.
+func TestRunServerMigrate_LiveLegacyMicroversion(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotBody = decodeBody(t, r)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "2.20")
+	var buf bytes.Buffer
+	if err := runServerMigrate(context.Background(), client, serverUUID, &serverMigrateFlags{live: true}, &buf); err != nil {
+		t.Fatalf("runServerMigrate live legacy: %v", err)
+	}
+	action := gotBody["os-migrateLive"].(map[string]any)
+	if action["block_migration"] != false {
+		t.Errorf("block_migration = %v, want false", action["block_migration"])
+	}
+	if action["disk_over_commit"] != false {
+		t.Errorf("disk_over_commit = %v, want false (sent at <= 2.24)", action["disk_over_commit"])
 	}
 }
 
