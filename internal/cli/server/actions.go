@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/remoteconsoles"
@@ -110,6 +112,14 @@ func newServerUnlockCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		})
 }
 
+// migratePollInterval and migratePollTimeout bound the --wait polling loop.
+// Migrations of large instances can run for many minutes, so the default cap is
+// generous; --wait-timeout overrides it.
+const (
+	migratePollInterval = 5 * time.Second
+	migratePollTimeout  = 60 * time.Minute
+)
+
 // serverMigrateFlags holds the options accepted by "server migrate". Cold
 // migration is the default; --live-migration switches to a live migration and
 // unlocks its block-migration / disk-overcommit knobs.
@@ -118,6 +128,8 @@ type serverMigrateFlags struct {
 	host           string
 	blockMigration bool
 	diskOverCommit bool
+	wait           bool
+	waitTimeout    time.Duration
 }
 
 func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -146,6 +158,8 @@ func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.host, "host", "", "target host (omit to let the scheduler choose)")
 	fl.BoolVar(&f.blockMigration, "block-migration", false, "live migration only: migrate local disks by block migration")
 	fl.BoolVar(&f.diskOverCommit, "disk-overcommit", false, "live migration only: allow disk over-commit on the destination")
+	fl.BoolVar(&f.wait, "wait", false, "wait for the migration to finish (server reaches ACTIVE, or VERIFY_RESIZE for a cold migration)")
+	fl.DurationVar(&f.waitTimeout, "wait-timeout", migratePollTimeout, "maximum time to wait for --wait to complete")
 	return cmd
 }
 
@@ -173,7 +187,7 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 		if _, err := fmt.Fprintf(w, "Requested live migration of server %s\n", ref); err != nil {
 			return err
 		}
-		return nil
+		return waitForMigration(ctx, client, ref, id, f, w)
 	}
 
 	// Cold migration. gophercloud's servers.Migrate posts {"migrate": null} with
@@ -190,8 +204,67 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 	if _, err := fmt.Fprintf(w, "Migrated server %s\n", ref); err != nil {
 		return err
 	}
-	return nil
+	return waitForMigration(ctx, client, ref, id, f, w)
 }
+
+// waitForMigration polls the server until its migration settles, when --wait is
+// set. Success mirrors OSC's "server migrate --wait": the server reaches ACTIVE
+// (live migration) or VERIFY_RESIZE (cold migration, awaiting confirm) with no
+// task in flight; an ERROR status is terminal. task_state gates the ACTIVE check
+// so a live migration is not reported done before nova starts it (status stays
+// ACTIVE while task_state is "migrating").
+func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, ref, id string, f *serverMigrateFlags, w io.Writer) error {
+	if !f.wait {
+		return nil
+	}
+	timeout := f.waitTimeout
+	if timeout <= 0 {
+		timeout = migratePollTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(migratePollInterval)
+	defer ticker.Stop()
+
+	var getErrors int
+	for {
+		var s struct {
+			Status    string `json:"status"`
+			TaskState string `json:"OS-EXT-STS:task_state"`
+		}
+		if err := servers.Get(ctx, client, id).ExtractInto(&s); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("waiting for migration of server %q: %w", ref, ctx.Err())
+			}
+			// Tolerate a few consecutive transient Get errors before giving up.
+			getErrors++
+			if getErrors > maxConsecutiveGetErrors {
+				return fmt.Errorf("polling server %q during migration: %w", ref, err)
+			}
+		} else {
+			getErrors = 0
+			switch {
+			case strings.EqualFold(s.Status, "ERROR"):
+				return fmt.Errorf("server %q entered ERROR status during migration", ref)
+			case s.TaskState == "" && (strings.EqualFold(s.Status, "ACTIVE") || strings.EqualFold(s.Status, "VERIFY_RESIZE")):
+				if _, err := fmt.Fprintf(w, "Server %s migration complete (status %s)\n", ref, s.Status); err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for migration of server %q: %w", ref, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// maxConsecutiveGetErrors bounds how many consecutive servers.Get failures the
+// --wait poll tolerates before giving up; the counter resets on any success.
+const maxConsecutiveGetErrors = 5
 
 // reboot -----------------------------------------------------------------------
 

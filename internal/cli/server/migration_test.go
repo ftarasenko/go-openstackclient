@@ -166,6 +166,37 @@ func TestRunServerMigrate_Live(t *testing.T) {
 	}
 }
 
+// TestRunServerMigrate_LiveWait covers --wait: after os-migrateLive the poll
+// GETs the server and returns once it reaches ACTIVE with no task in flight.
+func TestRunServerMigrate_LiveWait(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"server":{"id":"` + serverUUID + `","status":"ACTIVE","OS-EXT-STS:task_state":null}}`))
+	})
+
+	client := computeClient(fakeServer, "2.90")
+	var buf bytes.Buffer
+	f := &serverMigrateFlags{live: true, wait: true}
+	if err := runServerMigrate(context.Background(), client, serverUUID, f, &buf); err != nil {
+		t.Fatalf("runServerMigrate live+wait: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Requested live migration of server "+serverUUID) {
+		t.Errorf("output missing request line:\n%s", out)
+	}
+	if !strings.Contains(out, "migration complete (status ACTIVE)") {
+		t.Errorf("output missing completion line:\n%s", out)
+	}
+}
+
 const serverMigrationShowBody = `{
   "migration": {
     "id": 5,
