@@ -334,6 +334,52 @@ func TestRunRecordSetList_ResolvesZoneAndLists(t *testing.T) {
 	}
 }
 
+func TestRecordSetNameFilter(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"pslav", "*pslav*"},
+		{"docs.example.com", "*docs.example.com*"},
+		{"*k0s*", "*k0s*"},
+		{"www.*", "www.*"},
+	}
+	for _, c := range cases {
+		if got := recordSetNameFilter(c.in); got != c.want {
+			t.Errorf("recordSetNameFilter(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestRunRecordSetList_NameFilterWildcardsSubstring(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/zones", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(zoneListBody))
+	})
+
+	var gotName string
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets", func(w http.ResponseWriter, r *http.Request) {
+		gotName = r.URL.Query().Get("name")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(recordSetListBody))
+	})
+
+	client := dnsClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	f := &recordSetListFlags{name: "pslav"}
+	if err := runRecordSetList(context.Background(), client, o, "example.com", f, &buf); err != nil {
+		t.Fatalf("runRecordSetList returned error: %v", err)
+	}
+	if gotName != "*pslav*" {
+		t.Errorf("recordset list ?name= = %q, want %q (substring wrapped in wildcards)", gotName, "*pslav*")
+	}
+}
+
 // zoneShowBody is the single-zone GET response for the first zone in
 // zoneListBody, used by the show/set flows.
 const zoneShowBody = `{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/recordsets"
@@ -80,7 +81,7 @@ func newRecordSetListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.name, "name", "", "filter by recordset name")
+	fl.StringVar(&f.name, "name", "", "filter by recordset name (substring match; use '*' for an explicit wildcard pattern)")
 	fl.StringVar(&f.typ, "type", "", "filter by RRTYPE (A/AAAA/CNAME/MX/TXT/...)")
 	fl.StringVar(&f.data, "data", "", "filter by record data")
 	fl.IntVar(&f.ttl, "ttl", 0, "filter by TTL")
@@ -105,13 +106,26 @@ func dnsPageSize(limit int) int {
 	return defaultDNSPageSize
 }
 
+// recordSetNameFilter turns a user-supplied --name into designate's ?name=
+// value. designate matches the filter exactly unless it contains a "*"
+// wildcard, and recordset names are always FQDNs, so a bare substring like
+// "pslav" would never match. To make --name behave as an intuitive substring
+// search we wrap a wildcard-free value in "*...*"; a value that already
+// contains "*" is a deliberate pattern and passes through untouched.
+func recordSetNameFilter(name string) string {
+	if name == "" || strings.Contains(name, "*") {
+		return name
+	}
+	return "*" + name + "*"
+}
+
 func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, zoneRef string, f *recordSetListFlags, w io.Writer) error {
 	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
 	}
 	opts := recordsets.ListOpts{
-		Name:   f.name,
+		Name:   recordSetNameFilter(f.name),
 		Type:   f.typ,
 		Data:   f.data,
 		TTL:    f.ttl,
