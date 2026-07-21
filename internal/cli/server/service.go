@@ -130,9 +130,10 @@ type serviceSetFlags struct {
 
 // keystackAdminStates enumerates the admin_state values KeyStack's os-services
 // extension accepts (KCP-1886, plus "Unstable" from KCP-7988). Mirrors the
-// choices offered by the downstream python-openstackclient "service set".
+// admin_state enum in nova's os-services request schema
+// (nova/api/openstack/compute/schemas/services.py).
 var keystackAdminStates = []string{
-	"Enabled", "Disabled", "MaintenanceMode", "Error", "Fenced", "Unstable",
+	"Active", "EnteringMaintenanceMode", "MaintenanceMode", "Fenced", "Error", "Unstable",
 }
 
 func newComputeServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
