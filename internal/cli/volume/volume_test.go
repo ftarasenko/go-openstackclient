@@ -144,6 +144,38 @@ func TestRunVolumeList_FiltersAndValueFormat(t *testing.T) {
 	}
 }
 
+func TestRunVolumeList_TypeFilterIsClientSide(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		// The type filter is applied client-side, so it must not leak into the
+		// cinder query (the API has no volume_type param).
+		if got := r.URL.Query().Get("volume_type"); got != "" {
+			t.Errorf("volume_type query = %q, want empty (filter is client-side)", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeListBody))
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	o := &output.Options{Format: output.FormatTable}
+	f := &volumeListFlags{volumeType: "hdd"}
+
+	var buf bytes.Buffer
+	if err := runVolumeList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runVolumeList returned error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "vol-b") {
+		t.Errorf("type filter dropped the matching volume vol-b:\n%s", out)
+	}
+	if strings.Contains(out, "vol-a") {
+		t.Errorf("type filter kept the non-matching volume vol-a:\n%s", out)
+	}
+}
+
 func TestRunVolumeCreate_RequestBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

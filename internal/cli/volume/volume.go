@@ -72,6 +72,7 @@ type volumeListFlags struct {
 	long        bool
 	name        string
 	status      string
+	volumeType  string
 	limit       int
 	marker      string
 }
@@ -99,6 +100,7 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.StringVar(&f.name, "name", "", "filter by volume name")
 	fl.StringVar(&f.status, "status", "", "filter by volume status")
+	fl.StringVar(&f.volumeType, "type", "", "filter by volume type (client-side)")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of volumes to return")
 	fl.StringVar(&f.marker, "marker", "", "list volumes after this ID (pagination)")
 	return cmd
@@ -119,6 +121,17 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	all, err := volumes.ExtractVolumes(pages)
 	if err != nil {
 		return fmt.Errorf("parsing volume list: %w", err)
+	}
+	// Cinder's volume list has no volume_type query param (and upstream OSC has no
+	// --type on list), so filter by type client-side after extraction.
+	if f.volumeType != "" {
+		filtered := all[:0]
+		for _, v := range all {
+			if v.VolumeType == f.volumeType {
+				filtered = append(filtered, v)
+			}
+		}
+		all = filtered
 	}
 	// Limit is only the page size to cinder; enforce it as a hard result cap.
 	if f.limit > 0 && len(all) > f.limit {
