@@ -279,4 +279,54 @@ func TestRunComputeServiceList_RequestAndOutput(t *testing.T) {
 			t.Errorf("service list output missing %q\n---\n%s", want, out)
 		}
 	}
+	// Vanilla nova returns no admin_state/error_details, so those KeyStack
+	// columns must not appear.
+	for _, absent := range []string{"Admin State", "Error Details"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("vanilla service list output unexpectedly has %q\n---\n%s", absent, out)
+		}
+	}
+}
+
+const serviceListBodyKeyStack = `{
+  "services": [
+    {
+      "id": "aaaa1111-0000-0000-0000-000000000001",
+      "binary": "nova-compute",
+      "host": "compute-1",
+      "zone": "nova",
+      "status": "disabled",
+      "state": "up",
+      "admin_state": "Error",
+      "error_details": "disk failure",
+      "updated_at": "2026-07-11T00:00:00.000000"
+    }
+  ]
+}`
+
+// TestRunComputeServiceList_KeyStackAdminState verifies the KeyStack os-services
+// extension (KCP-1886/7988) admin_state/error_details fields surface in --long.
+func TestRunComputeServiceList_KeyStackAdminState(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(serviceListBodyKeyStack))
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runComputeServiceList(context.Background(), client, o, &serviceListFlags{long: true}, &buf); err != nil {
+		t.Fatalf("runComputeServiceList returned error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Admin State", "Error Details", "Error", "disk failure"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("keystack service list output missing %q\n---\n%s", want, out)
+		}
+	}
 }
