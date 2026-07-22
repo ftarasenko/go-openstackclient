@@ -9,6 +9,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -82,18 +83,55 @@ func runComputeServiceList(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return fmt.Errorf("parsing compute service list: %w", err)
 	}
-	return o.WriteList(w, serviceListTable(all, f.long))
+	// KeyStack's os-services extension (KCP-1886/7988) adds admin_state and
+	// error_details, which gophercloud's Service type drops; pull them raw and
+	// align by index (same "services" array, same order).
+	ext, err := extractServiceExt(pages)
+	if err != nil {
+		return fmt.Errorf("parsing compute service list: %w", err)
+	}
+	return o.WriteList(w, serviceListTable(all, ext, f.long))
 }
 
-func serviceListTable(list []services.Service, long bool) output.Table {
+// serviceExt carries the KeyStack os-services extension fields that gophercloud's
+// Service type omits.
+type serviceExt struct {
+	AdminState   string `json:"admin_state"`
+	ErrorDetails string `json:"error_details"`
+}
+
+func extractServiceExt(page pagination.Page) ([]serviceExt, error) {
+	var s struct {
+		Services []serviceExt `json:"services"`
+	}
+	err := page.(services.ServicePage).ExtractInto(&s)
+	return s.Services, err
+}
+
+func serviceListTable(list []services.Service, ext []serviceExt, long bool) output.Table {
 	cols := []string{"ID", "Binary", "Host", "Zone", "Status", "State", "Updated At"}
+	// The KeyStack admin_state/error_details columns are shown only when the
+	// cloud actually returns them, so vanilla-nova output stays unchanged.
+	keystack := long && slices.ContainsFunc(ext, func(e serviceExt) bool {
+		return e.AdminState != "" || e.ErrorDetails != ""
+	})
 	if long {
+		if keystack {
+			cols = append(cols, "Admin State", "Error Details")
+		}
 		cols = append(cols, "Disabled Reason", "Forced Down")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
-	for _, s := range list {
+	for i, s := range list {
 		row := []any{s.ID, s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt.String()}
 		if long {
+			if keystack {
+				var e serviceExt
+				if i < len(ext) {
+					e = ext[i]
+				}
+				row = append(row, e.AdminState, e.ErrorDetails)
+			}
 			row = append(row, s.DisabledReason, s.ForcedDown)
 		}
 		t.Rows = append(t.Rows, row)
