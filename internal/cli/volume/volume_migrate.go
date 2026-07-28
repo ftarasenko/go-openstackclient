@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
@@ -21,6 +22,8 @@ type volumeMigrateFlags struct {
 	host          string
 	forceHostCopy bool
 	lockVolume    bool
+	wait          bool
+	waitTimeout   time.Duration
 }
 
 func newVolumeMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -45,6 +48,8 @@ func newVolumeMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.host, "host", "", "destination host, as host@backend-name#pool (required)")
 	fl.BoolVar(&f.forceHostCopy, "force-host-copy", false, "force generic host-based copy, bypassing driver optimizations")
 	fl.BoolVar(&f.lockVolume, "lock-volume", false, "lock the volume so the migration cannot be aborted")
+	fl.BoolVar(&f.wait, "wait", false, "wait for the migration to finish (polls the admin-only migration_status)")
+	fl.DurationVar(&f.waitTimeout, "wait-timeout", volumePollTimeout, "maximum time to wait for --wait to complete")
 	if err := cmd.MarkFlagRequired("host"); err != nil {
 		panic(err)
 	}
@@ -78,6 +83,9 @@ func runVolumeMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 	}
 	if _, err := fmt.Fprintf(w, "Migrating volume %s to host %s\n", id, f.host); err != nil {
 		return err
+	}
+	if f.wait {
+		return waitForVolumeMigration(ctx, client, ref, id, f.host, f.waitTimeout, w)
 	}
 	return nil
 }
