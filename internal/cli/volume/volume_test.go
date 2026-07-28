@@ -739,6 +739,8 @@ func volumeSetCmd(t *testing.T, f *volumeSetFlags, set map[string]string) *cobra
 	fl.StringVar(&f.description, "description", "", "")
 	fl.StringArrayVar(&f.property, "property", nil, "")
 	fl.IntVar(&f.size, "size", 0, "")
+	fl.StringVar(&f.volumeType, "type", "", "")
+	fl.StringVar(&f.migrationPolicy, "migration-policy", "", "")
 	for k, v := range set {
 		if err := fl.Set(k, v); err != nil {
 			t.Fatalf("setting flag %q: %v", k, err)
@@ -851,5 +853,133 @@ func TestRunVolumeSet_NothingToSet(t *testing.T) {
 	err := runVolumeSet(context.Background(), nil, "x", f, cmd)
 	if err == nil {
 		t.Fatal("expected error when no set flags are provided, got nil")
+	}
+}
+
+// TestRunVolumeSet_RetypeResolvesTypeName covers `volume set --type --migration-policy`,
+// the upstream-OSC spelling of a retype: the type name is resolved to an ID and
+// posted as os-retype on the volume action endpoint.
+func TestRunVolumeSet_RetypeResolvesTypeName(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	const typeID = "t1111111-1111-1111-1111-111111111111"
+	var gotAction map[string]any
+	var gotMethod string
+	fakeServer.Mux.HandleFunc("/volumes/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		assertVolumeMicroversion(t, r, "3.59")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotAction)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method %q on /volumes/<id>; retype must not PUT", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+	// /types/ssd is unregistered, so the direct GET 404s and the resolver falls
+	// back to the name-filtered list below.
+	var listedTypes bool
+	fakeServer.Mux.HandleFunc("/types", func(w http.ResponseWriter, r *http.Request) {
+		listedTypes = true
+		if got := r.URL.Query().Get("name"); got != "ssd" {
+			t.Errorf("type list name filter = %q, want %q", got, "ssd")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(typeListBody))
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, map[string]string{"type": "ssd", "migration-policy": "on-demand"})
+	if err := runVolumeSet(context.Background(), client, id, f, cmd); err != nil {
+		t.Fatalf("runVolumeSet returned error: %v", err)
+	}
+
+	if !listedTypes {
+		t.Error("expected a name-filtered list on /types")
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("retype method = %q, want POST", gotMethod)
+	}
+	retype, ok := gotAction["os-retype"].(map[string]any)
+	if !ok {
+		t.Fatalf("action body = %#v, want an os-retype key", gotAction)
+	}
+	if retype["new_type"] != typeID {
+		t.Errorf("os-retype.new_type = %v, want %q", retype["new_type"], typeID)
+	}
+	if retype["migration_policy"] != "on-demand" {
+		t.Errorf("os-retype.migration_policy = %v, want %q", retype["migration_policy"], "on-demand")
+	}
+}
+
+// TestRunVolumeSet_RetypeOmitsDefaultPolicy checks that without --migration-policy
+// the key is left out entirely, so cinder applies its own "never" default.
+func TestRunVolumeSet_RetypeOmitsDefaultPolicy(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotAction map[string]any
+	fakeServer.Mux.HandleFunc("/volumes/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotAction)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+	// A type reference that is already an ID short-circuits on the direct GET.
+	const typeID = "t1111111-1111-1111-1111-111111111111"
+	fakeServer.Mux.HandleFunc("/types/"+typeID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(typeGetBody))
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, map[string]string{"type": typeID})
+	if err := runVolumeSet(context.Background(), client, id, f, cmd); err != nil {
+		t.Fatalf("runVolumeSet returned error: %v", err)
+	}
+	retype, ok := gotAction["os-retype"].(map[string]any)
+	if !ok {
+		t.Fatalf("action body = %#v, want an os-retype key", gotAction)
+	}
+	if retype["new_type"] != typeID {
+		t.Errorf("os-retype.new_type = %v, want %q", retype["new_type"], typeID)
+	}
+	if _, present := retype["migration_policy"]; present {
+		t.Errorf("os-retype.migration_policy should be omitted, got %v", retype["migration_policy"])
+	}
+}
+
+func TestRunVolumeSet_MigrationPolicyValidation(t *testing.T) {
+	// Both cases fail validation before any network use, so a nil client is fine.
+	tests := []struct {
+		name string
+		set  map[string]string
+	}{
+		{"policy without type", map[string]string{"migration-policy": "on-demand"}},
+		{"invalid policy", map[string]string{"type": "ssd", "migration-policy": "whenever"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &volumeSetFlags{}
+			cmd := volumeSetCmd(t, f, tc.set)
+			if err := runVolumeSet(context.Background(), nil, "x", f, cmd); err == nil {
+				t.Fatal("expected a validation error, got nil")
+			}
+		})
 	}
 }
