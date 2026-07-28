@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
@@ -386,6 +387,8 @@ type volumeSetFlags struct {
 	size            int
 	volumeType      string
 	migrationPolicy string
+	wait            bool
+	waitTimeout     time.Duration
 }
 
 func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -403,7 +406,7 @@ func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runVolumeSet(ctx, client, args[0], f, cmd)
+			return runVolumeSet(ctx, client, args[0], f, cmd, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -414,6 +417,8 @@ func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.volumeType, "type", "", "retype the volume to this volume type (name or ID)")
 	fl.StringVar(&f.migrationPolicy, "migration-policy", "",
 		`migration policy while retyping: "never" (cinder default) or "on-demand" (requires --type)`)
+	fl.BoolVar(&f.wait, "wait", false, "wait for a --type retype to finish and report whether it took effect")
+	fl.DurationVar(&f.waitTimeout, "wait-timeout", volumePollTimeout, "maximum time to wait for --wait to complete")
 	return cmd
 }
 
@@ -432,7 +437,7 @@ func parseMigrationPolicy(s string) (volumes.MigrationPolicy, error) {
 	}
 }
 
-func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *volumeSetFlags, cmd *cobra.Command) error {
+func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *volumeSetFlags, cmd *cobra.Command, w io.Writer) error {
 	policy, err := parseMigrationPolicy(f.migrationPolicy)
 	if err != nil {
 		return err
@@ -443,6 +448,11 @@ func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	// admin-intent flag.
 	if policy != "" && !cmd.Flags().Changed("type") {
 		return fmt.Errorf("--migration-policy requires --type")
+	}
+	// Retype is the only asynchronous part of "volume set", so --wait has nothing
+	// to watch without it.
+	if f.wait && !cmd.Flags().Changed("type") {
+		return fmt.Errorf("--wait requires --type")
 	}
 	if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("description") &&
 		!cmd.Flags().Changed("size") && !cmd.Flags().Changed("type") && len(f.property) == 0 {
@@ -473,6 +483,14 @@ func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 		opts := volumes.ChangeTypeOpts{NewType: typeID, MigrationPolicy: policy}
 		if err := volumes.ChangeType(ctx, client, id, opts).ExtractErr(); err != nil {
 			return fmt.Errorf("retyping volume %q: %w", ref, err)
+		}
+		// The action only returns 202: cinder can still roll the retype back, and
+		// without --wait that failure is invisible.
+		if f.wait {
+			target := newRetypeTarget(ctx, client, typeID)
+			if err := waitForRetype(ctx, client, ref, id, target, f.waitTimeout, w); err != nil {
+				return err
+			}
 		}
 	}
 
