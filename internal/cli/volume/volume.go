@@ -379,10 +379,12 @@ func runVolumeDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 
 // volumeSetFlags holds the mutations accepted by "volume set".
 type volumeSetFlags struct {
-	name        string
-	description string
-	property    []string
-	size        int
+	name            string
+	description     string
+	property        []string
+	size            int
+	volumeType      string
+	migrationPolicy string
 }
 
 func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -408,13 +410,42 @@ func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.description, "description", "", "new volume description")
 	fl.StringArrayVar(&f.property, "property", nil, "set a property key=value (repeatable)")
 	fl.IntVar(&f.size, "size", 0, "extend the volume to this size in GiB")
+	fl.StringVar(&f.volumeType, "type", "", "retype the volume to this volume type (name or ID)")
+	fl.StringVar(&f.migrationPolicy, "migration-policy", "",
+		`migration policy while retyping: "never" (cinder default) or "on-demand" (requires --type)`)
 	return cmd
 }
 
+// parseMigrationPolicy validates a --migration-policy value. An empty string
+// means the flag was not given, and cinder then defaults to "never".
+func parseMigrationPolicy(s string) (volumes.MigrationPolicy, error) {
+	switch s {
+	case "":
+		return "", nil
+	case string(volumes.MigrationPolicyNever):
+		return volumes.MigrationPolicyNever, nil
+	case string(volumes.MigrationPolicyOnDemand):
+		return volumes.MigrationPolicyOnDemand, nil
+	default:
+		return "", fmt.Errorf(`invalid --migration-policy %q: want "never" or "on-demand"`, s)
+	}
+}
+
 func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *volumeSetFlags, cmd *cobra.Command) error {
+	policy, err := parseMigrationPolicy(f.migrationPolicy)
+	if err != nil {
+		return err
+	}
+	// The policy only means anything as part of a retype, and is checked before the
+	// nothing-to-set guard below so passing it alone gets the precise diagnosis.
+	// Upstream OSC merely logs a warning and drops it; erroring is clearer for an
+	// admin-intent flag.
+	if policy != "" && !cmd.Flags().Changed("type") {
+		return fmt.Errorf("--migration-policy requires --type")
+	}
 	if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("description") &&
-		!cmd.Flags().Changed("size") && len(f.property) == 0 {
-		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --property")
+		!cmd.Flags().Changed("size") && !cmd.Flags().Changed("type") && len(f.property) == 0 {
+		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --type, --property")
 	}
 	id, err := resolveVolumeID(ctx, client, ref)
 	if err != nil {
@@ -426,6 +457,21 @@ func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	if cmd.Flags().Changed("size") {
 		if err := volumes.ExtendSize(ctx, client, id, volumes.ExtendSizeOpts{NewSize: f.size}).ExtractErr(); err != nil {
 			return fmt.Errorf("extending volume %q: %w", ref, err)
+		}
+	}
+
+	// Retype before the name/description update, matching OSC's ordering. An
+	// in-use volume only retypes in place when the new type lives on the same
+	// backend; crossing backends needs --migration-policy on-demand, which makes
+	// cinder migrate the volume (via nova's swap_volume while it is attached).
+	if cmd.Flags().Changed("type") {
+		typeID, err := resolveVolumeTypeID(ctx, client, f.volumeType)
+		if err != nil {
+			return err
+		}
+		opts := volumes.ChangeTypeOpts{NewType: typeID, MigrationPolicy: policy}
+		if err := volumes.ChangeType(ctx, client, id, opts).ExtractErr(); err != nil {
+			return fmt.Errorf("retyping volume %q: %w", ref, err)
 		}
 	}
 
