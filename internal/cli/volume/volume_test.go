@@ -983,3 +983,60 @@ func TestRunVolumeSet_MigrationPolicyValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestRunVolumeMigrate_RequestBody(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var gotAction map[string]any
+	var gotMethod string
+	fakeServer.Mux.HandleFunc("/volumes/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		assertVolumeMicroversion(t, r, "3.59")
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotAction)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	f := &volumeMigrateFlags{host: "ctl1@lvm#pool0", forceHostCopy: true}
+	var buf bytes.Buffer
+	if err := runVolumeMigrate(context.Background(), client, id, f, &buf); err != nil {
+		t.Fatalf("runVolumeMigrate returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("migrate method = %q, want POST", gotMethod)
+	}
+	mig, ok := gotAction["os-migrate_volume"].(map[string]any)
+	if !ok {
+		t.Fatalf("action body = %#v, want an os-migrate_volume key", gotAction)
+	}
+	if mig["host"] != "ctl1@lvm#pool0" {
+		t.Errorf("os-migrate_volume.host = %v, want %q", mig["host"], "ctl1@lvm#pool0")
+	}
+	if mig["force_host_copy"] != true {
+		t.Errorf("os-migrate_volume.force_host_copy = %v, want true", mig["force_host_copy"])
+	}
+	// lock_volume is always sent so the server default cannot drift.
+	if mig["lock_volume"] != false {
+		t.Errorf("os-migrate_volume.lock_volume = %v, want false", mig["lock_volume"])
+	}
+	if !strings.Contains(buf.String(), "Migrating volume "+id+" to host ctl1@lvm#pool0") {
+		t.Errorf("migrate output missing confirmation:\n%s", buf.String())
+	}
+}
+
+func TestRunVolumeMigrate_RequiresHost(t *testing.T) {
+	f := &volumeMigrateFlags{}
+	if err := runVolumeMigrate(context.Background(), nil, "x", f, io.Discard); err == nil {
+		t.Fatal("expected error when --host is empty, got nil")
+	}
+}

@@ -34,6 +34,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd.AddCommand(newVolumeDeleteCommand(a, o))
 	cmd.AddCommand(newVolumeSetCommand(a, o))
 	cmd.AddCommand(newVolumeUnsetCommand(a, o))
+	cmd.AddCommand(newVolumeMigrateCommand(a, o))
 
 	cmd.AddCommand(newSnapshotCommand(a, o))
 	cmd.AddCommand(newBackupCommand(a, o))
