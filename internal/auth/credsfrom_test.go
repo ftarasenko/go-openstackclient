@@ -13,30 +13,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-func TestResolveVaultPath(t *testing.T) {
-	const prefix = "deployments/itkey/e2e-lcm/reg"
-	const mount = "secret_v2"
-	full := prefix + "/reg-cp/openrc"
-	cases := []struct {
-		prefix, arg, want string
-	}{
-		{prefix, "reg-cp/openrc", full},                   // relative → joined
-		{prefix, full, full},                              // already full → unchanged
-		{prefix, "/other/abs/openrc", "other/abs/openrc"}, // leading / → absolute
-		{"", "a/b/openrc", "a/b/openrc"},                  // no prefix
-		{prefix, prefix, prefix},                          // equal to prefix
-		{"/reg/", "reg-cp/openrc", "reg/reg-cp/openrc"},   // prefix slashes trimmed
-		// Vault "mount/path" form: leading mount is stripped, rest is absolute.
-		{prefix, "/secret_v2/deployments/itkey/dev/x/openrc", "deployments/itkey/dev/x/openrc"},
-		{prefix, "secret_v2/deployments/itkey/dev/x/openrc", "deployments/itkey/dev/x/openrc"},
-	}
-	for _, c := range cases {
-		if got := resolveVaultPath(c.prefix, mount, c.arg); got != c.want {
-			t.Errorf("resolveVaultPath(%q,%q,%q) = %q, want %q", c.prefix, mount, c.arg, got, c.want)
-		}
-	}
-}
-
 func TestParseOpenrcAndOpenrcFromKV(t *testing.T) {
 	script := `# Ansible managed
 export OS_AUTH_URL=https://keystone:5000/v3

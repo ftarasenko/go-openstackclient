@@ -184,10 +184,11 @@ func firstCertDNSName(pemBytes []byte) string {
 	return ""
 }
 
-// applyVaultOpenrc reads the openrc KV v2 secret named by o.CredsFromVault and
-// applies its OS_* variables to o, so the normal Keystone flow authenticates
-// with those credentials. Explicit CLI flags still win over the fetched values.
-func (o *Options) applyVaultOpenrc(ctx context.Context) error {
+// VaultConfig resolves the Vault connection settings from the --vault-* flags,
+// their VAULT_* env vars, the ~/.vault-token cache and — when those are
+// incomplete — LCM cluster auto-discovery. It is exported because `koc vault kv`
+// needs the same resolved config without going through Keystone auth at all.
+func (o *Options) VaultConfig(ctx context.Context) (vault.Config, error) {
 	// Token precedence, matching the Vault CLI: --vault-token / VAULT_TOKEN, then
 	// the cached ~/.vault-token from `vault login`. A cached token is only used
 	// when no explicit AppRole was given, so `--vault-role-id/-secret-id` still
@@ -206,7 +207,7 @@ func (o *Options) applyVaultOpenrc(ctx context.Context) error {
 	if o.vaultNeedsDiscovery() {
 		if err := o.discoverVaultFromCluster(ctx); err != nil {
 			if o.VaultAddr == "" {
-				return fmt.Errorf("vault not configured and cluster auto-discovery failed: %w (set --vault-addr and an AppRole/token, or provide a reachable --kubeconfig)", err)
+				return vault.Config{}, fmt.Errorf("vault not configured and cluster auto-discovery failed: %w (set --vault-addr and an AppRole/token, or provide a reachable --kubeconfig)", err)
 			}
 			if o.Debug {
 				fmt.Fprintf(os.Stderr, "vault: cluster auto-discovery: %v\n", err)
@@ -218,12 +219,12 @@ func (o *Options) applyVaultOpenrc(ctx context.Context) error {
 	if o.VaultCACert != "" {
 		b, err := os.ReadFile(o.VaultCACert)
 		if err != nil {
-			return fmt.Errorf("reading --vault-cacert %q: %w", o.VaultCACert, err)
+			return vault.Config{}, fmt.Errorf("reading --vault-cacert %q: %w", o.VaultCACert, err)
 		}
 		caPEM = b
 	}
 
-	vc, err := vault.New(ctx, vault.Config{
+	return vault.Config{
 		Addr:        o.VaultAddr,
 		Namespace:   o.VaultNamespace,
 		Token:       o.VaultToken,
@@ -234,12 +235,28 @@ func (o *Options) applyVaultOpenrc(ctx context.Context) error {
 		CACertPEM:   caPEM,
 		Insecure:    o.VaultInsecure,
 		Debug:       o.Debug,
-	})
+	}, nil
+}
+
+// VaultClient resolves the Vault settings and returns an authenticated client.
+func (o *Options) VaultClient(ctx context.Context) (*vault.Client, error) {
+	cfg, err := o.VaultConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return vault.New(ctx, cfg)
+}
+
+// applyVaultOpenrc reads the openrc KV v2 secret named by o.CredsFromVault and
+// applies its OS_* variables to o, so the normal Keystone flow authenticates
+// with those credentials. Explicit CLI flags still win over the fetched values.
+func (o *Options) applyVaultOpenrc(ctx context.Context) error {
+	vc, err := o.VaultClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	path := resolveVaultPath(o.VaultKVPrefix, o.VaultKVMount, o.CredsFromVault)
+	path := vault.ResolvePath(o.VaultKVPrefix, o.VaultKVMount, o.CredsFromVault)
 	data, err := vc.ReadKVData(ctx, path)
 	if err != nil {
 		return err
@@ -453,35 +470,6 @@ func (o *Options) vaultOptionExplicit(flag, env string) bool {
 		return true
 	}
 	return os.Getenv(env) != ""
-}
-
-// resolveVaultPath maps a --creds-from-vault argument to the KV path used under
-// the mount's data/ API. It accepts three forms:
-//   - a leading KV-mount segment ("secret_v2/…", the Vault CLI form) — the mount
-//     is stripped and the remainder treated as absolute.
-//   - a leading "/" — an absolute path; the prefix is ignored.
-//   - otherwise — relative: prepended with the prefix (unless already prefixed).
-func resolveVaultPath(prefix, mount, arg string) string {
-	prefix = strings.Trim(prefix, "/")
-	mount = strings.Trim(mount, "/")
-
-	absolute := strings.HasPrefix(arg, "/")
-	p := strings.Trim(arg, "/")
-
-	// A leading "<mount>/" (or exactly the mount) is the Vault "mount/path" form;
-	// drop it and treat the rest as an absolute KV path.
-	if mount != "" && (p == mount || strings.HasPrefix(p, mount+"/")) {
-		p = strings.TrimLeft(strings.TrimPrefix(p, mount), "/")
-		absolute = true
-	}
-
-	if absolute {
-		return p
-	}
-	if prefix == "" || p == prefix || strings.HasPrefix(p, prefix+"/") {
-		return p
-	}
-	return prefix + "/" + p
 }
 
 // openrcFromKV extracts an openrc script from a KV v2 data map. It prefers the
