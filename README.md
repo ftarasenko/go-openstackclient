@@ -116,6 +116,7 @@ koc network list --long
 koc resource provider show <uuid> --allocations -f json
 koc hypervisor list --gauge --sort ram --aggregate compute-hp
 koc keyvrm recommendation list
+koc vault kv copy -r deployments/itkey/dev deployments/itkey/e2e
 ```
 
 ### Authentication
@@ -215,6 +216,108 @@ real CPU/RAM usage scraped from each host's node_exporter (`--ne-*` flags tune t
 scheme/port/suffix/concurrency/timeout). `-f json`/`csv` emit the raw numbers via
 the output layer.
 
+### Vault KV (`koc vault kv`)
+
+A koc-specific command group — Vault is not an OpenStack service, and there is no
+`python-openstackclient` equivalent. It authenticates with Vault credentials only
+(never Keystone), so it works on a host that has no cloud credentials at all:
+
+```sh
+koc vault kv list  deployments/itkey/dev
+koc vault kv get   deployments/itkey/dev/openrc     # prints values in cleartext
+koc vault kv copy -r deployments/itkey/dev deployments/itkey/e2e
+koc vault kv export deployments/itkey/dev --recipient koc-export.pub -o .junit/vault.xml
+koc vault kv decrypt .junit/vault.xml -i koc-export.key
+```
+
+`copy` fills a gap in the Vault CLI itself, which has no `kv copy` — the
+alternative is piping `vault kv get -format=json` into `vault kv put` per secret.
+Without `-r` the source must be a single secret; with `-r` the whole subtree is
+mirrored under the destination (nested folders included). `--dry-run` reports the
+exact set of writes without performing any, `--skip-existing` leaves destination
+secrets that already exist untouched, and `--src-version` pins a single copy to a
+specific source version. Secret values are never printed by `copy` (or by
+`--debug`, which logs only method/path/status) — `koc vault kv get` is the
+explicit way to see them.
+
+The Vault to talk to, and the **destination** of a copy, is the one described by
+the global `--vault-*` flags (see [Authentication](#authentication)), including
+LCM cluster auto-discovery. The **source** is addressed by `--src-vault-*`
+overrides; each one left unset is inherited from the destination, so copying
+between two paths of a single Vault needs no extra flags:
+
+| flag | env | default |
+| --- | --- | --- |
+| `--src-vault-addr` | `VAULT_SRC_ADDR` | the destination's |
+| `--src-vault-namespace` | `VAULT_SRC_NAMESPACE` | the destination's |
+| `--src-vault-token` | `VAULT_SRC_TOKEN` | the destination's credentials |
+| `--src-vault-role-id` / `--src-vault-secret-id` | `VAULT_SRC_ROLE_ID` / `VAULT_SRC_SECRET_ID` | the destination's credentials |
+| `--src-vault-kv-mount` | `VAULT_SRC_ENGINE` | the destination's |
+| `--src-vault-kv-prefix` | `VAULT_SRC_PREFIX` | the destination's |
+| `--src-vault-cacert` | `VAULT_SRC_CACERT` | the destination's |
+| `--insecure-src-vault` | `VAULT_SRC_SKIP_VERIFY` | the destination's |
+
+Any explicit source credential replaces the destination's credentials as a group,
+so an inherited token can never silently win over a source AppRole. The env names
+match the variables the KeyStack e2e pipeline already exports for its
+`vault-helper.py`, so a cross-Vault copy needs no flags at all there:
+
+```sh
+export VAULT_ADDR=… VAULT_TOKEN=…                  # destination
+export VAULT_SRC_ADDR=… VAULT_SRC_TOKEN=…          # source
+export VAULT_SRC_ENGINE=secret_v2 VAULT_SRC_PREFIX=deployments/itkey
+koc vault kv copy -r dev dev
+```
+
+Only secret **data** is copied. KV v2 `custom_metadata`, version history and
+`delete_version_after` are not, so the result is a copy of the current values,
+not a replica.
+
+#### Encrypted export (`kv export` / `kv decrypt`)
+
+`koc vault kv export <path> --recipient <pub.pem>` writes the subtree as a JUnit
+XML report for `artifacts:reports:junit` — one test case per secret, so a CI run
+still shows which paths exist, which are empty (skipped) and which could not be
+read (failure) — with every payload **encrypted**. There is no plaintext mode:
+`--recipient` is required.
+
+Each secret is sealed with a fresh AES-256-GCM key, itself wrapped to the
+recipient's RSA public key with OAEP-SHA256 (standard library only, so `vendor/`
+is unaffected). CI therefore holds only the public key: a leaked runner, artifact
+or Pages copy yields nothing readable, and only the private-key holder can
+recover the values.
+
+```sh
+# once, on the operator's machine
+openssl genrsa -out koc-export.key 4096
+openssl rsa -in koc-export.key -pubout -out koc-export.pub
+
+# in CI, with the public key only (env KOC_EXPORT_RECIPIENT also works)
+koc vault kv export deployments/itkey/dev --recipient koc-export.pub -o .junit/vault.xml
+
+# later, by the key holder — prints Path/Key/Value rows, honours -f/-c
+koc vault kv decrypt .junit/vault.xml -i koc-export.key
+koc vault kv decrypt .junit/vault.xml -i koc-export.key -f json
+```
+
+An existing PKI-issued **certificate** is accepted as the recipient, so a
+deployment's own cert can be used without extracting the key. `-o -` (or no `-o`)
+writes to stdout, and `decrypt -` reads from stdin; `decrypt` needs no Vault
+access at all. Payloads look like:
+
+```
+koc-enc:v1:rsa-oaep-sha256:aes-256-gcm
+AgCt+YNs5aaiMNcYrgAFe7c0kI+DeSGtIWdjJmQOBxYYNvhf…
+```
+
+Secret **paths stay readable** — they are what makes the report useful — but each
+path is the payload's GCM additional authenticated data, so moving a payload to
+another test case makes decryption fail rather than silently succeed under the
+wrong name. A secret named `ssl_certificates` is expanded one test case per key,
+so each certificate is separately visible and separately encrypted. `decrypt`
+never writes to a Vault: recovering a secret and re-injecting it stay separate
+acts.
+
 ## Layout
 
 ```
@@ -223,6 +326,7 @@ internal/auth/             clouds.Parse + provider + TLS + per-service clients
                            + --creds-from-ns / --creds-from-vault sources
 internal/kube/             minimal read-only k8s REST client (no client-go)
 internal/vault/            minimal Vault REST client (AppRole/token + KV v2)
+internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt, no Keystone auth
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
 internal/cli/              root command wiring
 internal/cli/resolve/      cross-service name→ID resolution
