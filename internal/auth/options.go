@@ -93,7 +93,8 @@ type Options struct {
 	Kubeconfig  string
 	KubeContext string
 
-	// Vault access (for CredsFromVault). Names mirror the standard VAULT_* CLI.
+	// Vault access, used by CredsFromVault and by the "koc vault kv" command
+	// group. Names mirror the standard VAULT_* CLI.
 	VaultAddr        string
 	VaultNamespace   string
 	VaultToken       string
@@ -187,8 +188,10 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.KubeContext, "kube-context", os.Getenv("KUBE_CONTEXT"),
 		"kubeconfig context for --creds-from-ns (default: current-context)")
 
+	// The --vault-* flags describe the Vault used by --creds-from-vault and by the
+	// "koc vault kv" command group (where they name the copy destination).
 	fs.StringVar(&o.VaultAddr, "vault-addr", os.Getenv("VAULT_ADDR"),
-		"Vault address for --creds-from-vault (env VAULT_ADDR)")
+		"Vault address (env VAULT_ADDR)")
 	fs.StringVar(&o.VaultNamespace, "vault-namespace", os.Getenv("VAULT_NAMESPACE"),
 		"Vault Enterprise namespace, sent as X-Vault-Namespace (env VAULT_NAMESPACE)")
 	fs.StringVar(&o.VaultToken, "vault-token", os.Getenv("VAULT_TOKEN"),
@@ -200,9 +203,9 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.VaultApprolePath, "vault-approle-path", envOr("VAULT_APPROLE_PATH", "approle"),
 		"Vault AppRole auth mount path (env VAULT_APPROLE_PATH)")
 	fs.StringVar(&o.VaultKVMount, "vault-kv-mount", envOr("VAULT_KV_MOUNT", "secret_v2"),
-		"Vault KV v2 mount for --creds-from-vault (env VAULT_KV_MOUNT)")
+		"Vault KV v2 mount (env VAULT_KV_MOUNT)")
 	fs.StringVar(&o.VaultKVPrefix, "vault-kv-prefix", os.Getenv("VAULT_KV_PREFIX"),
-		"default path prefix prepended to a relative --creds-from-vault path (env VAULT_KV_PREFIX)")
+		"default path prefix prepended to a relative Vault KV path (env VAULT_KV_PREFIX)")
 	fs.StringVar(&o.VaultCACert, "vault-cacert", os.Getenv("VAULT_CACERT"),
 		"path to a CA bundle for the Vault TLS endpoint (env VAULT_CACERT)")
 	// --insecure-vault skips TLS verification for the Vault endpoint used by
@@ -210,7 +213,7 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	// Keystone TLS, not Vault, so this is a separate opt-out. --vault-insecure is
 	// kept as a hidden back-compat alias (both bind to the same value).
 	fs.BoolVar(&o.VaultInsecure, "insecure-vault", envBool("VAULT_SKIP_VERIFY"),
-		"disable TLS verification for the Vault endpoint used by --creds-from-vault (env VAULT_SKIP_VERIFY)")
+		"disable TLS verification for the Vault endpoint (env VAULT_SKIP_VERIFY)")
 	fs.BoolVar(&o.VaultInsecure, "vault-insecure", envBool("VAULT_SKIP_VERIFY"),
 		"deprecated alias of --insecure-vault (env VAULT_SKIP_VERIFY)")
 

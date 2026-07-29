@@ -1,8 +1,9 @@
 // Package vault is a dependency-free, minimal HashiCorp Vault client. It exists
 // so koc can fetch an openrc-style KV v2 secret and authenticate the normal
-// Keystone flow from it, without vendoring the Vault SDK (honoring the repo's
-// air-gap / minimal-dependency invariant). It supports AppRole login (or a
-// pre-issued token), the KV v2 read API, and Vault Enterprise namespaces via the
+// Keystone flow from it, and so `koc vault kv` can read/list/copy KV v2 secrets,
+// without vendoring the Vault SDK (honoring the repo's air-gap /
+// minimal-dependency invariant). It supports AppRole login (or a pre-issued
+// token), the KV v2 read/write/list API, and Vault Enterprise namespaces via the
 // X-Vault-Namespace header.
 package vault
 
@@ -12,13 +13,21 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
+
+// ErrNotFound is returned for a 404. Vault answers 404 both for a missing secret
+// and for an empty/absent folder listing, so callers walking a tree must
+// tolerate it rather than treat it as a failure.
+var ErrNotFound = errors.New("not found")
 
 // Config holds Vault connection and auth settings. Either Token (a pre-issued
 // token) or RoleID+SecretID (AppRole) must be provided.
@@ -114,11 +123,31 @@ func (c *Client) approleLogin(ctx context.Context) error {
 	return nil
 }
 
-// ReadKVData reads a KV v2 secret and returns its data map (the inner
-// "data.data" of the KV v2 response). path is the secret path within the mount,
-// without the mount or the "data/" infix.
+// Addr returns the Vault address the client talks to, without a trailing slash.
+// Together with Namespace and KVMount it lets a caller report where it wrote and
+// detect a source and destination that are in fact the same place.
+func (c *Client) Addr() string { return strings.TrimRight(c.cfg.Addr, "/") }
+
+// Namespace returns the Vault Enterprise namespace, empty for root.
+func (c *Client) Namespace() string { return c.cfg.Namespace }
+
+// KVMount returns the configured KV v2 mount, without surrounding slashes.
+func (c *Client) KVMount() string { return strings.Trim(c.cfg.KVMount, "/") }
+
+// ReadKVData reads a KV v2 secret from the client's configured mount and returns
+// its data map (the inner "data.data" of the KV v2 response). path is the secret
+// path within the mount, without the mount or the "data/" infix.
 func (c *Client) ReadKVData(ctx context.Context, path string) (map[string]any, error) {
-	full := fmt.Sprintf("/v1/%s/data/%s", strings.Trim(c.cfg.KVMount, "/"), strings.TrimLeft(path, "/"))
+	return c.ReadKVDataAt(ctx, c.cfg.KVMount, path, 0)
+}
+
+// ReadKVDataAt reads a KV v2 secret from an explicit mount. version 0 reads the
+// latest version.
+func (c *Client) ReadKVDataAt(ctx context.Context, mount, path string, version int) (map[string]any, error) {
+	full := kvPath(mount, "data", path)
+	if version > 0 {
+		full += "?version=" + url.QueryEscape(fmt.Sprint(version))
+	}
 	var resp struct {
 		Data struct {
 			Data map[string]any `json:"data"`
@@ -133,9 +162,137 @@ func (c *Client) ReadKVData(ctx context.Context, path string) (map[string]any, e
 	return resp.Data.Data, nil
 }
 
+// WriteKVData creates or updates a KV v2 secret (writing a new version). Only
+// the secret data is written — custom_metadata and version history are not
+// touched.
+func (c *Client) WriteKVData(ctx context.Context, mount, path string, data map[string]any) error {
+	body, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		return fmt.Errorf("encoding secret %q: %w", path, err)
+	}
+	return c.do(ctx, http.MethodPost, kvPath(mount, "data", path), body, nil)
+}
+
+// ListKV lists the immediate children of a KV v2 path. Folder entries keep their
+// trailing "/" (Vault's own convention), which is how a caller tells a subtree
+// from a leaf secret. A missing or empty path yields ErrNotFound.
+func (c *Client) ListKV(ctx context.Context, mount, path string) ([]string, error) {
+	var resp struct {
+		Data struct {
+			Keys []string `json:"keys"`
+		} `json:"data"`
+	}
+	// Vault's LIST verb is equivalent to GET with ?list=true, which avoids
+	// depending on the non-standard method.
+	if err := c.do(ctx, http.MethodGet, kvPath(mount, "metadata", path)+"?list=true", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data.Keys, nil
+}
+
+// HasKV reports whether a KV v2 secret exists (its metadata is readable).
+func (c *Client) HasKV(ctx context.Context, mount, path string) (bool, error) {
+	err := c.do(ctx, http.MethodGet, kvPath(mount, "metadata", path), nil, nil)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// WalkKV returns every leaf secret under root, as paths relative to root, sorted
+// for a deterministic copy order. An empty or absent subfolder is skipped rather
+// than failing the whole walk. A root that is itself a leaf secret (no listing)
+// yields an empty slice — callers distinguish that case via ErrNotFound.
+func (c *Client) WalkKV(ctx context.Context, mount, root string) ([]string, error) {
+	var out []string
+	var walk func(rel string) error
+	walk = func(rel string) error {
+		keys, err := c.ListKV(ctx, mount, joinKV(root, rel))
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		for _, k := range keys {
+			if k == "" {
+				continue
+			}
+			if strings.HasSuffix(k, "/") {
+				if err := walk(joinKV(rel, strings.TrimSuffix(k, "/"))); err != nil {
+					return err
+				}
+				continue
+			}
+			out = append(out, joinKV(rel, k))
+		}
+		return nil
+	}
+	if err := walk(""); err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// kvPath builds "/v1/<mount>/<api>/<path>" for the KV v2 data/metadata APIs.
+func kvPath(mount, api, path string) string {
+	p := fmt.Sprintf("/v1/%s/%s", strings.Trim(mount, "/"), api)
+	if s := strings.Trim(path, "/"); s != "" {
+		p += "/" + s
+	}
+	return p
+}
+
+// joinKV joins two KV path segments, tolerating empty ones.
+func joinKV(a, b string) string {
+	a, b = strings.Trim(a, "/"), strings.Trim(b, "/")
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + "/" + b
+}
+
+// ResolvePath maps a user-supplied KV path argument to the path used under the
+// mount's data/ API. It accepts three forms:
+//   - a leading KV-mount segment ("secret_v2/…", the Vault CLI form) — the mount
+//     is stripped and the remainder treated as absolute.
+//   - a leading "/" — an absolute path; the prefix is ignored.
+//   - otherwise — relative: prepended with the prefix (unless already prefixed).
+func ResolvePath(prefix, mount, arg string) string {
+	prefix = strings.Trim(prefix, "/")
+	mount = strings.Trim(mount, "/")
+
+	absolute := strings.HasPrefix(arg, "/")
+	p := strings.Trim(arg, "/")
+
+	// A leading "<mount>/" (or exactly the mount) is the Vault "mount/path" form;
+	// drop it and treat the rest as an absolute KV path.
+	if mount != "" && (p == mount || strings.HasPrefix(p, mount+"/")) {
+		p = strings.TrimLeft(strings.TrimPrefix(p, mount), "/")
+		absolute = true
+	}
+
+	if absolute {
+		return p
+	}
+	if prefix == "" || p == prefix || strings.HasPrefix(p, prefix+"/") {
+		return p
+	}
+	return prefix + "/" + p
+}
+
 // do performs a Vault API call. It sets the token and namespace headers and
-// never dumps bodies (they carry tokens/secrets); with debug on it logs only
-// method, path and status.
+// never dumps bodies; with debug on it logs only method, path and status. That
+// is load-bearing, not stylistic: request and response bodies here carry Vault
+// tokens and raw secret data, so --debug must never be able to leak them.
 func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {
 	var r io.Reader
 	if body != nil {
@@ -166,6 +323,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 		fmt.Fprintf(os.Stderr, "vault: %s %s -> %d\n", method, path, resp.StatusCode)
 	}
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("vault %s %s: %w", method, path, ErrNotFound)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("vault %s %s: %s: %s", method, path, resp.Status, vaultError(payload))
 	}
