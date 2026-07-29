@@ -58,6 +58,7 @@ internal/kube/             minimal read-only k8s REST client (kubeconfig + secre
 internal/vault/            minimal Vault REST client (AppRole login / token + KV v2 read + X-Vault-Namespace)
 internal/output/           -f/--format {table,json,yaml,value,csv} and -c/--column layer
 internal/cli/keyvrm/       KeyVRM (in-house catalog service); typed request layer (types.go/requests.go) + cobra verbs
+internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt (package vaultcli); Vault creds only
 internal/cli/              root.go wires every service's command group onto the root
 internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
