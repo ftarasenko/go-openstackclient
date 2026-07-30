@@ -15,12 +15,15 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"sort"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -535,8 +538,14 @@ func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 
 // serverSetFlags holds the mutable attributes accepted by "server set".
 type serverSetFlags struct {
-	name       string
-	properties []string
+	name        string
+	description string
+	hostname    string
+	properties  []string
+	state       string
+	tags        []string
+	password    string
+	noPassword  bool
 	// availabilityZone drives the KeyStack per-instance AZ update (KCP-1211):
 	// a server PUT carrying availability_zone (nova 2.90+). Vanilla nova's
 	// server-update schema rejects the field with HTTP 400.
@@ -545,6 +554,7 @@ type serverSetFlags struct {
 
 func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &serverSetFlags{}
+	var rootPassword bool
 	cmd := &cobra.Command{
 		Use:   "set <server>",
 		Short: "Set server properties",
@@ -552,6 +562,15 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
+			}
+			// --root-password prompts instead of taking a value, so the password
+			// is resolved here and the seam only ever sees the final string.
+			if rootPassword {
+				pw, err := promptNewPassword(cmd.ErrOrStderr())
+				if err != nil {
+					return err
+				}
+				f.password = pw
 			}
 			ctx := cmd.Context()
 			client, err := newComputeClient(ctx, a)
@@ -563,7 +582,19 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new name for the server")
+	fl.StringVar(&f.description, "description", "", "new description for the server (nova 2.19+)")
+	fl.StringVar(&f.hostname, "hostname", "", "hostname published to the metadata service (nova 2.90+)")
 	fl.StringArrayVar(&f.properties, "property", nil, "metadata to set as key=value; repeatable")
+	fl.StringVar(&f.state, "state", "", "reset the server state to active or error (admin only)")
+	fl.StringArrayVar(&f.tags, "tag", nil, "tag to add to the server; repeatable (nova 2.26+)")
+	fl.StringVar(&f.password, "password", "", "set the server's admin password (requires cloud support)")
+	fl.BoolVar(&f.noPassword, "no-password", false,
+		"clear the admin password from the metadata service; does not change the actual server password")
+	// Deprecated upstream alias that prompts for the password instead of taking
+	// it as a value; hidden there too, kept so existing scripts keep working.
+	fl.BoolVar(&rootPassword, "root-password", false, "prompt for the server's new admin password")
+	_ = fl.MarkHidden("root-password")
+	cmd.MarkFlagsMutuallyExclusive("password", "no-password", "root-password")
 	// KeyStack per-instance AZ change (KCP-1211), nova 2.90+; rejected by vanilla
 	// nova. The fork spells the flag with an underscore, kept as an alias.
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "KeyStack: move the server to a new availability zone")
@@ -571,13 +602,39 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// serverUpdateOpts extends gophercloud's servers.UpdateOpts, which carries no
+// description field. The pointers distinguish "not set" from an empty string,
+// which nova reads as "clear this field".
+type serverUpdateOpts struct {
+	Name        string  `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Hostname    *string `json:"hostname,omitempty"`
+}
+
+func (opts serverUpdateOpts) ToServerUpdateMap() (map[string]any, error) {
+	return gophercloud.BuildRequestBody(opts, "server")
+}
+
 func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *serverSetFlags, _ io.Writer) error {
+	if err := validateServerSetFlags(client, f); err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	if f.name != "" {
-		if _, err := servers.Update(ctx, client, id, servers.UpdateOpts{Name: f.name}).Extract(); err != nil {
+	// One PUT for every standard updatable attribute, as OSC does; the KeyStack
+	// availability_zone extension stays a separate call so its error can be
+	// annotated without implicating a plain rename.
+	opts := serverUpdateOpts{Name: f.name}
+	if f.description != "" {
+		opts.Description = &f.description
+	}
+	if f.hostname != "" {
+		opts.Hostname = &f.hostname
+	}
+	if opts != (serverUpdateOpts{}) {
+		if _, err := servers.Update(ctx, client, id, opts).Extract(); err != nil {
 			return fmt.Errorf("updating server %q: %w", ref, err)
 		}
 	}
@@ -602,7 +659,115 @@ func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 			return fmt.Errorf("updating metadata on server %q: %w", ref, err)
 		}
 	}
+	if f.state != "" {
+		if err := servers.ResetState(ctx, client, id, servers.ServerState(f.state)).ExtractErr(); err != nil {
+			return fmt.Errorf("resetting state of server %q to %q: %w", ref, f.state, err)
+		}
+	}
+	switch {
+	case f.password != "":
+		if err := servers.ChangeAdminPassword(ctx, client, id, f.password).ExtractErr(); err != nil {
+			return fmt.Errorf("changing admin password on server %q: %w", ref, err)
+		}
+	case f.noPassword:
+		if err := clearServerPassword(ctx, client, id); err != nil {
+			return fmt.Errorf("clearing admin password on server %q: %w", ref, err)
+		}
+	}
+	for _, tag := range f.tags {
+		if err := addServerTag(ctx, client, id, tag); err != nil {
+			return fmt.Errorf("adding tag %q to server %q: %w", tag, ref, err)
+		}
+	}
 	return nil
+}
+
+// validateServerSetFlags rejects flag values the target API cannot honor before
+// any request is issued, so a partially-applied "server set" is less likely.
+func validateServerSetFlags(client *gophercloud.ServiceClient, f *serverSetFlags) error {
+	if f.state != "" && f.state != string(servers.StateActive) && f.state != string(servers.StateError) {
+		return fmt.Errorf("invalid --state %q: want active or error", f.state)
+	}
+	for _, tag := range f.tags {
+		// Nova forbids "/" in a tag, and it would also split the tag URL path.
+		if tag == "" || strings.Contains(tag, "/") {
+			return fmt.Errorf("invalid --tag %q: must be non-empty and contain no %q", tag, "/")
+		}
+	}
+	for _, need := range []struct {
+		set  bool
+		flag string
+		mv   string
+	}{
+		{f.description != "", "--description", "2.19"},
+		{len(f.tags) > 0, "--tag", "2.26"},
+		{f.hostname != "", "--hostname", "2.90"},
+	} {
+		if need.set && !computeSupportsMicroversion(client, need.mv) {
+			return fmt.Errorf("%s requires compute API microversion %s or later (--os-compute-api-version)", need.flag, need.mv)
+		}
+	}
+	return nil
+}
+
+// addServerTag adds a single tag to a server (nova 2.26+). gophercloud v2 has no
+// typed server-tags API, so this is a raw PUT; nova answers 201 when the tag is
+// new and 204 when it was already present.
+func addServerTag(ctx context.Context, client *gophercloud.ServiceClient, id, tag string) error {
+	url := client.ServiceURL("servers", id, "tags", tag)
+	resp, err := client.Put(ctx, url, nil, nil, &gophercloud.RequestOpts{OkCodes: []int{201, 204}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
+}
+
+// clearServerPassword drops the admin password nova published to the metadata
+// service. This does not change the password inside the guest. gophercloud v2
+// exposes the GET but not the DELETE, so issue it raw.
+func clearServerPassword(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
+	url := client.ServiceURL("servers", id, "os-server-password")
+	resp, err := client.Delete(ctx, url, &gophercloud.RequestOpts{OkCodes: []int{202, 204}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
+}
+
+// promptNewPassword reads a new admin password twice without echo, mirroring
+// "openstack server set --root-password".
+func promptNewPassword(w io.Writer) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return "", errors.New("--root-password needs an interactive terminal; use --password instead")
+	}
+	read := func(prompt string) (string, error) {
+		if _, err := fmt.Fprint(w, prompt); err != nil {
+			return "", err
+		}
+		pw, err := term.ReadPassword(fd)
+		if _, perr := fmt.Fprintln(w); perr != nil && err == nil {
+			err = perr
+		}
+		if err != nil {
+			return "", fmt.Errorf("reading password: %w", err)
+		}
+		return string(pw), nil
+	}
+	first, err := read("New password: ")
+	if err != nil {
+		return "", err
+	}
+	second, err := read("Retype new password: ")
+	if err != nil {
+		return "", err
+	}
+	if first != second {
+		return "", errors.New("passwords do not match, password unchanged")
+	}
+	return first, nil
 }
 
 func newServerUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
