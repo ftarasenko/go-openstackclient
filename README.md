@@ -21,7 +21,7 @@ deployment. No Python at runtime.
 >   (+assignments), service, region, catalog, application credential, token,
 >   group
 > - **volume** (cinder) — volume (incl. `set --state/--attached/--detached`),
->   snapshot, backup, type, service
+>   attachment (reserve → connect → complete), snapshot, backup, type, service
 > - **dns** (designate) — zone, recordset
 > - **image** (glance) — image CRUD, `save`, project sharing
 > - **network** (neutron) — network, subnet, router, port, floating ip,
@@ -114,6 +114,7 @@ koc flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny
 koc project create demo --domain itkey
 koc volume create --size 1 test-volume
 koc volume set stuck-volume --state available --detached
+koc volume attachment create test-volume myvm --connect --initiator iqn.2026-08.local:node1
 koc network list --long
 koc resource provider show <uuid> --allocations -f json
 koc hypervisor list --gauge --sort ram --aggregate compute-hp

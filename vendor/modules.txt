@@ -8,6 +8,7 @@ github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/drivers
 github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes
 github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/ports
 github.com/gophercloud/gophercloud/v2/openstack/baremetalintrospection/v1/introspection
+github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/attachments
 github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/backups
 github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/services
 github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/snapshots
