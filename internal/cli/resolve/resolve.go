@@ -17,6 +17,7 @@ import (
 	"regexp"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
@@ -62,6 +63,35 @@ func ProjectID(ctx context.Context, identityClient *gophercloud.ServiceClient, r
 		}
 		return projects.ExtractProjects(pages)
 	}, func(p projects.Project) string { return p.ID })
+}
+
+// ServerID resolves a nova server name (or ID) to a server ID using the given
+// compute service client.
+//
+// Unlike glance/neutron/keystone, nova's ?name= filter is a regular-expression
+// *substring* match, so the results are narrowed to an exact name match before
+// the shared one-result policy is applied. AllTenants lets an admin token resolve
+// a server owned by another project; nova ignores it for non-admin tokens, so it
+// does not broaden a regular user's visibility.
+func ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref string) (string, error) {
+	if ref == "" || IsUUID(ref) {
+		return ref, nil
+	}
+	pages, err := servers.List(computeClient, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("looking up server %q: %w", ref, err)
+	}
+	all, err := servers.ExtractServers(pages)
+	if err != nil {
+		return "", fmt.Errorf("looking up server %q: %w", ref, err)
+	}
+	matches := make([]servers.Server, 0, len(all))
+	for _, s := range all {
+		if s.Name == ref {
+			matches = append(matches, s)
+		}
+	}
+	return pick("server", ref, len(matches), func(i int) string { return matches[i].ID })
 }
 
 // byName is the shared engine for the cross-service resolvers: an empty ref or a

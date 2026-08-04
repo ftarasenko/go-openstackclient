@@ -1,6 +1,6 @@
 // Package volume implements the "koc volume" command tree, mirroring the
 // upstream "openstack volume" (cinder block-storage v3) noun-verb surface,
-// including the snapshot/backup/type/service subgroups.
+// including the attachment/snapshot/backup/type/service subgroups.
 package volume
 
 import (
@@ -22,8 +22,9 @@ import (
 
 // NewCommand builds the "volume" command group and returns it as a slice so the
 // root command can splice it (and any sibling groups) into its tree. The
-// snapshot, backup, type and service subgroups live under "volume" as
-// "volume snapshot", "volume backup", "volume type" and "volume service".
+// attachment, snapshot, backup, type and service subgroups live under "volume" as
+// "volume attachment", "volume snapshot", "volume backup", "volume type" and
+// "volume service".
 func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "volume",
@@ -38,6 +39,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd.AddCommand(newVolumeUnsetCommand(a, o))
 	cmd.AddCommand(newVolumeMigrateCommand(a, o))
 
+	cmd.AddCommand(newAttachmentCommand(a, o))
 	cmd.AddCommand(newSnapshotCommand(a, o))
 	cmd.AddCommand(newBackupCommand(a, o))
 	cmd.AddCommand(newTypeCommand(a, o))

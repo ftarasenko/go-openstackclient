@@ -157,6 +157,69 @@ func TestProjectID_NameResolves(t *testing.T) {
 	}
 }
 
+// TestServerID_ExactNameWinsOverSubstringMatch pins the nova-specific narrowing:
+// nova's ?name= filter is a regex substring match, so a partial hit must not be
+// mistaken for the answer and two exact hits must still be ambiguous.
+func TestServerID_ExactNameWinsOverSubstringMatch(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("name"); got != "web" {
+			t.Errorf("name filter = %q, want web", got)
+		}
+		if got := r.URL.Query().Get("all_tenants"); got != "true" {
+			t.Errorf("all_tenants = %q, want true", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Nova's regex filter also returns "web-2", which must be ignored.
+		_, _ = w.Write([]byte(`{"servers":[{"id":"srv-1","name":"web-2"},{"id":"srv-2","name":"web"}]}`))
+	})
+
+	client := computeFakeClient(fakeServer)
+	id, err := ServerID(context.Background(), client, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "srv-2" {
+		t.Errorf("resolved id = %q, want srv-2 (the exact name match)", id)
+	}
+}
+
+func TestServerID_UUIDPassthroughSkipsAPI(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("a UUID reference must not hit the compute API")
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	const uuid = "55555555-5555-5555-5555-555555555555"
+	id, err := ServerID(context.Background(), computeFakeClient(fakeServer), uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != uuid {
+		t.Errorf("resolved id = %q, want the reference %q", id, uuid)
+	}
+}
+
+func TestServerID_MultipleExactMatchesError(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"servers":[{"id":"srv-1","name":"web"},{"id":"srv-2","name":"web"}]}`))
+	})
+
+	if _, err := ServerID(context.Background(), computeFakeClient(fakeServer), "web"); err == nil {
+		t.Fatal("expected an ambiguity error for two servers named web, got nil")
+	}
+}
+
 // Service clients pointed at the mock, matching the ResourceBase each service
 // constructor applies (glance/keystone at root, neutron under /v2.0/).
 func imageFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
@@ -168,6 +231,12 @@ func imageFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
 func projectFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
 	sc := fakeclient.ServiceClient(fakeServer)
 	sc.Type = "identity"
+	return sc
+}
+
+func computeFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
+	sc := fakeclient.ServiceClient(fakeServer)
+	sc.Type = "compute"
 	return sc
 }
 

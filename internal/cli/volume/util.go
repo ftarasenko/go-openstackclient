@@ -3,6 +3,7 @@ package volume
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -140,6 +141,47 @@ func resolveVolumeTypeID(ctx context.Context, client *gophercloud.ServiceClient,
 		func(t volumetypes.VolumeType) string { return t.Name },
 		func(t volumetypes.VolumeType) string { return t.ID },
 	)
+}
+
+// volumeSupportsMicroversion reports whether the cinder client's negotiated
+// microversion is at least want. "latest" (koc's default) supports everything; an
+// unset microversion is cinder's 3.0 baseline and supports nothing newer.
+func volumeSupportsMicroversion(client *gophercloud.ServiceClient, want string) bool {
+	if client.Microversion == "latest" {
+		return true
+	}
+	hMaj, hMin, ok := parseMicroversion(client.Microversion)
+	if !ok {
+		return false
+	}
+	wMaj, wMin, _ := parseMicroversion(want)
+	if hMaj != wMaj {
+		return hMaj > wMaj
+	}
+	return hMin >= wMin
+}
+
+// requireVolumeMicroversion fails before any request is issued when the
+// negotiated cinder microversion is older than the one the API needs, so the
+// error names the flag to raise instead of surfacing a bare 404 from cinder.
+func requireVolumeMicroversion(client *gophercloud.ServiceClient, want, what string) error {
+	if volumeSupportsMicroversion(client, want) {
+		return nil
+	}
+	return fmt.Errorf("%s requires volume API microversion %s or later (--os-volume-api-version)", what, want)
+}
+
+func parseMicroversion(v string) (major, minor int, ok bool) {
+	majStr, minStr, found := strings.Cut(v, ".")
+	if !found {
+		return 0, 0, false
+	}
+	major, err1 := strconv.Atoi(majStr)
+	minor, err2 := strconv.Atoi(minStr)
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }
 
 // resolveByNameOrGet backs the cinder name-or-ID resolvers: a direct GET (the
