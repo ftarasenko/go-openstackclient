@@ -41,7 +41,9 @@ network once) so `vendor/` and `vendor/modules.txt` stay complete; otherwise the
 offline build breaks. Do not hand-edit `vendor/`.
 
 Gate before committing: `gofmt` clean, `go vet` clean, `golangci-lint` **0
-issues**, `go test ./...` green, and the offline static build succeeds.
+issues**, `go test ./...` green, the offline static build succeeds, and — if the
+commit changes the command surface — `docs/coverage.md` is updated (see "Coverage
+tracking").
 
 ## Layout
 
@@ -102,6 +104,7 @@ Every command file mirrors `internal/cli/baremetal/node.go`:
 4. `context` comes from `cmd.Context()`. Pagination is `List(...).AllPages(ctx)`
    then `Extract*`. `--limit` is a hard result cap where the API treats it only
    as a page size (truncate after Extract).
+5. **Update `docs/coverage.md` in the same commit** — see "Coverage tracking".
 
 Client helpers (`client.go`) authenticate once via `a.Authenticate(ctx)` then
 call the right `auth.Client` factory. When a command needs a **second** service
@@ -145,6 +148,34 @@ Use `net/http/httptest` + gophercloud's fixtures
 real factory), points it at the mock, and calls the `runXxx` seam directly.
 Assert **request method, URL, microversion header(s), request body, and rendered
 output**. Cover at least the primary list plus one write verb per noun.
+
+## Coverage tracking
+
+`docs/coverage.md` records how much of the upstream `openstack` surface `koc`
+implements, measured against the OSC / ironic / designate / osc-placement entry
+points and the gophercloud v2 package graph. It is the project's progress
+dashboard, so it is only useful while it is accurate.
+
+**Every commit that changes the command surface updates it in the same commit.**
+That means any commit which adds, renames, or removes a `koc` command, or moves a
+gap from one tier to another. Concretely:
+
+- Bump the affected per-service row (raw **and** core counts) and the headline
+  total, plus the snapshot line at the top (date + `koc` commit + leaf-command
+  count).
+- Delete the command from the prioritised-gap tier it was listed under. If it was
+  Tier 1/2 and you vendored a new gophercloud package for it, also update the
+  "vs gophercloud v2" packages-used row.
+- Add a row to "Naming deviations" if the new command intentionally differs from
+  the upstream name, or to "koc-native commands" if it has no upstream
+  equivalent (KeyStack extensions, KeyVRM, Vault).
+- Re-derive rather than guess when a batch of commands lands or a baseline
+  version moves — the "Updating this document" section carries the exact
+  commands. Counts are cheap to recompute and expensive to be wrong about.
+
+A docs-only refresh of this file is a `docs:` commit; when it rides along with
+the feature it belongs to, it is part of that `feat:` commit and needs no
+separate entry.
 
 ## gophercloud v2 gotchas (real bug sources)
 
@@ -264,5 +295,8 @@ single vague bullet.
 
 - **Do** keep new work reproducible offline, tested via the `runXxx` seam, and
   routed through the output layer.
+- **Do** update `docs/coverage.md` in the same commit as any command-surface
+  change.
 - **Don't** hand-edit `vendor/`, import gophercloud v1, format structured output
-  inline, or push to a branch other than the designated feature branch.
+  inline, land a new command without touching `docs/coverage.md`, or push to a
+  branch other than the designated feature branch.

@@ -8,7 +8,9 @@ koc-windows-*
 *.test
 *.out
 *.prof
-coverage.*
+# Root-anchored: an unanchored "coverage.*" also swallowed docs/coverage.md.
+# Generated coverage profiles land at the repo root; *.out/*.prof cover the rest.
+/coverage.*
 
 # Editor / OS
 .idea/
