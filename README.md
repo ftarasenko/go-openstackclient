@@ -20,7 +20,8 @@ deployment. No Python at runtime.
 > - **identity** (keystone) — endpoint, domain, project, user, role
 >   (+assignments), service, region, catalog, application credential, token,
 >   group
-> - **volume** (cinder) — volume, snapshot, backup, type, service
+> - **volume** (cinder) — volume (incl. `set --state/--attached/--detached`),
+>   snapshot, backup, type, service
 > - **dns** (designate) — zone, recordset
 > - **image** (glance) — image CRUD, `save`, project sharing
 > - **network** (neutron) — network, subnet, router, port, floating ip,
@@ -112,6 +113,7 @@ koc server add floating ip myvm 10.0.0.5
 koc flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny
 koc project create demo --domain itkey
 koc volume create --size 1 test-volume
+koc volume set stuck-volume --state available --detached
 koc network list --long
 koc resource provider show <uuid> --allocations -f json
 koc hypervisor list --gauge --sort ram --aggregate compute-hp
