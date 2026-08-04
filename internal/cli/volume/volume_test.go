@@ -741,6 +741,9 @@ func volumeSetCmd(t *testing.T, f *volumeSetFlags, set map[string]string) *cobra
 	fl.IntVar(&f.size, "size", 0, "")
 	fl.StringVar(&f.volumeType, "type", "", "")
 	fl.StringVar(&f.migrationPolicy, "migration-policy", "", "")
+	fl.StringVar(&f.state, "state", "", "")
+	fl.BoolVar(&f.attached, "attached", false, "")
+	fl.BoolVar(&f.detached, "detached", false, "")
 	fl.BoolVar(&f.wait, "wait", false, "")
 	fl.DurationVar(&f.waitTimeout, "wait-timeout", volumePollTimeout, "")
 	for k, v := range set {
@@ -845,6 +848,109 @@ func TestRunVolumeSet_PropertyMergesMetadata(t *testing.T) {
 	// Existing key preserved, new key merged in.
 	if meta["k"] != "v" || meta["new"] != "1" {
 		t.Errorf("merged metadata = %#v, want {k:v, new:1}", meta)
+	}
+}
+
+// TestRunVolumeSet_ResetStateAndAttachStatus covers `volume set --state --attached`:
+// both land in a single os-reset_status action, and the reset precedes the extend
+// so one invocation can unstick a volume and then act on it.
+func TestRunVolumeSet_ResetStateAndAttachStatus(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var actions []map[string]any
+	fakeServer.Mux.HandleFunc("/volumes/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("action method = %q, want POST", r.Method)
+		}
+		assertVolumeMicroversion(t, r, "3.59")
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		actions = append(actions, body)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+
+	client := volumeClient(fakeServer, "3.59")
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, map[string]string{"state": "in-use", "attached": "true", "size": "20"})
+	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+		t.Fatalf("runVolumeSet returned error: %v", err)
+	}
+
+	if len(actions) != 2 {
+		t.Fatalf("expected 2 volume actions (reset_status, extend), got %d: %#v", len(actions), actions)
+	}
+	reset, ok := actions[0]["os-reset_status"].(map[string]any)
+	if !ok {
+		t.Fatalf("first action = %#v, want os-reset_status", actions[0])
+	}
+	if reset["status"] != "in-use" || reset["attach_status"] != "attached" {
+		t.Errorf("reset body = %#v, want status=in-use attach_status=attached", reset)
+	}
+	if _, ok := actions[1]["os-extend"]; !ok {
+		t.Errorf("second action = %#v, want os-extend after the reset", actions[1])
+	}
+}
+
+// TestRunVolumeSet_DetachedOmitsStatus pins the reason resetStatusOpts exists:
+// gophercloud's ResetStatusOpts would always send "status": "", which cinder
+// rejects, so an attach-status-only reset must omit the key entirely.
+func TestRunVolumeSet_DetachedOmitsStatus(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	var got map[string]any
+	fakeServer.Mux.HandleFunc("/volumes/"+id+"/action", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/volumes/"+id, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(volumeGetBody))
+	})
+
+	client := volumeClient(fakeServer, "latest")
+	f := &volumeSetFlags{}
+	cmd := volumeSetCmd(t, f, map[string]string{"detached": "true"})
+	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+		t.Fatalf("runVolumeSet returned error: %v", err)
+	}
+	reset, ok := got["os-reset_status"].(map[string]any)
+	if !ok {
+		t.Fatalf("action body = %#v, want os-reset_status", got)
+	}
+	if _, present := reset["status"]; present {
+		t.Errorf("reset body must omit status when only --detached is given: %#v", reset)
+	}
+	if reset["attach_status"] != "detached" {
+		t.Errorf("reset body = %#v, want attach_status=detached", reset)
+	}
+}
+
+// TestRunVolumeSet_StateValidation rejects bad state/attach-status combinations
+// before any request is issued (a nil client would panic otherwise).
+func TestRunVolumeSet_StateValidation(t *testing.T) {
+	for name, set := range map[string]map[string]string{
+		"invalid state":         {"state": "wedged"},
+		"attached and detached": {"attached": "true", "detached": "true"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &volumeSetFlags{}
+			cmd := volumeSetCmd(t, f, set)
+			if err := runVolumeSet(context.Background(), nil, "x", f, cmd, io.Discard); err == nil {
+				t.Fatalf("expected an error for %v, got nil", set)
+			}
+		})
 	}
 }
 

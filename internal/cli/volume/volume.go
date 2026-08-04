@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -387,9 +388,25 @@ type volumeSetFlags struct {
 	size            int
 	volumeType      string
 	migrationPolicy string
+	state           string
+	attached        bool
+	detached        bool
 	wait            bool
 	waitTimeout     time.Duration
 }
+
+// volumeStates are the values "volume set --state" accepts, mirroring upstream
+// OSC's choice list for the cinder os-reset_status action.
+var volumeStates = []string{
+	"available", "error", "creating", "deleting", "in-use",
+	"attaching", "detaching", "error_deleting", "maintenance",
+}
+
+// attach statuses accepted by "volume set --attached/--detached".
+const (
+	attachStatusAttached = "attached"
+	attachStatusDetached = "detached"
+)
 
 func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &volumeSetFlags{}
@@ -417,6 +434,11 @@ func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.volumeType, "type", "", "retype the volume to this volume type (name or ID)")
 	fl.StringVar(&f.migrationPolicy, "migration-policy", "",
 		`migration policy while retyping: "never" (cinder default) or "on-demand" (requires --type)`)
+	fl.StringVar(&f.state, "state", "",
+		"reset the volume status to one of "+strings.Join(volumeStates, ", ")+
+			" (admin only; changes only cinder's record, not the backend)")
+	fl.BoolVar(&f.attached, "attached", false, `reset the volume attachment status to "attached" (admin only)`)
+	fl.BoolVar(&f.detached, "detached", false, `reset the volume attachment status to "detached" (admin only)`)
 	fl.BoolVar(&f.wait, "wait", false, "wait for a --type retype to finish and report whether it took effect")
 	fl.DurationVar(&f.waitTimeout, "wait-timeout", volumePollTimeout, "maximum time to wait for --wait to complete")
 	return cmd
@@ -437,6 +459,56 @@ func parseMigrationPolicy(s string) (volumes.MigrationPolicy, error) {
 	}
 }
 
+// parseAttachStatus turns the mutually exclusive --attached/--detached pair into
+// the attach_status cinder expects, or "" when neither was given.
+func parseAttachStatus(f *volumeSetFlags) (string, error) {
+	switch {
+	case f.attached && f.detached:
+		return "", fmt.Errorf("--attached and --detached are mutually exclusive")
+	case f.attached:
+		return attachStatusAttached, nil
+	case f.detached:
+		return attachStatusDetached, nil
+	}
+	return "", nil
+}
+
+// validateVolumeState rejects a --state cinder would refuse, before any request.
+func validateVolumeState(state string) error {
+	if state == "" {
+		return nil
+	}
+	for _, s := range volumeStates {
+		if state == s {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid --state %q: want one of %s", state, strings.Join(volumeStates, ", "))
+}
+
+// resetStatusOpts is a volumes.ResetStatusOptsBuilder that emits only the fields
+// the caller asked to change. volumes.ResetStatusOpts tags Status without
+// ",omitempty", so it always sends "status": "" — which cinder rejects as an
+// invalid status, making an --attached/--detached-only reset impossible.
+type resetStatusOpts struct {
+	status       string
+	attachStatus string
+}
+
+func (o resetStatusOpts) ToResetStatusMap() (map[string]any, error) {
+	action := map[string]any{}
+	if o.status != "" {
+		action["status"] = o.status
+	}
+	if o.attachStatus != "" {
+		action["attach_status"] = o.attachStatus
+	}
+	if len(action) == 0 {
+		return nil, fmt.Errorf("nothing to reset: specify --state, --attached or --detached")
+	}
+	return map[string]any{"os-reset_status": action}, nil
+}
+
 func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *volumeSetFlags, cmd *cobra.Command, w io.Writer) error {
 	policy, err := parseMigrationPolicy(f.migrationPolicy)
 	if err != nil {
@@ -454,16 +526,35 @@ func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	if f.wait && !cmd.Flags().Changed("type") {
 		return fmt.Errorf("--wait requires --type")
 	}
+	attachStatus, err := parseAttachStatus(f)
+	if err != nil {
+		return err
+	}
+	if err := validateVolumeState(f.state); err != nil {
+		return err
+	}
 	if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("description") &&
-		!cmd.Flags().Changed("size") && !cmd.Flags().Changed("type") && len(f.property) == 0 {
-		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --type, --property")
+		!cmd.Flags().Changed("size") && !cmd.Flags().Changed("type") &&
+		f.state == "" && attachStatus == "" && len(f.property) == 0 {
+		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --type, " +
+			"--property, --state, --attached, --detached")
 	}
 	id, err := resolveVolumeID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
 
-	// Extend first, if requested: it is a separate action from the metadata/name
+	// Reset the recorded status first: it is the repair action that unsticks a
+	// volume left in a transient state, so doing it before the extend/retype below
+	// lets one invocation fix the record and then act on the volume.
+	if f.state != "" || attachStatus != "" {
+		opts := resetStatusOpts{status: f.state, attachStatus: attachStatus}
+		if err := volumes.ResetStatus(ctx, client, id, opts).ExtractErr(); err != nil {
+			return fmt.Errorf("resetting status of volume %q: %w", ref, err)
+		}
+	}
+
+	// Extend next, if requested: it is a separate action from the metadata/name
 	// update below.
 	if cmd.Flags().Changed("size") {
 		if err := volumes.ExtendSize(ctx, client, id, volumes.ExtendSizeOpts{NewSize: f.size}).ExtractErr(); err != nil {
