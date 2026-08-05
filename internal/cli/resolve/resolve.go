@@ -18,6 +18,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/domains"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
@@ -92,6 +93,41 @@ func ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref
 		}
 	}
 	return pick("server", ref, len(matches), func(i int) string { return matches[i].ID })
+}
+
+// DomainID resolves a keystone domain name (or ID) to a domain ID using the
+// given identity service client.
+func DomainID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
+	return byName(ctx, "domain", ref, func(ctx context.Context) ([]domains.Domain, error) {
+		pages, err := domains.List(identityClient, domains.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return domains.ExtractDomains(pages)
+	}, func(d domains.Domain) string { return d.ID })
+}
+
+// ProjectIDInDomain is ProjectID narrowed to one domain (name or ID), backing
+// the --project/--project-domain pair OSC uses when a project name exists in
+// more than one domain. An empty domainRef behaves exactly like ProjectID.
+func ProjectIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceClient, ref, domainRef string) (string, error) {
+	if domainRef == "" {
+		return ProjectID(ctx, identityClient, ref)
+	}
+	if ref == "" || IsUUID(ref) {
+		return ref, nil
+	}
+	domainID, err := DomainID(ctx, identityClient, domainRef)
+	if err != nil {
+		return "", err
+	}
+	return byName(ctx, "project", ref, func(ctx context.Context) ([]projects.Project, error) {
+		pages, err := projects.List(identityClient, projects.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return projects.ExtractProjects(pages)
+	}, func(p projects.Project) string { return p.ID })
 }
 
 // byName is the shared engine for the cross-service resolvers: an empty ref or a

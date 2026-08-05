@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -248,7 +251,7 @@ func TestRunPortList_RequestAndOutput(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runPortList(context.Background(), client, o, &portListFlags{}, &buf); err != nil {
+	if err := runPortList(context.Background(), client, o, &portListFlags{}, portListDeps{}, &buf); err != nil {
 		t.Fatalf("runPortList: %v", err)
 	}
 	for _, want := range []string{"port-1", "aa:bb:cc:dd:ee:ff", "ACTIVE"} {
@@ -273,7 +276,7 @@ func TestRunPortList_FixedIPFilter(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	f := &portListFlags{fixedIP: []string{"ip-address=94.141.105.93"}}
-	if err := runPortList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runPortList(context.Background(), client, o, f, portListDeps{}, &buf); err != nil {
 		t.Fatalf("runPortList: %v", err)
 	}
 	want := "ip_address=94.141.105.93"
@@ -285,6 +288,161 @@ func TestRunPortList_FixedIPFilter(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("fixed_ips query = %v, want an entry %q", gotFixedIPs, want)
+	}
+}
+
+// TestRunPortList_ServerFilter covers the cross-service path: --server resolves
+// a nova server name to its ID against the compute client, and the resulting
+// device_id lands in the neutron query.
+func TestRunPortList_ServerFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery url.Values
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		gotQuery = r.URL.Query()
+		writeJSON(t, w, http.StatusOK, `{"ports":[{"id":"port-1","status":"ACTIVE"}]}`)
+	})
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		writeJSON(t, w, http.StatusOK, `{"servers":[{"id":"server-uuid","name":"vm1"}]}`)
+	})
+
+	client := networkClient(fakeServer)
+	compute := fakeclient.ServiceClient(fakeServer)
+	compute.Type = "compute"
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portListFlags{server: "vm1"}
+	deps := portListDeps{compute: func() (*gophercloud.ServiceClient, error) { return compute, nil }}
+	if err := runPortList(context.Background(), client, o, f, deps, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	if got := gotQuery.Get("device_id"); got != "server-uuid" {
+		t.Errorf("device_id = %q, want %q", got, "server-uuid")
+	}
+}
+
+// TestRunPortList_ServerUUIDSkipsCompute asserts a UUID --server needs no nova
+// call: the mock has no /servers handler, so any lookup would 404.
+func TestRunPortList_ServerUUIDSkipsCompute(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const uuid = "21733bd1-ff5e-47e1-aa6f-8abf4545c5ad"
+	var gotQuery url.Values
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		writeJSON(t, w, http.StatusOK, `{"ports":[]}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portListFlags{server: uuid}
+	computeCalled := false
+	deps := portListDeps{compute: func() (*gophercloud.ServiceClient, error) {
+		computeCalled = true
+		return nil, nil
+	}}
+	if err := runPortList(context.Background(), client, o, f, deps, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	if computeCalled {
+		t.Error("compute client derived for a UUID --server; want no compute call")
+	}
+	if got := gotQuery.Get("device_id"); got != uuid {
+		t.Errorf("device_id = %q, want %q", got, uuid)
+	}
+}
+
+// TestRunPortList_ScalarFilters asserts every plain query filter reaches
+// neutron, including --host (binding:host_id, not modeled by gophercloud) and
+// the four tag filters.
+func TestRunPortList_ScalarFilters(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery url.Values
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		gotQuery = r.URL.Query()
+		writeJSON(t, w, http.StatusOK, `{"ports":[]}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portListFlags{
+		name:        "p1",
+		deviceID:    "dev-1",
+		deviceOwner: "network:dhcp",
+		host:        "cmp-01",
+		macAddress:  "aa:bb:cc:dd:ee:ff",
+		status:      "active",
+		tags:        []string{"a", "b"},
+		anyTags:     []string{"c"},
+		notTags:     []string{"d"},
+		notAnyTags:  []string{"e"},
+	}
+	if err := runPortList(context.Background(), client, o, f, portListDeps{}, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	want := map[string]string{
+		"name":            "p1",
+		"device_id":       "dev-1",
+		"device_owner":    "network:dhcp",
+		"binding:host_id": "cmp-01",
+		"mac_address":     "aa:bb:cc:dd:ee:ff",
+		"status":          "ACTIVE", // lower-case input is upper-cased for the API
+		"tags":            "a,b",
+		"tags-any":        "c",
+		"not-tags":        "d",
+		"not-tags-any":    "e",
+	}
+	for k, v := range want {
+		if got := gotQuery.Get(k); got != v {
+			t.Errorf("query %s = %q, want %q", k, got, v)
+		}
+	}
+}
+
+func TestRunPortList_InvalidStatus(t *testing.T) {
+	var buf bytes.Buffer
+	o := &output.Options{Format: output.FormatTable}
+	f := &portListFlags{status: "bogus"}
+	err := runPortList(context.Background(), nil, o, f, portListDeps{}, &buf)
+	if err == nil || !strings.Contains(err.Error(), "invalid --status") {
+		t.Errorf("err = %v, want an invalid --status error", err)
+	}
+}
+
+// TestRunPortList_Long asserts --long adds the four extra columns and renders
+// trunk sub_ports.
+func TestRunPortList_Long(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		writeJSON(t, w, http.StatusOK, `{"ports":[{
+			"id":"port-1","status":"ACTIVE","device_owner":"compute:nova",
+			"security_groups":["sg-1"],"tags":["t1"],
+			"trunk_details":{"trunk_id":"trunk-1","sub_ports":[{"port_id":"sub-1","segmentation_id":42,"segmentation_type":"vlan"}]}
+		}]}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runPortList(context.Background(), client, o, &portListFlags{long: true}, portListDeps{}, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	for _, want := range []string{"Security Groups", "Trunk subports", "sg-1", "compute:nova", "t1", "sub-1"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("port list --long output missing %q\n%s", want, buf.String())
+		}
 	}
 }
 

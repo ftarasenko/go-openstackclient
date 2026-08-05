@@ -55,3 +55,10 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 func newNetworkClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
 	return a.NewServiceClient(ctx, (*auth.Client).Network)
 }
+
+// newNetworkSession is newNetworkClient for commands that also need the
+// authenticated Client to lazily derive a second service (cross-service name→ID
+// resolution), e.g. `port list --server`/`--project`.
+func newNetworkSession(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, *auth.Client, error) {
+	return a.NewServiceSession(ctx, (*auth.Client).Network)
+}

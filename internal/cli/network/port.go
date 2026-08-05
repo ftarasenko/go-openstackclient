@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -42,10 +45,33 @@ func portShowFields(p *ports.Port) ([]string, []any) {
 }
 
 type portListFlags struct {
-	router      string
-	network     string
-	deviceOwner string
-	fixedIP     []string
+	name          string
+	network       string
+	router        string
+	server        string
+	deviceID      string
+	deviceOwner   string
+	host          string
+	macAddress    string
+	status        string
+	project       string
+	projectDomain string
+	securityGroup []string
+	fixedIP       []string
+	tags          []string
+	anyTags       []string
+	notTags       []string
+	notAnyTags    []string
+	long          bool
+}
+
+// portListDeps supplies the secondary service clients `port list` may need:
+// compute to resolve --server and identity to resolve --project. Both are
+// derived lazily so listing ports never contacts a service the invocation does
+// not filter on; tests pass closures over a mock endpoint.
+type portListDeps struct {
+	compute  func() (*gophercloud.ServiceClient, error)
+	identity func() (*gophercloud.ServiceClient, error)
 }
 
 func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -59,24 +85,108 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runPortList(ctx, client, o, f, cmd.OutOrStdout())
+			deps := portListDeps{compute: session.Compute, identity: session.Identity}
+			return runPortList(ctx, client, o, f, deps, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.router, "router", "", "list only ports attached to this router (name or ID)")
+	fl.StringVar(&f.name, "name", "", "list only ports with this name")
 	fl.StringVar(&f.network, "network", "", "list only ports on this network (name or ID)")
+	fl.StringVar(&f.router, "router", "", "list only ports attached to this router (name or ID)")
+	fl.StringVar(&f.server, "server", "", "list only ports attached to this server (name or ID)")
+	fl.StringVar(&f.deviceID, "device-id", "", "list only ports with this device ID")
 	fl.StringVar(&f.deviceOwner, "device-owner", "", "list only ports with this device owner")
+	fl.StringVar(&f.host, "host", "", "list only ports bound to this host ID")
+	fl.StringVar(&f.macAddress, "mac-address", "", "list only ports with this MAC address")
+	fl.StringVar(&f.status, "status", "", "list only ports with this status (ACTIVE, BUILD, DOWN, ERROR)")
+	fl.StringVar(&f.project, "project", "", "list only ports in this project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID)")
+	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "list only ports in this security group (name or ID, repeatable)")
 	// OSC form: --fixed-ip subnet=<subnet>,ip-address=<ip>,ip-substring=<substr>; repeatable.
 	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "filter by fixed IP: subnet=/ip-address=/ip-substring= pairs; repeatable")
+	fl.StringSliceVar(&f.tags, "tags", nil, "list only ports with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only ports with any of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude ports with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude ports with any of these tags (comma-separated)")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
+	// Upstream OSC models these three as one device filter; they all set device_id.
+	cmd.MarkFlagsMutuallyExclusive("router", "server", "device-id")
 	return cmd
 }
 
-func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portListFlags, w io.Writer) error {
-	opts := ports.ListOpts{DeviceOwner: f.deviceOwner}
+// portListOpts adds the query parameters neutron accepts but gophercloud's
+// ports.ListOpts does not model — binding:host_id, behind --host.
+type portListOpts struct {
+	ports.ListOpts
+	hostID string
+}
+
+func (opts portListOpts) ToPortListQuery() (string, error) {
+	q, err := opts.ListOpts.ToPortListQuery()
+	if err != nil || opts.hostID == "" {
+		return q, err
+	}
+	params, err := url.ParseQuery(strings.TrimPrefix(q, "?"))
+	if err != nil {
+		return "", fmt.Errorf("building port list query: %w", err)
+	}
+	params.Set("binding:host_id", opts.hostID)
+	return "?" + params.Encode(), nil
+}
+
+// portExt is a Port decorated with the trunk_details attribute, which
+// gophercloud does not model; `port list --long` renders its sub_ports as
+// "Trunk subports". Both parts are anonymous embeds so ExtractPortsInto
+// populates them — that extraction path only decodes into struct-kind fields, so
+// the attribute has to arrive via a flat extension struct (as with MTUExt on
+// networkExt) rather than a named pointer field.
+type portExt struct {
+	ports.Port
+	TrunkDetailsExt
+}
+
+// TrunkDetailsExt carries the trunk_details attribute. It stays exported
+// because gophercloud's extraction reflects over the embedded field and cannot
+// address an unexported one.
+type TrunkDetailsExt struct {
+	TrunkDetails trunkDetails `json:"trunk_details"`
+}
+
+type trunkDetails struct {
+	TrunkID  string         `json:"trunk_id"`
+	SubPorts []trunkSubPort `json:"sub_ports"`
+}
+
+type trunkSubPort struct {
+	PortID           string `json:"port_id"`
+	SegmentationID   int    `json:"segmentation_id"`
+	SegmentationType string `json:"segmentation_type"`
+	MACAddress       string `json:"mac_address"`
+}
+
+func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portListFlags, deps portListDeps, w io.Writer) error {
+	status, err := normalizePortStatus(f.status)
+	if err != nil {
+		return err
+	}
+	opts := portListOpts{
+		ListOpts: ports.ListOpts{
+			Name:        f.name,
+			DeviceID:    f.deviceID,
+			DeviceOwner: f.deviceOwner,
+			MACAddress:  f.macAddress,
+			Status:      status,
+			Tags:        strings.Join(f.tags, ","),
+			TagsAny:     strings.Join(f.anyTags, ","),
+			NotTags:     strings.Join(f.notTags, ","),
+			NotTagsAny:  strings.Join(f.notAnyTags, ","),
+		},
+		hostID: f.host,
+	}
 	if f.router != "" {
 		routerID, err := resolveRouterID(ctx, client, f.router)
 		if err != nil {
@@ -84,12 +194,49 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		}
 		opts.DeviceID = routerID
 	}
+	switch {
+	case resolve.IsUUID(f.server):
+		// Already an ID — no nova round-trip, so `--server <uuid>` works even
+		// where the compute service is unreachable.
+		opts.DeviceID = f.server
+	case f.server != "":
+		compute, err := secondaryClient(deps.compute, "compute", "--server")
+		if err != nil {
+			return err
+		}
+		serverID, err := resolve.ServerID(ctx, compute, f.server)
+		if err != nil {
+			return err
+		}
+		opts.DeviceID = serverID
+	}
 	if f.network != "" {
 		networkID, err := resolveNetworkID(ctx, client, f.network)
 		if err != nil {
 			return err
 		}
 		opts.NetworkID = networkID
+	}
+	switch {
+	case resolve.IsUUID(f.project):
+		opts.ProjectID = f.project
+	case f.project != "":
+		identity, err := secondaryClient(deps.identity, "identity", "--project")
+		if err != nil {
+			return err
+		}
+		projectID, err := resolve.ProjectIDInDomain(ctx, identity, f.project, f.projectDomain)
+		if err != nil {
+			return err
+		}
+		opts.ProjectID = projectID
+	}
+	if len(f.securityGroup) > 0 {
+		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
+		if err != nil {
+			return err
+		}
+		opts.SecurityGroups = sgIDs
 	}
 	for _, spec := range f.fixedIP {
 		fip, err := parseFixedIPFilter(ctx, client, spec)
@@ -102,16 +249,52 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("listing ports: %w", err)
 	}
-	all, err := ports.ExtractPorts(pages)
-	if err != nil {
+	var all []portExt
+	if err := ports.ExtractPortsInto(pages, &all); err != nil {
 		return fmt.Errorf("parsing port list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "MAC Address", "Fixed IP Addresses", "Status"}, Rows: make([][]any, 0, len(all))}
-	for i := range all {
-		p := &all[i]
-		t.Rows = append(t.Rows, []any{p.ID, p.Name, p.MACAddress, p.FixedIPs, p.Status})
+	return o.WriteList(w, portListTable(all, f.long))
+}
+
+func portListTable(list []portExt, long bool) output.Table {
+	cols := []string{"ID", "Name", "MAC Address", "Fixed IP Addresses", "Status"}
+	if long {
+		cols = append(cols, "Security Groups", "Device Owner", "Tags", "Trunk subports")
 	}
-	return o.WriteList(w, t)
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
+	for i := range list {
+		p := &list[i]
+		row := []any{p.ID, p.Name, p.MACAddress, p.FixedIPs, p.Status}
+		if long {
+			row = append(row, p.SecurityGroups, p.DeviceOwner, p.Tags, p.TrunkDetails.SubPorts)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	return t
+}
+
+// normalizePortStatus upper-cases --status and rejects anything neutron does not
+// report, since the API matches the value case-sensitively.
+func normalizePortStatus(status string) (string, error) {
+	if status == "" {
+		return "", nil
+	}
+	up := strings.ToUpper(status)
+	switch up {
+	case "ACTIVE", "BUILD", "DOWN", "ERROR":
+		return up, nil
+	default:
+		return "", fmt.Errorf("invalid --status %q: want one of ACTIVE, BUILD, DOWN, ERROR", status)
+	}
+}
+
+// secondaryClient derives one of the optional cross-service clients, naming the
+// flag that needed it when the caller supplied no way to reach that service.
+func secondaryClient(derive func() (*gophercloud.ServiceClient, error), service, flag string) (*gophercloud.ServiceClient, error) {
+	if derive == nil {
+		return nil, fmt.Errorf("%s requires the %s service", flag, service)
+	}
+	return derive()
 }
 
 func newPortShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
