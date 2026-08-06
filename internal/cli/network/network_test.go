@@ -73,7 +73,7 @@ func TestRunNetworkList_RequestAndTableOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runNetworkList(context.Background(), client, o, &networkListFlags{}, &buf); err != nil {
+	if err := runNetworkList(context.Background(), client, o, &networkListFlags{}, "", &buf); err != nil {
 		t.Fatalf("runNetworkList returned error: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestRunNetworkList_LongIncludesExtensionColumns(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runNetworkList(context.Background(), client, o, &networkListFlags{long: true}, &buf); err != nil {
+	if err := runNetworkList(context.Background(), client, o, &networkListFlags{long: true}, "", &buf); err != nil {
 		t.Fatalf("runNetworkList returned error: %v", err)
 	}
 	out := buf.String()

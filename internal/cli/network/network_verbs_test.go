@@ -165,7 +165,7 @@ func TestRunSubnetList_RequestAndOutput(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runSubnetList(context.Background(), client, o, &buf); err != nil {
+	if err := runSubnetList(context.Background(), client, o, &subnetListFlags{}, "", &buf); err != nil {
 		t.Fatalf("runSubnetList: %v", err)
 	}
 	for _, want := range []string{"sub-1", "sn", "net-1", "10.0.0.0/24"} {

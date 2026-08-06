@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 284 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 285 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**258 of 749 in-scope upstream commands (34%).** Of `koc`'s 284 leaf commands,
-~259 are upstream-equivalent and 25 are koc-native.
+**259 of 749 in-scope upstream commands (35%).** Of `koc`'s 285 leaf commands,
+~260 are upstream-equivalent and 25 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -37,8 +37,9 @@ actually run daily. Both numbers are reported below; neither alone is honest.
 Counts are **leaf commands, not flags**. A command can be present and still lag
 upstream's option surface, so a flag-parity pass changes no number here: `port
 list` was counted from the start, but only carried 4 of upstream's 17 filters
-until `055dc95`. When auditing a noun, diff its flags against the upstream
-parser, not just its presence in these tables.
+until `055dc95`, and `subnet list` was counted while accepting no filters at all
+until the history-parity pass. When auditing a noun, diff its flags against the
+upstream parser, not just its presence in these tables.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
 `image.v1` are excluded as legacy) plus the three plugins above. 806 commands
@@ -52,7 +53,7 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 30/94 (32%) | **30/38 (79%)** |
 | `openstack.identity.v3` | 42/128 (33%) | **42/60 (70%)** |
-| `openstack.network.v2` | 56/165 (34%) | **56/92 (61%)** |
+| `openstack.network.v2` | 57/165 (35%) | **57/92 (62%)** |
 | `openstack.common` | 4/11 (36%) | 4/11 — `quota show/set`, `extension list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
@@ -106,7 +107,7 @@ Eleven services gophercloud supports have **zero** `koc` surface:
 | `compute/v2/servers` (`Shelve`/`Unshelve`/`Rescue`/`Unrescue`/`CreateImage`/`GetPassword`) | `server shelve/unshelve/rescue/unrescue`, `server image create` |
 | `identity/v3/{regions,services,users,tokens,catalog}` | `region create/delete/set/show`, `service create/delete/set`, `user password set`, `token revoke`, `catalog show` |
 | `blockstorage/v3/{snapshots,backups}` (`Update`) | `volume snapshot set/unset`, `volume backup set/unset` |
-| `networking/v2/{ports,subnets,security/groups}` (nil-update) | `port unset`, `subnet unset`, `security group unset` |
+| `networking/v2/{subnets,security/groups}` (nil-update) | `subnet unset`, `security group unset` (`port unset` is now wired) |
 | `networking/v2/extensions/layer3/routers` (`GatewayInfo`) | `router add/remove gateway` |
 
 ### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)

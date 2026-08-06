@@ -27,6 +27,7 @@ func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newPortCreateCommand(a, o))
 	cmd.AddCommand(newPortDeleteCommand(a, o))
 	cmd.AddCommand(newPortSetCommand(a, o))
+	cmd.AddCommand(newPortUnsetCommand(a, o))
 	return cmd
 }
 
@@ -477,6 +478,14 @@ type portSetFlags struct {
 	noSecurityGroup bool
 	enable          bool
 	disable         bool
+
+	allowedAddress      []string
+	noAllowedAddress    bool
+	enablePortSecurity  bool
+	disablePortSecurity bool
+	host                string
+	device              string
+	deviceOwner         string
 }
 
 func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -505,8 +514,18 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.noSecurityGroup, "no-security-group", false, "clear all security groups from the port")
 	fl.BoolVar(&f.enable, "enable", false, "set the port administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "set the port administratively down")
+	fl.StringArrayVar(&f.allowedAddress, "allowed-address", nil,
+		"allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable, replaces existing)")
+	fl.BoolVar(&f.noAllowedAddress, "no-allowed-address", false, "clear all allowed address pairs from the port")
+	fl.BoolVar(&f.enablePortSecurity, "enable-port-security", false, "enable port security (security groups and anti-spoofing)")
+	fl.BoolVar(&f.disablePortSecurity, "disable-port-security", false, "disable port security")
+	fl.StringVar(&f.host, "host", "", "binding host ID for the port")
+	fl.StringVar(&f.device, "device", "", "device ID the port is attached to")
+	fl.StringVar(&f.deviceOwner, "device-owner", "", "device owner of the port")
 	cmd.MarkFlagsMutuallyExclusive("security-group", "no-security-group")
 	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
+	cmd.MarkFlagsMutuallyExclusive("allowed-address", "no-allowed-address")
+	cmd.MarkFlagsMutuallyExclusive("enable-port-security", "disable-port-security")
 	return cmd
 }
 
@@ -549,13 +568,115 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		opts.SecurityGroups = &sgIDs
 		changed = true
 	}
+	switch {
+	case f.noAllowedAddress:
+		opts.AllowedAddressPairs = &[]ports.AddressPair{}
+		changed = true
+	case flags.Changed("allowed-address"):
+		pairs, err := parseAddressPairs(f.allowedAddress)
+		if err != nil {
+			return err
+		}
+		opts.AllowedAddressPairs = &pairs
+		changed = true
+	}
+	if flags.Changed("device") {
+		opts.DeviceID = &f.device
+		changed = true
+	}
+	if flags.Changed("device-owner") {
+		opts.DeviceOwner = &f.deviceOwner
+		changed = true
+	}
+
+	// --host and --*-port-security live in neutron's portsbinding and
+	// port-security extensions, which gophercloud v2.13.0 does not vendor a
+	// package for, so they are layered on as a local UpdateOptsBuilder.
+	ext := portUpdateOptsExt{UpdateOptsBuilder: opts}
+	if flags.Changed("host") {
+		ext.HostID = &f.host
+		changed = true
+	}
+	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
+		"enable-port-security", "disable-port-security"); secure != nil {
+		ext.PortSecurityEnabled = secure
+		changed = true
+	}
+
 	if !changed {
 		return fmt.Errorf("port set requires at least one attribute flag")
 	}
-	p, err := ports.Update(ctx, client, id, opts).Extract()
+	p, err := ports.Update(ctx, client, id, ext).Extract()
 	if err != nil {
 		return fmt.Errorf("updating port %s: %w", nameOrID, err)
 	}
 	fields, values := portShowFields(p)
 	return o.WriteSingle(w, fields, values)
+}
+
+// portUpdateOptsExt layers the binding and port-security attributes onto a
+// ports.UpdateOpts. gophercloud has extensions/portsbinding and
+// extensions/portsecurity upstream, but neither is vendored at v2.13.0 and
+// ports.UpdateOpts has no fields for them — so rather than pull two packages in
+// for two keys, this follows the same composition pattern as
+// external.UpdateOptsExt and injects them into the request body. Swap it for the
+// vendored extensions if they are ever needed more widely.
+type portUpdateOptsExt struct {
+	ports.UpdateOptsBuilder
+	HostID              *string
+	PortSecurityEnabled *bool
+}
+
+func (opts portUpdateOptsExt) ToPortUpdateMap() (map[string]any, error) {
+	base, err := opts.UpdateOptsBuilder.ToPortUpdateMap()
+	if err != nil {
+		return nil, err
+	}
+	if opts.HostID == nil && opts.PortSecurityEnabled == nil {
+		return base, nil
+	}
+	portMap, ok := base["port"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected port update body shape: %T", base["port"])
+	}
+	if opts.HostID != nil {
+		portMap["binding:host_id"] = *opts.HostID
+	}
+	if opts.PortSecurityEnabled != nil {
+		portMap["port_security_enabled"] = *opts.PortSecurityEnabled
+	}
+	return base, nil
+}
+
+// parseAddressPairs parses the repeatable --allowed-address specs into
+// ports.AddressPair values. Each spec is a comma-separated key=value list:
+// ip-address=<ip>[,mac-address=<mac>], matching OSC.
+func parseAddressPairs(specs []string) ([]ports.AddressPair, error) {
+	pairs := make([]ports.AddressPair, 0, len(specs))
+	for _, spec := range specs {
+		var pair ports.AddressPair
+		for _, part := range strings.Split(spec, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			k, v, err := splitKV(part)
+			if err != nil {
+				return nil, fmt.Errorf("parsing --allowed-address %q: %w", spec, err)
+			}
+			switch k {
+			case "ip-address", "ip_address":
+				pair.IPAddress = v
+			case "mac-address", "mac_address":
+				pair.MACAddress = v
+			default:
+				return nil, fmt.Errorf("parsing --allowed-address %q: unknown key %q", spec, k)
+			}
+		}
+		if pair.IPAddress == "" {
+			return nil, fmt.Errorf("--allowed-address %q requires ip-address", spec)
+		}
+		pairs = append(pairs, pair)
+	}
+	return pairs, nil
 }
