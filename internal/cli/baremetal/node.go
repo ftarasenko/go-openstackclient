@@ -30,6 +30,8 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newNodeMaintenanceCommand(a, o))
 	cmd.AddCommand(newNodePowerCommand(a, o))
 	cmd.AddCommand(newNodeBootDeviceCommand(a, o))
+	cmd.AddCommand(newNodeInventoryCommand(a, o))
+	cmd.AddCommand(newNodeAbortCommand(a, o))
 	for _, sub := range newNodeProvisionCommands(a, o) {
 		cmd.AddCommand(sub)
 	}
