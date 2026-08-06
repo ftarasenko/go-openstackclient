@@ -26,8 +26,10 @@ deployment. No Python at runtime.
 > - **image** (glance) — image CRUD, `save`, project sharing
 > - **network** (neutron) — network, subnet, router, port, floating ip,
 >   security group (+rule), agent
-> - **loadbalancer** (octavia) — load balancer, listener, pool, member and
->   health monitor CRUD, plus failover, stats and a flattened status tree
+> - **loadbalancer** (octavia) — load balancer, listener, pool, member, health
+>   monitor, l7policy, l7rule, quota, amphora, provider, flavor and flavorprofile
+>   (60 of python-octaviaclient's 82 commands), plus failover, stats and a
+>   flattened status tree
 > - **placement** — resource provider (list/show/delete/trait), allocation, trait
 > - **keyvrm** (Keystack Virtual Resource Manager — in-house) — app-config,
 >   host-aggregate-config, availability-zone, event, recommendation

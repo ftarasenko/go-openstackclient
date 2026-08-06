@@ -39,6 +39,13 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newPoolCommand(a, o),
 		newMemberCommand(a, o),
 		newHealthMonitorCommand(a, o),
+		newL7PolicyCommand(a, o),
+		newL7RuleCommand(a, o),
+		newLBQuotaCommand(a, o),
+		newAmphoraCommand(a, o),
+		newProviderCommand(a, o),
+		newFlavorCommand(a, o),
+		newFlavorProfileCommand(a, o),
 	)
 	return cmd
 }

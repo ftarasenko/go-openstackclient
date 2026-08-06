@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 320 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 352 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -26,8 +26,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**292 of 831 in-scope upstream commands (35%).** Of `koc`'s 320 leaf commands,
-~293 are upstream-equivalent and 27 are koc-native.
+**324 of 831 in-scope upstream commands (39%).** Of `koc`'s 352 leaf commands,
+~325 are upstream-equivalent and 27 are koc-native.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
@@ -82,12 +82,12 @@ backend capability/pools, host failover, transfers.
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | 14/60 (23%) | zone + recordset CRUD and zone shares; no transfers, exports/imports, TLDs, blacklists, TSIG keys, PTR records, quotas |
-| python-octaviaclient (`load balancer`) | 28/82 (34%) | the operator-facing core: load balancer, listener, pool, member and health monitor CRUD, plus failover, stats and the flattened status tree; L7 policies/rules, quotas, amphorae, providers, flavors and availability zones are still to come |
+| python-octaviaclient (`load balancer`) | 60/82 (73%) | everything except availability zones and profiles (11), the eight `unset` verbs, `listener stats show`, `quota list` and `quota reset`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
 
-`koc` imports **61 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **67 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -101,7 +101,7 @@ already ships:
 | `image` | 4/5 |
 | `placement` | 3/6 |
 | `dns` | 3/6 |
-| `loadbalancer` | 4/13 |
+| `loadbalancer` | 10/13 |
 
 Ten services gophercloud supports have **zero** `koc` surface:
 `sharedfilesystems` (14 pkgs), `orchestration` (7), `containerinfra` (6),
@@ -140,9 +140,15 @@ Ten services gophercloud supports have **zero** `koc` surface:
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
 `block storage cluster/log level/manageable`; ironic chassis, port groups, deploy
 templates, runbooks, traits, VIFs, BIOS, history, volume connectors/targets;
-designate TLDs, blacklists, exports/imports, shares, PTR; Neutron metering,
-flavors, L3 conntrack helpers, local IPs, NDP proxies, segment ranges, default SG
-rules; all of Swift and Manila.
+designate TLDs, blacklists, exports/imports, PTR; Neutron metering, flavors, L3
+conntrack helpers, local IPs, NDP proxies, segment ranges, default SG rules;
+octavia availability zones and profiles; all of Swift and Manila.
+
+Already using it: `network extension list/show`, `quota show --default`
+(compute), `loadbalancer quota defaults show`, `loadbalancer amphora
+configure/delete/stats show`, `loadbalancer provider capability list`,
+`loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
+`false` would be dropped).
 
 Follow the AGENTS.md raw-fallback rule: isolate behind a small helper, pin the
 microversion, and comment why the typed package is unavailable.
