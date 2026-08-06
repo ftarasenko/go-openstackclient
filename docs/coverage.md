@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 352 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 368 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -26,12 +26,12 @@ PyPI is the source of record.
 
 ## Headline
 
-**324 of 831 in-scope upstream commands (39%).** Of `koc`'s 352 leaf commands,
-~325 are upstream-equivalent and 27 are koc-native.
+**340 of 831 in-scope upstream commands (41%).** Of `koc`'s 368 leaf commands,
+~341 are upstream-equivalent and 27 are koc-native.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
-the figure is 264/749 (35%).
+the figure is 280/749 (37%).
 
 Leaf counts are of the **visible** tree. Two more commands exist but are hidden
 from `--help` because they duplicate a visible sibling exactly: `koc migration
@@ -81,13 +81,13 @@ backend capability/pools, host failover, transfers.
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
-| designate (`dns`) | 14/60 (23%) | zone + recordset CRUD and zone shares; no transfers, exports/imports, TLDs, blacklists, TSIG keys, PTR records, quotas |
+| designate (`dns`) | 30/60 (50%) | zone + recordset CRUD, zone shares, zone transfer requests/accepts, `dns quota` and TSIG keys. Diffed name-for-name against `entry_points.txt`: every `koc` dns leaf maps to an upstream command, none is koc-invented. Missing: zone exports/imports, blacklists, TLDs, PTR records, `dns service`, `dns limit list`, `zone abandon/axfr/move`, `zone nameservers list` |
 | python-octaviaclient (`load balancer`) | 60/82 (73%) | everything except availability zones and profiles (11), the eight `unset` verbs, `listener stats show`, `quota list` and `quota reset`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
 
-`koc` imports **67 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **70 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -100,7 +100,7 @@ already ships:
 | `baremetalintrospection` | 1/3 |
 | `image` | 4/5 |
 | `placement` | 3/6 |
-| `dns` | 3/6 |
+| `dns` | 6/6 |
 | `loadbalancer` | 10/13 |
 
 Ten services gophercloud supports have **zero** `koc` surface:
@@ -148,7 +148,8 @@ Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
-`false` would be dropped).
+`false` would be dropped), `dns quota reset` (gophercloud's `dns/v2/quotas` is
+Get/Update only — no `DELETE /v2/quotas/<project>`).
 
 Follow the AGENTS.md raw-fallback rule: isolate behind a small helper, pin the
 microversion, and comment why the typed package is unavailable.

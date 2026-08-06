@@ -10,12 +10,16 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
-// NewCommand builds the DNS (designate v2) command surface: the top-level
-// "zone" and "recordset" command trees. It returns a slice so the caller can
-// attach both directly, matching how OSC exposes them as sibling nouns.
+// NewCommand builds the DNS (designate v2) command surface. Upstream splits the
+// nouns two ways: "zone" and "recordset" carry no service prefix, while the
+// service-level ones ("dns quota", "dns service", "dns pool") sit under "dns".
+// "tsigkey" is its own top-level noun. The slice lets the caller attach them all
+// as siblings, matching how OSC exposes them.
 func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	return []*cobra.Command{
 		newZoneCommand(a, o),
 		newRecordSetCommand(a, o),
+		newDNSNounCommand(a, o),
+		newTSIGKeyCommand(a, o),
 	}
 }

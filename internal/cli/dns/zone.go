@@ -27,6 +27,7 @@ func newZoneCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newZoneDeleteCommand(a, o))
 	cmd.AddCommand(newZoneSetCommand(a, o))
 	cmd.AddCommand(newZoneShareCommand(a, o))
+	cmd.AddCommand(newZoneTransferCommand(a, o))
 	return cmd
 }
 
