@@ -32,6 +32,7 @@ func newNodeShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runNodeShow(ctx, client, o, args[0], cmd.OutOrStdout())
 		},
 	}
+	addFieldsAliases(cmd, o)
 	return cmd
 }
 
@@ -174,6 +175,21 @@ type nodeSetFlags struct {
 	property       []string
 	driverInfo     []string
 	extra          []string
+
+	// Hardware interfaces, one per ironic interface family. Setting one pins the
+	// node to a specific implementation instead of the driver's default.
+	interfaces map[string]*string
+
+	automatedClean   bool
+	noAutomatedClean bool
+}
+
+// hardwareInterfaces are the ironic hardware-interface families a node can pin,
+// in the order upstream lists them. Each becomes a --<name>-interface flag
+// patching /<name>_interface.
+var hardwareInterfaces = []string{
+	"bios", "boot", "console", "deploy", "firmware", "inspect", "management",
+	"network", "power", "raid", "rescue", "storage", "vendor",
 }
 
 func newNodeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -203,6 +219,15 @@ func newNodeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.property, "property", nil, "set a physical property key=value (repeatable)")
 	fl.StringArrayVar(&f.driverInfo, "driver-info", nil, "set a driver_info key=value (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
+	f.interfaces = make(map[string]*string, len(hardwareInterfaces))
+	for _, name := range hardwareInterfaces {
+		v := new(string)
+		f.interfaces[name] = v
+		fl.StringVar(v, name+"-interface", "", "set the node's "+name+" hardware interface")
+	}
+	fl.BoolVar(&f.automatedClean, "automated-clean", false, "enable automated cleaning for this node")
+	fl.BoolVar(&f.noAutomatedClean, "no-automated-clean", false, "disable automated cleaning for this node")
+	cmd.MarkFlagsMutuallyExclusive("automated-clean", "no-automated-clean")
 	return cmd
 }
 
@@ -235,6 +260,22 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if err := appendKVOps(&ops, "/extra/", f.extra, "--extra"); err != nil {
 		return err
 	}
+	// Hardware interfaces, in a fixed order so the patch is deterministic (a Go
+	// map range would not be).
+	for _, name := range hardwareInterfaces {
+		if v := f.interfaces[name]; v != nil && *v != "" {
+			scalar(name+"-interface", "/"+name+"_interface", *v)
+		}
+	}
+	// automated_clean is a tri-state in ironic: true, false, or null (defer to the
+	// conductor's default). --automated-clean/--no-automated-clean set the two
+	// explicit values; "node unset --automated-clean" is what restores null.
+	switch {
+	case f.automatedClean:
+		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: "/automated_clean", Value: true})
+	case f.noAutomatedClean:
+		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: "/automated_clean", Value: false})
+	}
 	if len(ops) == 0 {
 		return fmt.Errorf("node set requires at least one attribute flag")
 	}
@@ -261,12 +302,14 @@ func appendKVOps(ops *nodes.UpdateOpts, prefix string, pairs []string, flag stri
 
 // nodeUnsetFlags holds the attributes removable by "node unset".
 type nodeUnsetFlags struct {
-	name          bool
-	resourceClass bool
-	instanceUUID  bool
-	property      []string
-	driverInfo    []string
-	extra         []string
+	name           bool
+	resourceClass  bool
+	instanceUUID   bool
+	property       []string
+	driverInfo     []string
+	extra          []string
+	automatedClean bool
+	interfaces     map[string]*bool
 }
 
 func newNodeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -294,6 +337,14 @@ func newNodeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.property, "property", nil, "remove a physical property by key (repeatable)")
 	fl.StringArrayVar(&f.driverInfo, "driver-info", nil, "remove a driver_info key (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "remove an extra metadata key (repeatable)")
+	fl.BoolVar(&f.automatedClean, "automated-clean", false,
+		"clear the automated-clean override, restoring the conductor default")
+	f.interfaces = make(map[string]*bool, len(hardwareInterfaces))
+	for _, name := range hardwareInterfaces {
+		v := new(bool)
+		f.interfaces[name] = v
+		fl.BoolVar(v, name+"-interface", false, "clear the node's "+name+" hardware interface, restoring the driver default")
+	}
 	return cmd
 }
 
@@ -319,6 +370,15 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	for _, k := range f.extra {
 		remove("/extra/" + escapeJSONPointer(k))
+	}
+	if f.automatedClean {
+		remove("/automated_clean")
+	}
+	// Fixed order so the patch is deterministic (a Go map range would not be).
+	for _, name := range hardwareInterfaces {
+		if v := f.interfaces[name]; v != nil && *v {
+			remove("/" + name + "_interface")
+		}
 	}
 	if len(ops) == 0 {
 		return fmt.Errorf("node unset requires at least one attribute flag")
