@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 300 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 320 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -26,12 +26,12 @@ PyPI is the source of record.
 
 ## Headline
 
-**272 of 831 in-scope upstream commands (33%).** Of `koc`'s 300 leaf commands,
-~273 are upstream-equivalent and 27 are koc-native.
+**292 of 831 in-scope upstream commands (35%).** Of `koc`'s 320 leaf commands,
+~293 are upstream-equivalent and 27 are koc-native.
 
-The percentage *fell* while coverage grew: `python-octaviaclient` became a
-baseline in this pass, adding its 82 commands to the denominator. Measured
-against the previous four baselines the figure is 264/749 (35%).
+`python-octaviaclient` became a baseline during the history-parity pass, adding
+its 82 commands to the denominator; measured against the previous four baselines
+the figure is 264/749 (35%).
 
 Leaf counts are of the **visible** tree. Two more commands exist but are hidden
 from `--help` because they duplicate a visible sibling exactly: `koc migration
@@ -82,12 +82,12 @@ backend capability/pools, host failover, transfers.
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | 14/60 (23%) | zone + recordset CRUD and zone shares; no transfers, exports/imports, TLDs, blacklists, TSIG keys, PTR records, quotas |
-| python-octaviaclient (`load balancer`) | 8/82 (10%) | the core load-balancer verbs (list/show/create/set/delete/failover, stats and the flattened status tree); listeners, pools, members, health monitors, L7 policies/rules, quotas, amphorae, providers, flavors and availability zones are still to come |
+| python-octaviaclient (`load balancer`) | 28/82 (34%) | the operator-facing core: load balancer, listener, pool, member and health monitor CRUD, plus failover, stats and the flattened status tree; L7 policies/rules, quotas, amphorae, providers, flavors and availability zones are still to come |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
 
-`koc` imports **58 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **61 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -101,7 +101,7 @@ already ships:
 | `image` | 4/5 |
 | `placement` | 3/6 |
 | `dns` | 3/6 |
-| `loadbalancer` | 1/13 |
+| `loadbalancer` | 4/13 |
 
 Ten services gophercloud supports have **zero** `koc` surface:
 `sharedfilesystems` (14 pkgs), `orchestration` (7), `containerinfra` (6),
