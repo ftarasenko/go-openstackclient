@@ -23,6 +23,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 )
 
 // uuidRe matches a canonical 8-4-4-4-12 UUID (case-insensitive).
@@ -129,6 +131,30 @@ func ProjectIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceC
 		}
 		return projects.ExtractProjects(pages)
 	}, func(p projects.Project) string { return p.ID })
+}
+
+// SubnetID resolves a neutron subnet name (or ID) to a subnet ID using the given
+// network service client.
+func SubnetID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
+	return byName(ctx, "subnet", ref, func(ctx context.Context) ([]subnets.Subnet, error) {
+		pages, err := subnets.List(networkClient, subnets.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return subnets.ExtractSubnets(pages)
+	}, func(s subnets.Subnet) string { return s.ID })
+}
+
+// PortID resolves a neutron port name (or ID) to a port ID using the given
+// network service client.
+func PortID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
+	return byName(ctx, "port", ref, func(ctx context.Context) ([]ports.Port, error) {
+		pages, err := ports.List(networkClient, ports.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return ports.ExtractPorts(pages)
+	}, func(p ports.Port) string { return p.ID })
 }
 
 // UserID resolves a keystone user name (or ID) to a user ID using the given
