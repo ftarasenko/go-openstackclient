@@ -66,8 +66,8 @@ func TestRunGroupList_RequestAndTableOutput(t *testing.T) {
 	client := identityClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	// Empty domain avoids the resolve lookup.
-	if err := runGroupList(context.Background(), client, o, "", &buf); err != nil {
+	// Empty flags avoid the resolve lookups.
+	if err := runGroupList(context.Background(), client, o, &groupListFlags{}, &buf); err != nil {
 		t.Fatalf("runGroupList error: %v", err)
 	}
 	if gotMethod != http.MethodGet {
