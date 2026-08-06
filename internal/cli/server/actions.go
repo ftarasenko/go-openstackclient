@@ -753,6 +753,19 @@ func newServerConsoleCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
+// NewConsoleLogShowCommand is exported so internal/cli can build a second
+// instance of this command under the upstream `console log show` spelling. Cobra
+// commands have a single parent, so the alias tree needs its own instance rather
+// than a shared pointer.
+func NewConsoleLogShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return newConsoleLogShowCommand(a, o)
+}
+
+// NewConsoleURLShowCommand is NewConsoleLogShowCommand for `console url show`.
+func NewConsoleURLShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return newConsoleURLShowCommand(a, o)
+}
+
 func newConsoleLogShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var lines int
 	cmd := &cobra.Command{

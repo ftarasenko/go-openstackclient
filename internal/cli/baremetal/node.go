@@ -32,6 +32,12 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newNodeBootDeviceCommand(a, o))
 	cmd.AddCommand(newNodeInventoryCommand(a, o))
 	cmd.AddCommand(newNodeAbortCommand(a, o))
+	// Upstream ironic spells this "baremetal node reboot"; koc groups it under
+	// "node power". Register the upstream spelling too — hidden, since it
+	// duplicates a visible sibling exactly.
+	reboot := newNodePowerActionCommand(a, o, "reboot", "Reboot a node (upstream spelling of \"node power reboot\")", nodes.Rebooting)
+	reboot.Hidden = true
+	cmd.AddCommand(reboot)
 	for _, sub := range newNodeProvisionCommands(a, o) {
 		cmd.AddCommand(sub)
 	}

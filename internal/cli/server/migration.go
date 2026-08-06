@@ -70,6 +70,12 @@ func newServerMigrationCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	return cmd
 }
 
+// NewMigrationListCommand is exported so internal/cli can build a second instance
+// under the upstream `migration list` spelling (see internal/cli/aliases.go).
+func NewMigrationListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return newServerMigrationListCommand(a, o)
+}
+
 func newServerMigrationListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &migrationListFlags{}
 	cmd := &cobra.Command{

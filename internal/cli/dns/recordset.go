@@ -312,9 +312,11 @@ type recordSetSetFlags struct {
 func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &recordSetSetFlags{}
 	cmd := &cobra.Command{
-		Use:   "set <zone> <recordset>",
-		Short: "Update a recordset",
-		Args:  cobra.ExactArgs(2),
+		Use: "set <zone> <recordset>",
+		// python-designateclient spells this verb "update"; accept both.
+		Aliases: []string{"update"},
+		Short:   "Update a recordset",
+		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
