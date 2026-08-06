@@ -13,13 +13,14 @@ import (
 // NewCommand builds the DNS (designate v2) command surface. Upstream splits the
 // nouns two ways: "zone" and "recordset" carry no service prefix, while the
 // service-level ones ("dns quota", "dns service", "dns pool") sit under "dns".
-// "tsigkey" is its own top-level noun. The slice lets the caller attach them all
-// as siblings, matching how OSC exposes them.
+// "tsigkey" and "tld" are their own top-level nouns. The slice lets the caller
+// attach them all as siblings, matching how OSC exposes them.
 func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	return []*cobra.Command{
 		newZoneCommand(a, o),
 		newRecordSetCommand(a, o),
 		newDNSNounCommand(a, o),
 		newTSIGKeyCommand(a, o),
+		newTLDCommand(a, o),
 	}
 }
