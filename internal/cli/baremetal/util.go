@@ -3,6 +3,10 @@ package baremetal
 import (
 	"fmt"
 	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may
@@ -53,4 +57,26 @@ func parseKeyValMap(pairs []string) (map[string]any, error) {
 		m[k] = v
 	}
 	return m, nil
+}
+
+// addFieldsAliases registers --fields and --field on cmd, python-ironicclient's
+// spelling of the global -c/--column selector. History shows operators reaching
+// for the ironic spelling on `baremetal node list`/`show`, where koc only
+// accepted -c.
+//
+// The values are folded into o.Columns in PreRunE, so the output layer remains
+// the single place column selection is implemented. StringSliceVar (not
+// StringArrayVar) is used because the ironic CLI accepts both a comma-separated
+// list and repetition.
+func addFieldsAliases(cmd *cobra.Command, o *output.Options) {
+	var fields, field []string
+	fl := cmd.Flags()
+	fl.StringSliceVar(&fields, "fields", nil,
+		"field(s) to include; comma-separated or repeated (ironic CLI spelling of -c/--column)")
+	fl.StringSliceVar(&field, "field", nil, "alias of --fields")
+	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
+		o.Columns = append(o.Columns, fields...)
+		o.Columns = append(o.Columns, field...)
+		return nil
+	}
 }
