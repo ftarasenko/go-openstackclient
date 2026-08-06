@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 288 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 292 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**260 of 749 in-scope upstream commands (35%).** Of `koc`'s 288 leaf commands,
-~261 are upstream-equivalent and 27 are koc-native.
+**264 of 749 in-scope upstream commands (35%).** Of `koc`'s 292 leaf commands,
+~265 are upstream-equivalent and 27 are koc-native.
 
 Leaf counts are of the **visible** tree. Two more commands exist but are hidden
 from `--help` because they duplicate a visible sibling exactly: `koc migration
@@ -76,7 +76,7 @@ backend capability/pools, host failover, transfers.
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
-| designate (`dns`) | 10/60 (17%) | zone + recordset CRUD only; no transfers, exports/imports, TLDs, blacklists, TSIG keys, shares, PTR records, quotas |
+| designate (`dns`) | 14/60 (23%) | zone + recordset CRUD and zone shares; no transfers, exports/imports, TLDs, blacklists, TSIG keys, PTR records, quotas |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
@@ -126,7 +126,6 @@ Eleven services gophercloud supports have **zero** `koc` surface:
 - `networking/v2/extensions/{layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments}` (`subnetpools` and `trunks` are now wired)
 - `image/v2/tasks` → `image task list/show` (`imageimport` is now wired — `image import`, `image import info`; `image stage` and `image stores list` remain)
 - `baremetal/v1/allocations` → `baremetal allocation *`
-- `dns/v2/{quotas,tsigkeys,transfer/request,transfer/accept}`
 - `placement/v1/{resourceclasses,usages,allocationcandidates}`
 
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback

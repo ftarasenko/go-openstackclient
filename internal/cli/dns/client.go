@@ -14,3 +14,10 @@ import (
 func newDNSClient(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
 	return a.NewServiceClient(ctx, (*auth.Client).DNS)
 }
+
+// newDNSSession is newDNSClient for commands that also need the authenticated
+// Client to lazily derive keystone — "zone share create" takes a target project
+// by name, and designate stores only the ID.
+func newDNSSession(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, *auth.Client, error) {
+	return a.NewServiceSession(ctx, (*auth.Client).DNS)
+}
