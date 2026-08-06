@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `055dc95` · 245 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 249 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**222 of 749 in-scope upstream commands (30%).** Of `koc`'s 245 leaf commands,
-~223 are upstream-equivalent and 22 are koc-native.
+**225 of 749 in-scope upstream commands (30%).** Of `koc`'s 249 leaf commands,
+~226 are upstream-equivalent and 23 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -70,7 +70,7 @@ backend capability/pools, host failover, transfers.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 26/118 (22%) | node lifecycle, power and ports are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, volume connectors/targets |
+| ironic (`baremetal`) | 29/118 (25%) | node lifecycle, power, ports, driver details and stored inventory are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, volume connectors/targets |
 | designate (`dns`) | 10/60 (17%) | zone + recordset CRUD only; no transfers, exports/imports, TLDs, blacklists, TSIG keys, shares, PTR records, quotas |
 | osc-placement | 6/31 (19%) | read-only resource-provider and trait listing; no inventories, resource classes, usages, allocation candidates |
 
@@ -151,7 +151,8 @@ Functionally covered, but not drop-in for scripts written against `openstack`:
 
 No upstream equivalent, by design: 14 `koc keyvrm …` (in-house KeyVRM catalog
 service), 5 `koc vault kv …`, `koc server add/remove server-group` (KeyStack
-dynamic server groups), `koc image member set`.
+dynamic server groups), `koc image member set`, `koc baremetal node inventory show`
+(a table summary of the inventory upstream only offers as a raw `save`).
 
 ## Updating this document
 

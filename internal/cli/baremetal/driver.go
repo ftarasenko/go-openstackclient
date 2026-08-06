@@ -20,7 +20,73 @@ func newDriverCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Short: "Manage baremetal drivers",
 	}
 	cmd.AddCommand(newDriverListCommand(a, o))
+	cmd.AddCommand(newDriverShowCommand(a, o))
 	return cmd
+}
+
+func newDriverShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <driver>",
+		Short: "Show baremetal driver details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runDriverShow(ctx, client, o, args[0], cmd.OutOrStdout())
+		},
+	}
+	return cmd
+}
+
+func runDriverShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	d, err := drivers.GetDriverDetails(ctx, client, name).Extract()
+	if err != nil {
+		return fmt.Errorf("showing baremetal driver %s: %w", name, err)
+	}
+	fields, values := driverShowFields(d)
+	return o.WriteSingle(w, fields, values)
+}
+
+// driverShowFields is the Field/Value view of a single driver, mirroring
+// `openstack baremetal driver show`: the hosts running it plus every
+// default_*_interface / enabled_*_interfaces pair.
+func driverShowFields(d *drivers.Driver) ([]string, []any) {
+	fields := []string{"name", "hosts", "type"}
+	values := []any{d.Name, d.Hosts, d.Type}
+	// Interface families, in the order upstream renders them. Each contributes a
+	// default_<x>_interface / enabled_<x>_interfaces pair.
+	ifaces := []struct {
+		name    string
+		def     string
+		enabled []string
+	}{
+		{"bios", d.DefaultBiosInterface, d.EnabledBiosInterfaces},
+		{"boot", d.DefaultBootInterface, d.EnabledBootInterfaces},
+		{"console", d.DefaultConsoleInterface, d.EnabledConsoleInterface},
+		{"deploy", d.DefaultDeployInterface, d.EnabledDeployInterfaces},
+		{"firmware", d.DefaultFirmwareInterface, d.EnabledFirmwareInterfaces},
+		{"inspect", d.DefaultInspectInterface, d.EnabledInspectInterfaces},
+		{"management", d.DefaultManagementInterface, d.EnabledManagementInterfaces},
+		{"network", d.DefaultNetworkInterface, d.EnabledNetworkInterfaces},
+		{"power", d.DefaultPowerInterface, d.EnabledPowerInterfaces},
+		{"raid", d.DefaultRaidInterface, d.EnabledRaidInterfaces},
+		{"rescue", d.DefaultRescueInterface, d.EnabledRescueInterfaces},
+		{"storage", d.DefaultStorageInterface, d.EnabledStorageInterfaces},
+		{"vendor", d.DefaultVendorInterface, d.EnabledVendorInterfaces},
+	}
+	for _, i := range ifaces {
+		fields = append(fields, "default_"+i.name+"_interface", "enabled_"+i.name+"_interfaces")
+		values = append(values, i.def, i.enabled)
+	}
+	fields = append(fields, "properties")
+	values = append(values, d.Properties)
+	return fields, values
 }
 
 // driverListFlags holds the filters accepted by "driver list".

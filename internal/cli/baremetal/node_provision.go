@@ -78,6 +78,56 @@ func newNodeProvisionCommands(a *auth.Options, o *output.Options) []*cobra.Comma
 	return cmds
 }
 
+// newNodeAbortCommand builds "baremetal node abort". Unlike the transitions
+// above, abort has no single stable destination state — aborting a deploy lands
+// in "deploy failed", aborting a clean in "clean failed", aborting an
+// inspection in "inspect failed" — so --wait waits for the transition to settle
+// (target_provision_state cleared) and reports whichever state it settled in.
+func newNodeAbortCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var wait bool
+	var waitTimeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "abort <node>",
+		Short: "Abort a node's current provision-state operation",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runNodeAbort(ctx, client, args[0], wait, waitTimeout, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait until the abort settles into a stable provision state")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", provisionPollTimeout, "maximum time to wait for --wait to complete")
+	return cmd
+}
+
+func runNodeAbort(ctx context.Context, client *gophercloud.ServiceClient, id string, wait bool, waitTimeout time.Duration, w io.Writer) error {
+	opts := nodes.ProvisionStateOpts{Target: nodes.TargetAbort}
+	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
+		return fmt.Errorf("requesting abort on node %s: %w", id, err)
+	}
+	if !wait {
+		if _, err := fmt.Fprintf(w, "Requested abort for node %s\n", id); err != nil {
+			return err
+		}
+		return nil
+	}
+	state, err := waitForProvisionSettled(ctx, client, id, waitTimeout)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Node %s settled in provision state %q\n", id, state); err != nil {
+		return err
+	}
+	return nil
+}
+
 func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr provisionTransition, id string, wait bool, waitTimeout time.Duration, w io.Writer) error {
 	opts := nodes.ProvisionStateOpts{Target: tr.target}
 	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
@@ -158,6 +208,45 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for node %s to reach %q: %w", id, want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitForProvisionSettled polls the node until ironic clears
+// target_provision_state and returns the provision state it settled in. It is
+// the --wait body for verbs with no single expected destination (abort), so a
+// "* failed" state is a normal, successful outcome here rather than an error.
+func waitForProvisionSettled(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = provisionPollTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(provisionPollInterval)
+	defer ticker.Stop()
+
+	var getErrors int
+	for {
+		n, err := nodes.Get(ctx, client, id).Extract()
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
+			}
+			getErrors++
+			if getErrors > maxConsecutiveGetErrors {
+				return "", fmt.Errorf("polling node %s: %w", id, err)
+			}
+		} else {
+			getErrors = 0
+			if n.TargetProvisionState == "" {
+				return n.ProvisionState, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
 		case <-ticker.C:
 		}
 	}
