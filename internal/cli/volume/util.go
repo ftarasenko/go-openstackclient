@@ -11,6 +11,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/snapshots"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumetypes"
+
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may
@@ -205,4 +208,36 @@ func resolveByNameOrGet[T any](kind, ref string,
 		}
 	}
 	return oneID(kind, ref, ids)
+}
+
+// resolveProjectAndUser turns --project / --user references into keystone IDs,
+// deriving the identity client from the authenticated session only when a name
+// actually has to be looked up: an empty ref yields "" (no filter) and a UUID
+// passes straight through. The domain refs disambiguate a name that exists in
+// more than one domain.
+func resolveProjectAndUser(ctx context.Context, session *auth.Client,
+	projectRef, projectDomainRef, userRef, userDomainRef string,
+) (projectID, userID string, err error) {
+	needsLookup := func(ref string) bool { return ref != "" && !resolve.IsUUID(ref) }
+	if !needsLookup(projectRef) && !needsLookup(userRef) {
+		return projectRef, userRef, nil
+	}
+	identity, err := session.Identity()
+	if err != nil {
+		return "", "", err
+	}
+	projectID, userID = projectRef, userRef
+	if needsLookup(projectRef) {
+		projectID, err = resolve.ProjectIDInDomain(ctx, identity, projectRef, projectDomainRef)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	if needsLookup(userRef) {
+		userID, err = resolve.UserIDInDomain(ctx, identity, userRef, userDomainRef)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return projectID, userID, nil
 }

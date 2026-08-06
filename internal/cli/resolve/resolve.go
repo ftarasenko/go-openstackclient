@@ -20,6 +20,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/domains"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 )
@@ -128,6 +129,41 @@ func ProjectIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceC
 		}
 		return projects.ExtractProjects(pages)
 	}, func(p projects.Project) string { return p.ID })
+}
+
+// UserID resolves a keystone user name (or ID) to a user ID using the given
+// identity service client.
+func UserID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
+	return byName(ctx, "user", ref, func(ctx context.Context) ([]users.User, error) {
+		pages, err := users.List(identityClient, users.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return users.ExtractUsers(pages)
+	}, func(u users.User) string { return u.ID })
+}
+
+// UserIDInDomain is UserID narrowed to one domain (name or ID), backing the
+// --user/--user-domain pair OSC uses when a user name exists in more than one
+// domain. An empty domainRef behaves exactly like UserID.
+func UserIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceClient, ref, domainRef string) (string, error) {
+	if domainRef == "" {
+		return UserID(ctx, identityClient, ref)
+	}
+	if ref == "" || IsUUID(ref) {
+		return ref, nil
+	}
+	domainID, err := DomainID(ctx, identityClient, domainRef)
+	if err != nil {
+		return "", err
+	}
+	return byName(ctx, "user", ref, func(ctx context.Context) ([]users.User, error) {
+		pages, err := users.List(identityClient, users.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return users.ExtractUsers(pages)
+	}, func(u users.User) string { return u.ID })
 }
 
 // byName is the shared engine for the cross-service resolvers: an empty ref or a
