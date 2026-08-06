@@ -35,6 +35,10 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newLBFailoverCommand(a, o),
 		newLBStatsCommand(a, o),
 		newLBStatusCommand(a, o),
+		newListenerCommand(a, o),
+		newPoolCommand(a, o),
+		newMemberCommand(a, o),
+		newHealthMonitorCommand(a, o),
 	)
 	return cmd
 }

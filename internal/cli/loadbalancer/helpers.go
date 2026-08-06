@@ -3,6 +3,7 @@ package loadbalancer
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
@@ -112,25 +113,132 @@ func resolveLBRefs(ctx context.Context, session *auth.Client, refs lbRefs) (reso
 // ?name= filter is exact, and names are not unique across a project, so more than
 // one match is rejected rather than picking arbitrarily.
 func resolveLoadBalancerID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
+	return resolveByName("load balancer", ref, func() ([]string, error) {
+		pages, err := loadbalancers.List(client, loadbalancers.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		all, err := loadbalancers.ExtractLoadBalancers(pages)
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(all))
+		for _, lb := range all {
+			ids = append(ids, lb.ID)
+		}
+		return ids, nil
+	})
+}
+
+// The assign* helpers below build the sparse UpdateOpts every octavia noun uses:
+// each field is a pointer, so an attribute is sent only when its flag was
+// actually given and `set --name x` cannot blank an unrelated one. They also flip
+// a shared "touched" bit, so a set with no attribute flags can be rejected before
+// any request is made.
+
+func assignString(changed changedSet, flag, value string, dst **string, touched *bool) {
+	if !changed[flag] {
+		return
+	}
+	v := value
+	*dst = &v
+	*touched = true
+}
+
+func assignInt(changed changedSet, flag string, value int, dst **int, touched *bool) {
+	if !changed[flag] {
+		return
+	}
+	v := value
+	*dst = &v
+	*touched = true
+}
+
+func assignStrings(changed changedSet, flag string, value []string, dst **[]string, touched *bool) {
+	if !changed[flag] {
+		return
+	}
+	v := value
+	*dst = &v
+	*touched = true
+}
+
+func assignBool(changed changedSet, flag string, value bool, dst **bool, touched *bool) {
+	if !changed[flag] {
+		return
+	}
+	v := value
+	*dst = &v
+	*touched = true
+}
+
+// setIfNonZero fills a *int create option only for a non-zero value, so an
+// unset numeric flag leaves octavia's own default in place rather than asserting
+// zero.
+func setIfNonZero(dst **int, value int) {
+	if value == 0 {
+		return
+	}
+	v := value
+	*dst = &v
+}
+
+// parseKeyValues turns repeated "name=value" flag values into a map, naming the
+// flag in any error so the message points at what the operator typed.
+func parseKeyValues(pairs []string, flag string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		k, v, found := strings.Cut(pair, "=")
+		if !found || strings.TrimSpace(k) == "" {
+			return nil, fmt.Errorf("parsing %s %q: expected name=value", flag, pair)
+		}
+		out[strings.TrimSpace(k)] = v
+	}
+	return out, nil
+}
+
+// resolveByName is the shared name→ID policy for octavia nouns whose collection
+// endpoint filters exactly on name: a UUID passes through with no call, one match
+// wins, zero matches falls back to treating the ref as an ID (letting the server
+// produce the 404), and several matches is ambiguous.
+func resolveByName(kind, ref string, list func() ([]string, error)) (string, error) {
 	if ref == "" || resolve.IsUUID(ref) {
 		return ref, nil
 	}
-	pages, err := loadbalancers.List(client, loadbalancers.ListOpts{Name: ref}).AllPages(ctx)
+	ids, err := list()
 	if err != nil {
-		return "", fmt.Errorf("looking up load balancer %q: %w", ref, err)
+		return "", fmt.Errorf("looking up %s %q: %w", kind, ref, err)
 	}
-	all, err := loadbalancers.ExtractLoadBalancers(pages)
-	if err != nil {
-		return "", fmt.Errorf("looking up load balancer %q: %w", ref, err)
-	}
-	switch len(all) {
+	switch len(ids) {
 	case 0:
-		// Consistent with the rest of koc: assume the ref is already an ID and let
-		// the server produce the 404.
 		return ref, nil
 	case 1:
-		return all[0].ID, nil
+		return ids[0], nil
 	default:
-		return "", fmt.Errorf("load balancer name %q is ambiguous: %d matches, use the ID", ref, len(all))
+		return "", fmt.Errorf("%s name %q is ambiguous: %d matches, use the ID", kind, ref, len(ids))
 	}
+}
+
+// parseCommaKeyValues parses one comma-separated "k=v,k=v" flag value, the shape
+// OSC uses for compound options (--session-persistence, --l7rule).
+func parseCommaKeyValues(spec, flag string) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, found := strings.Cut(part, "=")
+		if !found || strings.TrimSpace(k) == "" {
+			return nil, fmt.Errorf("parsing %s %q: expected key=value pairs", flag, spec)
+		}
+		out[strings.TrimSpace(k)] = v
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("parsing %s %q: no key=value pairs given", flag, spec)
+	}
+	return out, nil
 }
