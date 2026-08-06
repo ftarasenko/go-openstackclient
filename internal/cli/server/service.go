@@ -45,6 +45,7 @@ type serviceListFlags struct {
 	long    bool
 	host    string
 	service string
+	status  string
 }
 
 func newComputeServiceListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -70,10 +71,18 @@ func newComputeServiceListCommand(a *auth.Options, o *output.Options) *cobra.Com
 	fl.StringVar(&f.host, "host", "", "filter by host name")
 	// --service filters on the service binary (e.g. nova-compute); -c is handled by output.
 	fl.StringVar(&f.service, "service", "", "filter by service binary, e.g. nova-compute")
+	fl.StringVar(&f.status, "status", "", "filter by status: enabled or disabled")
 	return cmd
 }
 
 func runComputeServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *serviceListFlags, w io.Writer) error {
+	// Nova's os-services list has no status query parameter — "status" is a
+	// response field, not a filter — so --status is applied after extraction. The
+	// valid values are enabled and disabled; anything else is rejected up front
+	// rather than silently matching nothing.
+	if f.status != "" && f.status != "enabled" && f.status != "disabled" {
+		return fmt.Errorf("--status must be enabled or disabled, got %q", f.status)
+	}
 	opts := services.ListOpts{Host: f.host, Binary: f.service}
 	pages, err := services.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -89,6 +98,21 @@ func runComputeServiceList(ctx context.Context, client *gophercloud.ServiceClien
 	ext, err := extractServiceExt(pages)
 	if err != nil {
 		return fmt.Errorf("parsing compute service list: %w", err)
+	}
+	// The two slices are aligned by index, so --status has to filter them together.
+	if f.status != "" {
+		keptServices := make([]services.Service, 0, len(all))
+		keptExt := make([]serviceExt, 0, len(ext))
+		for i, svc := range all {
+			if svc.Status != f.status {
+				continue
+			}
+			keptServices = append(keptServices, svc)
+			if i < len(ext) {
+				keptExt = append(keptExt, ext[i])
+			}
+		}
+		all, ext = keptServices, keptExt
 	}
 	return o.WriteList(w, serviceListTable(all, ext, f.long))
 }

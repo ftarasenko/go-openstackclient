@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -39,7 +42,19 @@ func newKeypairCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // keypair list
 // ---------------------------------------------------------------------------
 
+// keypairListFlags holds the owner filters accepted by "keypair list". Nova keys
+// keypairs on the user, so --user is a native filter (microversion 2.10+) while
+// --project has to be expanded into the project's users first — see
+// runKeypairList.
+type keypairListFlags struct {
+	user          string
+	userDomain    string
+	project       string
+	projectDomain string
+}
+
 func newKeypairListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &keypairListFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List keypairs",
@@ -48,29 +63,133 @@ func newKeypairListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			if f.user != "" && f.project != "" {
+				return fmt.Errorf("--user and --project are mutually exclusive")
+			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runKeypairList(ctx, client, o, cmd.OutOrStdout())
+			userIDs, err := keypairOwners(ctx, session, f)
+			if err != nil {
+				return err
+			}
+			return runKeypairList(ctx, client, o, userIDs, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.StringVar(&f.user, "user", "", "list keypairs owned by this user (name or ID; nova >= 2.10, admin)")
+	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.project, "project", "", "list keypairs of every user with a role on this project (name or ID, admin)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
 	return cmd
 }
 
-func runKeypairList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := keypairs.List(client, keypairs.ListOpts{}).AllPages(ctx)
-	if err != nil {
-		return fmt.Errorf("listing keypairs: %w", err)
+// keypairOwners turns --user / --project into the set of nova user IDs to list
+// keypairs for. Nil means "the caller's own keypairs" (no user_id filter).
+//
+// --project has no nova equivalent: keypairs belong to users, not projects. It is
+// expanded through keystone's role assignments — the users with a role on the
+// project — which is how upstream OSC presents the same flag. That means one
+// keypair list per user, so the fan-out is proportional to the project's user
+// count.
+func keypairOwners(ctx context.Context, session *auth.Client, f *keypairListFlags) ([]string, error) {
+	if f.user == "" && f.project == "" {
+		return nil, nil
 	}
-	all, err := keypairs.ExtractKeyPairs(pages)
+	identity, err := session.Identity()
 	if err != nil {
-		return fmt.Errorf("parsing keypair list: %w", err)
+		return nil, err
 	}
-	t := output.Table{Columns: []string{"Name", "Fingerprint", "Type"}, Rows: make([][]any, 0, len(all))}
-	for _, k := range all {
-		t.Rows = append(t.Rows, []any{k.Name, k.Fingerprint, k.Type})
+	if f.user != "" {
+		userID, uerr := resolve.UserIDInDomain(ctx, identity, f.user, f.userDomain)
+		if uerr != nil {
+			return nil, uerr
+		}
+		return []string{userID}, nil
+	}
+
+	projectID, err := resolve.ProjectIDInDomain(ctx, identity, f.project, f.projectDomain)
+	if err != nil {
+		return nil, err
+	}
+	pages, err := roles.ListAssignments(identity, roles.ListAssignmentsOpts{
+		ScopeProjectID: projectID,
+		Effective:      gophercloud.Enabled,
+	}).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing users with a role on project %q: %w", f.project, err)
+	}
+	assignments, err := roles.ExtractRoleAssignments(pages)
+	if err != nil {
+		return nil, fmt.Errorf("parsing role assignments for project %q: %w", f.project, err)
+	}
+	seen := make(map[string]bool, len(assignments))
+	userIDs := make([]string, 0, len(assignments))
+	for _, assignment := range assignments {
+		// Effective assignments name a user even when the grant came via a group,
+		// but an assignment scoped to a group with no members has no user.
+		if assignment.User.ID == "" || seen[assignment.User.ID] {
+			continue
+		}
+		seen[assignment.User.ID] = true
+		userIDs = append(userIDs, assignment.User.ID)
+	}
+	if len(userIDs) == 0 {
+		return nil, fmt.Errorf("no users have a role on project %q", f.project)
+	}
+	sort.Strings(userIDs)
+	return userIDs, nil
+}
+
+// runKeypairList lists keypairs for each owner in userIDs, or the caller's own
+// when it is empty. The owning user is added as a column whenever more than one
+// user is involved, since otherwise the rows would be indistinguishable.
+func runKeypairList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	userIDs []string, w io.Writer,
+) error {
+	type row struct {
+		userID string
+		pair   keypairs.KeyPair
+	}
+	var rows []row
+
+	if len(userIDs) == 0 {
+		userIDs = []string{""}
+	}
+	for _, userID := range userIDs {
+		pages, err := keypairs.List(client, keypairs.ListOpts{UserID: userID}).AllPages(ctx)
+		if err != nil {
+			return fmt.Errorf("listing keypairs: %w", err)
+		}
+		all, err := keypairs.ExtractKeyPairs(pages)
+		if err != nil {
+			return fmt.Errorf("parsing keypair list: %w", err)
+		}
+		for _, k := range all {
+			rows = append(rows, row{userID: userID, pair: k})
+		}
+	}
+
+	cols := []string{"Name", "Fingerprint", "Type"}
+	perUser := len(userIDs) > 1
+	if perUser {
+		cols = append(cols, "User ID")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(rows))}
+	for _, r := range rows {
+		out := []any{r.pair.Name, r.pair.Fingerprint, r.pair.Type}
+		if perUser {
+			// Prefer the ID nova reports; fall back to the one we queried for, since
+			// older microversions omit it from the list response.
+			userID := r.pair.UserID
+			if userID == "" {
+				userID = r.userID
+			}
+			out = append(out, userID)
+		}
+		t.Rows = append(t.Rows, out)
 	}
 	return o.WriteList(w, t)
 }
@@ -79,7 +198,14 @@ func runKeypairList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 // keypair show
 // ---------------------------------------------------------------------------
 
+type keypairShowFlags struct {
+	publicKey  bool
+	user       string
+	userDomain string
+}
+
 func newKeypairShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &keypairShowFlags{}
 	cmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Display keypair details",
@@ -89,20 +215,46 @@ func newKeypairShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runKeypairShow(ctx, client, o, args[0], cmd.OutOrStdout())
+			userID := ""
+			if f.user != "" {
+				identity, ierr := session.Identity()
+				if ierr != nil {
+					return ierr
+				}
+				userID, ierr = resolve.UserIDInDomain(ctx, identity, f.user, f.userDomain)
+				if ierr != nil {
+					return ierr
+				}
+			}
+			return runKeypairShow(ctx, client, o, args[0], userID, f.publicKey, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.BoolVar(&f.publicKey, "public-key", false, "print only the public key, unformatted, for piping into a file")
+	fl.StringVar(&f.user, "user", "", "show a keypair owned by this user (name or ID; nova >= 2.10, admin)")
+	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
 	return cmd
 }
 
-func runKeypairShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	k, err := keypairs.Get(ctx, client, name, keypairs.GetOpts{}).Extract()
+// runKeypairShow renders the keypair, or with publicKeyOnly emits just the public
+// key verbatim so it can be redirected into an authorized_keys file — bypassing
+// the table layer the way "keypair create" does for a generated private key.
+func runKeypairShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	name, userID string, publicKeyOnly bool, w io.Writer,
+) error {
+	k, err := keypairs.Get(ctx, client, name, keypairs.GetOpts{UserID: userID}).Extract()
 	if err != nil {
 		return fmt.Errorf("showing keypair %q: %w", name, err)
+	}
+	if publicKeyOnly {
+		if _, err := fmt.Fprintln(w, k.PublicKey); err != nil {
+			return fmt.Errorf("writing public key: %w", err)
+		}
+		return nil
 	}
 	fields := []string{"Name", "Fingerprint", "Type", "User ID", "Public Key"}
 	values := []any{k.Name, k.Fingerprint, k.Type, k.UserID, k.PublicKey}
