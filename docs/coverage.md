@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-04 · `koc` @ `be4edee` · 239 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `055dc95` · 245 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,14 +25,20 @@ PyPI is the source of record.
 
 ## Headline
 
-**216 of 749 in-scope upstream commands (28%).** Of `koc`'s 239 leaf commands,
-~217 are upstream-equivalent and 22 are koc-native.
+**222 of 749 in-scope upstream commands (30%).** Of `koc`'s 245 leaf commands,
+~223 are upstream-equivalent and 22 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
 Neutron VPNaaS/FWaaS/metering, Keystone federation, ironic runbooks). Excluding
-those, `koc` covers **52–68%** of each core service — the commands operators
+those, `koc` covers **52–79%** of each core service — the commands operators
 actually run daily. Both numbers are reported below; neither alone is honest.
+
+Counts are **leaf commands, not flags**. A command can be present and still lag
+upstream's option surface, so a flag-parity pass changes no number here: `port
+list` was counted from the start, but only carried 4 of upstream's 17 filters
+until `055dc95`. When auditing a noun, diff its flags against the upstream
+parser, not just its presence in these tables.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
 `image.v1` are excluded as legacy) plus the three plugins above. 806 commands
@@ -44,7 +50,7 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 | --- | --- | --- |
 | `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
 | `openstack.image.v2` | 10/42 (23%) | **10/15 (66%)** |
-| `openstack.volume.v3` | 24/94 (25%) | **24/38 (63%)** |
+| `openstack.volume.v3` | 30/94 (32%) | **30/38 (79%)** |
 | `openstack.identity.v3` | 35/128 (27%) | **35/60 (58%)** |
 | `openstack.network.v2` | 45/165 (27%) | **45/86 (52%)** |
 | `openstack.common` | 1/11 (9%) | 1/11 — only `quota show` |
@@ -70,7 +76,7 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **50 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **51 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -78,7 +84,7 @@ already ships:
 | `networking` | 11/50 |
 | `identity` | 11/27 |
 | `compute` | 10/20 |
-| `blockstorage` | 5/24 |
+| `blockstorage` | 6/24 |
 | `baremetal` | 4/9 |
 | `image` | 3/5 |
 | `placement` | 3/6 |
@@ -111,7 +117,8 @@ Twelve services gophercloud supports have **zero** `koc` surface:
 - `compute/v2/usage` → `usage list/show`
 - `compute/v2/availabilityzones` + `blockstorage/v3/availabilityzones` → `availability zone list`
 - `compute/v2/limits` + `blockstorage/v3/limits` → `limits show`
-- `blockstorage/v3/{attachments,transfers,qos,quotasets}` → 20+ volume commands
+- `blockstorage/v3/{transfers,qos,quotasets}` → 14+ volume commands
+  (`attachments` is now wired — `volume attachment list/show/create/delete/set/complete`)
 - `networking/v2/extensions/{subnetpools,layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments,trunks}`
 - `image/v2/{imageimport,tasks}` → `image import/stage`, `image import info`, `image stores list`, `image task list/show`
 - `baremetal/v1/allocations` → `baremetal allocation *`
@@ -152,7 +159,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (239 leaf commands at the snapshot above)
+# 1. koc's own command tree (245 leaf commands at the snapshot above)
 make build
 # walk `--help` recursively, collecting leaves under "Available Commands:"
 
