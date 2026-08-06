@@ -84,7 +84,7 @@ func TestRunVolumeList_RequestAndTableOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runVolumeList(context.Background(), client, o, &volumeListFlags{}, &buf); err != nil {
+	if err := runVolumeList(context.Background(), client, o, &volumeListFlags{}, "", "", &buf); err != nil {
 		t.Fatalf("runVolumeList returned error: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestRunVolumeList_FiltersAndValueFormat(t *testing.T) {
 	f := &volumeListFlags{allProjects: true, name: "vol-a", status: "available"}
 
 	var buf bytes.Buffer
-	if err := runVolumeList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runVolumeList(context.Background(), client, o, f, "", "", &buf); err != nil {
 		t.Fatalf("runVolumeList returned error: %v", err)
 	}
 	if strings.Contains(buf.String(), "ID") {
@@ -164,7 +164,7 @@ func TestRunVolumeList_TypeFilterIsClientSide(t *testing.T) {
 	f := &volumeListFlags{volumeType: "hdd"}
 
 	var buf bytes.Buffer
-	if err := runVolumeList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runVolumeList(context.Background(), client, o, f, "", "", &buf); err != nil {
 		t.Fatalf("runVolumeList returned error: %v", err)
 	}
 	out := buf.String()
@@ -256,7 +256,7 @@ func TestRunVolumeList_LimitTruncates(t *testing.T) {
 	f := &volumeListFlags{limit: 1, marker: "prev-id"}
 
 	var buf bytes.Buffer
-	if err := runVolumeList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runVolumeList(context.Background(), client, o, f, "", "", &buf); err != nil {
 		t.Fatalf("runVolumeList returned error: %v", err)
 	}
 	out := buf.String()

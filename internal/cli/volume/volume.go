@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -80,6 +81,36 @@ type volumeListFlags struct {
 	volumeType  string
 	limit       int
 	marker      string
+
+	project       string
+	projectDomain string
+	user          string
+	userDomain    string
+}
+
+// volumeListOptsExt adds cinder's user_id filter, which volumes.ListOpts has no
+// field for at gophercloud v2.13.0. It follows the ListOptsExt composition
+// pattern used elsewhere in this repo rather than reaching for a raw request.
+type volumeListOptsExt struct {
+	volumes.ListOptsBuilder
+	UserID string
+}
+
+func (opts volumeListOptsExt) ToVolumeListQuery() (string, error) {
+	q, err := opts.ListOptsBuilder.ToVolumeListQuery()
+	if err != nil {
+		return "", err
+	}
+	if opts.UserID == "" {
+		return q, nil
+	}
+	parsed, err := url.Parse(q)
+	if err != nil {
+		return "", err
+	}
+	params := parsed.Query()
+	params.Add("user_id", opts.UserID)
+	return (&url.URL{RawQuery: params.Encode()}).String(), nil
 }
 
 func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -93,16 +124,24 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newVolumeClient(ctx, a)
+			client, session, err := newVolumeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runVolumeList(ctx, client, o, f, cmd.OutOrStdout())
+			projectID, userID, err := resolveProjectAndUser(ctx, session, f.project, f.projectDomain, f.user, f.userDomain)
+			if err != nil {
+				return err
+			}
+			return runVolumeList(ctx, client, o, f, projectID, userID, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.allProjects, "all-projects", false, "list volumes from all projects (admin)")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
+	fl.StringVar(&f.project, "project", "", "list volumes owned by this project (name or ID); implies --all-projects")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.user, "user", "", "list volumes created by this user (name or ID); implies --all-projects")
+	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
 	fl.StringVar(&f.name, "name", "", "filter by volume name")
 	fl.StringVar(&f.status, "status", "", "filter by volume status")
 	fl.StringVar(&f.volumeType, "type", "", "filter by volume type (client-side)")
@@ -111,13 +150,23 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *volumeListFlags, w io.Writer) error {
-	opts := volumes.ListOpts{
-		AllTenants: f.allProjects,
+func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *volumeListFlags, projectID, userID string, w io.Writer,
+) error {
+	base := volumes.ListOpts{
+		// Filtering by another project or user is inherently a cross-project read,
+		// which cinder only honors together with all_tenants — so either flag
+		// implies it rather than silently returning nothing.
+		AllTenants: f.allProjects || projectID != "" || userID != "",
+		TenantID:   projectID,
 		Name:       f.name,
 		Status:     f.status,
 		Limit:      f.limit,
 		Marker:     f.marker,
+	}
+	var opts volumes.ListOptsBuilder = base
+	if userID != "" {
+		opts = volumeListOptsExt{ListOptsBuilder: base, UserID: userID}
 	}
 	pages, err := volumes.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -221,6 +270,7 @@ type volumeCreateFlags struct {
 	image            string
 	snapshot         string
 	source           string
+	backup           string
 	availabilityZone string
 	property         []string
 	bootable         bool
@@ -265,6 +315,14 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				}
 				f.snapshot = id
 			}
+			// Resolve a --backup name to an ID via cinder before creating.
+			if f.backup != "" && !resolve.IsUUID(f.backup) {
+				id, err := resolveBackupID(ctx, client, f.backup)
+				if err != nil {
+					return err
+				}
+				f.backup = id
+			}
 			return runVolumeCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
@@ -275,6 +333,7 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.image, "image", "", "source image (ID or name) to create a bootable volume from")
 	fl.StringVar(&f.snapshot, "snapshot", "", "source snapshot (ID or name)")
 	fl.StringVar(&f.source, "source", "", "source volume (ID or name) to clone from")
+	fl.StringVar(&f.backup, "backup", "", "source backup (ID or name) to restore the new volume from")
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "availability zone")
 	fl.StringArrayVar(&f.property, "property", nil, "set a property key=value (repeatable)")
 	fl.BoolVar(&f.bootable, "bootable", false, "mark the created volume as bootable")
@@ -283,9 +342,9 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *volumeCreateFlags, w io.Writer) error {
-	// Cinder derives the size from the source snapshot/volume, so --size is only
-	// required for image-from and blank creates.
-	if f.snapshot == "" && f.source == "" && f.size <= 0 {
+	// Cinder derives the size from the source snapshot/volume/backup, so --size is
+	// only required for image-from and blank creates.
+	if f.snapshot == "" && f.source == "" && f.backup == "" && f.size <= 0 {
 		return fmt.Errorf("--size must be a positive number of GiB")
 	}
 	meta, err := parseKeyValMap(f.property)
@@ -308,6 +367,7 @@ func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		ImageID:          f.image,
 		SnapshotID:       f.snapshot,
 		SourceVolID:      sourceVolID,
+		BackupID:         f.backup,
 		AvailabilityZone: f.availabilityZone,
 		Metadata:         meta,
 	}
