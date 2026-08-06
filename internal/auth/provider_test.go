@@ -2,9 +2,11 @@ package auth
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/spf13/pflag"
 )
 
 // scopeJSON runs the resolved AuthOptions through gophercloud's scope map and
@@ -153,5 +155,120 @@ func TestApplyDomainScope_NoDomainFlagsLeavesScopeUntouched(t *testing.T) {
 	}
 	if ao.DomainName != "cloudsDom" {
 		t.Errorf("clouds.yaml domain must be preserved, got %q", ao.DomainName)
+	}
+}
+
+func TestApplySystemScope_ProducesSystemAllScope(t *testing.T) {
+	o := &Options{
+		Username:       "admin",
+		UserDomainName: "Default",
+		SystemScope:    "all",
+	}
+	ao := gophercloud.AuthOptions{Username: "admin"}
+	o.applyAuthOverrides(&ao)
+
+	scope := scopeJSON(t, &ao)
+	sys, ok := scope["system"].(map[string]any)
+	if !ok {
+		t.Fatalf("scope has no system key: %#v", scope)
+	}
+	if sys["all"] != true {
+		t.Errorf(`scope system = %#v, want {"all": true}`, sys)
+	}
+	// The user's identity domain still qualifies the username.
+	if ao.DomainName != "Default" {
+		t.Errorf("user identity domain = %q, want Default", ao.DomainName)
+	}
+}
+
+// A system-scoped token carries no project, so a project inherited from the
+// environment / clouds.yaml / a Vault openrc must be dropped rather than
+// producing a project scope.
+func TestApplySystemScope_OverridesInheritedProjectScope(t *testing.T) {
+	o := &Options{
+		Username:          "admin",
+		ProjectName:       "admin",
+		UserDomainName:    "Default",
+		ProjectDomainName: "Default",
+		SystemScope:       "all",
+	}
+	ao := gophercloud.AuthOptions{Username: "admin", TenantName: "admin"}
+	o.applyAuthOverrides(&ao)
+
+	if ao.TenantName != "" || ao.TenantID != "" {
+		t.Errorf("tenant fields not cleared: name=%q id=%q", ao.TenantName, ao.TenantID)
+	}
+	scope := scopeJSON(t, &ao)
+	if _, ok := scope["project"]; ok {
+		t.Errorf("system-scoped token must not carry a project scope: %#v", scope)
+	}
+	if _, ok := scope["system"]; !ok {
+		t.Errorf("scope is not system-scoped: %#v", scope)
+	}
+}
+
+func TestValidateSystemScope(t *testing.T) {
+	tests := []struct {
+		name        string
+		scope       string
+		alsoChanged []string
+		wantErr     string
+	}{
+		{name: "unset", scope: ""},
+		{name: "all", scope: "all"},
+		{name: "bad value", scope: "everything", wantErr: "unsupported value"},
+		{
+			name:  "conflicts with explicit project name",
+			scope: "all", alsoChanged: []string{"os-project-name"},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:  "conflicts with explicit domain name",
+			scope: "all", alsoChanged: []string{"os-domain-name"},
+			wantErr: "mutually exclusive",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &Options{}
+			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			o.AddFlags(fs)
+			args := []string{}
+			if tc.scope != "" {
+				args = append(args, "--os-system-scope="+tc.scope)
+			}
+			for _, name := range tc.alsoChanged {
+				args = append(args, "--"+name+"=x")
+			}
+			if err := fs.Parse(args); err != nil {
+				t.Fatalf("parsing %v: %v", args, err)
+			}
+
+			err := o.validateSystemScope()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateSystemScope() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateSystemScope() = %v, want an error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// An OS_PROJECT_NAME left in the environment is background configuration, not a
+// conflicting request: --os-system-scope overrides it silently.
+func TestValidateSystemScope_EnvProjectIsNotAConflict(t *testing.T) {
+	t.Setenv("OS_PROJECT_NAME", "admin")
+	o := &Options{}
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	o.AddFlags(fs)
+	if err := fs.Parse([]string{"--os-system-scope=all"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := o.validateSystemScope(); err != nil {
+		t.Fatalf("validateSystemScope() = %v, want nil", err)
 	}
 }

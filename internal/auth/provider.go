@@ -33,6 +33,9 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 	if o.CredsFromNS != "" && o.CredsFromVault != "" {
 		return nil, fmt.Errorf("--creds-from-ns and --creds-from-vault are mutually exclusive")
 	}
+	if err := o.validateSystemScope(); err != nil {
+		return nil, err
+	}
 
 	// Vault: fetch an openrc secret and fold its OS_* values into o, then fall
 	// through to the normal Keystone flow below (works for every service).
@@ -132,6 +135,53 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf(&ao.ApplicationCredentialSecret, o.AppCredSecret)
 
 	o.applyDomainScope(ao)
+	o.applySystemScope(ao)
+}
+
+// systemScopeAll is the only system-scope value Keystone defines. OSC accepts
+// `--os-system-scope all` and nothing else.
+const systemScopeAll = "all"
+
+// validateSystemScope rejects an unusable --os-system-scope before any network
+// call. A system-scoped token cannot also be project- or domain-scoped, so
+// asking for both on the same command line is an error rather than a silent
+// precedence rule.
+//
+// Only *explicitly given* flags conflict: a project set by clouds.yaml, an
+// openrc in Vault, or a leftover OS_PROJECT_NAME in the environment is
+// background configuration the operator is overriding on purpose, and
+// applySystemScope drops it.
+func (o *Options) validateSystemScope() error {
+	if o.SystemScope == "" {
+		return nil
+	}
+	if o.SystemScope != systemScopeAll {
+		return fmt.Errorf("--os-system-scope: unsupported value %q, the only value Keystone defines is %q", o.SystemScope, systemScopeAll)
+	}
+	if o.fs == nil || !o.fs.Changed("os-system-scope") {
+		return nil
+	}
+	for _, name := range []string{"os-project-name", "os-project-id", "os-domain-name"} {
+		if o.fs.Changed(name) {
+			return fmt.Errorf("--os-system-scope and --%s are mutually exclusive: a token is scoped to the system, a domain or a project, not several", name)
+		}
+	}
+	return nil
+}
+
+// applySystemScope replaces whatever project/domain scope the clouds.yaml, env
+// or Vault openrc supplied with a system scope. It runs after applyDomainScope
+// so it wins unconditionally, matching the flag's "scope this token to the whole
+// deployment" meaning.
+func (o *Options) applySystemScope(ao *gophercloud.AuthOptions) {
+	if o.SystemScope == "" {
+		return
+	}
+	ao.Scope = &gophercloud.AuthScope{System: true}
+	// A system-scoped token carries no project. Clear the legacy tenant fields so
+	// nothing downstream re-derives a project scope from them.
+	ao.TenantName = ""
+	ao.TenantID = ""
 }
 
 // applyDomainScope wires the user's identity domain and the token scope
