@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 268 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 283 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**244 of 749 in-scope upstream commands (33%).** Of `koc`'s 268 leaf commands,
-~245 are upstream-equivalent and 23 are koc-native.
+**257 of 749 in-scope upstream commands (34%).** Of `koc`'s 283 leaf commands,
+~258 are upstream-equivalent and 25 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -52,8 +52,8 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 30/94 (32%) | **30/38 (79%)** |
 | `openstack.identity.v3` | 42/128 (33%) | **42/60 (70%)** |
-| `openstack.network.v2` | 45/165 (27%) | **45/86 (52%)** |
-| `openstack.common` | 1/11 (9%) | 1/11 — only `quota show` |
+| `openstack.network.v2` | 56/165 (34%) | **56/92 (61%)** |
+| `openstack.common` | 3/11 (27%) | 3/11 — `quota show`, `extension list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
 
@@ -61,7 +61,7 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 `server share`, `server dump`; identity — federation/IdP/mapping/service
 provider, OAuth1 + EC2 credentials, trusts, limits, policies, credentials,
 endpoint groups, access rules; image — metadefs, cached images, tasks; network —
-QoS, metering, flavors, trunks, segment ranges, L3 conntrack helpers, local IPs,
+QoS, metering, flavors, segment ranges, L3 conntrack helpers, local IPs,
 RBAC, NDP proxies, auto-allocated topology, default SG rules/statefulness;
 volume — `block storage *`, consistency groups, volume groups, QoS, messages,
 backend capability/pools, host failover, transfers.
@@ -76,12 +76,12 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **53 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **55 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
 | --- | --- |
-| `networking` | 11/50 |
+| `networking` | 13/50 |
 | `identity` | 11/27 |
 | `compute` | 10/20 |
 | `blockstorage` | 6/24 |
@@ -118,7 +118,7 @@ Eleven services gophercloud supports have **zero** `koc` surface:
 - `compute/v2/limits` + `blockstorage/v3/limits` → `limits show`
 - `blockstorage/v3/{transfers,qos,quotasets}` → 14+ volume commands
   (`attachments` is now wired — `volume attachment list/show/create/delete/set/complete`)
-- `networking/v2/extensions/{subnetpools,layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments,trunks}`
+- `networking/v2/extensions/{layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments}` (`subnetpools` and `trunks` are now wired)
 - `image/v2/tasks` → `image task list/show` (`imageimport` is now wired — `image import`, `image import info`; `image stage` and `image stores list` remain)
 - `baremetal/v1/allocations` → `baremetal allocation *`
 - `dns/v2/{quotas,tsigkeys,transfer/request,transfer/accept}`
@@ -145,13 +145,17 @@ Functionally covered, but not drop-in for scripts written against `openstack`:
 | `koc server console log show` | `openstack console log show` |
 | `koc server console url show` | `openstack console url show` |
 | `koc baremetal node power reboot` | `openstack baremetal node reboot` |
+| `koc network extension list` / `show` | `openstack extension list --network` / `extension show` |
+| `koc network trunk subport list` | `openstack network subport list` |
 
 ## koc-native commands
 
 No upstream equivalent, by design: 14 `koc keyvrm …` (in-house KeyVRM catalog
 service), 5 `koc vault kv …`, `koc server add/remove server-group` (KeyStack
 dynamic server groups), `koc image member set`, `koc baremetal node inventory show`
-(a table summary of the inventory upstream only offers as a raw `save`).
+(a table summary of the inventory upstream only offers as a raw `save`), and
+`koc network trunk subport add`/`remove` (upstream folds these into
+`network trunk set`/`unset --subport` flags rather than giving them verbs).
 
 ## Updating this document
 

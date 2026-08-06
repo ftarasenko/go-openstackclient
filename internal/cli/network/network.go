@@ -26,6 +26,8 @@ import (
 func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	networkCmd := newNetworkCommand(a, o)
 	networkCmd.AddCommand(newAgentCommand(a, o))
+	networkCmd.AddCommand(newTrunkCommand(a, o))
+	networkCmd.AddCommand(newExtensionCommand(a, o))
 
 	floating := &cobra.Command{
 		Use:   "floating",
