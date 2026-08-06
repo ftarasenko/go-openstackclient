@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 285 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 288 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,12 @@ PyPI is the source of record.
 
 ## Headline
 
-**259 of 749 in-scope upstream commands (35%).** Of `koc`'s 285 leaf commands,
-~260 are upstream-equivalent and 25 are koc-native.
+**260 of 749 in-scope upstream commands (35%).** Of `koc`'s 288 leaf commands,
+~261 are upstream-equivalent and 27 are koc-native.
+
+Leaf counts are of the **visible** tree. Two more commands exist but are hidden
+from `--help` because they duplicate a visible sibling exactly: `koc migration
+list` and `koc baremetal node reboot` (see "Naming deviations").
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -51,7 +55,7 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 | --- | --- | --- |
 | `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
-| `openstack.volume.v3` | 30/94 (32%) | **30/38 (79%)** |
+| `openstack.volume.v3` | 31/94 (33%) | **31/38 (82%)** |
 | `openstack.identity.v3` | 42/128 (33%) | **42/60 (70%)** |
 | `openstack.network.v2` | 57/165 (35%) | **57/92 (62%)** |
 | `openstack.common` | 4/11 (36%) | 4/11 — `quota show/set`, `extension list/show` |
@@ -139,15 +143,21 @@ microversion, and comment why the typed package is unavailable.
 
 ## Naming deviations from upstream
 
-Functionally covered, but not drop-in for scripts written against `openstack`:
+`koc` groups some nouns differently from upstream. Since the history-parity pass
+**the upstream spelling also works** for the first four — they are registered as
+additional commands (or cobra aliases) running the same code, so a script written
+against `openstack` is not broken by the deviation. The `koc` spelling is listed
+first because it is what `--help` shows.
 
-| `koc` | upstream |
-| --- | --- |
-| `koc server console log show` | `openstack console log show` |
-| `koc server console url show` | `openstack console url show` |
-| `koc baremetal node power reboot` | `openstack baremetal node reboot` |
-| `koc network extension list` / `show` | `openstack extension list --network` / `extension show` |
-| `koc network trunk subport list` | `openstack network subport list` |
+| `koc` | upstream | upstream spelling accepted? |
+| --- | --- | --- |
+| `koc server console log show` | `openstack console log show` | yes — `koc console log show` |
+| `koc server console url show` | `openstack console url show` | yes — `koc console url show` |
+| `koc baremetal node power reboot` | `openstack baremetal node reboot` | yes (hidden duplicate) |
+| `koc recordset set` | `openstack recordset set` (designate CLI: `update`) | yes — `update` cobra alias |
+| `koc server migration list` | `openstack server migration list` | also as `koc migration list` (hidden) |
+| `koc network extension list` / `show` | `openstack extension list --network` / `extension show` | no |
+| `koc network trunk subport list` | `openstack network subport list` | no |
 
 ## koc-native commands
 
@@ -156,7 +166,9 @@ service), 5 `koc vault kv …`, `koc server add/remove server-group` (KeyStack
 dynamic server groups), `koc image member set`, `koc baremetal node inventory show`
 (a table summary of the inventory upstream only offers as a raw `save`), and
 `koc network trunk subport add`/`remove` (upstream folds these into
-`network trunk set`/`unset --subport` flags rather than giving them verbs).
+`network trunk set`/`unset --subport` flags rather than giving them verbs). The
+two `koc server console …` spellings also count here now that the upstream
+`console …` form is the primary one.
 
 ## Updating this document
 

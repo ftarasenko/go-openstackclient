@@ -84,5 +84,8 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(placement.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(quota.NewCommand(authOpts, outOpts))
 
+	// Upstream spellings of commands koc nests differently (see aliases.go).
+	root.AddCommand(upstreamSpellingCommands(authOpts, outOpts)...)
+
 	return root
 }
