@@ -29,7 +29,12 @@ func newDNSNounCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Use:   "dns",
 		Short: "DNS (designate) service-level commands",
 	}
-	cmd.AddCommand(newDNSQuotaCommand(a, o))
+	cmd.AddCommand(
+		newDNSQuotaCommand(a, o),
+		newDNSPoolCommand(a, o),
+		newDNSServiceCommand(a, o),
+		newDNSLimitCommand(a, o),
+	)
 	return cmd
 }
 

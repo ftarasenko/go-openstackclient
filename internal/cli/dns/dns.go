@@ -22,5 +22,6 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 		newDNSNounCommand(a, o),
 		newTSIGKeyCommand(a, o),
 		newTLDCommand(a, o),
+		newPTRRecordCommand(a, o),
 	}
 }

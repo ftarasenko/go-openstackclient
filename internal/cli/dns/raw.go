@@ -66,6 +66,24 @@ func dnsPostJSON(ctx context.Context, client *gophercloud.ServiceClient, url str
 	return err
 }
 
+// dnsPostNoContent performs a POST that answers with no body — designate's zone
+// task endpoints, which reply 202 or 204 and nothing else. It must not ask
+// gophercloud to decode a JSONResponse: an empty body is not valid JSON, so the
+// decode would fail on a request that in fact succeeded.
+func dnsPostNoContent(ctx context.Context, client *gophercloud.ServiceClient, url string,
+	body any, headers map[string]string,
+) error {
+	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{
+		MoreHeaders: headers,
+		OkCodes:     []int{http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent},
+	})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
+}
+
 // dnsPostRaw performs a POST whose body is not JSON — a BIND zonefile sent as
 // text/dns, which is how designate accepts a bare zone import.
 func dnsPostRaw(ctx context.Context, client *gophercloud.ServiceClient, url, contentType string,

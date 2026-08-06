@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 387 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 400 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -26,12 +26,12 @@ PyPI is the source of record.
 
 ## Headline
 
-**359 of 831 in-scope upstream commands (43%).** Of `koc`'s 387 leaf commands,
-~360 are upstream-equivalent and 27 are koc-native.
+**370 of 831 in-scope upstream commands (45%).** Of `koc`'s 400 leaf commands,
+~371 are upstream-equivalent and 29 are koc-native.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
-the figure is 299/749 (40%).
+the figure is 310/749 (41%).
 
 Leaf counts are of the **visible** tree. Two more commands exist but are hidden
 from `--help` because they duplicate a visible sibling exactly: `koc migration
@@ -81,7 +81,7 @@ backend capability/pools, host failover, transfers.
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
-| designate (`dns`) | 49/60 (82%) | zone + recordset CRUD, zone shares, zone transfer requests/accepts, zone exports/imports, blacklists, TLDs, `dns quota` and TSIG keys. Diffed name-for-name against `entry_points.txt`: every `koc` dns leaf maps to an upstream command, none is koc-invented. Missing: PTR records, `dns service`, `dns limit list`, `zone abandon/axfr/move`, `zone nameservers list` |
+| designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 60/82 (73%) | everything except availability zones and profiles (11), the eight `unset` verbs, `listener stats show`, `quota list` and `quota reset`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
@@ -140,19 +140,23 @@ Ten services gophercloud supports have **zero** `koc` surface:
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
 `block storage cluster/log level/manageable`; ironic chassis, port groups, deploy
 templates, runbooks, traits, VIFs, BIOS, history, volume connectors/targets;
-designate PTR records and service statuses; Neutron metering, flavors, L3
-conntrack helpers, local IPs, NDP proxies, segment ranges, default SG rules;
-octavia availability zones and profiles; all of Swift and Manila.
+Neutron metering, flavors, L3 conntrack helpers, local IPs, NDP proxies, segment
+ranges, default SG rules; octavia availability zones and profiles; all of Swift
+and Manila. (Designate is no longer on this list — the raw fallback is written and
+its whole surface is covered; see below.)
 
 Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
 `false` would be dropped), `dns quota reset` (gophercloud's `dns/v2/quotas` is
-Get/Update only — no `DELETE /v2/quotas/<project>`), and the whole of
-`zone export/import`, `zone blacklist` and `tld` (no gophercloud package at all —
-shared helpers in `internal/cli/dns/raw.go`, which also carries designate's
-`--all-projects`/`--sudo-project-id` header shim).
+Get/Update only — no `DELETE /v2/quotas/<project>`), and **30 of the 60 designate
+commands** — `zone export/import`, `zone blacklist`, `tld`, `zone
+abandon/axfr/move`, `zone nameservers list`, `ptr record`, `dns pool`, `dns
+service`, `dns limit list` — for which gophercloud has no package at all. Those
+share the helpers in `internal/cli/dns/raw.go`: JSON GET/POST/PATCH/DELETE, a
+`links.next` page walk standing in for the missing Pager, and designate's
+`--all-projects`/`--sudo-project-id` header shim.
 
 Follow the AGENTS.md raw-fallback rule: isolate behind a small helper, pin the
 microversion, and comment why the typed package is unavailable.
@@ -175,10 +179,17 @@ first because it is what `--help` shows.
 | `koc network extension list` / `show` | `openstack extension list --network` / `extension show` | no |
 | `koc network trunk subport list` | `openstack network subport list` | no |
 
+One flag deviates rather than a command: `koc dns service list --service-name`,
+where upstream spells the same filter `--service_name` — the only underscored flag
+in designate's CLI. Both work; the underscored form is registered hidden.
+
 ## koc-native commands
 
 No upstream equivalent, by design: 14 `koc keyvrm …` (in-house KeyVRM catalog
-service), 5 `koc vault kv …`, `koc server add/remove server-group` (KeyStack
+service), 5 `koc vault kv …`, `koc dns pool list/show` (designate's API and its
+Python SDK both expose `/v2/pools`, but `python-designateclient` registers no
+`openstack` command for it; reads only, since pool *writes* are a
+`designate-manage`/config operation on the servers), `koc server add/remove server-group` (KeyStack
 dynamic server groups), `koc image member set`, `koc baremetal node inventory show`
 (a table summary of the inventory upstream only offers as a raw `save`), and
 `koc network trunk subport add`/`remove` (upstream folds these into
