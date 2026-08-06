@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
@@ -201,6 +203,12 @@ type routerSetFlags struct {
 	enable          bool
 	disable         bool
 	externalGateway string
+
+	enableSNAT  bool
+	disableSNAT bool
+	qosPolicy   string
+	route       []string
+	noRoute     bool
 }
 
 func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -226,6 +234,13 @@ func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.enable, "enable", false, "enable the router (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the router (admin state down)")
 	fl.StringVar(&f.externalGateway, "external-gateway", "", "set the external gateway network (name or ID)")
+	fl.BoolVar(&f.enableSNAT, "enable-snat", false, "enable source NAT on the external gateway")
+	fl.BoolVar(&f.disableSNAT, "disable-snat", false, "disable source NAT on the external gateway")
+	fl.StringVar(&f.qosPolicy, "qos-policy", "", "QoS policy ID to attach to the external gateway")
+	fl.StringArrayVar(&f.route, "route", nil,
+		"static route as destination=<cidr>,gateway=<ip> (repeatable; appends unless --no-route is also given)")
+	fl.BoolVar(&f.noRoute, "no-route", false, "clear the router's static routes (with --route, replaces them instead)")
+	cmd.MarkFlagsMutuallyExclusive("enable-snat", "disable-snat")
 	return cmd
 }
 
@@ -247,12 +262,20 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		opts.AdminStateUp = state
 		changed = true
 	}
-	if f.externalGateway != "" {
-		gwID, err := resolveNetworkID(ctx, client, f.externalGateway)
-		if err != nil {
-			return err
-		}
-		opts.GatewayInfo = &routers.GatewayInfo{NetworkID: gwID}
+	gateway, err := buildGatewayInfo(ctx, client, nameOrID, id, f, flags)
+	if err != nil {
+		return err
+	}
+	if gateway != nil {
+		opts.GatewayInfo = gateway
+		changed = true
+	}
+	routes, err := buildRoutes(ctx, client, nameOrID, id, f)
+	if err != nil {
+		return err
+	}
+	if routes != nil {
+		opts.Routes = routes
 		changed = true
 	}
 	if !changed {
@@ -264,6 +287,122 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	fields, values := routerShowFields(r)
 	return o.WriteSingle(w, fields, values)
+}
+
+// buildGatewayInfo assembles external_gateway_info from --external-gateway,
+// --enable-snat/--disable-snat and --qos-policy, returning nil when none were
+// given.
+//
+// Neutron replaces external_gateway_info wholesale and rejects it without a
+// network_id, so changing only SNAT or the QoS policy means re-sending the
+// router's current gateway network — which is read back here rather than
+// requiring the operator to repeat --external-gateway.
+func buildGatewayInfo(ctx context.Context, client *gophercloud.ServiceClient,
+	nameOrID, id string, f *routerSetFlags, flags flagSet,
+) (*routers.GatewayInfo, error) {
+	snat := enableDisable(flags, f.enableSNAT, f.disableSNAT, "enable-snat", "disable-snat")
+	if f.externalGateway == "" && snat == nil && f.qosPolicy == "" {
+		return nil, nil
+	}
+
+	info := &routers.GatewayInfo{EnableSNAT: snat, QoSPolicyID: f.qosPolicy}
+	if f.externalGateway != "" {
+		gwID, err := resolveNetworkID(ctx, client, f.externalGateway)
+		if err != nil {
+			return nil, err
+		}
+		info.NetworkID = gwID
+		return info, nil
+	}
+
+	current, err := routers.Get(ctx, client, id).Extract()
+	if err != nil {
+		return nil, fmt.Errorf("reading router %s to preserve its external gateway: %w", nameOrID, err)
+	}
+	if current.GatewayInfo.NetworkID == "" {
+		return nil, fmt.Errorf("router %s has no external gateway: pass --external-gateway alongside --enable-snat/--disable-snat/--qos-policy", nameOrID)
+	}
+	info.NetworkID = current.GatewayInfo.NetworkID
+	// Keep the fixed IPs neutron already assigned; omitting them would make it
+	// reallocate from the external subnet, changing the router's gateway address.
+	info.ExternalFixedIPs = current.GatewayInfo.ExternalFixedIPs
+	if info.EnableSNAT == nil {
+		info.EnableSNAT = current.GatewayInfo.EnableSNAT
+	}
+	if info.QoSPolicyID == "" {
+		info.QoSPolicyID = current.GatewayInfo.QoSPolicyID
+	}
+	return info, nil
+}
+
+// buildRoutes resolves the --route/--no-route pair into the routes list to send,
+// or nil when neither was given. Matching OSC: --no-route alone clears the list,
+// --route alone appends to the router's current routes, and the two together
+// replace them.
+func buildRoutes(ctx context.Context, client *gophercloud.ServiceClient,
+	nameOrID, id string, f *routerSetFlags,
+) (*[]routers.Route, error) {
+	if len(f.route) == 0 && !f.noRoute {
+		return nil, nil
+	}
+	parsed, err := parseRoutes(f.route)
+	if err != nil {
+		return nil, err
+	}
+	// --no-route (with or without --route) makes the given list the whole list.
+	if f.noRoute {
+		if parsed == nil {
+			parsed = []routers.Route{}
+		}
+		return &parsed, nil
+	}
+	current, err := routers.Get(ctx, client, id).Extract()
+	if err != nil {
+		return nil, fmt.Errorf("reading router %s to append routes: %w", nameOrID, err)
+	}
+	combined := make([]routers.Route, 0, len(current.Routes)+len(parsed))
+	combined = append(combined, current.Routes...)
+	for _, candidate := range parsed {
+		if !slices.Contains(combined, candidate) {
+			combined = append(combined, candidate)
+		}
+	}
+	return &combined, nil
+}
+
+// parseRoutes parses the repeatable --route specs into routers.Route values. Each
+// spec is a comma-separated key=value list: destination=<cidr>,gateway=<ip>.
+func parseRoutes(specs []string) ([]routers.Route, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	out := make([]routers.Route, 0, len(specs))
+	for _, spec := range specs {
+		var route routers.Route
+		for _, part := range strings.Split(spec, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			k, v, err := splitKV(part)
+			if err != nil {
+				return nil, fmt.Errorf("parsing --route %q: %w", spec, err)
+			}
+			switch k {
+			case "destination":
+				route.DestinationCIDR = v
+			case "gateway", "nexthop":
+				route.NextHop = v
+			default:
+				return nil, fmt.Errorf("parsing --route %q: unknown key %q", spec, k)
+			}
+		}
+		if route.DestinationCIDR == "" || route.NextHop == "" {
+			return nil, fmt.Errorf("--route %q requires both destination and gateway", spec)
+		}
+		out = append(out, route)
+	}
+	return out, nil
 }
 
 func newRouterUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
