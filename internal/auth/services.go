@@ -183,6 +183,21 @@ func (c *Client) Placement() (*gophercloud.ServiceClient, error) {
 	return sc, nil
 }
 
+// LoadBalancer returns an octavia (load-balancer v2) service client. The catalog
+// type is "load-balancer", not "octavia". Octavia versions via the URL rather
+// than a microversion header, so sc.Microversion stays empty — like
+// network/dns/image.
+func (c *Client) LoadBalancer() (*gophercloud.ServiceClient, error) {
+	if err := c.requireKeystone("load-balancer"); err != nil {
+		return nil, err
+	}
+	sc, err := openstack.NewLoadBalancerV2(c.Provider, c.Endpoint)
+	if err != nil {
+		return nil, wrapService("load-balancer", err)
+	}
+	return sc, nil
+}
+
 // keyvrmServiceType is the Keystone catalog service type for KeyVRM.
 const keyvrmServiceType = "keyvrm"
 

@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 292 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 300 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -16,6 +16,7 @@ the gap list in the same commit.
 | `python-openstackclient` | 10.2.1 | PyPI sdist → `python_openstackclient.egg-info/entry_points.txt` |
 | `python-ironicclient` (OSC plugin) | 6.2.0 | PyPI sdist → `entry_points.txt` |
 | `python-designateclient` (OSC plugin) | 7.0.0 | PyPI sdist → `entry_points.txt` |
+| `python-octaviaclient` (OSC plugin) | 3.14.0 | PyPI sdist → `entry_points.txt` (82 commands under `[openstack.load_balancer.v2]`) |
 | `osc-placement` (OSC plugin) | 4.9.0 | PyPI sdist → `entry_points.txt` |
 | `gophercloud/v2` | v2.13.0 | module zip from `proxy.golang.org` (matches the `vendor/` pin) |
 
@@ -25,8 +26,12 @@ PyPI is the source of record.
 
 ## Headline
 
-**264 of 749 in-scope upstream commands (35%).** Of `koc`'s 292 leaf commands,
-~265 are upstream-equivalent and 27 are koc-native.
+**272 of 831 in-scope upstream commands (33%).** Of `koc`'s 300 leaf commands,
+~273 are upstream-equivalent and 27 are koc-native.
+
+The percentage *fell* while coverage grew: `python-octaviaclient` became a
+baseline in this pass, adding its 82 commands to the denominator. Measured
+against the previous four baselines the figure is 264/749 (35%).
 
 Leaf counts are of the **visible** tree. Two more commands exist but are hidden
 from `--help` because they duplicate a visible sibling exactly: `koc migration
@@ -46,8 +51,8 @@ until the history-parity pass. When auditing a noun, diff its flags against the
 upstream parser, not just its presence in these tables.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
-`image.v1` are excluded as legacy) plus the three plugins above. 806 commands
-including Swift + Manila; 749 excluding them, since `koc` targets neither.
+`image.v1` are excluded as legacy) plus the four plugins above. 888 commands
+including Swift + Manila; 831 excluding them, since `koc` targets neither.
 
 ## vs python-openstackclient (core)
 
@@ -77,11 +82,12 @@ backend capability/pools, host failover, transfers.
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | 14/60 (23%) | zone + recordset CRUD and zone shares; no transfers, exports/imports, TLDs, blacklists, TSIG keys, PTR records, quotas |
+| python-octaviaclient (`load balancer`) | 8/82 (10%) | the core load-balancer verbs (list/show/create/set/delete/failover, stats and the flattened status tree); listeners, pools, members, health monitors, L7 policies/rules, quotas, amphorae, providers, flavors and availability zones are still to come |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
 
-`koc` imports **57 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **58 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -94,12 +100,13 @@ already ships:
 | `baremetalintrospection` | 1/3 |
 | `image` | 4/5 |
 | `placement` | 3/6 |
-| `dns` | 2/6 |
+| `dns` | 3/6 |
+| `loadbalancer` | 1/13 |
 
-Eleven services gophercloud supports have **zero** `koc` surface:
-`loadbalancer` (13 pkgs), `sharedfilesystems` (14), `orchestration` (7),
-`containerinfra` (6), `db` (6), `objectstorage` (5), `keymanager` (4),
-`messaging` (3), `workflow` (3), `metric` (1), `container` (1).
+Ten services gophercloud supports have **zero** `koc` surface:
+`sharedfilesystems` (14 pkgs), `orchestration` (7), `containerinfra` (6),
+`db` (6), `objectstorage` (5), `keymanager` (4), `messaging` (3), `workflow` (3),
+`metric` (1), `container` (1).
 
 ## Prioritised gaps
 
@@ -184,7 +191,8 @@ pip download --no-deps --no-binary :all: python-openstackclient -d osc
 tar xzf osc/python_openstackclient-*.tar.gz
 awk '/^\[/{s=$0} /^[a-z0-9_]+ *=/{if (s ~ /^\[openstack\./) print s"\t"$1}' \
   python_openstackclient-*/python_openstackclient.egg-info/entry_points.txt
-# repeat for python-ironicclient, python-designateclient, osc-placement
+# repeat for python-ironicclient, python-designateclient, python-octaviaclient,
+# osc-placement
 
 # 3. gophercloud surface vs what koc imports
 curl -sSo gc.zip https://proxy.golang.org/github.com/gophercloud/gophercloud/v2/@v/v2.13.0.zip
