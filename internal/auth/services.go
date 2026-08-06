@@ -70,6 +70,22 @@ func (c *Client) Baremetal() (*gophercloud.ServiceClient, error) {
 	return sc, nil
 }
 
+// Introspection returns an ironic-inspector (baremetal-introspection v1) service
+// client. This is a *separate* catalog entry from ironic itself
+// (type "baremetal-introspection"), so it cannot be derived from the Baremetal()
+// client. The inspector API is unversioned in the microversion sense — it
+// versions via the URL — so Microversion stays empty.
+func (c *Client) Introspection() (*gophercloud.ServiceClient, error) {
+	if err := c.requireKeystone("baremetal-introspection"); err != nil {
+		return nil, err
+	}
+	sc, err := openstack.NewBareMetalIntrospectionV1(c.Provider, c.Endpoint)
+	if err != nil {
+		return nil, wrapService("baremetal-introspection", err)
+	}
+	return sc, nil
+}
+
 // requireKeystone rejects a non-baremetal service in --creds-from-ns mode, where
 // only standalone Ironic credentials are available.
 func (c *Client) requireKeystone(service string) error {
