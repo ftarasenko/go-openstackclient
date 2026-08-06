@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 255 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 262 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**231 of 749 in-scope upstream commands (31%).** Of `koc`'s 255 leaf commands,
-~232 are upstream-equivalent and 23 are koc-native.
+**238 of 749 in-scope upstream commands (32%).** Of `koc`'s 262 leaf commands,
+~239 are upstream-equivalent and 23 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -51,7 +51,7 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 | `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
 | `openstack.image.v2` | 10/42 (23%) | **10/15 (66%)** |
 | `openstack.volume.v3` | 30/94 (32%) | **30/38 (79%)** |
-| `openstack.identity.v3` | 35/128 (27%) | **35/60 (58%)** |
+| `openstack.identity.v3` | 42/128 (33%) | **42/60 (70%)** |
 | `openstack.network.v2` | 45/165 (27%) | **45/86 (52%)** |
 | `openstack.common` | 1/11 (9%) | 1/11 — only `quota show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
@@ -102,7 +102,6 @@ Eleven services gophercloud supports have **zero** `koc` surface:
 
 | Vendored package | Unlocks |
 | --- | --- |
-| `identity/v3/groups` (Create/Update/Delete/Get) | `group create/delete/set/show`, `group add/remove user` — today only `group list` exists |
 | `identity/v3/roles` (Create/Update/Delete + role-inference rules) | `role create/delete/set`, `implied role create/delete/list` |
 | `compute/v2/servers` (`Shelve`/`Unshelve`/`Rescue`/`Unrescue`/`CreateImage`/`GetPassword`) | `server shelve/unshelve/rescue/unrescue`, `server image create` |
 | `identity/v3/{regions,services,users,tokens,catalog}` | `region create/delete/set/show`, `service create/delete/set`, `user password set`, `token revoke`, `catalog show` |
