@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/external"
@@ -77,19 +78,36 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			f.externalSet = cmd.Flags().Changed("external")
+			fl := cmd.Flags()
+			f.externalSet = fl.Changed("external")
+			if err := mutuallyExclusive(fl, "share", "no-share"); err != nil {
+				return err
+			}
+			f.shared = enableDisable(fl, f.share, f.noShare, "share", "no-share")
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runNetworkList(ctx, client, o, f, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, f.project, f.projectDomain)
+			if err != nil {
+				return err
+			}
+			return runNetworkList(ctx, client, o, f, projectID, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.BoolVar(&f.external, "external", false, "list only external networks (use --external=false for internal)")
 	fl.StringVar(&f.name, "name", "", "list networks matching this name")
+	fl.StringVar(&f.project, "project", "", "list networks owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.status, "status", "", "list networks with this status (ACTIVE, DOWN, BUILD, ERROR)")
+	fl.BoolVar(&f.share, "share", false, "list only shared networks")
+	fl.BoolVar(&f.noShare, "no-share", false, "list only non-shared networks")
+	fl.StringVar(&f.providerNetworkType, "provider-network-type", "", "list networks of this provider network type (flat, vlan, vxlan, ...)")
+	fl.StringVar(&f.providerPhysicalNetwork, "provider-physical-network", "", "list networks on this provider physical network")
+	fl.StringVar(&f.providerSegment, "provider-segment", "", "list networks with this provider segmentation ID")
 	return cmd
 }
 
@@ -98,13 +116,79 @@ type networkListFlags struct {
 	external    bool
 	externalSet bool
 	name        string
+
+	project       string
+	projectDomain string
+	status        string
+	share         bool
+	noShare       bool
+
+	providerNetworkType     string
+	providerPhysicalNetwork string
+	providerSegment         string
+
+	shared *bool
 }
 
-func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *networkListFlags, w io.Writer) error {
-	base := networks.ListOpts{Name: f.name}
+// providerListOptsExt adds the provider-extension query parameters neutron
+// accepts on GET /networks. gophercloud's provider package has CreateOptsExt and
+// UpdateOptsExt but no ListOptsExt at v2.13.0, and networks.ListOpts has no
+// fields for them, so this local extension follows the same composition pattern
+// as external.ListOptsExt — including wrapping it, so --external and
+// --provider-* work together.
+type providerListOptsExt struct {
+	networks.ListOptsBuilder
+	NetworkType     string
+	PhysicalNetwork string
+	SegmentationID  string
+}
+
+func (opts providerListOptsExt) ToNetworkListQuery() (string, error) {
+	q, err := opts.ListOptsBuilder.ToNetworkListQuery()
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(q)
+	if err != nil {
+		return "", err
+	}
+	params := parsed.Query()
+	for key, value := range map[string]string{
+		"provider:network_type":     opts.NetworkType,
+		"provider:physical_network": opts.PhysicalNetwork,
+		"provider:segmentation_id":  opts.SegmentationID,
+	} {
+		if value != "" {
+			params.Add(key, value)
+		}
+	}
+	return (&url.URL{RawQuery: params.Encode()}).String(), nil
+}
+
+func (f *networkListFlags) hasProviderFilter() bool {
+	return f.providerNetworkType != "" || f.providerPhysicalNetwork != "" || f.providerSegment != ""
+}
+
+func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *networkListFlags, projectID string, w io.Writer,
+) error {
+	base := networks.ListOpts{
+		Name:      f.name,
+		ProjectID: projectID,
+		Status:    f.status,
+		Shared:    f.shared,
+	}
 	var opts networks.ListOptsBuilder = base
 	if f.externalSet {
-		opts = external.ListOptsExt{ListOptsBuilder: base, External: boolPtr(f.external)}
+		opts = external.ListOptsExt{ListOptsBuilder: opts, External: boolPtr(f.external)}
+	}
+	if f.hasProviderFilter() {
+		opts = providerListOptsExt{
+			ListOptsBuilder: opts,
+			NetworkType:     f.providerNetworkType,
+			PhysicalNetwork: f.providerPhysicalNetwork,
+			SegmentationID:  f.providerSegment,
+		}
 	}
 	pages, err := networks.List(client, opts).AllPages(ctx)
 	if err != nil {

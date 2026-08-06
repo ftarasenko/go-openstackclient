@@ -42,7 +42,25 @@ func subnetShowFields(s *subnets.Subnet) ([]string, []any) {
 	return fields, values
 }
 
+// subnetListFlags holds the filters accepted by "subnet list". Until this pass
+// the command took no filters at all beyond --help, so every one of these is new.
+type subnetListFlags struct {
+	name          string
+	network       string
+	project       string
+	projectDomain string
+	subnetPool    string
+	gateway       string
+	ipVersion     int
+	dhcp          bool
+	noDHCP        bool
+	long          bool
+
+	enableDHCP *bool
+}
+
 func newSubnetListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &subnetListFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List subnets",
@@ -51,19 +69,62 @@ func newSubnetListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			fl := cmd.Flags()
+			if err := mutuallyExclusive(fl, "dhcp", "no-dhcp"); err != nil {
+				return err
+			}
+			f.enableDHCP = enableDisable(fl, f.dhcp, f.noDHCP, "dhcp", "no-dhcp")
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runSubnetList(ctx, client, o, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, f.project, f.projectDomain)
+			if err != nil {
+				return err
+			}
+			return runSubnetList(ctx, client, o, f, projectID, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "list subnets matching this name")
+	fl.StringVar(&f.network, "network", "", "list subnets of this network (name or ID)")
+	fl.StringVar(&f.project, "project", "", "list subnets owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.subnetPool, "subnet-pool", "", "list subnets allocated from this subnet pool (name or ID)")
+	fl.StringVar(&f.gateway, "gateway", "", "list subnets with this gateway IP")
+	fl.IntVar(&f.ipVersion, "ip-version", 0, "list subnets of this IP version (4 or 6)")
+	fl.BoolVar(&f.dhcp, "dhcp", false, "list only subnets with DHCP enabled")
+	fl.BoolVar(&f.noDHCP, "no-dhcp", false, "list only subnets with DHCP disabled")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
 
-func runSubnetList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := subnets.List(client, subnets.ListOpts{}).AllPages(ctx)
+func runSubnetList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *subnetListFlags, projectID string, w io.Writer,
+) error {
+	opts := subnets.ListOpts{
+		Name:       f.name,
+		ProjectID:  projectID,
+		GatewayIP:  f.gateway,
+		IPVersion:  f.ipVersion,
+		EnableDHCP: f.enableDHCP,
+	}
+	if f.network != "" {
+		networkID, err := resolveNetworkID(ctx, client, f.network)
+		if err != nil {
+			return err
+		}
+		opts.NetworkID = networkID
+	}
+	if f.subnetPool != "" {
+		poolID, err := resolveSubnetPoolID(ctx, client, f.subnetPool)
+		if err != nil {
+			return err
+		}
+		opts.SubnetPoolID = poolID
+	}
+	pages, err := subnets.List(client, opts).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing subnets: %w", err)
 	}
@@ -71,11 +132,30 @@ func runSubnetList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("parsing subnet list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Network", "Subnet"}, Rows: make([][]any, 0, len(all))}
+
+	cols := []string{"ID", "Name", "Network", "Subnet"}
+	if f.long {
+		cols = append(cols, "Project", "DHCP", "Gateway", "IP Version", "Subnet Pool", "Allocation Pools")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, s := range all {
-		t.Rows = append(t.Rows, []any{s.ID, s.Name, s.NetworkID, s.CIDR})
+		row := []any{s.ID, s.Name, s.NetworkID, s.CIDR}
+		if f.long {
+			row = append(row, s.ProjectID, s.EnableDHCP, s.GatewayIP, s.IPVersion, s.SubnetPoolID, formatAllocationPools(s.AllocationPools))
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
+}
+
+// formatAllocationPools renders a subnet's allocation pools as "start-end"
+// entries so the range fits one table cell.
+func formatAllocationPools(pools []subnets.AllocationPool) []string {
+	out := make([]string, 0, len(pools))
+	for _, p := range pools {
+		out = append(out, p.Start+"-"+p.End)
+	}
+	return out
 }
 
 func newSubnetShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
