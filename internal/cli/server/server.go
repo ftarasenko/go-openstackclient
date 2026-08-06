@@ -100,7 +100,6 @@ func NewCommands(a *auth.Options, o *output.Options) []*cobra.Command {
 		NewCommand(a, o),
 		newComputeCommand(a, o),
 		newHypervisorCommand(a, o),
-		newQuotaCommand(a, o),
 		newAggregateCommand(a, o),
 	}
 }

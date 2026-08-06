@@ -169,29 +169,3 @@ func TestRunServerList_LimitAndMarker(t *testing.T) {
 		t.Errorf("--limit=1 should truncate to one row, but web-2 present:\n%s", out)
 	}
 }
-
-// TestRunQuotaShow_UsesProjectIDInURL confirms the (already-resolved) project ID
-// is what nova receives on the quotasets URL — the fix for M1 resolves a name to
-// this ID before reaching the seam.
-func TestRunQuotaShow_UsesProjectIDInURL(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
-
-	const projectID = "abcabcabcabc0000abcabcabcabc0000"
-	fakeServer.Mux.HandleFunc("/os-quota-sets/"+projectID, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"quota_set": {"id": "` + projectID + `", "instances": 10, "cores": 20, "ram": 51200}}`))
-	})
-
-	client := computeClient(fakeServer, "latest")
-	o := &output.Options{Format: output.FormatValue}
-
-	var buf bytes.Buffer
-	if err := runQuotaShow(context.Background(), client, o, projectID, false, &buf); err != nil {
-		t.Fatalf("runQuotaShow returned error: %v", err)
-	}
-	if !strings.Contains(buf.String(), "10") {
-		t.Errorf("output missing instances quota:\n%s", buf.String())
-	}
-}

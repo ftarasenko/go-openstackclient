@@ -916,61 +916,6 @@ func TestRunComputeServiceSet_NothingToDo(t *testing.T) {
 	}
 }
 
-func TestRunQuotaShow_ProjectAndOutput(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
-
-	var gotMethod string
-	fakeServer.Mux.HandleFunc("/os-quota-sets/proj-1", func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"quota_set":{"id":"proj-1","instances":10,"cores":20,"ram":51200,"key_pairs":100,"metadata_items":128,"server_groups":10,"server_group_members":10}}`))
-	})
-
-	client := computeClient(fakeServer, "2.79")
-	o := &output.Options{Format: output.FormatTable}
-	var buf bytes.Buffer
-	if err := runQuotaShow(context.Background(), client, o, "proj-1", false, &buf); err != nil {
-		t.Fatalf("runQuotaShow: %v", err)
-	}
-	if gotMethod != http.MethodGet {
-		t.Errorf("method = %q, want GET", gotMethod)
-	}
-	out := buf.String()
-	for _, want := range []string{"Instances", "Cores", "RAM", "Key Pairs", "10", "20", "51200"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("quota output missing %q\n---\n%s", want, out)
-		}
-	}
-}
-
-func TestRunQuotaShow_Defaults(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
-
-	var gotMethod string
-	fakeServer.Mux.HandleFunc("/os-quota-sets/proj-1/defaults", func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"quota_set":{"id":"proj-1","instances":5,"cores":10,"ram":25600}}`))
-	})
-
-	client := computeClient(fakeServer, "2.79")
-	o := &output.Options{Format: output.FormatTable}
-	var buf bytes.Buffer
-	if err := runQuotaShow(context.Background(), client, o, "proj-1", true, &buf); err != nil {
-		t.Fatalf("runQuotaShow (defaults): %v", err)
-	}
-	if gotMethod != http.MethodGet {
-		t.Errorf("method = %q, want GET", gotMethod)
-	}
-	if !strings.Contains(buf.String(), "5") {
-		t.Errorf("defaults output = %q, want instances=5", buf.String())
-	}
-}
-
 func TestRunHypervisorList_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

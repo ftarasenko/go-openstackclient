@@ -17,6 +17,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/keyvrm"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/network"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/placement"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/quota"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/server"
 	vaultcli "github.com/ftarasenko/go-openstackclient/internal/cli/vault"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/volume"
@@ -69,7 +70,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	// Each service registers its noun commands. Some services expose several
 	// top-level nouns (e.g. compute → flavor/keypair; server → server/compute/
-	// hypervisor/quota), so they return a slice.
+	// hypervisor), so they return a slice.
 	root.AddCommand(baremetal.NewCommand(authOpts, outOpts))
 	root.AddCommand(image.NewCommand(authOpts, outOpts))
 	root.AddCommand(keyvrm.NewCommand(authOpts, outOpts))
@@ -81,6 +82,7 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(dns.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(network.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(placement.NewCommand(authOpts, outOpts)...)
+	root.AddCommand(quota.NewCommand(authOpts, outOpts))
 
 	return root
 }
