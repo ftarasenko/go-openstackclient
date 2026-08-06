@@ -132,8 +132,21 @@ derive service clients. Credentials are resolved in this precedence order:
 3. Application credentials (`OS_APPLICATION_CREDENTIAL_ID` / `_SECRET`),
    honored through either path above.
 
-Both domain-scoped and project-scoped tokens are supported
-(`--os-domain-name` vs. `--os-project-name` + `--os-project-domain-name`).
+Project-, domain- and system-scoped tokens are all supported:
+
+| Scope | Flags |
+| --- | --- |
+| project | `--os-project-name` + `--os-project-domain-name` (or `--os-project-id`) |
+| domain | `--os-domain-name` |
+| system | `--os-system-scope all` (env `OS_SYSTEM_SCOPE`) |
+
+A token has exactly one scope, so `--os-system-scope` conflicts with an
+explicit `--os-project-name` / `--os-project-id` / `--os-domain-name` and is
+rejected up front. A project inherited from `clouds.yaml`, the environment or a
+Vault openrc is treated as background configuration instead and is overridden,
+so `koc baremetal driver show ipmi --os-system-scope all` works from a shell
+that already has a project-scoped openrc sourced. `all` is the only value
+Keystone defines.
 
 #### Alternative credential sources
 

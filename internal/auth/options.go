@@ -53,6 +53,11 @@ type Options struct {
 	RegionName        string
 	Interface         string
 
+	// SystemScope requests a system-scoped token. OSC spells this
+	// --os-system-scope and only accepts the value "all"; it is mutually
+	// exclusive with project and domain scope.
+	SystemScope string
+
 	// Application credentials.
 	AppCredID     string
 	AppCredName   string
@@ -145,6 +150,8 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"region name (env OS_REGION_NAME)")
 	fs.StringVar(&o.Interface, "os-interface", os.Getenv("OS_INTERFACE"),
 		"endpoint interface: public, internal or admin (env OS_INTERFACE)")
+	fs.StringVar(&o.SystemScope, "os-system-scope", os.Getenv("OS_SYSTEM_SCOPE"),
+		`request a system-scoped token; the only value Keystone defines is "all" (env OS_SYSTEM_SCOPE)`)
 
 	fs.StringVar(&o.AppCredID, "os-application-credential-id", os.Getenv("OS_APPLICATION_CREDENTIAL_ID"),
 		"application credential ID (env OS_APPLICATION_CREDENTIAL_ID)")
