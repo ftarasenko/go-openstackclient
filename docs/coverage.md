@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 266 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 268 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**242 of 749 in-scope upstream commands (32%).** Of `koc`'s 266 leaf commands,
-~243 are upstream-equivalent and 23 are koc-native.
+**244 of 749 in-scope upstream commands (33%).** Of `koc`'s 268 leaf commands,
+~245 are upstream-equivalent and 23 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -49,7 +49,7 @@ including Swift + Manila; 749 excluding them, since `koc` targets neither.
 | Namespace | Raw | Core (niche subsystems excluded) |
 | --- | --- | --- |
 | `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
-| `openstack.image.v2` | 10/42 (23%) | **10/15 (66%)** |
+| `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 30/94 (32%) | **30/38 (79%)** |
 | `openstack.identity.v3` | 42/128 (33%) | **42/60 (70%)** |
 | `openstack.network.v2` | 45/165 (27%) | **45/86 (52%)** |
@@ -76,7 +76,7 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **52 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **53 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -87,7 +87,7 @@ already ships:
 | `blockstorage` | 6/24 |
 | `baremetal` | 4/9 |
 | `baremetalintrospection` | 1/3 |
-| `image` | 3/5 |
+| `image` | 4/5 |
 | `placement` | 3/6 |
 | `dns` | 2/6 |
 
@@ -119,7 +119,7 @@ Eleven services gophercloud supports have **zero** `koc` surface:
 - `blockstorage/v3/{transfers,qos,quotasets}` → 14+ volume commands
   (`attachments` is now wired — `volume attachment list/show/create/delete/set/complete`)
 - `networking/v2/extensions/{subnetpools,layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments,trunks}`
-- `image/v2/{imageimport,tasks}` → `image import/stage`, `image import info`, `image stores list`, `image task list/show`
+- `image/v2/tasks` → `image task list/show` (`imageimport` is now wired — `image import`, `image import info`; `image stage` and `image stores list` remain)
 - `baremetal/v1/allocations` → `baremetal allocation *`
 - `dns/v2/{quotas,tsigkeys,transfer/request,transfer/accept}`
 - `placement/v1/{resourceclasses,usages,allocationcandidates}`
