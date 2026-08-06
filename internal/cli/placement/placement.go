@@ -52,6 +52,9 @@ func newProviderCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newProviderDeleteCommand(a, o))
 	cmd.AddCommand(newProviderTraitCommand(a, o))
 	cmd.AddCommand(newProviderAllocationCommand(a, o))
+	cmd.AddCommand(newProviderInventoryCommand(a, o))
+	cmd.AddCommand(newProviderUsageCommand(a, o))
+	cmd.AddCommand(newProviderAggregateCommand(a, o))
 	return cmd
 }
 
