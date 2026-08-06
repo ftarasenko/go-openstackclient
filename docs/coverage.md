@@ -3,7 +3,8 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 400 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `eae6d1a` · 400 leaf commands (visible tree; 2
+more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -203,9 +204,12 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (245 leaf commands at the snapshot above)
+# 1. koc's own command tree (400 leaf commands at the snapshot above)
 make build
-# walk `--help` recursively, collecting leaves under "Available Commands:"
+# Walk `--help` recursively. Count a command when it is *runnable*, not merely when
+# it is childless: `koc image import <image>` is a verb that also parents `koc image
+# import info`. Read runnability off the Usage block — a pure group's only usage
+# form is "<path> [command]".
 
 # 2. upstream baselines — PyPI is reachable where opendev.org is not
 pip download --no-deps --no-binary :all: python-openstackclient -d osc
