@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -123,6 +124,11 @@ type serverListFlags struct {
 	createdBefore string
 	deletedSince  string
 	deletedBefore string
+
+	project       string
+	projectDomain string
+	user          string
+	userDomain    string
 }
 
 // serverListQuery augments gophercloud's servers.ListOpts with the KeyStack
@@ -175,11 +181,15 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerList(ctx, client, o, f, cmd.OutOrStdout())
+			projectID, userID, err := resolveServerOwner(ctx, session, f)
+			if err != nil {
+				return err
+			}
+			return runServerList(ctx, client, o, f, projectID, userID, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -189,6 +199,10 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "filter by server name (regular expression)")
 	fl.StringVar(&f.status, "status", "", "filter by server status, e.g. ACTIVE")
 	fl.StringVar(&f.host, "host", "", "filter by hypervisor host name")
+	fl.StringVar(&f.project, "project", "", "list servers owned by this project (name or ID); implies --all-projects")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.user, "user", "", "list servers created by this user (name or ID); implies --all-projects")
+	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of servers to return")
 	fl.StringVar(&f.marker, "marker", "", "list servers after this server ID (pagination marker)")
 	// KeyStack server-list filters (KCP-1768/2417), nova 2.66+; rejected by
@@ -201,13 +215,47 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *serverListFlags, w io.Writer) error {
+// resolveServerOwner turns --project / --user into keystone IDs, deriving the
+// identity client only when a reference is a name rather than a UUID.
+func resolveServerOwner(ctx context.Context, session *auth.Client, f *serverListFlags) (projectID, userID string, err error) {
+	needsLookup := func(ref string) bool { return ref != "" && !resolve.IsUUID(ref) }
+	if !needsLookup(f.project) && !needsLookup(f.user) {
+		return f.project, f.user, nil
+	}
+	identity, err := session.Identity()
+	if err != nil {
+		return "", "", err
+	}
+	projectID, userID = f.project, f.user
+	if needsLookup(f.project) {
+		projectID, err = resolve.ProjectIDInDomain(ctx, identity, f.project, f.projectDomain)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	if needsLookup(f.user) {
+		userID, err = resolve.UserIDInDomain(ctx, identity, f.user, f.userDomain)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return projectID, userID, nil
+}
+
+func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *serverListFlags, projectID, userID string, w io.Writer,
+) error {
 	opts := serverListQuery{
 		ListOpts: servers.ListOpts{
-			Name:       f.name,
-			Status:     f.status,
-			Host:       f.host,
-			AllTenants: f.all || f.allProjects,
+			Name:   f.name,
+			Status: f.status,
+			Host:   f.host,
+			// Listing another project's or user's servers is a cross-project read,
+			// which nova only honors together with all_tenants — so either filter
+			// implies it rather than quietly returning nothing.
+			AllTenants: f.all || f.allProjects || projectID != "" || userID != "",
+			TenantID:   projectID,
+			UserID:     userID,
 			Marker:     f.marker,
 			Limit:      f.limit,
 		},

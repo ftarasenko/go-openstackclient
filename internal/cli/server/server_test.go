@@ -67,7 +67,7 @@ func TestRunServerList_RequestAndTableOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runServerList(context.Background(), client, o, &serverListFlags{}, &buf); err != nil {
+	if err := runServerList(context.Background(), client, o, &serverListFlags{}, "", "", &buf); err != nil {
 		t.Fatalf("runServerList returned error: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestRunServerList_AllProjectsFilter(t *testing.T) {
 	f := &serverListFlags{allProjects: true, name: "web", status: "ACTIVE"}
 
 	var buf bytes.Buffer
-	if err := runServerList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runServerList(context.Background(), client, o, f, "", "", &buf); err != nil {
 		t.Fatalf("runServerList returned error: %v", err)
 	}
 }

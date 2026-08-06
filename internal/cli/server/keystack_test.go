@@ -133,7 +133,7 @@ func TestRunServerList_KeyStackFilters(t *testing.T) {
 		deletedBefore: "2016-06-04T06:27:59Z",
 	}
 	var buf bytes.Buffer
-	if err := runServerList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runServerList(context.Background(), client, o, f, "", "", &buf); err != nil {
 		t.Fatalf("runServerList: %v", err)
 	}
 	want := map[string]string{
@@ -168,7 +168,7 @@ func TestRunServerList_DefaultQueryUnchanged(t *testing.T) {
 	client := computeClient(fakeServer, "2.90")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerList(context.Background(), client, o, &serverListFlags{}, &buf); err != nil {
+	if err := runServerList(context.Background(), client, o, &serverListFlags{}, "", "", &buf); err != nil {
 		t.Fatalf("runServerList: %v", err)
 	}
 	for _, k := range []string{"deleted", "created-since", "created-before", "deleted-since", "deleted-before"} {

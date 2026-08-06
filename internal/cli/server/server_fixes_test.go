@@ -158,7 +158,7 @@ func TestRunServerList_LimitAndMarker(t *testing.T) {
 	f := &serverListFlags{limit: 1, marker: "00000000-0000-0000-0000-000000000000"}
 
 	var buf bytes.Buffer
-	if err := runServerList(context.Background(), client, o, f, &buf); err != nil {
+	if err := runServerList(context.Background(), client, o, f, "", "", &buf); err != nil {
 		t.Fatalf("runServerList returned error: %v", err)
 	}
 	out := buf.String()

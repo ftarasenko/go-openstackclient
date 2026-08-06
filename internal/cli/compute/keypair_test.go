@@ -42,7 +42,7 @@ func TestRunKeypairList_RequestAndTableOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runKeypairList(context.Background(), client, o, &buf); err != nil {
+	if err := runKeypairList(context.Background(), client, o, nil, &buf); err != nil {
 		t.Fatalf("runKeypairList returned error: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestRunKeypairList_ValueFormatIsTabSeparatedNoHeader(t *testing.T) {
 	o := &output.Options{Format: output.FormatValue}
 
 	var buf bytes.Buffer
-	if err := runKeypairList(context.Background(), client, o, &buf); err != nil {
+	if err := runKeypairList(context.Background(), client, o, nil, &buf); err != nil {
 		t.Fatalf("runKeypairList returned error: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestRunKeypairShow_RequestAndOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runKeypairShow(context.Background(), client, o, "key-a", &buf); err != nil {
+	if err := runKeypairShow(context.Background(), client, o, "key-a", "", false, &buf); err != nil {
 		t.Fatalf("runKeypairShow returned error: %v", err)
 	}
 
