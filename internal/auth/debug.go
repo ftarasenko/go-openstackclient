@@ -2,11 +2,15 @@ package auth
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // debugTransport logs each HTTP request and response to stderr when --debug is
@@ -90,3 +94,47 @@ func redact(s string) string {
 	})
 	return out
 }
+
+// timingTransport prints the wall-clock duration of every HTTP round trip to
+// stderr, backing --timing. It is separate from debugTransport so timings can be
+// collected without the full request/response dumps: `openstack --timing` prints
+// only a per-call table, and that is the useful signal when chasing a slow
+// command rather than a wrong one.
+//
+// It wraps whatever transport it is given, so with both flags set the timing line
+// follows the debug dump for the same call.
+type timingTransport struct {
+	rt http.RoundTripper
+	w  io.Writer
+	mu sync.Mutex
+}
+
+func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	if w == nil {
+		w = os.Stderr
+	}
+	return &timingTransport{rt: rt, w: w}
+}
+
+func (t *timingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := timeNow()
+	resp, err := t.rt.RoundTrip(req)
+	elapsed := timeNow().Sub(start)
+
+	status := "error"
+	if resp != nil {
+		status = strconv.Itoa(resp.StatusCode)
+	}
+	// gophercloud reuses one client across goroutines for parallel calls, so the
+	// writes are serialised to keep lines from interleaving.
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, _ = fmt.Fprintf(t.w, "timing: %-6s %s %s in %s\n", req.Method, req.URL.Redacted(), status, elapsed.Round(time.Millisecond))
+	return resp, err
+}
+
+// timeNow is a variable so tests can make durations deterministic.
+var timeNow = time.Now

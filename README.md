@@ -187,7 +187,8 @@ unless overridden by an explicit flag/env.
 ### Output formats
 
 `-f/--format` selects the renderer; `-c/--column` selects columns (repeatable,
-case-insensitive, order-preserving):
+case-insensitive, order-preserving); `--sort-column` sorts list output
+(repeatable, for tie-breaks):
 
 - `table` (default) — human-readable ASCII table
 - `json` — array (list) / object (single resource)
@@ -202,6 +203,33 @@ A very large opaque cell (base64 `user_data`, cert bundles) is elided in the
 table to a `<N bytes; …>` placeholder; the full value is always available via
 `-f json/yaml`, `-f value`, or by naming it with `-c <column>`. `server show
 --user-data` prints just the base64-decoded `user_data`.
+
+`--sort-column <col>` sorts any list command's rows, in every format. It is a
+client-side sort applied before `-c` narrows the columns, so the sort key does
+not have to be one of the displayed columns, and it needs no support from the
+API. Numeric columns compare numerically (`--sort-column Size` puts 9 before
+10, not before 100), the sort is stable so repeated `--sort-column` flags break
+ties, and column names are matched case-insensitively.
+
+### Flag abbreviation
+
+`openstack` is built on argparse, which accepts any **unambiguous prefix** of a
+long option — so `--all` works for `--all-projects` and `--fit` for
+`--fit-width`. `pflag` does not abbreviate, so `koc` normalises the command line
+before parsing it and accepts the same abbreviations:
+
+```sh
+koc volume list --all      # → --all-projects
+koc server list --fit      # → --fit-width
+koc image list --form json # → --format json
+```
+
+The rules are deliberately conservative, so an abbreviation can never change the
+meaning of a command line: only `--long` forms are considered (short flags and
+clusters are untouched), a token that is already a real flag name is never
+rewritten, and a prefix matching zero or **more than one** flag is left alone so
+`koc` reports the usual "unknown flag" rather than guessing. Everything after a
+bare `--` is positional and is not examined.
 
 ### Microversions
 
@@ -218,6 +246,14 @@ Ironic emits `X-OpenStack-Ironic-API-Version`; nova/cinder use the generic
 ### Diagnostics
 
 `--debug` logs each HTTP request/response to stderr with auth tokens redacted.
+
+`--timing` prints one line per API call to stderr with its method, URL, status
+and wall-clock duration — the signal for "why is this slow" without the body
+dumps `--debug` produces. The two combine; passwords in a URL are redacted.
+
+```
+timing: GET    https://nova.example/v2.1/servers/detail 200 in 412ms
+```
 
 ### Hypervisor allocation gauges
 

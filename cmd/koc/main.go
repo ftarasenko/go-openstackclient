@@ -24,6 +24,10 @@ func main() {
 	defer stop()
 
 	root := cli.NewRootCommand(version)
+	// `openstack` (argparse) accepts any unambiguous long-flag prefix, so muscle
+	// memory carries --all for --all-projects and --fit for --fit-width. pflag does
+	// not abbreviate, so the args are normalised before cobra parses them.
+	root.SetArgs(cli.ExpandFlagPrefixes(root, os.Args[1:]))
 	if err := root.ExecuteContext(ctx); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "koc: "+err.Error())

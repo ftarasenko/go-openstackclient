@@ -288,3 +288,143 @@ func TestWriteSingle_MismatchedFieldsValues(t *testing.T) {
 		t.Error("expected error when values shorter than fields, got nil (panic risk)")
 	}
 }
+
+// --sort-column orders rows in the output layer, so it works on every list in
+// every format and needs no API support.
+func TestWriteList_SortColumn(t *testing.T) {
+	table := Table{
+		Columns: []string{"Name", "Size", "Zone"},
+		Rows: [][]any{
+			{"beta", 10, "az2"},
+			{"alpha", 9, "az1"},
+			{"gamma", 100, "az1"},
+		},
+	}
+
+	t.Run("string column", func(t *testing.T) {
+		o := &Options{Format: FormatValue, SortColumns: []string{"Name"}}
+		var buf bytes.Buffer
+		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
+			t.Fatalf("WriteList: %v", err)
+		}
+		want := "alpha\t9\taz1\nbeta\t10\taz2\ngamma\t100\taz1\n"
+		if buf.String() != want {
+			t.Errorf("got:\n%swant:\n%s", buf.String(), want)
+		}
+	})
+
+	// Numbers must compare numerically: 9 before 10 before 100, not "10" < "100" < "9".
+	t.Run("numeric column", func(t *testing.T) {
+		o := &Options{Format: FormatValue, SortColumns: []string{"Size"}}
+		var buf bytes.Buffer
+		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
+			t.Fatalf("WriteList: %v", err)
+		}
+		want := "alpha\t9\taz1\nbeta\t10\taz2\ngamma\t100\taz1\n"
+		if buf.String() != want {
+			t.Errorf("numeric sort went lexicographic:\ngot:\n%swant:\n%s", buf.String(), want)
+		}
+	})
+
+	// Repeated keys break ties, in the order given.
+	t.Run("multiple columns", func(t *testing.T) {
+		o := &Options{Format: FormatValue, SortColumns: []string{"Zone", "Size"}}
+		var buf bytes.Buffer
+		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
+			t.Fatalf("WriteList: %v", err)
+		}
+		want := "alpha\t9\taz1\ngamma\t100\taz1\nbeta\t10\taz2\n"
+		if buf.String() != want {
+			t.Errorf("got:\n%swant:\n%s", buf.String(), want)
+		}
+	})
+
+	// Column names are prose; operators type lower case.
+	t.Run("case insensitive", func(t *testing.T) {
+		o := &Options{Format: FormatValue, SortColumns: []string{"name"}}
+		var buf bytes.Buffer
+		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
+			t.Fatalf("WriteList: %v", err)
+		}
+		if !strings.HasPrefix(buf.String(), "alpha") {
+			t.Errorf("lower-case column name did not match:\n%s", buf.String())
+		}
+	})
+
+	// Sorting runs before -c narrows the columns, so a sort key need not be shown.
+	t.Run("sort by a column that is not displayed", func(t *testing.T) {
+		o := &Options{Format: FormatValue, Columns: []string{"Name"}, SortColumns: []string{"Size"}}
+		var buf bytes.Buffer
+		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
+			t.Fatalf("WriteList: %v", err)
+		}
+		want := "alpha\nbeta\ngamma\n"
+		if buf.String() != want {
+			t.Errorf("got:\n%swant:\n%s", buf.String(), want)
+		}
+	})
+
+	t.Run("unknown column errors", func(t *testing.T) {
+		o := &Options{Format: FormatValue, SortColumns: []string{"Nonesuch"}}
+		var buf bytes.Buffer
+		err := o.WriteList(&buf, cloneTable(table))
+		if err == nil || !strings.Contains(err.Error(), "unknown sort column") {
+			t.Fatalf("err = %v, want an unknown-sort-column error", err)
+		}
+	})
+
+	// Rows that compare equal keep the order the API returned them in.
+	t.Run("stable", func(t *testing.T) {
+		dup := Table{
+			Columns: []string{"Name", "Zone"},
+			Rows:    [][]any{{"b", "az1"}, {"a", "az1"}, {"c", "az1"}},
+		}
+		o := &Options{Format: FormatValue, SortColumns: []string{"Zone"}}
+		var buf bytes.Buffer
+		if err := o.WriteList(&buf, dup); err != nil {
+			t.Fatalf("WriteList: %v", err)
+		}
+		want := "b\taz1\na\taz1\nc\taz1\n"
+		if buf.String() != want {
+			t.Errorf("sort was not stable:\ngot:\n%swant:\n%s", buf.String(), want)
+		}
+	})
+}
+
+// cloneTable gives each subtest its own rows, since sortRows orders them in place.
+func cloneTable(t Table) Table {
+	rows := make([][]any, len(t.Rows))
+	for i, r := range t.Rows {
+		rows[i] = append([]any(nil), r...)
+	}
+	return Table{Columns: t.Columns, Rows: rows}
+}
+
+func TestCompareCells_NumericAndString(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b any
+		want int
+	}{
+		{"ints", 9, 10, -1},
+		{"equal ints", 5, 5, 0},
+		{"int descending", 10, 9, 1},
+		// Sizes and counts arrive as strings from several APIs.
+		{"numeric strings", "9", "10", -1},
+		{"floats", 1.5, 1.25, 1},
+		{"mixed numeric types", int64(3), 4.0, -1},
+		{"strings", "alpha", "beta", -1},
+		// A number against a non-number falls back to string comparison, where
+		// "10" precedes "ACTIVE" because '1' < 'A' in byte order.
+		{"number vs word", 10, "ACTIVE", -1},
+		{"nil sorts first", nil, "a", -1},
+		{"empty string is not a number", "", "1", -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := compareCells(tc.a, tc.b); got != tc.want {
+				t.Errorf("compareCells(%v, %v) = %d, want %d", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
