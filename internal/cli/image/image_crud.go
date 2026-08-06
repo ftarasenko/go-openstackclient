@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
@@ -177,6 +179,20 @@ type imageCreateFlags struct {
 	public          bool
 	private         bool
 	property        []string
+
+	visibility string
+	id         string
+	tag        []string
+}
+
+// imageVisibilities are glance's four visibility values. --public and --private
+// are kept as the shorthands OSC also accepts; --visibility is the only way to
+// reach "shared" and "community".
+var imageVisibilities = []string{
+	string(images.ImageVisibilityPublic),
+	string(images.ImageVisibilityPrivate),
+	string(images.ImageVisibilityShared),
+	string(images.ImageVisibilityCommunity),
 }
 
 func newImageCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -206,8 +222,36 @@ func newImageCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.public, "public", false, "make the image public")
 	fl.BoolVar(&f.private, "private", false, "make the image private")
 	fl.StringArrayVar(&f.property, "property", nil, "arbitrary image property key=value (repeatable)")
+	fl.StringVar(&f.visibility, "visibility", "",
+		"image visibility: "+strings.Join(imageVisibilities, ", ")+" (--public/--private are shorthands)")
+	fl.StringVar(&f.id, "id", "", "create the image with this UUID instead of a server-assigned one")
+	fl.StringArrayVar(&f.tag, "tag", nil, "image tag (repeatable)")
 	cmd.MarkFlagsMutuallyExclusive("public", "private")
+	cmd.MarkFlagsMutuallyExclusive("public", "visibility")
+	cmd.MarkFlagsMutuallyExclusive("private", "visibility")
 	return cmd
+}
+
+// resolveImageVisibility folds --visibility and the --public/--private shorthands
+// into one optional value. nil means "say nothing", leaving glance's default
+// (private on most deployments) in place rather than asserting it.
+func resolveImageVisibility(visibility string, public, private bool) (*images.ImageVisibility, error) {
+	switch {
+	case visibility != "":
+		if !slices.Contains(imageVisibilities, visibility) {
+			return nil, fmt.Errorf("unsupported --visibility %q: expected one of %s",
+				visibility, strings.Join(imageVisibilities, ", "))
+		}
+		v := images.ImageVisibility(visibility)
+		return &v, nil
+	case public:
+		v := images.ImageVisibilityPublic
+		return &v, nil
+	case private:
+		v := images.ImageVisibilityPrivate
+		return &v, nil
+	}
+	return nil, nil
 }
 
 func runImageCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *imageCreateFlags, w io.Writer) error {
@@ -215,20 +259,20 @@ func runImageCreate(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)
 	}
+	visibility, err := resolveImageVisibility(f.visibility, f.public, f.private)
+	if err != nil {
+		return err
+	}
 	opts := images.CreateOpts{
 		Name:            name,
+		ID:              f.id,
 		DiskFormat:      f.diskFormat,
 		ContainerFormat: f.containerFormat,
 		MinDisk:         f.minDisk,
 		MinRAM:          f.minRAM,
 		Properties:      props,
-	}
-	if f.public {
-		v := images.ImageVisibilityPublic
-		opts.Visibility = &v
-	} else if f.private {
-		v := images.ImageVisibilityPrivate
-		opts.Visibility = &v
+		Tags:            f.tag,
+		Visibility:      visibility,
 	}
 
 	img, err := images.Create(ctx, client, opts).Extract()
