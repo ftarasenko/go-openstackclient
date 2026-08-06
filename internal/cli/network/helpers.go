@@ -12,24 +12,50 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
+
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 )
 
 // boolPtr returns a pointer to b, for the *bool option fields used across
 // neutron opts structs.
 func boolPtr(b bool) *bool { return &b }
 
-// enableDisable resolves the mutually-influenced --enable/--disable flag pair
-// into an optional *bool. It returns nil when neither was set so the attribute
-// is left untouched on update.
-func enableDisable(cmd interface{ Changed(string) bool }, enable, disable bool) *bool {
+// enableDisable resolves a positive/negative boolean flag pair into an optional
+// *bool: non-nil only when one of the two was actually given, so an attribute
+// nobody mentioned is left untouched on update. onName/offName default to
+// "enable"/"disable" when omitted, which is the pair most neutron nouns use;
+// pass them explicitly for the others (--share/--no-share,
+// --default/--no-default, --dhcp/--no-dhcp).
+func enableDisable(cmd interface{ Changed(string) bool }, on, off bool, names ...string) *bool {
+	onName, offName := "enable", "disable"
+	if len(names) == 2 {
+		onName, offName = names[0], names[1]
+	}
 	switch {
-	case cmd.Changed("enable") && enable:
+	case cmd.Changed(onName) && on:
 		return boolPtr(true)
-	case cmd.Changed("disable") && disable:
+	case cmd.Changed(offName) && off:
 		return boolPtr(false)
 	default:
 		return nil
 	}
+}
+
+// resolveProjectRef turns a --project value into a project ID, deriving the
+// identity client from the authenticated session only when one is actually
+// needed: an empty ref yields "" (no filter) and a UUID passes straight through,
+// so the common cases cost no keystone call. domainRef, when set, disambiguates
+// a project name that exists in more than one domain.
+func resolveProjectRef(ctx context.Context, session *auth.Client, ref, domainRef string) (string, error) {
+	if ref == "" || resolve.IsUUID(ref) {
+		return ref, nil
+	}
+	identity, err := session.Identity()
+	if err != nil {
+		return "", err
+	}
+	return resolve.ProjectIDInDomain(ctx, identity, ref, domainRef)
 }
 
 // mutuallyExclusive returns an error when both named boolean flags were set on
