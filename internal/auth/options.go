@@ -114,6 +114,11 @@ type Options struct {
 	// Diagnostics.
 	Debug bool
 
+	// Timing prints the wall-clock duration of each HTTP round trip to stderr.
+	// It is independent of Debug: timings without the full body dumps are what
+	// answer "why is this slow".
+	Timing bool
+
 	// fs is retained so factory methods can distinguish an explicitly-set flag
 	// from an env-derived default (notably for --insecure).
 	fs *pflag.FlagSet
@@ -181,6 +186,8 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 
 	fs.BoolVar(&o.Debug, "debug", envBool("OS_DEBUG"),
 		"log HTTP requests and responses to stderr (tokens redacted)")
+	fs.BoolVar(&o.Timing, "timing", false,
+		"print the wall-clock duration of each API call to stderr")
 
 	// koc-specific credential sources. UNVERIFIED against KeyStack: these have no
 	// python-openstackclient equivalent; they load credentials from the LCM

@@ -55,6 +55,12 @@ type Options struct {
 	Columns  []string
 	MaxWidth int  // --max-width: hard cap on table width; 0 = auto (fit to TTY)
 	FitWidth bool // --fit-width: fit the table to the display width even when piped
+
+	// SortColumns are the column names to sort list output by, in precedence
+	// order. Sorting lives here rather than per-command so it applies to every
+	// list in every format, and so it needs no API support: the rows are already
+	// in memory by the time they reach this layer.
+	SortColumns []string
 }
 
 // AddFlags registers -f/--format and -c/--column on the given flag set.
@@ -67,6 +73,8 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"maximum display width for table output; 0 fits to the terminal (or is unbounded when piped)")
 	fs.BoolVar(&o.FitWidth, "fit-width", false,
 		"fit table output to the display width even when not a terminal")
+	fs.StringArrayVar(&o.SortColumns, "sort-column", nil,
+		"sort list output by this column; can be repeated for tie-breaks")
 }
 
 // Validate checks that the requested format is supported.
@@ -88,6 +96,12 @@ type Table struct {
 // WriteList renders a multi-row result (e.g. "node list") in the selected format.
 func (o *Options) WriteList(w io.Writer, t Table) error {
 	if err := o.validateColumns(t.Columns); err != nil {
+		return err
+	}
+	// Sorting happens against the FULL column set, before -c narrows it, so a
+	// sort key does not have to be one of the displayed columns — matching how
+	// upstream's --sort-column behaves.
+	if err := o.sortRows(t); err != nil {
 		return err
 	}
 	cols, idx := o.selectColumns(t.Columns)
@@ -114,6 +128,111 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 	default:
 		return writeTable(w, cols, rows, o.fitWidth(w), 8, len(o.Columns) == 0)
 	}
+}
+
+// sortRows orders t.Rows in place by the --sort-column keys, in the order given.
+// Column names are matched case-insensitively, since a column header is prose
+// ("Availability Zone") while operators type lower case.
+//
+// Values are compared numerically when both sides are numbers and as strings
+// otherwise, so `--sort-column Size` orders 9 before 10 rather than
+// lexicographically. The sort is stable, so repeated keys break ties and rows
+// that compare equal keep the order the API returned them in.
+func (o *Options) sortRows(t Table) error {
+	if len(o.SortColumns) == 0 || len(t.Rows) < 2 {
+		return nil
+	}
+	keys := make([]int, 0, len(o.SortColumns))
+	for _, name := range o.SortColumns {
+		idx := -1
+		for i, col := range t.Columns {
+			if strings.EqualFold(col, name) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return fmt.Errorf("unknown sort column %q: available columns are %s",
+				name, strings.Join(t.Columns, ", "))
+		}
+		keys = append(keys, idx)
+	}
+
+	sort.SliceStable(t.Rows, func(i, j int) bool {
+		for _, k := range keys {
+			c := compareCells(cellAt(t.Rows[i], k), cellAt(t.Rows[j], k))
+			if c != 0 {
+				return c < 0
+			}
+		}
+		return false
+	})
+	return nil
+}
+
+// cellAt reads a row's cell, tolerating a short row (some commands emit ragged
+// rows when an optional field is absent).
+func cellAt(row []any, i int) any {
+	if i < len(row) {
+		return row[i]
+	}
+	return nil
+}
+
+// compareCells orders two cell values: numerically when both are numeric, and by
+// their rendered string form otherwise. It returns -1, 0 or 1.
+func compareCells(a, b any) int {
+	an, aok := numericValue(a)
+	bn, bok := numericValue(b)
+	if aok && bok {
+		switch {
+		case an < bn:
+			return -1
+		case an > bn:
+			return 1
+		default:
+			return 0
+		}
+	}
+	return strings.Compare(cellRaw(a), cellRaw(b))
+}
+
+// numericValue reports a cell's value as a float when it is a number — either a
+// numeric Go type or a string that parses as one, since several commands carry
+// sizes and counts through as strings.
+func numericValue(v any) (float64, bool) {
+	switch n := v.(type) {
+	case nil:
+		return 0, false
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil && strings.TrimSpace(n) != ""
+	}
+	return 0, false
 }
 
 // WriteSingle renders a single resource as a Field/Value view (e.g. "node show").

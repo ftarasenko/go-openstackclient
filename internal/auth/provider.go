@@ -76,6 +76,11 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 	if o.Debug {
 		provider.HTTPClient.Transport = newDebugTransport(provider.HTTPClient.Transport)
 	}
+	// Wrapped outermost so its measurement includes the debug dump's own cost
+	// only when --debug is also set, and so the timing line follows that dump.
+	if o.Timing {
+		provider.HTTPClient.Transport = newTimingTransport(provider.HTTPClient.Transport, os.Stderr)
+	}
 
 	return &Client{Provider: provider, Endpoint: eo, opts: o}, nil
 }
