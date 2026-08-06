@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 262 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 266 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**238 of 749 in-scope upstream commands (32%).** Of `koc`'s 262 leaf commands,
-~239 are upstream-equivalent and 23 are koc-native.
+**242 of 749 in-scope upstream commands (32%).** Of `koc`'s 266 leaf commands,
+~243 are upstream-equivalent and 23 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -72,7 +72,7 @@ backend capability/pools, host failover, transfers.
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | 10/60 (17%) | zone + recordset CRUD only; no transfers, exports/imports, TLDs, blacklists, TSIG keys, shares, PTR records, quotas |
-| osc-placement | 6/31 (19%) | read-only resource-provider and trait listing; no inventories, resource classes, usages, allocation candidates |
+| osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
 
