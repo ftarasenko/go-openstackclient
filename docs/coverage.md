@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 249 leaf commands.
+**Snapshot:** 2026-08-06 · `koc` @ `claude/history-parity-openstack-mcjryb` · 255 leaf commands.
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -25,8 +25,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**225 of 749 in-scope upstream commands (30%).** Of `koc`'s 249 leaf commands,
-~226 are upstream-equivalent and 23 are koc-native.
+**231 of 749 in-scope upstream commands (31%).** Of `koc`'s 255 leaf commands,
+~232 are upstream-equivalent and 23 are koc-native.
 
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
@@ -70,13 +70,13 @@ backend capability/pools, host failover, transfers.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 29/118 (25%) | node lifecycle, power, ports, driver details and stored inventory are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, volume connectors/targets |
+| ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | 10/60 (17%) | zone + recordset CRUD only; no transfers, exports/imports, TLDs, blacklists, TSIG keys, shares, PTR records, quotas |
 | osc-placement | 6/31 (19%) | read-only resource-provider and trait listing; no inventories, resource classes, usages, allocation candidates |
 
 ## vs gophercloud v2
 
-`koc` imports **51 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **52 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -86,15 +86,15 @@ already ships:
 | `compute` | 10/20 |
 | `blockstorage` | 6/24 |
 | `baremetal` | 4/9 |
+| `baremetalintrospection` | 1/3 |
 | `image` | 3/5 |
 | `placement` | 3/6 |
 | `dns` | 2/6 |
 
-Twelve services gophercloud supports have **zero** `koc` surface:
+Eleven services gophercloud supports have **zero** `koc` surface:
 `loadbalancer` (13 pkgs), `sharedfilesystems` (14), `orchestration` (7),
 `containerinfra` (6), `db` (6), `objectstorage` (5), `keymanager` (4),
-`messaging` (3), `workflow` (3), `baremetalintrospection` (3), `metric` (1),
-`container` (1).
+`messaging` (3), `workflow` (3), `metric` (1), `container` (1).
 
 ## Prioritised gaps
 
