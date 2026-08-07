@@ -27,10 +27,19 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 )
 
-// uuidRe matches a canonical 8-4-4-4-12 UUID (case-insensitive).
-var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+// uuidRe matches a UUID in either of the two forms OpenStack hands out
+// (case-insensitive): the canonical dashed 8-4-4-4-12 form used by nova,
+// neutron, glance and ironic, and the 32-character UNDASHED hex form Keystone
+// uses for project, user, domain and role IDs.
+//
+// Only the dashed form was accepted before, so "resolvers pass UUIDs through
+// untouched" was violated for every Keystone reference: koc issued a doomed
+// GET /v3/projects?name=<32-hex-id>, got {"projects": []}, and only then fell
+// back to the literal ref. That cost a round trip on every project/user lookup
+// and leaned on the zero-match fallback for correctness.
+var uuidRe = regexp.MustCompile(`^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})$`)
 
-// IsUUID reports whether ref is a canonical UUID.
+// IsUUID reports whether ref is a UUID in either accepted form.
 func IsUUID(ref string) bool { return uuidRe.MatchString(ref) }
 
 // ImageID resolves a glance image name (or ID) to an image ID using the given
