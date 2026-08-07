@@ -36,7 +36,7 @@ type blacklist struct {
 
 func blacklistFields(b *blacklist) ([]string, []any) {
 	return []string{"id", "pattern", "description", "created_at", "updated_at"},
-		[]any{b.ID, b.Pattern, b.Description, b.CreatedAt, b.UpdatedAt}
+		[]any{b.ID, b.Pattern, b.Description, dnsTimeString(b.CreatedAt), dnsTimeString(b.UpdatedAt)}
 }
 
 func newZoneBlacklistCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -344,7 +344,7 @@ type tld struct {
 
 func tldFields(t *tld) ([]string, []any) {
 	return []string{"id", "name", "description", "created_at", "updated_at"},
-		[]any{t.ID, t.Name, t.Description, t.CreatedAt, t.UpdatedAt}
+		[]any{t.ID, t.Name, t.Description, dnsTimeString(t.CreatedAt), dnsTimeString(t.UpdatedAt)}
 }
 
 func newTLDCommand(a *auth.Options, o *output.Options) *cobra.Command {

@@ -37,7 +37,7 @@ func newZoneShareCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func zoneShareFields(s *zones.ZoneShare) ([]string, []any) {
 	return []string{"id", "zone_id", "project_id", "target_project_id", "created_at", "updated_at"},
-		[]any{s.ID, s.ZoneID, s.ProjectID, s.TargetProjectID, s.CreatedAt, s.UpdatedAt}
+		[]any{s.ID, s.ZoneID, s.ProjectID, s.TargetProjectID, dnsTime(s.CreatedAt), dnsTime(s.UpdatedAt)}
 }
 
 // --- create ----------------------------------------------------------------
@@ -144,7 +144,7 @@ func runZoneShareList(ctx context.Context, client *gophercloud.ServiceClient, o 
 		Rows:    make([][]any, 0, len(all)),
 	}
 	for _, s := range all {
-		t.Rows = append(t.Rows, []any{s.ID, s.ZoneID, s.TargetProjectID, s.CreatedAt})
+		t.Rows = append(t.Rows, []any{s.ID, s.ZoneID, s.TargetProjectID, dnsTime(s.CreatedAt)})
 	}
 	return o.WriteList(w, t)
 }

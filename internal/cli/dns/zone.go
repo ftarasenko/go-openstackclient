@@ -49,7 +49,7 @@ func zoneShowFields(z *zones.Zone) ([]string, []any) {
 	values := []any{
 		z.ID, z.Name, z.Type, z.Email, z.TTL, z.Serial, z.Status, z.Action,
 		z.Description, z.Masters, z.PoolID, z.ProjectID, z.Version,
-		z.CreatedAt, z.UpdatedAt, z.TransferredAt,
+		dnsTime(z.CreatedAt), dnsTime(z.UpdatedAt), dnsTime(z.TransferredAt),
 	}
 	return fields, values
 }
