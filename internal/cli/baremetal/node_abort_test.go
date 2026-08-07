@@ -63,7 +63,9 @@ func TestRunNodeAbort_WaitSettlesInFailureState(t *testing.T) {
 			_, _ = w.Write([]byte(`{"uuid":"node-1","provision_state":"clean wait","target_provision_state":"available"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"uuid":"node-1","provision_state":"clean failed","target_provision_state":"","last_error":"aborted by user"}`))
+		// Real ironic leaves target_provision_state populated after a successful
+		// abort — only provision_state marks the transition as terminal.
+		_, _ = w.Write([]byte(`{"uuid":"node-1","provision_state":"clean failed","target_provision_state":"available","last_error":"aborted by user"}`))
 	})
 
 	client := baremetalClient(fakeServer, "latest")
@@ -77,11 +79,15 @@ func TestRunNodeAbort_WaitSettlesInFailureState(t *testing.T) {
 	if err := runNodeAbort(context.Background(), client, "node-1", true, 10*time.Second, &buf); err != nil {
 		t.Fatalf("runNodeAbort --wait returned error: %v", err)
 	}
-	if out := buf.String(); !strings.Contains(out, `settled in provision state "clean failed"`) {
+	out := buf.String()
+	if !strings.Contains(out, `settled in provision state "clean failed"`) {
 		t.Errorf("unexpected --wait output %q", out)
 	}
+	if !strings.Contains(out, "Last error: aborted by user") {
+		t.Errorf("--wait output should report last_error, got %q", out)
+	}
 	if gets < 2 {
-		t.Errorf("expected --wait to poll until target_provision_state cleared, got %d GETs", gets)
+		t.Errorf("expected --wait to keep polling while the abort was in flight, got %d GETs", gets)
 	}
 }
 
