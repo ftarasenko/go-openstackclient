@@ -67,6 +67,16 @@ func NewRootCommand(version string) *cobra.Command {
 		"Global Flags:\n{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}",
 		"Global Flags:\n  Run \"koc --help\" to list the global auth, TLS, and output flags.",
 		1)
+	// requireSubcommands gives every group-only command a RunE so it can reject
+	// an unknown verb (see groups.go), which would otherwise make cobra advertise
+	// a runnable "koc <group> [flags]" usage form for a command that does
+	// nothing. Suppress that line for annotated groups so `--help` — and the
+	// leaf-counting recipe in docs/coverage.md, which reads runnability off the
+	// Usage block — still see a pure group as "<path> [command]" only.
+	tmpl = strings.Replace(tmpl,
+		"Usage:{{if .Runnable}}\n  {{.UseLine}}{{end}}",
+		"Usage:{{if and .Runnable (not (index .Annotations \""+groupAnnotation+"\"))}}\n  {{.UseLine}}{{end}}",
+		1)
 	root.SetUsageTemplate(tmpl)
 
 	// Each service registers its noun commands. Some services expose several
@@ -88,6 +98,9 @@ func NewRootCommand(version string) *cobra.Command {
 
 	// Upstream spellings of commands koc nests differently (see aliases.go).
 	root.AddCommand(upstreamSpellingCommands(authOpts, outOpts)...)
+
+	// Must run last, once the whole tree is assembled.
+	requireSubcommands(root)
 
 	return root
 }
