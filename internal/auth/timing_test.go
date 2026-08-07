@@ -121,3 +121,57 @@ type errorRoundTripper struct{}
 func (errorRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, http.ErrHandlerTimeout
 }
+
+// Upstream's timing report ends with a Total row; koc keeps its per-request
+// lines on stderr (see the timingTransport doc comment) but reproduces the
+// total, which is the part that answers "where did the wall clock go".
+func TestReportTiming_SummarisesEveryRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	fixedClock(t, 250*time.Millisecond)
+
+	var log bytes.Buffer
+	tr := newTimingTransport(http.DefaultTransport, &log)
+	t.Cleanup(func() { activeTiming.Store(nil) })
+	client := &http.Client{Transport: tr}
+
+	for range 3 {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/zones", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	// newTimingTransport registered itself, so main's package-level call works.
+	ReportTiming()
+	if got, want := log.String(), "timing: total 3 request(s) in 750ms\n"; !strings.HasSuffix(got, want) {
+		t.Errorf("timing output should end with %q, got:\n%s", want, got)
+	}
+}
+
+// Without --timing there is no transport, so the summary must stay silent
+// rather than print an empty total.
+func TestReportTiming_SilentWithoutTiming(t *testing.T) {
+	activeTiming.Store(nil)
+	ReportTiming() // must not panic
+}
+
+// A --timing run that made no requests (a validation error before auth) also
+// prints nothing.
+func TestReportTiming_SilentWhenNoRequestsWereMade(t *testing.T) {
+	var log bytes.Buffer
+	newTimingTransport(http.DefaultTransport, &log)
+	t.Cleanup(func() { activeTiming.Store(nil) })
+	ReportTiming()
+	if log.Len() != 0 {
+		t.Errorf("expected no output, got %q", log.String())
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -103,11 +104,33 @@ func redact(s string) string {
 //
 // It wraps whatever transport it is given, so with both flags set the timing line
 // follows the debug dump for the same call.
+//
+// # Deliberate deviation from upstream
+//
+// osc_lib/command/timing.py is a cliff Lister: it prints a "URL | Seconds"
+// table to STDOUT, with a final Total row. koc writes plain lines to STDERR
+// instead, because timing output on stdout would corrupt `koc … -f json | jq`
+// and `koc … -f value > file` — the two things koc's output layer exists to
+// make reliable. Upstream can afford it because its table is itself a cliff
+// formatter; koc's -f applies to the command's result, not to its diagnostics.
+// Recorded in docs/coverage.md under "Naming deviations".
+//
+// Upstream's Total row is genuinely useful, though, and is reproduced by
+// ReportTiming.
 type timingTransport struct {
 	rt http.RoundTripper
 	w  io.Writer
-	mu sync.Mutex
+
+	mu    sync.Mutex
+	calls int
+	total time.Duration
 }
+
+// activeTiming is the transport --timing installed for this invocation, so main
+// can print the summary once the command has finished. koc authenticates at most
+// once per process, so a single handle is enough; it stays nil when --timing was
+// not given, which is what makes ReportTiming a no-op then.
+var activeTiming atomic.Pointer[timingTransport]
 
 func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
 	if rt == nil {
@@ -116,7 +139,28 @@ func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
 	if w == nil {
 		w = os.Stderr
 	}
-	return &timingTransport{rt: rt, w: w}
+	t := &timingTransport{rt: rt, w: w}
+	activeTiming.Store(t)
+	return t
+}
+
+// ReportTiming writes the --timing summary — upstream's Total row — and does
+// nothing when --timing was not given. Call it once the command has run,
+// including when it failed: a slow call is often exactly why it failed.
+func ReportTiming() {
+	if t := activeTiming.Load(); t != nil {
+		t.report()
+	}
+}
+
+func (t *timingTransport) report() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.calls == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(t.w, "timing: total %d request(s) in %s\n",
+		t.calls, t.total.Round(time.Millisecond))
 }
 
 func (t *timingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -132,6 +176,8 @@ func (t *timingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// writes are serialised to keep lines from interleaving.
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.calls++
+	t.total += elapsed
 	_, _ = fmt.Fprintf(t.w, "timing: %-6s %s %s in %s\n", req.Method, req.URL.Redacted(), status, elapsed.Round(time.Millisecond))
 	return resp, err
 }
