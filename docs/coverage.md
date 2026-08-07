@@ -192,6 +192,15 @@ One flag deviates rather than a command: `koc dns service list --service-name`,
 where upstream spells the same filter `--service_name` — the only underscored flag
 in designate's CLI. Both work; the underscored form is registered hidden.
 
+`--timing` deviates in **where it writes**, deliberately.
+`osc_lib/command/timing.py` is a cliff Lister: it prints a "URL | Seconds"
+table to **stdout**, ending in a Total row. `koc --timing` prints one plain
+line per request to **stderr**, plus the same total. Timing output on stdout
+would corrupt `koc … -f json | jq` and `koc … -f value > file`, which is
+precisely what koc's output layer exists to guarantee; upstream can afford it
+because its table is itself a cliff formatter, whereas koc's `-f` applies to the
+command's result and not to its diagnostics.
+
 ## koc-native commands
 
 No upstream equivalent, by design: 14 `koc keyvrm …` (in-house KeyVRM catalog

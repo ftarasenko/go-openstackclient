@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli"
 )
 
@@ -34,7 +35,11 @@ func main() {
 	// once its name is spelled in full.
 	args := cli.ExpandCommandPrefixes(root, os.Args[1:])
 	root.SetArgs(cli.ExpandFlagPrefixes(root, args))
-	if err := root.ExecuteContext(ctx); err != nil {
+	err := root.ExecuteContext(ctx)
+	// After the command, and on the failure path too: a slow call is often
+	// exactly why it failed. No-op unless --timing was given.
+	auth.ReportTiming()
+	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "koc: "+err.Error())
 		}
