@@ -159,7 +159,7 @@ func TestReportTiming_SummarisesEveryRequest(t *testing.T) {
 
 // Without --timing there is no transport, so the summary must stay silent
 // rather than print an empty total.
-func TestReportTiming_SilentWithoutTiming(t *testing.T) {
+func TestReportTiming_SilentWithoutTiming(_ *testing.T) {
 	activeTiming.Store(nil)
 	ReportTiming() // must not panic
 }
