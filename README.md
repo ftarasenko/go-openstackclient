@@ -208,6 +208,15 @@ table to a `<N bytes; …>` placeholder; the full value is always available via
 `-f json/yaml`, `-f value`, or by naming it with `-c <column>`. `server show
 --user-data` prints just the base64-decoded `user_data`.
 
+**`-f json` renders the same view the table does, not the raw API object.** Keys
+are the column titles a list command displays (`"Project ID"`, `"Service Name"`),
+and a composite cell arrives pre-formatted — a port's `fixed_ips` is the string
+`ip_address='10.0.0.5', subnet_id='…'` where `openstack -f json` gives an array
+of objects. It is the right shape for `-c`-narrowed output and for reading, but
+it is **not** a drop-in for upstream's JSON in a script that indexes into nested
+fields. Timestamps are normalised: RFC 3339 when set, `null` when absent (never
+Go's zero date).
+
 `--sort-column <col>` sorts any list command's rows, in every format. It is a
 client-side sort applied before `-c` narrows the columns, so the sort key does
 not have to be one of the displayed columns, and it needs no support from the
@@ -416,6 +425,8 @@ items are deferred and worth noting:
   scope qualifiers; keystone treats them as mutually exclusive.
 - **`--debug` elides large/binary bodies** (image up/downloads) and redacts
   tokens and credential fields; it does not pretty-print JSON.
+- **`-f json` mirrors the rendered table**, not the API object — see "Output
+  formats" above before consuming it from a script.
 
 ## KeyStack documentation caveat
 

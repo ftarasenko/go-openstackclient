@@ -352,12 +352,12 @@ The bug: only dashed UUIDs were passed through, so every 32-char undashed
 Keystone ID caused a doomed `GET /v3/projects?name=<id>` first.
 
 ```sh
-koc --debug quota show --project <32-CHAR-UNDASHED-PROJECT-ID> 2>&1 | grep 'projects?name='
+koc --debug quota show <32-CHAR-UNDASHED-PROJECT-ID> 2>&1 | grep 'projects?name='
 ```
 **Expected**: **no output** — no name lookup is issued.
 
 ```sh
-koc --debug quota show --project <PROJECT-NAME> 2>&1 | grep 'projects?name='
+koc --debug quota show <PROJECT-NAME> 2>&1 | grep 'projects?name='
 ```
 **Expected**: the lookup IS issued (names must still resolve).
 
@@ -411,7 +411,7 @@ cloud; if it sends a timezone offset or a different fraction width, paste it.
 **Destructive**: creates a load balancer. Delete it afterwards.
 
 ```sh
-koc loadbalancer create --name verify-wait --vip-subnet-id <SUBNET> \
+koc loadbalancer create verify-wait --vip-subnet-id <SUBNET> \
     --wait --wait-timeout 5s ; echo "exit=$?"
 ```
 
@@ -428,7 +428,7 @@ koc loadbalancer delete verify-wait --cascade --wait
 Happy path — confirm exactly **one** record is emitted, not two:
 
 ```sh
-koc loadbalancer create --name verify-ok --vip-subnet-id <SUBNET> \
+koc loadbalancer create verify-ok --vip-subnet-id <SUBNET> \
     --wait -f json | jq -s 'length'    # must be 1
 koc loadbalancer delete verify-ok --cascade --wait
 ```
