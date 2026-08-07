@@ -343,7 +343,7 @@ func runLBQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 // "unset", which silently reverted quotas the operator never named.
 func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var projectDomain string
-	clear := make(map[string]*bool, len(lbQuotaNames))
+	clearFlags := make(map[string]*bool, len(lbQuotaNames))
 	cmd := &cobra.Command{
 		Use:   "unset [<project>]",
 		Short: "Clear the named load balancer quotas, reverting them to the defaults",
@@ -354,7 +354,7 @@ func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			var names []string
 			for _, n := range lbQuotaNames {
-				if *clear[n] {
+				if *clearFlags[n] {
 					names = append(names, n)
 				}
 			}
@@ -376,7 +376,7 @@ func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	for _, n := range lbQuotaNames {
-		clear[n] = fl.Bool(n, false, "clear the "+n+" quota")
+		clearFlags[n] = fl.Bool(n, false, "clear the "+n+" quota")
 	}
 	fl.StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
 	return cmd

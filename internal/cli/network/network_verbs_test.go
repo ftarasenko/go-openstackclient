@@ -1136,7 +1136,7 @@ func TestRunPortShow_PortSecurityAbsentRendersEmpty(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	emptyLookup(t, fakeServer, "/ports", "ports")
-	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","name":"p"}}`)
 	})
 

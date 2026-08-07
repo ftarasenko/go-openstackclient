@@ -425,7 +425,7 @@ func TestRunLBCreate_WaitTimeoutStillRendersTheLoadBalancer(t *testing.T) {
 	defer func(prev time.Duration) { provisioningPollInterval = prev }(provisioningPollInterval)
 	provisioningPollInterval = time.Millisecond
 
-	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/", func(w http.ResponseWriter, _ *http.Request) {
 		// Every poll reports PENDING_CREATE, so the wait can only time out.
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"loadbalancer": {"id": "lb-1", "name": "web",
