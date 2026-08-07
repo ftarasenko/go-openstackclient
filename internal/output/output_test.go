@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -167,20 +168,118 @@ func TestCell_SanitizesServerSuppliedString(t *testing.T) {
 	}
 }
 
-func TestWriteValue_CollapsesEmbeddedTabAndNewline(t *testing.T) {
-	// A single value containing a tab and newline must not add columns or rows.
+// `-f value` is the format scripts redirect into a file, so it must emit the
+// value byte-for-byte. Collapsing embedded newlines made `zone export showfile
+// -f value > zone.txt` produce an unusable zonefile.
+func TestWriteValue_EmitsEmbeddedNewlinesVerbatim(t *testing.T) {
 	o := &Options{Format: FormatValue}
 	var buf bytes.Buffer
 	tbl := Table{Columns: []string{"A", "B"}, Rows: [][]any{{"x\ty\nz", "end"}}}
 	if err := o.WriteList(&buf, tbl); err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("embedded newline leaked extra rows: %q", buf.String())
+	if got, want := buf.String(), "x\ty\nz\tend\n"; got != want {
+		t.Errorf("value output = %q, want %q", got, want)
 	}
-	if got := lines[0]; got != "x y z\tend" {
-		t.Errorf("value row = %q, want tab/newline collapsed to spaces", got)
+}
+
+// The showfile workflow end to end: a multi-line zonefile written through
+// WriteSingle with -f value must round-trip unchanged.
+func TestWriteSingle_ValueRoundTripsAMultiLineZonefile(t *testing.T) {
+	zonefile := "$ORIGIN example.com.\n$TTL 3600\nexample.com. IN SOA ns1.example.com. admin.example.com. 1 3600 600 86400 3600\nexample.com. IN NS ns1.example.com.\n"
+	o := &Options{Format: FormatValue}
+	var buf bytes.Buffer
+	if err := o.WriteSingle(&buf, []string{"data"}, []any{zonefile}); err != nil {
+		t.Fatal(err)
+	}
+	// WriteSingle terminates the record with its own newline; the zonefile
+	// already ends in one, so trim exactly the added record separator.
+	if got := strings.TrimSuffix(buf.String(), "\n"); got != zonefile {
+		t.Errorf("zonefile did not round-trip\n got: %q\nwant: %q", got, zonefile)
+	}
+}
+
+// A multi-line cell renders across several physical lines of its table row,
+// the way cliff's PrettyTable does, instead of collapsing onto one.
+func TestWriteTable_RendersMultiLineCellAcrossLines(t *testing.T) {
+	o := &Options{Format: FormatTable}
+	var buf bytes.Buffer
+	tbl := Table{
+		Columns: []string{"ID", "NS Records"},
+		Rows:    [][]any{{"p1", "1:ns1.example.com.\n2:ns2.example.com."}, {"p2", "1:ns3.example.com."}},
+	}
+	if err := o.WriteList(&buf, tbl); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"| p1 | 1:ns1.example.com. |",
+		"|    | 2:ns2.example.com. |",
+		"| p2 | 1:ns3.example.com. |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table missing line %q\n---\n%s", want, out)
+		}
+	}
+	// The column is as wide as the widest LINE, not the whole cell.
+	if strings.Contains(out, "1:ns1.example.com. 2:ns2.example.com.") {
+		t.Errorf("multi-line cell was flattened\n---\n%s", out)
+	}
+}
+
+// Tabs still collapse to spaces in a table cell — they would knock the columns
+// out of alignment — while newlines survive.
+func TestWriteTable_CollapsesTabsButKeepsNewlines(t *testing.T) {
+	o := &Options{Format: FormatTable}
+	var buf bytes.Buffer
+	tbl := Table{Columns: []string{"A"}, Rows: [][]any{{"x\ty\nz"}}}
+	if err := o.WriteList(&buf, tbl); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "| x y |") || !strings.Contains(out, "| z   |") {
+		t.Errorf("want a tab collapsed to a space and the newline kept\n---\n%s", out)
+	}
+}
+
+// CSV must quote a field containing a newline (RFC 4180) rather than collapse it.
+func TestWriteCSV_QuotesMultiLineCell(t *testing.T) {
+	o := &Options{Format: FormatCSV}
+	var buf bytes.Buffer
+	tbl := Table{Columns: []string{"ID", "NS"}, Rows: [][]any{{"p1", "a\nb"}}}
+	if err := o.WriteList(&buf, tbl); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := buf.String(), "ID,NS\np1,\"a\nb\"\n"; got != want {
+		t.Errorf("csv = %q, want %q", got, want)
+	}
+	// And it must parse back to the original value.
+	recs, err := csv.NewReader(strings.NewReader(buf.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("csv did not parse back: %v", err)
+	}
+	if recs[1][1] != "a\nb" {
+		t.Errorf("round-tripped cell = %q, want %q", recs[1][1], "a\nb")
+	}
+}
+
+// json and yaml were already correct; lock that in alongside the others.
+func TestWriteSingle_JSONAndYAMLKeepNewlines(t *testing.T) {
+	for _, tc := range []struct {
+		format string
+		want   string
+	}{
+		{FormatJSON, `"a\nb"`},
+		{FormatYAML, "|-"}, // yaml emits a literal block scalar
+	} {
+		o := &Options{Format: tc.format}
+		var buf bytes.Buffer
+		if err := o.WriteSingle(&buf, []string{"data"}, []any{"a\nb"}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), tc.want) {
+			t.Errorf("-f %s output %q does not contain %q", tc.format, buf.String(), tc.want)
+		}
 	}
 }
 

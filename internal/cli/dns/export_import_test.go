@@ -149,8 +149,11 @@ func TestRunZoneExportShowFile_AcceptsTextDNS(t *testing.T) {
 	if gotAccept != "text/dns" {
 		t.Errorf("Accept = %q, want text/dns", gotAccept)
 	}
-	if !strings.Contains(buf.String(), "$ORIGIN example.com.") {
-		t.Errorf("output missing the zonefile\n---\n%s", buf.String())
+	// -f value must reproduce the zonefile byte-for-byte: the documented
+	// workflow is `zone export showfile -f value > zone.txt` followed by
+	// `zone import create`, and a flattened zonefile is not importable.
+	if got := strings.TrimSuffix(buf.String(), "\n"); got != zonefile {
+		t.Errorf("zonefile did not round-trip\n got: %q\nwant: %q", got, zonefile)
 	}
 }
 

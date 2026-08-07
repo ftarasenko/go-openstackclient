@@ -407,14 +407,20 @@ func writeCSV(w io.Writer, cols []string, rows [][]any) error {
 }
 
 // writeValue emits tab-separated values with no header, one row per line, for
-// scripting (`-f value`). Because the record and field separators are newline
-// and tab, any tab/newline embedded in a value is collapsed to a space so the
-// output stays one-record-per-line and column counts are stable.
+// scripting (`-f value`).
+//
+// Values are written verbatim, embedded newlines included: `-f value` is the
+// format scripts pipe into a file, so collapsing them would corrupt the payload
+// — `zone export showfile -f value > zone.txt` has to produce a zonefile that
+// `zone import create` can read back. A multi-line value therefore does spill
+// across physical lines; use -f json or -f yaml when a record must stay on one.
+// Control characters and ANSI escapes are still stripped (see stripControl) so a
+// hostile endpoint cannot rewrite the operator's terminal.
 func writeValue(w io.Writer, rows [][]any) error {
 	for _, r := range rows {
 		cells := make([]string, len(r))
 		for i, v := range r {
-			cells[i] = oneLine(cell(v))
+			cells[i] = cell(v)
 		}
 		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing value output: %w", err)
@@ -445,12 +451,14 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 			if ci < len(r) {
 				v = r[ci]
 			}
-			s := oneLine(cell(v))
+			s := tabsToSpaces(cell(v))
 			if elide {
 				s = elideCell(s)
 			}
 			sr[ci] = s
-			if n := utf8.RuneCountInString(s); n > natural[ci] {
+			// A multi-line cell is as wide as its widest line, not as wide as
+			// the whole string: it is rendered across several physical rows.
+			if n := maxLineWidth(strings.Split(s, "\n")); n > natural[ci] {
 				natural[ci] = n
 			}
 		}
@@ -643,10 +651,26 @@ func maxLineWidth(lines []string) int {
 	return n
 }
 
-// wrapText breaks s into physical lines no wider than width (in runes),
-// preferring to wrap at spaces but hard-breaking tokens longer than width.
-// A width <= 0, or a string already within width, is returned as a single line.
+// wrapText breaks s into physical lines no wider than width (in runes).
+// Newlines embedded in s are honoured as hard breaks, so a multi-line value
+// (a zonefile, a pool's NS records, a stats object) renders across several
+// physical lines of its table row instead of being flattened onto one.
 func wrapText(s string, width int) []string {
+	if !strings.Contains(s, "\n") {
+		return wrapLine(s, width)
+	}
+	segments := strings.Split(s, "\n")
+	out := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		out = append(out, wrapLine(seg, width)...)
+	}
+	return out
+}
+
+// wrapLine wraps a single newline-free line to width (in runes), preferring to
+// wrap at spaces but hard-breaking tokens longer than width. A width <= 0, or a
+// string already within width, is returned as a single line.
+func wrapLine(s string, width int) []string {
 	if width <= 0 || utf8.RuneCountInString(s) <= width {
 		return []string{s}
 	}
@@ -690,7 +714,7 @@ var ansiRe = regexp.MustCompile("\x1b(?:\\[[0-9;?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?
 
 // stripControl removes ANSI escapes and C0/C1 control characters from
 // text-format output. Tab and newline are preserved here (they carry meaning in
-// CSV, and are collapsed to spaces by oneLine for table/value output); every
+// CSV, in a table cell that spans several lines, and in `-f value` output); every
 // other control rune — including the terminal-hijacking ESC, CR, and BEL — is
 // dropped. JSON/YAML output does not pass through here; their encoders escape
 // control characters safely.
@@ -717,18 +741,15 @@ func isDangerousControl(r rune) bool {
 	return r < 0x20 || (r >= 0x7f && r < 0xa0)
 }
 
-// oneLine collapses tab/newline/carriage-return to spaces so a value renders on
-// a single physical row in the table and value formats.
-func oneLine(s string) string {
-	if !strings.ContainsAny(s, "\t\n\r") {
+// tabsToSpaces replaces tabs with spaces so a cell cannot knock the table's
+// columns out of alignment. Newlines deliberately survive: writeTable renders
+// them as additional physical lines inside the row, the way cliff's PrettyTable
+// does. Carriage returns never reach here — stripControl drops them.
+func tabsToSpaces(s string) string {
+	if !strings.Contains(s, "\t") {
 		return s
 	}
-	return strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' || r == '\r' {
-			return ' '
-		}
-		return r
-	}, s)
+	return strings.ReplaceAll(s, "\t", " ")
 }
 
 // cell renders a single value for text-based output, with control characters
