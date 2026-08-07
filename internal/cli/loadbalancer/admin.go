@@ -41,10 +41,15 @@ func newLBQuotaCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newLBQuotaShowCommand(a, o),
 		newLBQuotaSetCommand(a, o),
 		newLBQuotaUnsetCommand(a, o),
+		newLBQuotaResetCommand(a, o),
 		newLBQuotaDefaultsCommand(a, o),
 	)
 	return cmd
 }
+
+// lbQuotaNames are octavia's seven quota keys, in the order upstream's
+// `loadbalancer quota unset` registers its flags.
+var lbQuotaNames = []string{"loadbalancer", "listener", "pool", "member", "healthmonitor", "l7policy", "l7rule"}
 
 func lbQuotaFields(q *quotas.Quota) ([]string, []any) {
 	return []string{"loadbalancer", "listener", "pool", "member", "healthmonitor", "l7policy", "l7rule"},
@@ -201,11 +206,89 @@ func runLBQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	return o.WriteSingle(w, fields, values)
 }
 
+// newLBQuotaUnsetCommand builds "loadbalancer quota unset", which clears ONLY
+// the quotas named by its boolean flags — mirroring upstream
+// python-octaviaclient's UnsetQuota (osc/v2/quota.py). Clearing every quota at
+// once is a separate verb upstream, `quota reset`; koc used to spell that
+// "unset", which silently reverted quotas the operator never named.
 func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var projectDomain string
+	clear := make(map[string]*bool, len(lbQuotaNames))
 	cmd := &cobra.Command{
 		Use:   "unset [<project>]",
-		Short: "Reset a project's load balancer quotas to the defaults",
+		Short: "Clear the named load balancer quotas, reverting them to the defaults",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			var names []string
+			for _, n := range lbQuotaNames {
+				if *clear[n] {
+					names = append(names, n)
+				}
+			}
+			if len(names) == 0 {
+				return fmt.Errorf("nothing to unset: pass at least one quota flag " +
+					"(use \"loadbalancer quota reset\" to clear them all)")
+			}
+			ctx := cmd.Context()
+			client, session, err := newLoadBalancerSession(ctx, a)
+			if err != nil {
+				return err
+			}
+			project, err := resolveQuotaProject(ctx, session, a, args, projectDomain)
+			if err != nil {
+				return err
+			}
+			return runLBQuotaUnset(ctx, client, o, project, names, cmd.OutOrStdout())
+		},
+	}
+	fl := cmd.Flags()
+	for _, n := range lbQuotaNames {
+		clear[n] = fl.Bool(n, false, "clear the "+n+" quota")
+	}
+	fl.StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	return cmd
+}
+
+// runLBQuotaUnset PUTs an explicit JSON null for each named quota, which is how
+// octavia is told "revert this one key to the deployment default". The typed
+// quotas.UpdateOpts cannot express it — its fields are `*int` with
+// `omitempty`, so a nil pointer is omitted rather than serialised as null — so
+// this is the raw fallback per AGENTS.md, against the same
+// PUT /v2.0/quotas/<project> the typed Update uses.
+func runLBQuotaUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	project string, names []string, w io.Writer,
+) error {
+	quota := make(map[string]any, len(names))
+	for _, n := range names {
+		quota[n] = nil
+	}
+	reqBody := map[string]any{"quota": quota}
+	var respBody struct {
+		Quota quotas.Quota `json:"quota"`
+	}
+	resp, err := client.Put(ctx, client.ServiceURL("quotas", project), reqBody, &respBody,
+		&gophercloud.RequestOpts{OkCodes: []int{200, 202}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+		return fmt.Errorf("unsetting load balancer quotas %v for project %q: %w", names, project, err)
+	}
+	fields, values := lbQuotaFields(&respBody.Quota)
+	return o.WriteSingle(w, fields, values)
+}
+
+// newLBQuotaResetCommand builds "loadbalancer quota reset": clear every quota
+// for the project, no flags. This is upstream octaviaclient's ResetQuota, and
+// the behaviour koc previously exposed under the `unset` name.
+func newLBQuotaResetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var projectDomain string
+	cmd := &cobra.Command{
+		Use:   "reset [<project>]",
+		Short: "Reset all of a project's load balancer quotas to the defaults",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -220,14 +303,14 @@ func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runLBQuotaUnset(ctx, client, project, cmd.OutOrStdout())
+			return runLBQuotaReset(ctx, client, project, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
 	return cmd
 }
 
-func runLBQuotaUnset(ctx context.Context, client *gophercloud.ServiceClient, project string, w io.Writer) error {
+func runLBQuotaReset(ctx context.Context, client *gophercloud.ServiceClient, project string, w io.Writer) error {
 	if err := quotas.Delete(ctx, client, project).ExtractErr(); err != nil {
 		return fmt.Errorf("resetting load balancer quotas for project %q: %w", project, err)
 	}
