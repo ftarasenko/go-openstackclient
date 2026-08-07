@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+	"github.com/spf13/cobra"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -151,7 +153,7 @@ func TestRunDNSQuotaSet_OnlySendsGivenQuotas(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p1", f,
-		map[string]bool{"zones": true, "zone-records": true}, &buf)
+		map[string]bool{"zones": true, "zone-records": true}, &commonOptions{}, &buf)
 	if err != nil {
 		t.Fatalf("runDNSQuotaSet error: %v", err)
 	}
@@ -169,7 +171,7 @@ func TestRunDNSQuotaSet_RejectsEmptyUpdate(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p1",
-		&dnsQuotaSetFlags{}, map[string]bool{}, &buf)
+		&dnsQuotaSetFlags{}, map[string]bool{}, &commonOptions{}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "nothing to set") {
 		t.Fatalf("expected a 'nothing to set' error, got %v", err)
 	}
@@ -188,7 +190,7 @@ func TestRunDNSQuotaReset_RawDelete(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := runDNSQuotaReset(context.Background(), dnsShareClient(fakeServer), "p1", &buf); err != nil {
+	if err := runDNSQuotaReset(context.Background(), dnsShareClient(fakeServer), "p1", &commonOptions{}, &buf); err != nil {
 		t.Fatalf("runDNSQuotaReset error: %v", err)
 	}
 	if gotMethod != http.MethodDelete || gotPath != "/quotas/p1" {
@@ -326,5 +328,184 @@ func TestTSIGKeyCreate_RequiresEveryAttribute(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--"+omit) {
 			t.Errorf("omitting --%s: err = %v, want it to name the missing flag", omit, err)
 		}
+	}
+}
+
+// dns quota list/set/reset must carry a cross-project header when the target is
+// not the session's project — designate answers 403 to a bare cross-project GET
+// or PATCH of /v2/quotas, which made the project argument a trap that only ever
+// worked for your own project.
+func TestDNSQuotaHeaders_CrossProject(t *testing.T) {
+	tests := []struct {
+		name        string
+		common      *commonOptions
+		wantAll     string
+		wantSudo    string
+		wantNoExtra bool
+	}{
+		{name: "auto all-projects", common: &commonOptions{allProjects: true}, wantAll: "true"},
+		{name: "explicit sudo", common: &commonOptions{sudoProjectID: "p2"}, wantSudo: "p2"},
+		{name: "own project sends nothing", common: &commonOptions{}, wantNoExtra: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			var gotAll, gotSudo string
+			fakeServer.Mux.HandleFunc("/quotas/p2", func(w http.ResponseWriter, r *http.Request) {
+				gotAll = r.Header.Get("X-Auth-All-Projects")
+				gotSudo = r.Header.Get("X-Auth-Sudo-Project-ID")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"zones": 10, "zone_records": 500, "zone_recordsets": 500,
+                  "recordset_records": 20, "api_export_size": 1000}`))
+			})
+
+			o := &output.Options{Format: output.FormatTable}
+			var buf bytes.Buffer
+			if err := runDNSQuotaList(context.Background(), dnsShareClient(fakeServer), o, "p2",
+				tt.common, &buf); err != nil {
+				t.Fatalf("runDNSQuotaList error: %v", err)
+			}
+			if gotAll != tt.wantAll {
+				t.Errorf("X-Auth-All-Projects = %q, want %q", gotAll, tt.wantAll)
+			}
+			if gotSudo != tt.wantSudo {
+				t.Errorf("X-Auth-Sudo-Project-ID = %q, want %q", gotSudo, tt.wantSudo)
+			}
+		})
+	}
+}
+
+// The same headers must reach the write verbs, not just the read.
+func TestRunDNSQuotaSetAndReset_CarryCrossProjectHeaders(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var patchAll, deleteAll string
+	fakeServer.Mux.HandleFunc("/quotas/p2", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodDelete:
+			deleteAll = r.Header.Get("X-Auth-All-Projects")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			patchAll = r.Header.Get("X-Auth-All-Projects")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"zones": 20, "zone_records": 500, "zone_recordsets": 500,
+              "recordset_records": 20, "api_export_size": 1000}`))
+		}
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p2",
+		&dnsQuotaSetFlags{zones: 20}, map[string]bool{"zones": true},
+		&commonOptions{allProjects: true}, &buf); err != nil {
+		t.Fatalf("runDNSQuotaSet error: %v", err)
+	}
+	if patchAll != "true" {
+		t.Errorf("set: X-Auth-All-Projects = %q, want true", patchAll)
+	}
+	buf.Reset()
+	if err := runDNSQuotaReset(context.Background(), dnsShareClient(fakeServer), "p2",
+		&commonOptions{allProjects: true}, &buf); err != nil {
+		t.Fatalf("runDNSQuotaReset error: %v", err)
+	}
+	if deleteAll != "true" {
+		t.Errorf("reset: X-Auth-All-Projects = %q, want true", deleteAll)
+	}
+}
+
+// All three verbs must expose the upstream flags.
+func TestDNSQuotaCommands_HaveCrossProjectFlags(t *testing.T) {
+	a := &auth.Options{}
+	o := &output.Options{Format: output.FormatTable}
+	for name, cmd := range map[string]*cobra.Command{
+		"list":  newDNSQuotaListCommand(a, o),
+		"set":   newDNSQuotaSetCommand(a, o),
+		"reset": newDNSQuotaResetCommand(a, o),
+	} {
+		for _, flag := range []string{"all-projects", "sudo-project-id", "project-id"} {
+			if cmd.Flags().Lookup(flag) == nil {
+				t.Errorf("dns quota %s is missing --%s", name, flag)
+			}
+		}
+	}
+}
+
+// dnsQuotaTarget.resolve turns on all-projects only when the target differs from
+// the session's project, and never overrides an explicit choice.
+func TestDNSQuotaTarget_AutoAllProjects(t *testing.T) {
+	a := &auth.Options{ProjectID: "11111111-1111-1111-1111-111111111111"}
+	tests := []struct {
+		name    string
+		args    []string
+		target  *dnsQuotaTarget
+		common  *commonOptions
+		wantAll bool
+	}{
+		{
+			name:    "other project turns it on",
+			args:    []string{"22222222-2222-2222-2222-222222222222"},
+			target:  &dnsQuotaTarget{},
+			common:  &commonOptions{},
+			wantAll: true,
+		},
+		{
+			name:    "own project leaves it off",
+			args:    []string{"11111111-1111-1111-1111-111111111111"},
+			target:  &dnsQuotaTarget{},
+			common:  &commonOptions{},
+			wantAll: false,
+		},
+		{
+			name:    "no argument defaults to own project",
+			args:    nil,
+			target:  &dnsQuotaTarget{},
+			common:  &commonOptions{},
+			wantAll: false,
+		},
+		{
+			name:    "--project-id is equivalent to the positional",
+			args:    nil,
+			target:  &dnsQuotaTarget{projectID: "22222222-2222-2222-2222-222222222222"},
+			common:  &commonOptions{},
+			wantAll: true,
+		},
+		{
+			// An explicit sudo must not be silently joined by all-projects.
+			name:    "explicit sudo-project-id wins",
+			args:    []string{"22222222-2222-2222-2222-222222222222"},
+			target:  &dnsQuotaTarget{},
+			common:  &commonOptions{sudoProjectID: "22222222-2222-2222-2222-222222222222"},
+			wantAll: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Both refs are UUIDs, so no identity round trip is needed and a nil
+			// session is never dereferenced.
+			got, err := tt.target.resolve(context.Background(), nil, a, tt.args, tt.common)
+			if err != nil {
+				t.Fatalf("resolve error: %v", err)
+			}
+			if got == "" {
+				t.Fatal("resolve returned an empty project")
+			}
+			if tt.common.allProjects != tt.wantAll {
+				t.Errorf("allProjects = %v, want %v", tt.common.allProjects, tt.wantAll)
+			}
+		})
+	}
+}
+
+// A positional and a conflicting --project-id is an operator error, not a
+// silent pick.
+func TestDNSQuotaTarget_ConflictingProjects(t *testing.T) {
+	target := &dnsQuotaTarget{projectID: "22222222-2222-2222-2222-222222222222"}
+	_, err := target.resolve(context.Background(), nil, &auth.Options{ProjectID: "p0"},
+		[]string{"33333333-3333-3333-3333-333333333333"}, &commonOptions{})
+	if err == nil || !strings.Contains(err.Error(), "conflicting projects") {
+		t.Fatalf("expected a conflicting-projects error, got %v", err)
 	}
 }
