@@ -13,11 +13,19 @@ import (
 
 func TestIsUUID(t *testing.T) {
 	cases := map[string]bool{
+		// Dashed 8-4-4-4-12: nova, neutron, glance, ironic.
 		"11111111-1111-1111-1111-111111111111": true,
 		"ABCDEF01-1111-1111-1111-111111111111": true,
-		"not-a-uuid":                           false,
-		"ubuntu-22.04":                         false,
-		"":                                     false,
+		// Undashed 32-hex: Keystone project, user, domain and role IDs.
+		"5f0f658d5bc34e1fb3fb0862a79489a4": true,
+		"5F0F658D5BC34E1FB3FB0862A79489A4": true,
+		// Near misses must not pass, or a real name would be swallowed.
+		"5f0f658d5bc34e1fb3fb0862a79489a":   false, // 31 chars
+		"5f0f658d5bc34e1fb3fb0862a79489a4b": false, // 33 chars
+		"5f0f658d5bc34e1fb3fb0862a79489az":  false, // non-hex
+		"not-a-uuid":                        false,
+		"ubuntu-22.04":                      false,
+		"":                                  false,
 	}
 	for in, want := range cases {
 		if got := IsUUID(in); got != want {
@@ -245,4 +253,49 @@ func netFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
 	sc.Type = "network"
 	sc.ResourceBase = sc.Endpoint + "v2.0/"
 	return sc
+}
+
+// Keystone hands out 32-character undashed hex IDs, so the dashed-only matcher
+// made every project/user reference issue a doomed GET /v3/projects?name=<id>
+// and fall back to the literal ref. The passthrough must fire for that form too.
+func TestProjectID_UndashedUUIDPassthroughSkipsAPI(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	called := false
+	fakeServer.Mux.HandleFunc("/projects", func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	const id = "5f0f658d5bc34e1fb3fb0862a79489a4"
+	got, err := ProjectID(context.Background(), projectFakeClient(fakeServer), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != id {
+		t.Errorf("undashed UUID should pass through unchanged, got %q", got)
+	}
+	if called {
+		t.Error("an undashed UUID reference must not trigger an API call")
+	}
+}
+
+// A genuine project *name* must still be looked up, not mistaken for an ID.
+func TestProjectID_NameStillResolves(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/projects", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"projects":[{"id":"5f0f658d5bc34e1fb3fb0862a79489a4","name":"admin"}]}`))
+	})
+
+	got, err := ProjectID(context.Background(), projectFakeClient(fakeServer), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "5f0f658d5bc34e1fb3fb0862a79489a4" {
+		t.Errorf("name lookup returned %q", got)
+	}
 }
