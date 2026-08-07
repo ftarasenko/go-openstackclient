@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-07 · `koc` @ `f34480d` · 403 leaf commands (visible tree; 2
+**Snapshot:** 2026-08-07 · `koc` @ `8792f1d` · 403 leaf commands (visible tree; 2
 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
