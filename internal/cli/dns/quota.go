@@ -83,11 +83,79 @@ func resolveDNSQuotaProject(ctx context.Context, session *auth.Client, a *auth.O
 	return resolve.ProjectIDInDomain(ctx, identity, ref, domainRef)
 }
 
+// dnsQuotaTarget names the project a quota verb acts on. Upstream designate
+// spells it --project-id; koc grew the positional first, so both work.
+type dnsQuotaTarget struct {
+	projectID     string
+	projectDomain string
+}
+
+func (t *dnsQuotaTarget) bind(cmd *cobra.Command) {
+	fl := cmd.Flags()
+	fl.StringVar(&t.projectID, "project-id", "", "project to act on (upstream's spelling of the positional argument)")
+	fl.StringVar(&t.projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+}
+
+// resolve returns the target project ID, and enables the all-projects header
+// when that project is not the one the session is scoped to.
+//
+// designate answers 403 to a cross-project GET or PATCH of /v2/quotas unless the
+// request carries X-Auth-All-Projects or X-Auth-Sudo-Project-ID, which made the
+// project argument a trap: it only ever worked for your own project. Upstream
+// python-designateclient's quotas.py calls common.set_all_projects(client, True)
+// automatically whenever the requested project differs from the session's, and
+// that is what happens here. An explicit --all-projects/--sudo-project-id still
+// wins, since headers() already carries whatever the operator asked for.
+func (t *dnsQuotaTarget) resolve(ctx context.Context, session *auth.Client, a *auth.Options,
+	args []string, common *commonOptions,
+) (string, error) {
+	if t.projectID != "" {
+		if len(args) == 1 && args[0] != t.projectID {
+			return "", fmt.Errorf("conflicting projects: %q as an argument and %q as --project-id", args[0], t.projectID)
+		}
+		args = []string{t.projectID}
+	}
+	target, err := resolveDNSQuotaProject(ctx, session, a, args, t.projectDomain)
+	if err != nil {
+		return "", err
+	}
+	own, err := sessionProjectID(ctx, session, a)
+	if err != nil {
+		return "", err
+	}
+	if own != "" && target != own && !common.allProjects && common.sudoProjectID == "" {
+		common.allProjects = true
+	}
+	return target, nil
+}
+
+// sessionProjectID resolves the project the invocation is scoped to, without a
+// round trip when OS_PROJECT_ID is already an ID. An unscoped session (neither
+// set) yields "", which disables the cross-project auto-detection rather than
+// guessing.
+func sessionProjectID(ctx context.Context, session *auth.Client, a *auth.Options) (string, error) {
+	if a.ProjectID != "" {
+		return a.ProjectID, nil
+	}
+	if a.ProjectName == "" {
+		return "", nil
+	}
+	if resolve.IsUUID(a.ProjectName) {
+		return a.ProjectName, nil
+	}
+	identity, err := session.Identity()
+	if err != nil {
+		return "", err
+	}
+	return resolve.ProjectIDInDomain(ctx, identity, a.ProjectName, a.ProjectDomainName)
+}
+
 // newDNSQuotaListCommand is spelled "list" to match upstream even though the
 // designate API has no collection endpoint for quotas: it reads one project's
 // quotas, which is what `openstack dns quota list` does too.
 func newDNSQuotaListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var projectDomain string
+	target := &dnsQuotaTarget{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:     "list [<project>]",
 		Short:   "Show a project's DNS quotas",
@@ -102,19 +170,22 @@ func newDNSQuotaListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := resolveDNSQuotaProject(ctx, session, a, args, projectDomain)
+			project, err := target.resolve(ctx, session, a, args, common)
 			if err != nil {
 				return err
 			}
-			return runDNSQuotaList(ctx, client, o, project, cmd.OutOrStdout())
+			return runDNSQuotaList(ctx, client, o, project, common, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	target.bind(cmd)
+	common.bind(cmd)
 	return cmd
 }
 
-func runDNSQuotaList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, project string, w io.Writer) error {
-	q, err := quotas.Get(ctx, client, project).Extract()
+func runDNSQuotaList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	project string, common *commonOptions, w io.Writer,
+) error {
+	q, err := quotas.Get(ctx, withCommonHeaders(client, common), project).Extract()
 	if err != nil {
 		return fmt.Errorf("showing DNS quotas for project %q: %w", project, err)
 	}
@@ -128,7 +199,6 @@ type dnsQuotaSetFlags struct {
 	zoneRecords      int
 	zoneRecordsets   int
 	zones            int
-	projectDomain    string
 }
 
 func (f *dnsQuotaSetFlags) bindings(opts *quotas.UpdateOpts) map[string]func() {
@@ -143,6 +213,8 @@ func (f *dnsQuotaSetFlags) bindings(opts *quotas.UpdateOpts) map[string]func() {
 
 func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &dnsQuotaSetFlags{}
+	target := &dnsQuotaTarget{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "set [<project>]",
 		Short: "Set a project's DNS quotas",
@@ -157,11 +229,11 @@ func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := resolveDNSQuotaProject(ctx, session, a, args, f.projectDomain)
+			project, err := target.resolve(ctx, session, a, args, common)
 			if err != nil {
 				return err
 			}
-			return runDNSQuotaSet(ctx, client, o, project, f, changed, cmd.OutOrStdout())
+			return runDNSQuotaSet(ctx, client, o, project, f, changed, common, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -170,14 +242,15 @@ func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.IntVar(&f.zoneRecords, "zone-records", 0, "maximum records per zone")
 	fl.IntVar(&f.recordsetRecords, "recordset-records", 0, "maximum records per recordset")
 	fl.IntVar(&f.apiExportSize, "api-export-size", 0, "maximum number of recordsets an API zone export may contain")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	target.bind(cmd)
+	common.bind(cmd)
 	return cmd
 }
 
 // runDNSQuotaSet sends only the quotas whose flags were given, so a set of one
 // does not reset the rest to zero.
 func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	project string, f *dnsQuotaSetFlags, changed map[string]bool, w io.Writer,
+	project string, f *dnsQuotaSetFlags, changed map[string]bool, common *commonOptions, w io.Writer,
 ) error {
 	var opts quotas.UpdateOpts
 	bindings := f.bindings(&opts)
@@ -197,7 +270,7 @@ func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if !touched {
 		return fmt.Errorf("nothing to set: pass at least one quota flag")
 	}
-	q, err := quotas.Update(ctx, client, project, opts).Extract()
+	q, err := quotas.Update(ctx, withCommonHeaders(client, common), project, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("setting DNS quotas for project %q: %w", project, err)
 	}
@@ -206,7 +279,8 @@ func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 }
 
 func newDNSQuotaResetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var projectDomain string
+	target := &dnsQuotaTarget{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "reset [<project>]",
 		Short: "Reset a project's DNS quotas to the deployment defaults",
@@ -220,23 +294,27 @@ func newDNSQuotaResetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			project, err := resolveDNSQuotaProject(ctx, session, a, args, projectDomain)
+			project, err := target.resolve(ctx, session, a, args, common)
 			if err != nil {
 				return err
 			}
-			return runDNSQuotaReset(ctx, client, project, cmd.OutOrStdout())
+			return runDNSQuotaReset(ctx, client, project, common, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	target.bind(cmd)
+	common.bind(cmd)
 	return cmd
 }
 
 // runDNSQuotaReset issues DELETE /v2/quotas/<project>, which gophercloud's
 // dns/v2/quotas package does not cover — it has Get and Update only. Raw fallback
 // per AGENTS.md; replace it if a typed Delete lands.
-func runDNSQuotaReset(ctx context.Context, client *gophercloud.ServiceClient, project string, w io.Writer) error {
+func runDNSQuotaReset(ctx context.Context, client *gophercloud.ServiceClient,
+	project string, common *commonOptions, w io.Writer,
+) error {
 	resp, err := client.Delete(ctx, client.ServiceURL("quotas", project), &gophercloud.RequestOpts{
-		OkCodes: []int{204},
+		OkCodes:     []int{204},
+		MoreHeaders: common.headers(),
 	})
 	if resp != nil {
 		defer func() { _ = resp.Body.Close() }()
