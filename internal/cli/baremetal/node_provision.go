@@ -181,20 +181,22 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 	defer ticker.Stop()
 
 	var getErrors int
+	var last string
 	for {
 		n, err := nodes.Get(ctx, client, id).Extract()
 		if err != nil {
 			// Tolerate a small number of consecutive transient Get errors, but
 			// stop promptly if the context is done.
 			if ctx.Err() != nil {
-				return fmt.Errorf("waiting for node %s to reach %q: %w", id, want, ctx.Err())
+				return fmt.Errorf("waiting for node %s to reach %q%s: %w", id, want, lastProvisionState(last), ctx.Err())
 			}
 			getErrors++
 			if getErrors > maxConsecutiveGetErrors {
-				return fmt.Errorf("polling node %s: %w", id, err)
+				return fmt.Errorf("polling node %s%s: %w", id, lastProvisionState(last), err)
 			}
 		} else {
 			getErrors = 0
+			last = n.ProvisionState
 			settled := n.TargetProvisionState == ""
 			switch {
 			case settled && n.ProvisionState == string(want):
@@ -214,10 +216,21 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for node %s to reach %q: %w", id, want, ctx.Err())
+			return fmt.Errorf("waiting for node %s to reach %q%s: %w", id, want, lastProvisionState(last), ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+// lastProvisionState renders the provision state last seen, for the error
+// message on a wait that gave up. Whether the node was still "deploying" or had
+// already settled somewhere unexpected is the difference between "ironic is
+// slow" and "koc stopped watching too early".
+func lastProvisionState(last string) string {
+	if last == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (last provision_state %q)", last)
 }
 
 // waitForProvisionSettled polls the node until the transition settles and
@@ -250,25 +263,27 @@ func waitForProvisionSettled(ctx context.Context, client *gophercloud.ServiceCli
 	defer ticker.Stop()
 
 	var getErrors int
+	var last string
 	for {
 		n, err := nodes.Get(ctx, client, id).Extract()
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
+				return "", "", fmt.Errorf("waiting for node %s to settle%s: %w", id, lastProvisionState(last), ctx.Err())
 			}
 			getErrors++
 			if getErrors > maxConsecutiveGetErrors {
-				return "", "", fmt.Errorf("polling node %s: %w", id, err)
+				return "", "", fmt.Errorf("polling node %s%s: %w", id, lastProvisionState(last), err)
 			}
 		} else {
 			getErrors = 0
+			last = n.ProvisionState
 			if isProvisionFailure(n.ProvisionState) || n.TargetProvisionState == "" {
 				return n.ProvisionState, n.LastError, nil
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return "", "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
+			return "", "", fmt.Errorf("waiting for node %s to settle%s: %w", id, lastProvisionState(last), ctx.Err())
 		case <-ticker.C:
 		}
 	}

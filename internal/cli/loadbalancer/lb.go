@@ -284,8 +284,18 @@ func runLBCreate(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		return fmt.Errorf("creating load balancer %q: %w", name, err)
 	}
 	if f.wait {
-		if err := waitForLoadBalancerActive(ctx, client, lb.ID, f.waitTimeout); err != nil {
-			return err
+		if werr := waitForLoadBalancerActive(ctx, client, lb.ID, f.waitTimeout); werr != nil {
+			// The load balancer exists — octavia accepted the create — so it has
+			// to reach stdout before the error does, or its ID survives only
+			// inside the error string and the operator has to scrape it out to
+			// clean up. Rendered here rather than unconditionally before the wait
+			// so the success path still emits exactly one record, which is what
+			// -f json and -f yaml consumers require.
+			fields, values := lbFields(lb)
+			if perr := o.WriteSingle(w, fields, values); perr != nil {
+				return perr
+			}
+			return werr
 		}
 		lb, err = loadbalancers.Get(ctx, client, lb.ID).Extract()
 		if err != nil {
