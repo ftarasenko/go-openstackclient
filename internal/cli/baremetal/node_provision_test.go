@@ -232,3 +232,48 @@ func TestRunNodeAbort_WaitReportsFailureStateAsSuccess(t *testing.T) {
 		t.Errorf("output = %q, want %q", buf.String(), want)
 	}
 }
+
+// A --wait that gives up must name the state the node was last seen in:
+// "still deploying" and "settled somewhere unexpected" call for different
+// actions, and the bare "context deadline exceeded" distinguishes neither.
+func TestWaitForProvisionState_TimeoutNamesTheLastState(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisionPollInterval = prev }(provisionPollInterval)
+	provisionPollInterval = time.Millisecond
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	// Never settles, so the wait can only time out.
+	serveNodeGetSequence(fakeServer, id, nodeGetBody("deploying", "active", ""))
+
+	client := baremetalClient(fakeServer, "latest")
+	err := waitForProvisionState(context.Background(), client, id, "active", 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a timeout, got nil")
+	}
+	if !strings.Contains(err.Error(), `last provision_state "deploying"`) {
+		t.Errorf("timeout error should name the last state, got: %v", err)
+	}
+}
+
+// The same for abort's settle wait.
+func TestWaitForProvisionSettled_TimeoutNamesTheLastState(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisionPollInterval = prev }(provisionPollInterval)
+	provisionPollInterval = time.Millisecond
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	serveNodeGetSequence(fakeServer, id, nodeGetBody("clean wait", "available", ""))
+
+	client := baremetalClient(fakeServer, "latest")
+	_, _, err := waitForProvisionSettled(context.Background(), client, id, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a timeout, got nil")
+	}
+	if !strings.Contains(err.Error(), `last provision_state "clean wait"`) {
+		t.Errorf("timeout error should name the last state, got: %v", err)
+	}
+}

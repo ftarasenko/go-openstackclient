@@ -107,22 +107,31 @@ func pollProvisioning(ctx context.Context, client *gophercloud.ServiceClient, id
 			// Tolerate a few consecutive transient failures, but stop promptly if
 			// the context itself is done.
 			if ctx.Err() != nil {
-				return last, fmt.Errorf("waiting for load balancer %s: %w", id, ctx.Err())
+				return last, fmt.Errorf("waiting for load balancer %s%s: %w", id, lastStatus(last), ctx.Err())
 			}
 			getErrors++
 			if getErrors > maxConsecutiveGetErrors {
-				return last, fmt.Errorf("polling load balancer %s: %w", id, err)
+				return last, fmt.Errorf("polling load balancer %s%s: %w", id, lastStatus(last), err)
 			}
 		}
 		select {
 		case <-ctx.Done():
-			if last != "" {
-				return last, fmt.Errorf("waiting for load balancer %s (last provisioning_status %q): %w", id, last, ctx.Err())
-			}
-			return last, fmt.Errorf("waiting for load balancer %s: %w", id, ctx.Err())
+			return last, fmt.Errorf("waiting for load balancer %s%s: %w", id, lastStatus(last), ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+// lastStatus renders the last provisioning_status seen, for the error message on
+// a wait that gave up. Knowing whether the load balancer was still
+// PENDING_CREATE or had already gone ACTIVE is the difference between "octavia
+// is slow" and "koc stopped watching too early", so it belongs in every giving-up
+// path, not just the timeout one.
+func lastStatus(last string) string {
+	if last == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (last provisioning_status %q)", last)
 }
 
 // isNotFound reports whether err is octavia's 404, which during a delete wait is

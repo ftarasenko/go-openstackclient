@@ -414,3 +414,50 @@ func fastPolling(t *testing.T) {
 	provisioningPollInterval = time.Millisecond
 	t.Cleanup(func() { provisioningPollInterval = old })
 }
+
+// A --wait that times out must still put the load balancer on stdout: octavia
+// accepted the create, so the resource exists, and if its ID lives only inside
+// the error string the operator has to scrape it out to clean up.
+func TestRunLBCreate_WaitTimeoutStillRendersTheLoadBalancer(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisioningPollInterval = prev }(provisioningPollInterval)
+	provisioningPollInterval = time.Millisecond
+
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/", func(w http.ResponseWriter, r *http.Request) {
+		// Every poll reports PENDING_CREATE, so the wait can only time out.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"loadbalancer": {"id": "lb-1", "name": "web",
+          "provisioning_status": "PENDING_CREATE", "operating_status": "OFFLINE"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"loadbalancers": []}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"loadbalancer": {"id": "lb-1", "name": "web",
+          "vip_subnet_id": "subnet-1", "provisioning_status": "PENDING_CREATE",
+          "operating_status": "OFFLINE"}}`))
+	})
+
+	f := &lbCreateFlags{wait: true, waitTimeout: 20 * time.Millisecond}
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	err := runLBCreate(context.Background(), lbClient(fakeServer), o, "web", f,
+		resolvedLBRefs{vipSubnetID: "subnet-1"}, &buf)
+	if err == nil {
+		t.Fatal("expected the wait to time out, got nil")
+	}
+	// The last observed status distinguishes "octavia is slow" from "koc stopped
+	// watching too early".
+	if !strings.Contains(err.Error(), "PENDING_CREATE") {
+		t.Errorf("timeout error should carry the last provisioning_status, got: %v", err)
+	}
+	if !strings.Contains(buf.String(), "lb-1") {
+		t.Errorf("the created load balancer must reach stdout so its ID is recoverable\n---\n%s", buf.String())
+	}
+}
