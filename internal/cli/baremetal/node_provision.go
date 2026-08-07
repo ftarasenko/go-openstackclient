@@ -118,12 +118,19 @@ func runNodeAbort(ctx context.Context, client *gophercloud.ServiceClient, id str
 		}
 		return nil
 	}
-	state, err := waitForProvisionSettled(ctx, client, id, waitTimeout)
+	state, lastError, err := waitForProvisionSettled(ctx, client, id, waitTimeout)
 	if err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "Node %s settled in provision state %q\n", id, state); err != nil {
 		return err
+	}
+	// A "* failed" state is the normal outcome of a successful abort (ironic
+	// records why in last_error), so surface it without failing the command.
+	if lastError != "" {
+		if _, err := fmt.Fprintf(w, "Last error: %s\n", lastError); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -213,11 +220,26 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 	}
 }
 
-// waitForProvisionSettled polls the node until ironic clears
-// target_provision_state and returns the provision state it settled in. It is
-// the --wait body for verbs with no single expected destination (abort), so a
-// "* failed" state is a normal, successful outcome here rather than an error.
-func waitForProvisionSettled(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) (string, error) {
+// waitForProvisionSettled polls the node until the transition settles and
+// returns the provision state it settled in, together with ironic's last_error.
+// It is the --wait body for verbs with no single expected destination (abort),
+// so a "* failed" state is a normal, successful outcome here rather than an
+// error.
+//
+// Settled means either of:
+//
+//   - the provision state is terminal on its own (isProvisionFailure): ironic
+//     leaves target_provision_state populated after a successful abort — e.g.
+//     provision_state="inspect failed" with target_provision_state="manageable"
+//     — so waiting for the target to clear would spin until the timeout on the
+//     SUCCESS path. Upstream python-ironicclient keys on provision_state for
+//     exactly this reason (ironicclient/v1/node.py: terminal when
+//     provision_state == "error" or provision_state ends in " failed"), and
+//     treats target_provision_state only as a secondary check.
+//   - ironic cleared target_provision_state, i.e. the transition finished
+//     normally (abort of a deploy lands back on "available", of a clean on
+//     "manageable", …).
+func waitForProvisionSettled(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) (state string, lastError string, err error) {
 	if timeout <= 0 {
 		timeout = provisionPollTimeout
 	}
@@ -232,27 +254,29 @@ func waitForProvisionSettled(ctx context.Context, client *gophercloud.ServiceCli
 		n, err := nodes.Get(ctx, client, id).Extract()
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
+				return "", "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
 			}
 			getErrors++
 			if getErrors > maxConsecutiveGetErrors {
-				return "", fmt.Errorf("polling node %s: %w", id, err)
+				return "", "", fmt.Errorf("polling node %s: %w", id, err)
 			}
 		} else {
 			getErrors = 0
-			if n.TargetProvisionState == "" {
-				return n.ProvisionState, nil
+			if isProvisionFailure(n.ProvisionState) || n.TargetProvisionState == "" {
+				return n.ProvisionState, n.LastError, nil
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
+			return "", "", fmt.Errorf("waiting for node %s to settle: %w", id, ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
 // isProvisionFailure reports whether a provision state is a terminal failure.
+// Mirrors python-ironicclient: the "error" state, or any "<verb> failed" state
+// ("deploy failed", "clean failed", "inspect failed", "rescue failed", …).
 func isProvisionFailure(state string) bool {
-	return strings.Contains(state, "failed") || state == string(nodes.Error)
+	return strings.HasSuffix(state, " failed") || state == string(nodes.Error)
 }

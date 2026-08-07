@@ -1,6 +1,7 @@
 package baremetal
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -136,5 +137,98 @@ func TestWaitForProvisionState_FailsOnFailureState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "deploy failed") {
 		t.Errorf("error should name the failure state, got: %v", err)
+	}
+}
+
+// TestWaitForProvisionSettled_TerminalFailureState covers the successful-abort
+// path: ironic leaves provision_state="inspect failed" with
+// target_provision_state="manageable" still populated, so keying only off
+// target_provision_state clearing would spin until the timeout on SUCCESS.
+func TestWaitForProvisionSettled_TerminalFailureState(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisionPollInterval = prev }(provisionPollInterval)
+	provisionPollInterval = time.Millisecond
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	serveNodeGetSequence(fakeServer, id,
+		nodeGetBody("inspecting", "manageable", ""),
+		nodeGetBody("inspect failed", "manageable", "Inspection was aborted by request."),
+	)
+
+	client := baremetalClient(fakeServer, "latest")
+	// A generous timeout: the test hangs (and fails) unless the terminal-state
+	// detection returns promptly.
+	state, lastErr, err := waitForProvisionSettled(context.Background(), client, id, time.Minute)
+	if err != nil {
+		t.Fatalf("waitForProvisionSettled returned error: %v", err)
+	}
+	if state != "inspect failed" {
+		t.Errorf("state = %q, want %q", state, "inspect failed")
+	}
+	if lastErr != "Inspection was aborted by request." {
+		t.Errorf("lastError = %q, want the ironic last_error", lastErr)
+	}
+}
+
+// TestWaitForProvisionSettled_TargetCleared covers the other exit: an abort that
+// lands back on a normal stable state with target_provision_state cleared.
+func TestWaitForProvisionSettled_TargetCleared(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisionPollInterval = prev }(provisionPollInterval)
+	provisionPollInterval = time.Millisecond
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	serveNodeGetSequence(fakeServer, id,
+		nodeGetBody("deleting", "available", ""),
+		nodeGetBody("available", "", ""),
+	)
+
+	client := baremetalClient(fakeServer, "latest")
+	state, lastErr, err := waitForProvisionSettled(context.Background(), client, id, time.Minute)
+	if err != nil {
+		t.Fatalf("waitForProvisionSettled returned error: %v", err)
+	}
+	if state != "available" {
+		t.Errorf("state = %q, want %q", state, "available")
+	}
+	if lastErr != "" {
+		t.Errorf("lastError = %q, want empty", lastErr)
+	}
+}
+
+// TestRunNodeAbort_WaitReportsFailureStateAsSuccess drives the runXxx seam end
+// to end: PUT the abort, poll, and render the settled state plus last_error
+// without returning an error (exit 0).
+func TestRunNodeAbort_WaitReportsFailureStateAsSuccess(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	defer func(prev time.Duration) { provisionPollInterval = prev }(provisionPollInterval)
+	provisionPollInterval = time.Millisecond
+
+	const id = "11111111-1111-1111-1111-111111111111"
+	fakeServer.Mux.HandleFunc("/nodes/"+id+"/states/provision", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "PUT")
+		th.TestHeader(t, r, "X-OpenStack-Ironic-API-Version", "latest")
+		th.TestJSONRequest(t, r, `{"target": "abort"}`)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	serveNodeGetSequence(fakeServer, id,
+		nodeGetBody("inspect failed", "manageable", "Inspection was aborted by request."),
+	)
+
+	client := baremetalClient(fakeServer, "latest")
+	var buf bytes.Buffer
+	if err := runNodeAbort(context.Background(), client, id, true, time.Minute, &buf); err != nil {
+		t.Fatalf("runNodeAbort returned error: %v", err)
+	}
+	want := "Node " + id + " settled in provision state \"inspect failed\"\n" +
+		"Last error: Inspection was aborted by request.\n"
+	if buf.String() != want {
+		t.Errorf("output = %q, want %q", buf.String(), want)
 	}
 }
