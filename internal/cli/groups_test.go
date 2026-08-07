@@ -103,3 +103,14 @@ func TestEveryGroupInTheTreeRequiresASubcommand(t *testing.T) {
 	}
 	walk(root)
 }
+
+// execRootArgs runs an already-built root with args, returning its output.
+func execRootArgs(t *testing.T, root *cobra.Command, args []string) (string, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs(args)
+	err := root.Execute()
+	return buf.String(), err
+}
