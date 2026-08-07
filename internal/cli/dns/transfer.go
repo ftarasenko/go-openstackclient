@@ -41,7 +41,7 @@ func transferRequestFields(r *request.TransferRequest) ([]string, []any) {
 	}
 	values := []any{
 		r.ID, r.ZoneID, r.ZoneName, r.ProjectID, r.TargetProjectID,
-		r.Key, r.Description, r.Status, r.CreatedAt, r.UpdatedAt,
+		r.Key, r.Description, r.Status, dnsTime(r.CreatedAt), dnsTime(r.UpdatedAt),
 	}
 	return fields, values
 }
@@ -53,7 +53,7 @@ func transferAcceptFields(ac *accept.TransferAccept) ([]string, []any) {
 	}
 	values := []any{
 		ac.ID, ac.Status, ac.ProjectID, ac.ZoneID, ac.Key,
-		ac.ZoneTransferRequestID, ac.CreatedAt, ac.UpdatedAt,
+		ac.ZoneTransferRequestID, dnsTime(ac.CreatedAt), dnsTime(ac.UpdatedAt),
 	}
 	return fields, values
 }

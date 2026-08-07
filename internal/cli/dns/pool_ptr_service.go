@@ -64,7 +64,7 @@ func (p *pool) nsRecords() string {
 
 func poolFields(p *pool) ([]string, []any) {
 	return []string{"id", "name", "description", "project_id", "ns_records", "created_at", "updated_at"},
-		[]any{p.ID, p.Name, p.Description, p.ProjectID, p.nsRecords(), p.CreatedAt, p.UpdatedAt}
+		[]any{p.ID, p.Name, p.Description, p.ProjectID, p.nsRecords(), dnsTimeString(p.CreatedAt), dnsTimeString(p.UpdatedAt)}
 }
 
 // newDNSPoolCommand builds "dns pool list|show".
@@ -514,7 +514,7 @@ func mapOrDash(values map[string]any) string {
 func serviceStatusFields(s *serviceStatus) ([]string, []any) {
 	return []string{"id", "hostname", "service_name", "status", "stats", "capabilities", "heartbeated_at"},
 		[]any{s.ID, s.Hostname, s.ServiceName, s.Status,
-			mapOrDash(s.Stats), mapOrDash(s.Capabilities), s.HeartbeatedAt}
+			mapOrDash(s.Stats), mapOrDash(s.Capabilities), dnsTimeString(s.HeartbeatedAt)}
 }
 
 func newDNSServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {

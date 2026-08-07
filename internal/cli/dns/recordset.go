@@ -42,7 +42,7 @@ func recordSetShowFields(rs *recordsets.RecordSet) ([]string, []any) {
 	values := []any{
 		rs.ID, rs.Name, rs.Type, rs.Records, rs.TTL, rs.Status, rs.Action,
 		rs.Description, rs.ZoneID, rs.ZoneName, rs.ProjectID, rs.Version,
-		rs.CreatedAt, rs.UpdatedAt,
+		dnsTime(rs.CreatedAt), dnsTime(rs.UpdatedAt),
 	}
 	return fields, values
 }

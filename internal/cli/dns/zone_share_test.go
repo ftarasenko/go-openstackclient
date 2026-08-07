@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
@@ -172,6 +173,54 @@ func TestRunZoneShareDelete_Request(t *testing.T) {
 	for _, want := range []string{"Removed share sh1", "Removed share sh2"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("output missing %q\n---\n%s", want, buf.String())
+		}
+	}
+}
+
+// One timestamp convention across the dns package: designate's own spelling,
+// and nil — never Go's zero time, never a bare "" from one code path and
+// "0001-01-01 00:00:00 +0000 UTC" from another — when the value is null.
+func TestDNSTimestampConvention(t *testing.T) {
+	stamped := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	if got := dnsTime(stamped); got != "2026-08-06T12:00:00.000000" {
+		t.Errorf("dnsTime = %v, want designate's spelling", got)
+	}
+	if got := dnsTime(time.Time{}); got != nil {
+		t.Errorf("a null timestamp must render nil, got %v", got)
+	}
+	if got := dnsTimeString("2026-08-06T12:00:00.000000"); got != "2026-08-06T12:00:00.000000" {
+		t.Errorf("dnsTimeString = %v, want passthrough", got)
+	}
+	if got := dnsTimeString(""); got != nil {
+		t.Errorf("an empty raw timestamp must render nil, got %v", got)
+	}
+}
+
+// The zero time must never reach the rendered output of a zone, which is where
+// an unshared zone's transferred_at showed up as "0001-01-01 00:00:00 +0000 UTC".
+func TestRunZoneShow_NullTransferredAtRendersEmpty(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	stubZoneList(fakeServer)
+	fakeServer.Mux.HandleFunc("/zones/z1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"z1","name":"example.com.","type":"PRIMARY","status":"ACTIVE",
+          "created_at":"2026-08-06T12:00:00.000000","updated_at":null,"transferred_at":null}`))
+	})
+
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	if err := runZoneShow(context.Background(), dnsShareClient(fakeServer), o, "z1", &buf); err != nil {
+		t.Fatalf("runZoneShow error: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "0001-01-01") {
+		t.Errorf("the Go zero time leaked into the output\n---\n%s", out)
+	}
+	for _, want := range []string{`"transferred_at": null`, `"updated_at": null`, `"created_at": "2026-08-06T12:00:00.000000"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
 		}
 	}
 }

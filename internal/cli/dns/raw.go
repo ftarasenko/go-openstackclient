@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
@@ -268,4 +269,37 @@ func withCommonHeaders(client *gophercloud.ServiceClient, c *commonOptions) *gop
 	copied := *client
 	copied.MoreHeaders = cloneHeaders(h)
 	return &copied
+}
+
+// --- timestamps ------------------------------------------------------------
+
+// dnsTimeLayout is designate's own timestamp spelling, e.g.
+// "2026-08-06T12:00:00.000000". The koc-owned DTOs (zone export/import, pool,
+// blacklist, TLD, service status) carry designate's string through untouched,
+// so formatting the gophercloud-parsed time.Time values the same way is what
+// makes one convention out of two.
+const dnsTimeLayout = "2006-01-02T15:04:05.000000"
+
+// dnsTime renders a designate timestamp that gophercloud parsed into a
+// time.Time. A null timestamp — an unshared zone's transferred_at, a
+// never-updated record's updated_at — arrives as the Go zero time, which
+// rendered as the meaningless "0001-01-01 00:00:00 +0000 UTC". It becomes nil
+// here instead, so it shows as empty in table/value/csv and as null in
+// json/yaml, matching how every other absent value renders in koc. (Upstream
+// prints the string "None"; nil is the same idea without lying to a JSON
+// consumer.)
+func dnsTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(dnsTimeLayout)
+}
+
+// dnsTimeString is the same convention for the raw-string DTOs, where designate
+// signals "no timestamp" with a JSON null that decodes to "".
+func dnsTimeString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

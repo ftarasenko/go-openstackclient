@@ -40,7 +40,7 @@ type zoneExport struct {
 
 func zoneExportFields(e *zoneExport) ([]string, []any) {
 	return []string{"id", "zone_id", "project_id", "status", "location", "message", "version", "created_at", "updated_at"},
-		[]any{e.ID, e.ZoneID, e.ProjectID, e.Status, e.Location, e.Message, e.Version, e.CreatedAt, e.UpdatedAt}
+		[]any{e.ID, e.ZoneID, e.ProjectID, e.Status, e.Location, e.Message, e.Version, dnsTimeString(e.CreatedAt), dnsTimeString(e.UpdatedAt)}
 }
 
 // zoneImport is designate's import-task record. It carries the same shape as an
@@ -59,7 +59,7 @@ type zoneImport struct {
 
 func zoneImportFields(i *zoneImport) ([]string, []any) {
 	return []string{"id", "zone_id", "project_id", "status", "message", "version", "created_at", "updated_at"},
-		[]any{i.ID, i.ZoneID, i.ProjectID, i.Status, i.Message, i.Version, i.CreatedAt, i.UpdatedAt}
+		[]any{i.ID, i.ZoneID, i.ProjectID, i.Status, i.Message, i.Version, dnsTimeString(i.CreatedAt), dnsTimeString(i.UpdatedAt)}
 }
 
 // --- zone export -----------------------------------------------------------
@@ -184,7 +184,7 @@ func runZoneExportList(ctx context.Context, client *gophercloud.ServiceClient, o
 		Rows:    make([][]any, 0, len(all)),
 	}
 	for _, e := range all {
-		t.Rows = append(t.Rows, []any{e.ID, e.ZoneID, e.CreatedAt, e.Status})
+		t.Rows = append(t.Rows, []any{e.ID, e.ZoneID, dnsTimeString(e.CreatedAt), e.Status})
 	}
 	return o.WriteList(w, t)
 }
@@ -457,7 +457,7 @@ func runZoneImportList(ctx context.Context, client *gophercloud.ServiceClient, o
 		Rows:    make([][]any, 0, len(all)),
 	}
 	for _, i := range all {
-		t.Rows = append(t.Rows, []any{i.ID, i.ZoneID, i.CreatedAt, i.Status, i.Message})
+		t.Rows = append(t.Rows, []any{i.ID, i.ZoneID, dnsTimeString(i.CreatedAt), i.Status, i.Message})
 	}
 	return o.WriteList(w, t)
 }

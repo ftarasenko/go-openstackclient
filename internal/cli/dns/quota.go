@@ -361,7 +361,7 @@ func newTSIGKeyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func tsigKeyFields(k *tsigkeys.TSIGKey) ([]string, []any) {
 	return []string{"id", "name", "algorithm", "scope", "resource_id", "created_at", "updated_at"},
-		[]any{k.ID, k.Name, k.Algorithm, k.Scope, k.ResourceID, k.CreatedAt, k.UpdatedAt}
+		[]any{k.ID, k.Name, k.Algorithm, k.Scope, k.ResourceID, dnsTime(k.CreatedAt), dnsTime(k.UpdatedAt)}
 }
 
 // resolveTSIGKeyID turns a TSIG key name or ID into an ID. Names are unique per
