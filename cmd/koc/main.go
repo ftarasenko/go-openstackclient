@@ -24,10 +24,16 @@ func main() {
 	defer stop()
 
 	root := cli.NewRootCommand(version)
-	// `openstack` (argparse) accepts any unambiguous long-flag prefix, so muscle
-	// memory carries --all for --all-projects and --fit for --fit-width. pflag does
-	// not abbreviate, so the args are normalised before cobra parses them.
-	root.SetArgs(cli.ExpandFlagPrefixes(root, os.Args[1:]))
+	// `openstack` accepts any unambiguous abbreviation of a command name (cliff)
+	// and of a long flag (argparse), so muscle memory carries `server li` for
+	// `server list`, --all for --all-projects and --fit for --fit-width. Neither
+	// cobra nor pflag abbreviates, so the args are normalised before parsing.
+	//
+	// Command names expand first: flag expansion resolves abbreviations against
+	// the flags of the command the args point at, which is only the right command
+	// once its name is spelled in full.
+	args := cli.ExpandCommandPrefixes(root, os.Args[1:])
+	root.SetArgs(cli.ExpandFlagPrefixes(root, args))
 	if err := root.ExecuteContext(ctx); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "koc: "+err.Error())
