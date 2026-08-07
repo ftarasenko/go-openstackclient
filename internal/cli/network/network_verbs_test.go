@@ -488,7 +488,7 @@ func TestRunPortCreate_WithFixedIPResolvesSubnet(t *testing.T) {
 	o := &output.Options{Format: output.FormatValue}
 	f := &portCreateFlags{network: "net-1", fixedIP: []string{"subnet=sn,ip-address=10.0.0.5"}}
 	var buf bytes.Buffer
-	if err := runPortCreate(context.Background(), client, o, "portA", f, &buf); err != nil {
+	if err := runPortCreate(context.Background(), client, o, "portA", f, fakeFlags{}, &buf); err != nil {
 		t.Fatalf("runPortCreate: %v", err)
 	}
 }
@@ -1178,5 +1178,52 @@ func TestRunPortSet_RendersPortSecurityFromTheResponse(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "port_security_enabled") || !strings.Contains(out, "false") {
 		t.Errorf("port set should render port_security_enabled\n---\n%s", out)
+	}
+}
+
+// Upstream "openstack port create" can create a port with no security groups
+// and with port security already off; koc only had these on "port set", so
+// getting there took two round trips.
+func TestRunPortCreate_NoSecurityGroupAndPortSecurity(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	emptyLookup(t, fakeServer, "/networks", "networks")
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"port":{"name":"portA","network_id":"net-1","security_groups":[],"port_security_enabled":false}}`)
+		writeJSON(t, w, http.StatusCreated,
+			`{"port":{"id":"port-1","name":"portA","network_id":"net-1","port_security_enabled":false}}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+	f := &portCreateFlags{network: "net-1", noSecurityGroup: true, disablePortSecurity: true}
+	var buf bytes.Buffer
+	err := runPortCreate(context.Background(), client, o, "portA", f,
+		fakeFlags{"disable-port-security": true}, &buf)
+	if err != nil {
+		t.Fatalf("runPortCreate: %v", err)
+	}
+}
+
+// --allowed-address on create mirrors "port set --allowed-address".
+func TestRunPortCreate_AllowedAddress(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	emptyLookup(t, fakeServer, "/networks", "networks")
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"port":{"name":"portA","network_id":"net-1","allowed_address_pairs":[{"ip_address":"10.0.0.100"}]}}`)
+		writeJSON(t, w, http.StatusCreated, `{"port":{"id":"port-1","name":"portA","network_id":"net-1"}}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatValue}
+	f := &portCreateFlags{network: "net-1", allowedAddress: []string{"ip-address=10.0.0.100"}}
+	var buf bytes.Buffer
+	if err := runPortCreate(context.Background(), client, o, "portA", f, fakeFlags{}, &buf); err != nil {
+		t.Fatalf("runPortCreate: %v", err)
 	}
 }

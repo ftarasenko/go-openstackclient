@@ -385,14 +385,18 @@ func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 }
 
 type portCreateFlags struct {
-	network       string
-	fixedIP       []string
-	macAddress    string
-	deviceOwner   string
-	description   string
-	securityGroup []string
-	enable        bool
-	disable       bool
+	network             string
+	fixedIP             []string
+	macAddress          string
+	deviceOwner         string
+	description         string
+	securityGroup       []string
+	noSecurityGroup     bool
+	allowedAddress      []string
+	enablePortSecurity  bool
+	disablePortSecurity bool
+	enable              bool
+	disable             bool
 }
 
 func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -413,7 +417,7 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPortCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
+			return runPortCreate(ctx, client, o, args[0], f, cmd.Flags(), cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -423,13 +427,19 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.deviceOwner, "device-owner", "", "device owner for the port")
 	fl.StringVar(&f.description, "description", "", "description for the port")
 	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "security group to associate (name or ID, repeatable)")
+	fl.BoolVar(&f.noSecurityGroup, "no-security-group", false, "create the port with no security groups")
+	fl.StringArrayVar(&f.allowedAddress, "allowed-address", nil, "allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable)")
+	fl.BoolVar(&f.enablePortSecurity, "enable-port-security", false, "enable port security (security groups and anti-spoofing)")
+	fl.BoolVar(&f.disablePortSecurity, "disable-port-security", false, "disable port security")
 	fl.BoolVar(&f.enable, "enable", false, "create the port administratively up (default)")
 	fl.BoolVar(&f.disable, "disable", false, "create the port administratively down")
+	cmd.MarkFlagsMutuallyExclusive("security-group", "no-security-group")
+	cmd.MarkFlagsMutuallyExclusive("enable-port-security", "disable-port-security")
 	_ = cmd.MarkFlagRequired("network")
 	return cmd
 }
 
-func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *portCreateFlags, w io.Writer) error {
+func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *portCreateFlags, flags flagSet, w io.Writer) error {
 	networkID, err := resolveNetworkID(ctx, client, f.network)
 	if err != nil {
 		return err
@@ -454,15 +464,35 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if fixedIPs != nil {
 		opts.FixedIPs = fixedIPs
 	}
-	if len(f.securityGroup) > 0 {
+	switch {
+	case f.noSecurityGroup:
+		opts.SecurityGroups = &[]string{}
+	case len(f.securityGroup) > 0:
 		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
 		if err != nil {
 			return err
 		}
 		opts.SecurityGroups = &sgIDs
 	}
+	if len(f.allowedAddress) > 0 {
+		pairs, err := parseAddressPairs(f.allowedAddress)
+		if err != nil {
+			return err
+		}
+		opts.AllowedAddressPairs = pairs
+	}
+
+	// port_security_enabled lives in neutron's port-security extension, which
+	// gophercloud v2.13.0 has no create-side package for, so it is layered on
+	// the same way runPortSet does it.
+	var builder ports.CreateOptsBuilder = opts
+	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
+		"enable-port-security", "disable-port-security"); secure != nil {
+		builder = portCreateOptsExt{CreateOptsBuilder: opts, PortSecurityEnabled: secure}
+	}
+
 	var p portExt
-	if err := ports.Create(ctx, client, opts).ExtractInto(&p); err != nil {
+	if err := ports.Create(ctx, client, builder).ExtractInto(&p); err != nil {
 		return fmt.Errorf("creating port: %w", err)
 	}
 	fields, values := portShowFields(&p)
@@ -674,6 +704,29 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 // for two keys, this follows the same composition pattern as
 // external.UpdateOptsExt and injects them into the request body. Swap it for the
 // vendored extensions if they are ever needed more widely.
+// portCreateOptsExt carries port_security_enabled onto a create, which the
+// port-security extension defines and gophercloud v2.13.0 does not vendor.
+type portCreateOptsExt struct {
+	ports.CreateOptsBuilder
+	PortSecurityEnabled *bool
+}
+
+func (opts portCreateOptsExt) ToPortCreateMap() (map[string]any, error) {
+	base, err := opts.CreateOptsBuilder.ToPortCreateMap()
+	if err != nil {
+		return nil, err
+	}
+	if opts.PortSecurityEnabled == nil {
+		return base, nil
+	}
+	portMap, ok := base["port"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected port create body shape: %T", base["port"])
+	}
+	portMap["port_security_enabled"] = *opts.PortSecurityEnabled
+	return base, nil
+}
+
 type portUpdateOptsExt struct {
 	ports.UpdateOptsBuilder
 	HostID              *string

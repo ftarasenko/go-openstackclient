@@ -397,7 +397,7 @@ func TestRunPortCreate_SecurityGroupsAndAdminState(t *testing.T) {
 	f := &portCreateFlags{network: "net-1", securityGroup: []string{"sg-1", "sg-2"}, disable: true}
 
 	var buf bytes.Buffer
-	if err := runPortCreate(context.Background(), client, o, "portA", f, &buf); err != nil {
+	if err := runPortCreate(context.Background(), client, o, "portA", f, changedSet{}, &buf); err != nil {
 		t.Fatalf("runPortCreate returned error: %v", err)
 	}
 }
