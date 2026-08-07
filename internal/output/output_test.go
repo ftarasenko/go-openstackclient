@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -525,5 +526,90 @@ func TestCompareCells_NumericAndString(t *testing.T) {
 				t.Errorf("compareCells(%v, %v) = %d, want %d", tc.a, tc.b, got, tc.want)
 			}
 		})
+	}
+}
+
+// A time.Time must render one way in every format, and an absent one must not
+// surface Go's zero time. Before this, "koc loadbalancer show" printed
+// updated_at as "0001-01-01 00:00:00 +0000 UTC" in a table and
+// "0001-01-01T00:00:00Z" in JSON, and a real timestamp printed Go's native
+// format in the table but RFC 3339 in JSON.
+func TestTimestampsRenderOneWay(t *testing.T) {
+	created := time.Date(2023, 6, 15, 14, 14, 55, 0, time.UTC)
+	fields := []string{"id", "created_at", "updated_at"}
+	values := []any{"lb-1", created, time.Time{}}
+
+	t.Run("table", func(t *testing.T) {
+		var b bytes.Buffer
+		o := &Options{Format: FormatTable}
+		if err := o.WriteSingle(&b, fields, values); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		if !strings.Contains(out, "2023-06-15T14:14:55Z") {
+			t.Errorf("table lacks the RFC 3339 timestamp:\n%s", out)
+		}
+		if strings.Contains(out, "0001-01-01") {
+			t.Errorf("table leaked Go's zero time:\n%s", out)
+		}
+		if strings.Contains(out, "+0000 UTC") {
+			t.Errorf("table leaked Go's native time format:\n%s", out)
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var b bytes.Buffer
+		o := &Options{Format: FormatJSON}
+		if err := o.WriteSingle(&b, fields, values); err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b.Bytes(), &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if m["created_at"] != "2023-06-15T14:14:55Z" {
+			t.Errorf("created_at = %v, want 2023-06-15T14:14:55Z", m["created_at"])
+		}
+		if m["updated_at"] != nil {
+			t.Errorf("updated_at = %v, want null", m["updated_at"])
+		}
+	})
+
+	t.Run("value", func(t *testing.T) {
+		var b bytes.Buffer
+		o := &Options{Format: FormatValue}
+		if err := o.WriteSingle(&b, fields, values); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(b.String(), "0001-01-01") {
+			t.Errorf("value output leaked Go's zero time:\n%s", b.String())
+		}
+	})
+}
+
+// The same convention applies to list rows, and to *time.Time fields.
+func TestTimestampsInListRows(t *testing.T) {
+	created := time.Date(2026, 8, 7, 15, 36, 15, 0, time.UTC)
+	tbl := Table{
+		Columns: []string{"ID", "Created At", "Updated At", "Deleted At"},
+		Rows:    [][]any{{"lb-1", created, time.Time{}, (*time.Time)(nil)}},
+	}
+	var b bytes.Buffer
+	o := &Options{Format: FormatJSON}
+	if err := o.WriteList(&b, tbl); err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(b.Bytes(), &rows); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rows[0]["Created At"] != "2026-08-07T15:36:15Z" {
+		t.Errorf("Created At = %v", rows[0]["Created At"])
+	}
+	if rows[0]["Updated At"] != nil {
+		t.Errorf("Updated At = %v, want null", rows[0]["Updated At"])
+	}
+	if rows[0]["Deleted At"] != nil {
+		t.Errorf("Deleted At = %v, want null", rows[0]["Deleted At"])
 	}
 }

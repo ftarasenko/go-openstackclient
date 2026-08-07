@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/pflag"
@@ -113,7 +114,7 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 				row[j] = r[c]
 			}
 		}
-		rows[i] = row
+		rows[i] = normalizeRow(row)
 	}
 
 	switch o.Format {
@@ -243,6 +244,15 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 	if err := o.validateColumns(fields); err != nil {
 		return err
 	}
+	// Canonicalize before the format branch so every format renders one value
+	// (see normalize). Copied rather than done in place: values belongs to the
+	// caller.
+	normalized := make([]any, len(values))
+	for i, v := range values {
+		normalized[i] = normalize(v)
+	}
+	values = normalized
+
 	// Column selection filters which fields are shown.
 	if len(o.Columns) > 0 {
 		var fFields []string
@@ -750,6 +760,48 @@ func tabsToSpaces(s string) string {
 		return s
 	}
 	return strings.ReplaceAll(s, "\t", " ")
+}
+
+// normalize canonicalizes a value as it enters the output layer, so every
+// format sees the same thing.
+//
+// It exists for time.Time, which otherwise renders two different ways from one
+// value: table/value/csv go through fmt.Stringer and get Go's native
+// "2023-06-15 14:14:55 +0000 UTC", while json/yaml marshal it as RFC 3339. An
+// absent timestamp is worse — it arrives as the Go zero time and renders as
+// "0001-01-01 00:00:00 +0000 UTC", a date-shaped string that is not a date.
+//
+// Both become one convention here: nil when there is no timestamp (empty in
+// table/value/csv, null in json/yaml, like every other absent value in koc) and
+// RFC 3339 otherwise, which is the spelling the APIs themselves use and what
+// json.Marshal already produced. The dns package converts its own timestamps to
+// designate's spelling before calling in, so it passes through untouched.
+func normalize(v any) any {
+	switch t := v.(type) {
+	case time.Time:
+		return formatTime(t)
+	case *time.Time:
+		if t == nil {
+			return nil
+		}
+		return formatTime(*t)
+	default:
+		return v
+	}
+}
+
+func formatTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.Format(time.RFC3339Nano)
+}
+
+func normalizeRow(row []any) []any {
+	for i, v := range row {
+		row[i] = normalize(v)
+	}
+	return row
 }
 
 // cell renders a single value for text-based output, with control characters
