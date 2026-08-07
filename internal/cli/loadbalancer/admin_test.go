@@ -531,3 +531,76 @@ func TestRunLBQuotaReset_DeletesTheWholeQuotaSet(t *testing.T) {
 		t.Errorf("output = %q", buf.String())
 	}
 }
+
+// `loadbalancer quota list` reads GET /v2.0/quotas, which gophercloud does not
+// wrap; it must share the prefix the typed quota calls use.
+func TestRunLBQuotaList_RawEndpointAndPagination(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var paths []string
+	fakeServer.Mux.HandleFunc("/v2.0/quotas", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		paths = append(paths, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("marker") == "" {
+			// First page, with a next link. The legacy `load_balancer` and
+			// `health_monitor` spellings must be understood too.
+			_, _ = w.Write([]byte(`{
+              "quotas": [
+                {"project_id": "p1", "loadbalancer": 5, "listener": -1, "pool": 4,
+                 "member": 50, "healthmonitor": 10, "l7policy": 5, "l7rule": 20},
+                {"project_id": "p2", "load_balancer": 1, "health_monitor": 2}
+              ],
+              "quotas_links": [{"rel": "next", "href": "` + fakeServer.Server.URL + `/v2.0/quotas?marker=p2"}]
+            }`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"quotas": [{"project_id": "p3", "loadbalancer": 7}], "quotas_links": []}`))
+	})
+
+	o := &output.Options{Format: output.FormatCSV}
+	var buf bytes.Buffer
+	if err := runLBQuotaList(context.Background(), lbClient(fakeServer), o, "", &buf); err != nil {
+		t.Fatalf("runLBQuotaList error: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("requests = %v, want the next link to be followed", paths)
+	}
+	if paths[0] != "/v2.0/quotas" {
+		t.Errorf("first request = %q, want /v2.0/quotas", paths[0])
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"Project ID,Load Balancer,Listener,Pool,Member,Health Monitor,L7Policy,L7Rule",
+		"p1,5,-1,4,50,10,5,20",
+		"p2,1,,,,2,,", // legacy spellings map across; absent keys stay empty
+		"p3,7,,,,,,",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// --project narrows the listing to one project via the API's own filter.
+func TestRunLBQuotaList_ProjectFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery string
+	fakeServer.Mux.HandleFunc("/v2.0/quotas", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"quotas": [{"project_id": "p1", "loadbalancer": 5}], "quotas_links": []}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runLBQuotaList(context.Background(), lbClient(fakeServer), o, "p1", &buf); err != nil {
+		t.Fatalf("runLBQuotaList error: %v", err)
+	}
+	if gotQuery != "project_id=p1" {
+		t.Errorf("query = %q, want project_id=p1", gotQuery)
+	}
+}

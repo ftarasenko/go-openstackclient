@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-07 · `koc` @ `f34480d` · 401 leaf commands (visible tree; 2
+**Snapshot:** 2026-08-07 · `koc` @ `f34480d` · 403 leaf commands (visible tree; 2
 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -27,8 +27,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**372 of 831 in-scope upstream commands (45%).** Of `koc`'s 401 leaf commands,
-~372 are upstream-equivalent and 29 are koc-native.
+**374 of 831 in-scope upstream commands (45%).** Of `koc`'s 403 leaf commands,
+~374 are upstream-equivalent and 29 are koc-native.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
@@ -62,7 +62,7 @@ including Swift + Manila; 831 excluding them, since `koc` targets neither.
 | `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 31/94 (33%) | **31/38 (82%)** |
-| `openstack.identity.v3` | 42/128 (33%) | **42/60 (70%)** |
+| `openstack.identity.v3` | 43/128 (34%) | **43/60 (72%)** |
 | `openstack.network.v2` | 57/165 (35%) | **57/92 (62%)** |
 | `openstack.common` | 4/11 (36%) | 4/11 — `quota show/set`, `extension list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
@@ -83,7 +83,7 @@ backend capability/pools, host failover, transfers.
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
-| python-octaviaclient (`load balancer`) | 62/82 (76%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented), `listener stats show` and `quota list`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
+| python-octaviaclient (`load balancer`) | 63/82 (77%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented) and `listener stats show`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
@@ -117,7 +117,7 @@ Ten services gophercloud supports have **zero** `koc` surface:
 | --- | --- |
 | `identity/v3/roles` (Create/Update/Delete + role-inference rules) | `role create/delete/set`, `implied role create/delete/list` |
 | `compute/v2/servers` (`Shelve`/`Unshelve`/`Rescue`/`Unrescue`/`CreateImage`/`GetPassword`) | `server shelve/unshelve/rescue/unrescue`, `server image create` |
-| `identity/v3/{regions,services,users,tokens,catalog}` | `region create/delete/set/show`, `service create/delete/set`, `user password set`, `token revoke`, `catalog show` |
+| `identity/v3/{regions,services,users,tokens}` | `region create/delete/set/show`, `service create/delete/set`, `user password set`, `token revoke` |
 | `blockstorage/v3/{snapshots,backups}` (`Update`) | `volume snapshot set/unset`, `volume backup set/unset` |
 | `networking/v2/{subnets,security/groups}` (nil-update) | `subnet unset`, `security group unset` (`port unset` is now wired) |
 | `networking/v2/extensions/layer3/routers` (`GatewayInfo`) | `router add/remove gateway` |

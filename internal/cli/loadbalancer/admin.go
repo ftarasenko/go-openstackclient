@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	neturl "net/url"
 	"sort"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -38,6 +39,7 @@ func newLBQuotaCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Short: "Manage per-project load balancer quotas",
 	}
 	cmd.AddCommand(
+		newLBQuotaListCommand(a, o),
 		newLBQuotaShowCommand(a, o),
 		newLBQuotaSetCommand(a, o),
 		newLBQuotaUnsetCommand(a, o),
@@ -79,6 +81,134 @@ func resolveQuotaProject(ctx context.Context, session *auth.Client, a *auth.Opti
 		return "", err
 	}
 	return resolve.ProjectIDInDomain(ctx, identity, ref, domainRef)
+}
+
+// lbProjectQuota is one row of GET /v2.0/quotas: a project's quotas plus the
+// project they belong to.
+//
+// The fields are pointers and carry both spellings octavia has used, because
+// this cannot reuse quotas.Quota: that type defines UnmarshalJSON to reconcile
+// the legacy `load_balancer`/`health_monitor` names, and embedding it would
+// promote that method onto this struct and swallow project_id.
+type lbProjectQuota struct {
+	ProjectID string `json:"project_id"`
+
+	Loadbalancer *int `json:"loadbalancer"`
+	LoadBalancer *int `json:"load_balancer"` // legacy spelling
+
+	Listener      *int `json:"listener"`
+	Pool          *int `json:"pool"`
+	Member        *int `json:"member"`
+	Healthmonitor *int `json:"healthmonitor"`
+	HealthMonitor *int `json:"health_monitor"` // legacy spelling
+	L7Policy      *int `json:"l7policy"`
+	L7Rule        *int `json:"l7rule"`
+}
+
+// quotaValue renders one quota cell: octavia's -1 means unlimited, and a key the
+// deployment omits renders empty rather than as a misleading 0.
+func quotaValue(primary, legacy *int) any {
+	v := primary
+	if v == nil {
+		v = legacy
+	}
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// newLBQuotaListCommand builds "loadbalancer quota list", upstream
+// octaviaclient's ListQuota.
+func newLBQuotaListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var projectRef, projectDomain string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List per-project load balancer quotas",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, session, err := newLoadBalancerSession(ctx, a)
+			if err != nil {
+				return err
+			}
+			project := ""
+			if projectRef != "" {
+				// resolveQuotaProject's default-to-own-project fallback is wrong
+				// here: no --project means "every project", not "mine".
+				if project, err = resolveQuotaProject(ctx, session, a, []string{projectRef}, projectDomain); err != nil {
+					return err
+				}
+			}
+			return runLBQuotaList(ctx, client, o, project, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().StringVar(&projectRef, "project", "", "list only this project's quotas (name or ID)")
+	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	return cmd
+}
+
+// runLBQuotaList reads GET /v2.0/quotas, for which gophercloud has no typed
+// call — its quotas package covers only the per-project Get/Update/Delete. Raw
+// fallback per AGENTS.md, on the same prefix the typed calls use (see the note
+// on runLBQuotaDefaultsShow). Octavia paginates with `quotas_links`, so the next
+// links are followed to completion.
+func runLBQuotaList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	project string, w io.Writer,
+) error {
+	url := client.ServiceURL("quotas")
+	if project != "" {
+		url += "?project_id=" + neturl.QueryEscape(project)
+	}
+	var all []lbProjectQuota
+	seen := map[string]bool{}
+	for url != "" {
+		var page struct {
+			Quotas []lbProjectQuota `json:"quotas"`
+			Links  []struct {
+				Rel  string `json:"rel"`
+				HRef string `json:"href"`
+			} `json:"quotas_links"`
+		}
+		resp, err := client.Get(ctx, url, &page, nil)
+		if resp != nil {
+			defer func() { _ = resp.Body.Close() }()
+		}
+		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+			return fmt.Errorf("listing load balancer quotas: %w", err)
+		}
+		all = append(all, page.Quotas...)
+		seen[url] = true
+		url = ""
+		for _, l := range page.Links {
+			// Guard against a server that echoes the current page as "next".
+			if l.Rel == "next" && l.HRef != "" && !seen[l.HRef] {
+				url = l.HRef
+			}
+		}
+	}
+
+	t := output.Table{
+		Columns: []string{"Project ID", "Load Balancer", "Listener", "Pool", "Member", "Health Monitor", "L7Policy", "L7Rule"},
+		Rows:    make([][]any, 0, len(all)),
+	}
+	for i := range all {
+		q := &all[i]
+		t.Rows = append(t.Rows, []any{
+			q.ProjectID,
+			quotaValue(q.Loadbalancer, q.LoadBalancer),
+			quotaValue(q.Listener, nil),
+			quotaValue(q.Pool, nil),
+			quotaValue(q.Member, nil),
+			quotaValue(q.Healthmonitor, q.HealthMonitor),
+			quotaValue(q.L7Policy, nil),
+			quotaValue(q.L7Rule, nil),
+		})
+	}
+	return o.WriteList(w, t)
 }
 
 func newLBQuotaShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
