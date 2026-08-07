@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -109,17 +110,10 @@ func runZoneList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		Limit:  dnsPageSize(f.limit),
 		Marker: f.marker,
 	}
-	pages, err := zones.List(client, opts).AllPages(ctx)
+	// Limit is only the page size to designate; enforce it as a hard result cap.
+	all, err := paging.Collect(ctx, zones.List(client, opts), f.limit, zones.ExtractZones)
 	if err != nil {
 		return fmt.Errorf("listing dns zones: %w", err)
-	}
-	all, err := zones.ExtractZones(pages)
-	if err != nil {
-		return fmt.Errorf("parsing dns zone list: %w", err)
-	}
-	// Limit is only the page size to designate; enforce it as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
 	}
 	return o.WriteList(w, zoneListTable(all))
 }

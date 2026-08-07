@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -185,17 +186,12 @@ func newIntrospectionListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 
 func runIntrospectionList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *introspectionListFlags, w io.Writer) error {
 	opts := introspection.ListIntrospectionsOpts{Limit: f.limit, Marker: f.marker}
-	pages, err := introspection.ListIntrospections(client, opts).AllPages(ctx)
+	// The inspector treats "limit" only as a page size, so --limit is enforced
+	// as a hard result cap; Collect also stops paging once it is met.
+	all, err := paging.Collect(ctx, introspection.ListIntrospections(client, opts), f.limit, introspection.ExtractIntrospections)
 	if err != nil {
 		return fmt.Errorf("listing introspections: %w", err)
 	}
-	all, err := introspection.ExtractIntrospections(pages)
-	if err != nil {
-		return fmt.Errorf("parsing introspection list: %w", err)
-	}
-	// The inspector treats "limit" as a page size and AllPages walks every page,
-	// so --limit is enforced as a hard cap here (see util.go capResults).
-	all = capResults(all, f.limit)
 
 	t := output.Table{
 		Columns: []string{"UUID", "Started at", "Finished at", "Error"},

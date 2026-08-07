@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -92,17 +93,10 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Limit:      f.limit,
 		Marker:     f.marker,
 	}
-	pages, err := backups.List(client, opts).AllPages(ctx)
+	// Limit is only the page size to cinder; enforce it as a hard result cap.
+	all, err := paging.Collect(ctx, backups.List(client, opts), f.limit, backups.ExtractBackups)
 	if err != nil {
 		return fmt.Errorf("listing backups: %w", err)
-	}
-	all, err := backups.ExtractBackups(pages)
-	if err != nil {
-		return fmt.Errorf("parsing backup list: %w", err)
-	}
-	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Description", "Status", "Size"}}
 	for _, b := range all {

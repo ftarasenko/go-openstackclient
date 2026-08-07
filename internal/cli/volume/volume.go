@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -169,13 +170,17 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if userID != "" {
 		opts = volumeListOptsExt{ListOptsBuilder: base, UserID: userID}
 	}
-	pages, err := volumes.List(client, opts).AllPages(ctx)
+	// Limit is only the page size to cinder, so --limit is a hard result cap.
+	// With --type the cap applies to what survives the client-side filter below,
+	// so every page has to be read first; without it, stop as soon as the cap is
+	// met.
+	collectCap := f.limit
+	if f.volumeType != "" {
+		collectCap = 0
+	}
+	all, err := paging.Collect(ctx, volumes.List(client, opts), collectCap, volumes.ExtractVolumes)
 	if err != nil {
 		return fmt.Errorf("listing volumes: %w", err)
-	}
-	all, err := volumes.ExtractVolumes(pages)
-	if err != nil {
-		return fmt.Errorf("parsing volume list: %w", err)
 	}
 	// Cinder's volume list has no volume_type query param (and upstream OSC has no
 	// --type on list), so filter by type client-side after extraction.
@@ -187,10 +192,9 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 			}
 		}
 		all = filtered
-	}
-	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
+		if f.limit > 0 && len(all) > f.limit {
+			all = all[:f.limit]
+		}
 	}
 	return o.WriteList(w, volumeListTable(all, f.long))
 }

@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -265,21 +266,14 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		DeletedSince:  f.deletedSince,
 		DeletedBefore: f.deletedBefore,
 	}
-	pages, err := servers.List(client, opts).AllPages(ctx)
+	// Nova treats limit only as a page size, so --limit is enforced as a hard
+	// result cap; Collect also stops paging once it is met.
+	all, err := paging.Collect(ctx, servers.List(client, opts), f.limit, servers.ExtractServers)
 	if err != nil {
 		if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
 			return keystackExtErr(fmt.Errorf("listing servers: %w", err), "created/deleted server-list filters")
 		}
 		return fmt.Errorf("listing servers: %w", err)
-	}
-	all, err := servers.ExtractServers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing server list: %w", err)
-	}
-	// Nova treats limit only as a page size, so AllPages may return more than
-	// requested; enforce --limit as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
 	}
 	return o.WriteList(w, serverListTable(all, f.long))
 }

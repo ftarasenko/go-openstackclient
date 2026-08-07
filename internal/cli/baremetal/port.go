@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -84,15 +85,10 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		SortKey: f.sortKey,
 		SortDir: f.sortDir,
 	}
-	pages, err := ports.List(client, opts).AllPages(ctx)
+	all, err := paging.Collect(ctx, ports.List(client, opts), f.limit, ports.ExtractPorts)
 	if err != nil {
 		return fmt.Errorf("listing baremetal ports: %w", err)
 	}
-	all, err := ports.ExtractPorts(pages)
-	if err != nil {
-		return fmt.Errorf("parsing baremetal port list: %w", err)
-	}
-	all = capResults(all, f.limit)
 	return o.WriteList(w, portListTable(all, f.long))
 }
 

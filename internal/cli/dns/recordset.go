@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -133,17 +134,10 @@ func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o 
 		Limit:  dnsPageSize(f.limit),
 		Marker: f.marker,
 	}
-	pages, err := recordsets.ListByZone(client, zoneID, opts).AllPages(ctx)
+	// Limit is only the page size to designate; enforce it as a hard result cap.
+	all, err := paging.Collect(ctx, recordsets.ListByZone(client, zoneID, opts), f.limit, recordsets.ExtractRecordSets)
 	if err != nil {
 		return fmt.Errorf("listing recordsets in zone %s: %w", zoneRef, err)
-	}
-	all, err := recordsets.ExtractRecordSets(pages)
-	if err != nil {
-		return fmt.Errorf("parsing recordset list: %w", err)
-	}
-	// Limit is only the page size to designate; enforce it as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
 	}
 	return o.WriteList(w, recordSetListTable(all))
 }

@@ -330,3 +330,86 @@ func TestRunComputeServiceList_KeyStackAdminState(t *testing.T) {
 		}
 	}
 }
+
+// --limit is a hard result cap, and nova treats "limit" only as a page size, so
+// the obvious AllPages-then-truncate spelling walked the whole collection:
+// "server list --limit 1" issued 35 requests against a 34-server project.
+// Paging must stop as soon as the cap is met.
+func TestServerList_LimitStopsPaging(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var requests int
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		marker := r.URL.Query().Get("marker")
+		// Three single-server pages chained by marker; the third ends the list.
+		id, next := "s-1", "s-2"
+		switch marker {
+		case "s-1":
+			id, next = "s-2", "s-3"
+		case "s-2":
+			id, next = "s-3", ""
+		}
+		w.Header().Set("Content-Type", "application/json")
+		links := ""
+		if next != "" {
+			links = `, "servers_links": [{"rel": "next", "href": "` +
+				fakeServer.Server.URL + `/servers/detail?limit=1&marker=` + id + `"}]`
+		}
+		_, _ = io.WriteString(w, `{"servers": [{"id": "`+id+`", "name": "`+id+
+			`", "status": "ACTIVE", "addresses": {}}]`+links+`}`)
+	})
+
+	var b bytes.Buffer
+	o := &output.Options{Format: output.FormatValue}
+	f := &serverListFlags{limit: 1}
+	err := runServerList(context.Background(), computeClient(fakeServer, "2.79"), o, f, "", "", &b)
+	th.AssertNoErr(t, err)
+
+	if requests != 1 {
+		t.Errorf("issued %d request(s) for --limit 1, want 1", requests)
+	}
+	if got := strings.Count(strings.TrimSpace(b.String()), "\n") + 1; got != 1 {
+		t.Errorf("rendered %d row(s), want 1:\n%s", got, b.String())
+	}
+}
+
+// Without a limit every page is still collected.
+func TestServerList_NoLimitWalksEveryPage(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var requests int
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		marker := r.URL.Query().Get("marker")
+		id, next := "s-1", "s-2"
+		switch marker {
+		case "s-1":
+			id, next = "s-2", "s-3"
+		case "s-2":
+			id, next = "s-3", ""
+		}
+		w.Header().Set("Content-Type", "application/json")
+		links := ""
+		if next != "" {
+			links = `, "servers_links": [{"rel": "next", "href": "` +
+				fakeServer.Server.URL + `/servers/detail?marker=` + id + `"}]`
+		}
+		_, _ = io.WriteString(w, `{"servers": [{"id": "`+id+`", "name": "`+id+
+			`", "status": "ACTIVE", "addresses": {}}]`+links+`}`)
+	})
+
+	var b bytes.Buffer
+	o := &output.Options{Format: output.FormatValue}
+	err := runServerList(context.Background(), computeClient(fakeServer, "2.79"), o, &serverListFlags{}, "", "", &b)
+	th.AssertNoErr(t, err)
+
+	if requests != 3 {
+		t.Errorf("issued %d request(s) with no limit, want 3", requests)
+	}
+	if got := strings.Count(strings.TrimSpace(b.String()), "\n") + 1; got != 3 {
+		t.Errorf("rendered %d row(s), want 3:\n%s", got, b.String())
+	}
+}

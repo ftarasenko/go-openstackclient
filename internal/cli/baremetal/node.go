@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -147,15 +148,10 @@ func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		opts.associated = &f.associated
 	}
 
-	pages, err := nodes.List(client, opts).AllPages(ctx)
+	all, err := paging.Collect(ctx, nodes.List(client, opts), f.limit, nodes.ExtractNodes)
 	if err != nil {
 		return fmt.Errorf("listing baremetal nodes: %w", err)
 	}
-	all, err := nodes.ExtractNodes(pages)
-	if err != nil {
-		return fmt.Errorf("parsing baremetal node list: %w", err)
-	}
-	all = capResults(all, f.limit)
 
 	return o.WriteList(w, nodeListTable(all, f.long))
 }

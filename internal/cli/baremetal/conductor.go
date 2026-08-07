@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -74,15 +75,10 @@ func runConductorList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if f.long {
 		opts.Detail = true
 	}
-	pages, err := conductors.List(client, opts).AllPages(ctx)
+	all, err := paging.Collect(ctx, conductors.List(client, opts), f.limit, conductors.ExtractConductors)
 	if err != nil {
 		return fmt.Errorf("listing baremetal conductors: %w", err)
 	}
-	all, err := conductors.ExtractConductors(pages)
-	if err != nil {
-		return fmt.Errorf("parsing baremetal conductor list: %w", err)
-	}
-	all = capResults(all, f.limit)
 	return o.WriteList(w, conductorListTable(all, f.long))
 }
 

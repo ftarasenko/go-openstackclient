@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -143,17 +144,10 @@ func runAttachmentList(ctx context.Context, client *gophercloud.ServiceClient, o
 		Limit:      f.limit,
 		Marker:     f.marker,
 	}
-	pages, err := attachments.List(client, opts).AllPages(ctx)
+	// Limit is only the page size to cinder; enforce it as a hard result cap.
+	all, err := paging.Collect(ctx, attachments.List(client, opts), f.limit, attachments.ExtractAttachments)
 	if err != nil {
 		return fmt.Errorf("listing volume attachments: %w", err)
-	}
-	all, err := attachments.ExtractAttachments(pages)
-	if err != nil {
-		return fmt.Errorf("parsing volume attachment list: %w", err)
-	}
-	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Volume ID", "Server ID", "Status"},
