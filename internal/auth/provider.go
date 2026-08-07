@@ -122,22 +122,23 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 }
 
 // applyAuthOverrides layers explicitly-set auth flags over whatever the
-// clouds.yaml / env path produced.
+// clouds.yaml / env path produced. Every value goes through Options.override so
+// an env-derived default cannot outrank an explicitly named cloud.
 func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf := func(dst *string, v string) {
 		if v != "" {
 			*dst = v
 		}
 	}
-	setIf(&ao.IdentityEndpoint, o.AuthURL)
-	setIf(&ao.Username, o.Username)
-	setIf(&ao.UserID, o.UserID)
-	setIf(&ao.Password, o.Password)
-	setIf(&ao.TenantName, o.ProjectName)
-	setIf(&ao.TenantID, o.ProjectID)
-	setIf(&ao.ApplicationCredentialID, o.AppCredID)
-	setIf(&ao.ApplicationCredentialName, o.AppCredName)
-	setIf(&ao.ApplicationCredentialSecret, o.AppCredSecret)
+	setIf(&ao.IdentityEndpoint, o.override("os-auth-url", o.AuthURL))
+	setIf(&ao.Username, o.override("os-username", o.Username))
+	setIf(&ao.UserID, o.override("os-user-id", o.UserID))
+	setIf(&ao.Password, o.override("os-password", o.Password))
+	setIf(&ao.TenantName, o.override("os-project-name", o.ProjectName))
+	setIf(&ao.TenantID, o.override("os-project-id", o.ProjectID))
+	setIf(&ao.ApplicationCredentialID, o.override("os-application-credential-id", o.AppCredID))
+	setIf(&ao.ApplicationCredentialName, o.override("os-application-credential-name", o.AppCredName))
+	setIf(&ao.ApplicationCredentialSecret, o.override("os-application-credential-secret", o.AppCredSecret))
 
 	o.applyDomainScope(ao)
 	o.applySystemScope(ao)
@@ -179,7 +180,7 @@ func (o *Options) validateSystemScope() error {
 // so it wins unconditionally, matching the flag's "scope this token to the whole
 // deployment" meaning.
 func (o *Options) applySystemScope(ao *gophercloud.AuthOptions) {
-	if o.SystemScope == "" {
+	if o.override("os-system-scope", o.SystemScope) == "" {
 		return
 	}
 	ao.Scope = &gophercloud.AuthScope{System: true}
@@ -198,20 +199,24 @@ func (o *Options) applySystemScope(ao *gophercloud.AuthOptions) {
 // is supplied. When no koc domain flag is given we leave scoping untouched so
 // the clouds.yaml / AuthOptionsFromEnv defaults are preserved.
 func (o *Options) applyDomainScope(ao *gophercloud.AuthOptions) {
-	if o.UserDomainName == "" && o.ProjectDomainName == "" && o.DomainName == "" {
+	userDomainName := o.override("os-user-domain-name", o.UserDomainName)
+	projectDomainName := o.override("os-project-domain-name", o.ProjectDomainName)
+	domainName := o.override("os-domain-name", o.DomainName)
+
+	if userDomainName == "" && projectDomainName == "" && domainName == "" {
 		return
 	}
 
 	// The user's identity domain qualifies the username/user-id. Prefer an
 	// explicit user domain, then a lone --os-domain-name, then the project
 	// domain (single-domain clouds set only one of these).
-	if userDomain := firstNonEmpty(o.UserDomainName, o.DomainName, o.ProjectDomainName); userDomain != "" {
+	if userDomain := firstNonEmpty(userDomainName, domainName, projectDomainName); userDomain != "" {
 		ao.DomainName = userDomain
 		ao.DomainID = ""
 	}
 
-	projectName := firstNonEmpty(o.ProjectName, ao.TenantName)
-	projectID := firstNonEmpty(o.ProjectID, ao.TenantID)
+	projectName := firstNonEmpty(o.override("os-project-name", o.ProjectName), ao.TenantName)
+	projectID := firstNonEmpty(o.override("os-project-id", o.ProjectID), ao.TenantID)
 
 	switch {
 	case projectID != "":
@@ -221,11 +226,11 @@ func (o *Options) applyDomainScope(ao *gophercloud.AuthOptions) {
 		// Project-by-name must be qualified by the project's own domain.
 		ao.Scope = &gophercloud.AuthScope{
 			ProjectName: projectName,
-			DomainName:  firstNonEmpty(o.ProjectDomainName, o.UserDomainName, o.DomainName),
+			DomainName:  firstNonEmpty(projectDomainName, userDomainName, domainName),
 		}
-	case o.DomainName != "":
+	case domainName != "":
 		// Domain-scoped token (no project).
-		ao.Scope = &gophercloud.AuthScope{DomainName: o.DomainName}
+		ao.Scope = &gophercloud.AuthScope{DomainName: domainName}
 	}
 }
 
@@ -239,10 +244,10 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func (o *Options) applyEndpointOverrides(eo *gophercloud.EndpointOpts) {
-	if o.RegionName != "" {
-		eo.Region = o.RegionName
+	if region := o.override("os-region-name", o.RegionName); region != "" {
+		eo.Region = region
 	}
-	switch o.Interface {
+	switch o.override("os-interface", o.Interface) {
 	case "public":
 		eo.Availability = gophercloud.AvailabilityPublic
 	case "internal":

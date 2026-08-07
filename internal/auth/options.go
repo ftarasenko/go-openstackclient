@@ -5,10 +5,17 @@
 //
 // Authentication precedence (highest first):
 //
-//  1. --os-cloud / OS_CLOUD  → clouds.yaml (via gophercloud config/clouds.Parse)
-//  2. OS_* environment variables
-//  3. Application credentials (OS_APPLICATION_CREDENTIAL_ID / _SECRET),
+//  1. Explicitly given --os-* flags
+//  2. --os-cloud / OS_CLOUD  → clouds.yaml (via gophercloud config/clouds.Parse)
+//  3. OS_* environment variables
+//  4. Application credentials (OS_APPLICATION_CREDENTIAL_ID / _SECRET),
 //     which are honored through either of the two paths above.
+//
+// Naming a cloud selects it wholesale: because every auth flag defaults to its
+// OS_* variable, a sourced openrc would otherwise override the named cloud
+// field by field and silently send the command — credentials included — to the
+// environment's cloud instead. Only flags the operator actually typed (and
+// values from a --creds-from-vault openrc) outrank clouds.yaml.
 //
 // TLS is always wired explicitly into the provider so behavior matches OSC:
 // custom CA bundle (OS_CACERT / --os-cacert), mutual TLS client cert+key
@@ -120,8 +127,55 @@ type Options struct {
 	Timing bool
 
 	// fs is retained so factory methods can distinguish an explicitly-set flag
-	// from an env-derived default (notably for --insecure).
+	// from an env-derived default (notably for --insecure, and for keeping a
+	// stray OS_* out of an explicitly named cloud — see Options.override).
 	fs *pflag.FlagSet
+
+	// forced names flags whose value came from a source that outranks
+	// clouds.yaml even though pflag never saw them on the command line —
+	// currently only the --creds-from-vault openrc.
+	forced map[string]bool
+}
+
+// markForced records that flag's value was supplied by a source pflag cannot
+// see but which still outranks clouds.yaml.
+func (o *Options) markForced(flag string) {
+	if o.forced == nil {
+		o.forced = make(map[string]bool)
+	}
+	o.forced[flag] = true
+}
+
+// explicitlySet reports whether the operator actually supplied this flag, as
+// opposed to it sitting at the OS_*-derived default AddFlags installed.
+func (o *Options) explicitlySet(flag string) bool {
+	if o.forced[flag] {
+		return true
+	}
+	if o.fs == nil {
+		// Built programmatically rather than from a command line: every
+		// populated field was set deliberately, so there is no env-derived
+		// default to tell it apart from.
+		return true
+	}
+	return o.fs.Changed(flag)
+}
+
+// override returns v only when it may legitimately be layered over the auth
+// options the base path produced.
+//
+// On the env path o's fields *are* the configuration, so everything applies. On
+// the clouds.yaml path they are not: AddFlags defaults every auth flag to its
+// OS_* variable, so a sourced openrc leaves them all populated even when the
+// operator typed nothing but --os-cloud. Layering those over the named cloud
+// silently redirects the command — credentials included — at whatever the
+// environment happened to hold, so there only a value the operator actually
+// supplied wins.
+func (o *Options) override(flag, v string) string {
+	if v == "" || o.Cloud == "" || o.explicitlySet(flag) {
+		return v
+	}
+	return ""
 }
 
 // AddFlags registers the global auth/TLS/microversion flags. Defaults are drawn

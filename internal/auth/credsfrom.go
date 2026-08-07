@@ -538,6 +538,9 @@ func (o *Options) applyOpenrcVars(kv map[string]string) {
 		for _, k := range keys {
 			if v := kv[k]; v != "" {
 				*dst = v
+				// pflag never saw this value, but it still outranks
+				// clouds.yaml — mark it so Options.override keeps it.
+				o.markForced(flag)
 				return
 			}
 		}
