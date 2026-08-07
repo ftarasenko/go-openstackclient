@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -475,29 +476,45 @@ func runPTRRecordUnset(ctx context.Context, client *gophercloud.ServiceClient,
 // --- dns service -----------------------------------------------------------
 
 // serviceStatus is one designate service process's self-reported health.
+//
+// stats and capabilities are JSON *objects*, not arrays: designate emits
+// `"stats": {}, "capabilities": {}` (see designate's service_status schema).
+// Declaring them as []string made every `dns service list`/`show` fail against a
+// real designate with "cannot unmarshal object into Go struct field ... of type
+// []string". Upstream python-designateclient survives only because an empty
+// dict is falsy in its `"\n".join(x) if x else "-"`.
 type serviceStatus struct {
-	ID            string   `json:"id"`
-	Hostname      string   `json:"hostname"`
-	ServiceName   string   `json:"service_name"`
-	Status        string   `json:"status"`
-	Stats         []string `json:"stats"`
-	Capabilities  []string `json:"capabilities"`
-	HeartbeatedAt string   `json:"heartbeated_at"`
+	ID            string         `json:"id"`
+	Hostname      string         `json:"hostname"`
+	ServiceName   string         `json:"service_name"`
+	Status        string         `json:"status"`
+	Stats         map[string]any `json:"stats"`
+	Capabilities  map[string]any `json:"capabilities"`
+	HeartbeatedAt string         `json:"heartbeated_at"`
 }
 
-// joinOrDash renders designate's multi-valued status fields the way upstream does:
-// one entry per line, and "-" when there are none.
-func joinOrDash(values []string) string {
+// mapOrDash renders designate's stats/capabilities objects: "-" when empty, and
+// otherwise one "key=value" per line, sorted by key so the output is stable.
+func mapOrDash(values map[string]any) string {
 	if len(values) == 0 {
 		return "-"
 	}
-	return strings.Join(values, "\n")
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf("%s=%v", k, values[k]))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func serviceStatusFields(s *serviceStatus) ([]string, []any) {
 	return []string{"id", "hostname", "service_name", "status", "stats", "capabilities", "heartbeated_at"},
 		[]any{s.ID, s.Hostname, s.ServiceName, s.Status,
-			joinOrDash(s.Stats), joinOrDash(s.Capabilities), s.HeartbeatedAt}
+			mapOrDash(s.Stats), mapOrDash(s.Capabilities), s.HeartbeatedAt}
 }
 
 func newDNSServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -586,7 +603,7 @@ func runDNSServiceList(ctx context.Context, client *gophercloud.ServiceClient, o
 	for i := range all {
 		s := &all[i]
 		t.Rows = append(t.Rows, []any{s.ID, s.Hostname, s.ServiceName, s.Status,
-			joinOrDash(s.Stats), joinOrDash(s.Capabilities)})
+			mapOrDash(s.Stats), mapOrDash(s.Capabilities)})
 	}
 	return o.WriteList(w, t)
 }

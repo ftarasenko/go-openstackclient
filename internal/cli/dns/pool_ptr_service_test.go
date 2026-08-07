@@ -192,9 +192,9 @@ func TestRunDNSServiceList_FiltersAndFormatsMultiValues(t *testing.T) {
 		_, _ = w.Write([]byte(`{
           "service_statuses": [
             {"id": "s1", "hostname": "dns-1", "service_name": "central", "status": "UP",
-             "stats": [], "capabilities": []},
+             "stats": {}, "capabilities": {}},
             {"id": "s2", "hostname": "dns-2", "service_name": "worker", "status": "UP",
-             "capabilities": ["a", "b"]}
+             "stats": {"zones": 42, "rrsets": 108}, "capabilities": {"pools": "default"}}
           ],
           "links": {}
         }`))
@@ -213,9 +213,17 @@ func TestRunDNSServiceList_FiltersAndFormatsMultiValues(t *testing.T) {
 			t.Errorf("query = %q, want %q", gotQuery, want)
 		}
 	}
-	// Empty multi-valued fields render as "-", matching upstream.
-	if !strings.Contains(buf.String(), "-") || !strings.Contains(buf.String(), "central") {
-		t.Errorf("output = %q", buf.String())
+	// Empty stats/capabilities objects render as "-", matching upstream; a
+	// populated one renders one sorted "key=value" per line.
+	out := buf.String()
+	for _, want := range []string{"central", "-", "rrsets=108", "zones=42", "pools=default"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+	// Sorted by key: rrsets before zones.
+	if i, j := strings.Index(out, "rrsets=108"), strings.Index(out, "zones=42"); i > j {
+		t.Errorf("stats keys are not sorted\n---\n%s", out)
 	}
 }
 
@@ -244,8 +252,11 @@ func TestRunDNSServiceShow(t *testing.T) {
 			t.Errorf("method = %q, want GET", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// The real designate payload: stats and capabilities are objects, and are
+		// empty on a healthy central. Rendering them must not fail.
 		_, _ = w.Write([]byte(`{"id": "s1", "hostname": "dns-1", "service_name": "central",
-          "status": "UP", "capabilities": ["a"], "heartbeated_at": "2026-08-06T12:00:00.000000"}`))
+          "status": "UP", "stats": {}, "capabilities": {},
+          "heartbeated_at": "2026-08-06T12:00:00.000000"}`))
 	})
 
 	o := &output.Options{Format: output.FormatTable}
