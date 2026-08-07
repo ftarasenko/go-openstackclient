@@ -128,11 +128,11 @@ func runPortUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		builder = portUpdateOptsExt{UpdateOptsBuilder: opts, HostID: &empty}
 	}
 
-	p, err := ports.Update(ctx, client, id, builder).Extract()
-	if err != nil {
+	var p portExt
+	if err := ports.Update(ctx, client, id, builder).ExtractInto(&p); err != nil {
 		return fmt.Errorf("updating port %s: %w", nameOrID, err)
 	}
-	fields, values := portShowFields(p)
+	fields, values := portShowFields(&p)
 	return o.WriteSingle(w, fields, values)
 }
 

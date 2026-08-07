@@ -31,15 +31,58 @@ func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func portShowFields(p *ports.Port) ([]string, []any) {
+// getPort reads a port with the extension attributes, replacing
+// ports.Get(...).Extract(), which would drop them.
+func getPort(ctx context.Context, client *gophercloud.ServiceClient, id string) (*portExt, error) {
+	var p portExt
+	if err := ports.Get(ctx, client, id).ExtractInto(&p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// formatFixedIPs renders a port's fixed IPs the way upstream OSC does — one
+// "key='value'" entry per line — rather than as the raw JSON blob the generic
+// cell renderer would produce for a []ports.IP.
+func formatFixedIPs(ips []ports.IP) string {
+	lines := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		lines = append(lines, fmt.Sprintf("ip_address='%s', subnet_id='%s'", ip.IPAddress, ip.SubnetID))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatAddressPairs renders allowed_address_pairs in the same shape. The
+// mac_address key is omitted when neutron did not set one, matching the API.
+func formatAddressPairs(pairs []ports.AddressPair) string {
+	lines := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		if p.MACAddress == "" {
+			lines = append(lines, fmt.Sprintf("ip_address='%s'", p.IPAddress))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("ip_address='%s', mac_address='%s'", p.IPAddress, p.MACAddress))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func portShowFields(p *portExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "network_id", "mac_address", "status", "admin_state_up",
 		"device_owner", "device_id", "fixed_ips", "security_groups",
+		"allowed_address_pairs", "port_security_enabled",
 		"description", "project_id", "tags", "created_at", "updated_at",
+	}
+	// port_security_enabled stays nil when the deployment does not run the
+	// extension, so it renders empty rather than a misleading "false".
+	var portSecurity any
+	if p.PortSecurityEnabled != nil {
+		portSecurity = *p.PortSecurityEnabled
 	}
 	values := []any{
 		p.ID, p.Name, p.NetworkID, p.MACAddress, p.Status, p.AdminStateUp,
-		p.DeviceOwner, p.DeviceID, p.FixedIPs, p.SecurityGroups,
+		p.DeviceOwner, p.DeviceID, formatFixedIPs(p.FixedIPs), p.SecurityGroups,
+		formatAddressPairs(p.AllowedAddressPairs), portSecurity,
 		p.Description, p.ProjectID, p.Tags, p.CreatedAt, p.UpdatedAt,
 	}
 	return fields, values
@@ -148,6 +191,16 @@ func (opts portListOpts) ToPortListQuery() (string, error) {
 type portExt struct {
 	ports.Port
 	TrunkDetailsExt
+	PortSecurityExt
+}
+
+// PortSecurityExt carries the port_security_enabled attribute, which
+// gophercloud's ports.Port does not model. `port set
+// --enable/--disable-port-security` wrote it (see portUpdateOptsExt) but nothing
+// could read it back, so the flag was write-only and its effect unverifiable
+// from koc. Exported and flat for the same reason as TrunkDetailsExt.
+type PortSecurityExt struct {
+	PortSecurityEnabled *bool `json:"port_security_enabled"`
 }
 
 // TrunkDetailsExt carries the trunk_details attribute. It stays exported
@@ -265,7 +318,7 @@ func portListTable(list []portExt, long bool) output.Table {
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for i := range list {
 		p := &list[i]
-		row := []any{p.ID, p.Name, p.MACAddress, p.FixedIPs, p.Status}
+		row := []any{p.ID, p.Name, p.MACAddress, formatFixedIPs(p.FixedIPs), p.Status}
 		if long {
 			row = append(row, p.SecurityGroups, p.DeviceOwner, p.Tags, p.TrunkDetails.SubPorts)
 		}
@@ -323,7 +376,7 @@ func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	p, err := ports.Get(ctx, client, id).Extract()
+	p, err := getPort(ctx, client, id)
 	if err != nil {
 		return fmt.Errorf("getting port %s: %w", nameOrID, err)
 	}
@@ -408,11 +461,11 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		}
 		opts.SecurityGroups = &sgIDs
 	}
-	p, err := ports.Create(ctx, client, opts).Extract()
-	if err != nil {
+	var p portExt
+	if err := ports.Create(ctx, client, opts).ExtractInto(&p); err != nil {
 		return fmt.Errorf("creating port: %w", err)
 	}
-	fields, values := portShowFields(p)
+	fields, values := portShowFields(&p)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -606,11 +659,11 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if !changed {
 		return fmt.Errorf("port set requires at least one attribute flag")
 	}
-	p, err := ports.Update(ctx, client, id, ext).Extract()
-	if err != nil {
+	var p portExt
+	if err := ports.Update(ctx, client, id, ext).ExtractInto(&p); err != nil {
 		return fmt.Errorf("updating port %s: %w", nameOrID, err)
 	}
-	fields, values := portShowFields(p)
+	fields, values := portShowFields(&p)
 	return o.WriteSingle(w, fields, values)
 }
 

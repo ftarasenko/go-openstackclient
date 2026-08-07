@@ -1082,3 +1082,101 @@ func TestRunSecurityGroupRuleDelete(t *testing.T) {
 		t.Errorf("output missing confirmation:\n%s", buf.String())
 	}
 }
+
+// port_security_enabled and allowed_address_pairs appeared in no output format,
+// so `port set --allowed-address` and --enable/--disable-port-security were
+// write-only: the writes worked but koc could not show their effect.
+func TestRunPortShow_RendersAllowedAddressPairsAndPortSecurity(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	emptyLookup(t, fakeServer, "/ports", "ports")
+	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		writeJSON(t, w, http.StatusOK, `{"port":{
+          "id":"port-1","name":"p","mac_address":"aa:bb:cc:dd:ee:ff",
+          "port_security_enabled": false,
+          "allowed_address_pairs":[
+            {"ip_address":"10.0.0.100","mac_address":"aa:bb:cc:00:00:01"},
+            {"ip_address":"10.0.0.101"}
+          ],
+          "fixed_ips":[{"subnet_id":"subnet-1","ip_address":"10.0.0.5"}]
+        }}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runPortShow(context.Background(), client, o, "port-1", &buf); err != nil {
+		t.Fatalf("runPortShow: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"allowed_address_pairs",
+		"ip_address='10.0.0.100', mac_address='aa:bb:cc:00:00:01'",
+		"ip_address='10.0.0.101'",
+		"port_security_enabled",
+		"false",
+		// fixed_ips render human-readably, not as a raw JSON blob.
+		"ip_address='10.0.0.5', subnet_id='subnet-1'",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("port show output missing %q\n---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `{"subnet_id"`) {
+		t.Errorf("fixed_ips still rendered as raw JSON\n---\n%s", out)
+	}
+}
+
+// A deployment without the port-security extension omits the key; it must
+// render empty rather than a misleading "false".
+func TestRunPortShow_PortSecurityAbsentRendersEmpty(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	emptyLookup(t, fakeServer, "/ports", "ports")
+	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","name":"p"}}`)
+	})
+
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	if err := runPortShow(context.Background(), client, o, "port-1", &buf); err != nil {
+		t.Fatalf("runPortShow: %v", err)
+	}
+	if !strings.Contains(buf.String(), `"port_security_enabled": null`) {
+		t.Errorf("absent port_security_enabled should be null, got:\n%s", buf.String())
+	}
+}
+
+// The write verbs render the same fields, so `port set --disable-port-security`
+// shows its own effect.
+func TestRunPortSet_RendersPortSecurityFromTheResponse(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	emptyLookup(t, fakeServer, "/ports", "ports")
+	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPut)
+		th.TestJSONRequest(t, r, `{"port": {"port_security_enabled": false}}`)
+		writeJSON(t, w, http.StatusOK, `{"port":{
+          "id":"port-1","name":"p","port_security_enabled": false,
+          "allowed_address_pairs":[]
+        }}`)
+	})
+
+	f := &portSetFlags{disablePortSecurity: true}
+	client := networkClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runPortSet(context.Background(), client, o, "port-1", f,
+		changedFlags{"disable-port-security": true}, &buf); err != nil {
+		t.Fatalf("runPortSet: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "port_security_enabled") || !strings.Contains(out, "false") {
+		t.Errorf("port set should render port_security_enabled\n---\n%s", out)
+	}
+}
