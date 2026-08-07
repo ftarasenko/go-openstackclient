@@ -3,12 +3,14 @@ package loadbalancer
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -443,5 +445,89 @@ func TestResolveFlavorProfileID_MatchesClientSide(t *testing.T) {
 	}
 	if got != "nonesuch" {
 		t.Errorf("resolveFlavorProfileID() = %q, want the literal reference back", got)
+	}
+}
+
+// TestRunLBQuotaUnset_ClearsOnlyNamedQuotas is the regression for koc's old
+// `unset`, which DELETEd the whole quota set and so silently reverted quotas the
+// operator never named. Upstream octaviaclient's UnsetQuota PUTs an explicit
+// null per named key; only those keys may appear in the body.
+func TestRunLBQuotaUnset_ClearsOnlyNamedQuotas(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotMethod string
+	fakeServer.Mux.HandleFunc("/v2.0/quotas/p1", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		th.TestMethod(t, r, "PUT")
+		th.TestJSONRequest(t, r, `{"quota": {"listener": null, "pool": null}}`)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"quota": {"loadbalancer": 5, "listener": -1, "pool": -1, "member": 50, "healthmonitor": -1, "l7policy": 5, "l7rule": 20}}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runLBQuotaUnset(context.Background(), lbClient(fakeServer), o, "p1",
+		[]string{"listener", "pool"}, &buf); err != nil {
+		t.Fatalf("runLBQuotaUnset error: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT (DELETE would clear every quota)", gotMethod)
+	}
+	// The refreshed quota set is rendered, so the untouched loadbalancer=5 shows.
+	for _, want := range []string{"loadbalancer", "5", "listener"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("output missing %q\n---\n%s", want, buf.String())
+		}
+	}
+}
+
+// Upstream requires at least one flag; without one the command must refuse
+// rather than fall back to clearing everything.
+func TestLBQuotaUnset_RequiresAFlag(t *testing.T) {
+	cmd := newLBQuotaUnsetCommand(&auth.Options{}, &output.Options{Format: output.FormatTable})
+	cmd.SetArgs([]string{"p1"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when no quota flag is given, got nil")
+	}
+	if !strings.Contains(err.Error(), "nothing to unset") {
+		t.Errorf("error = %v, want a \"nothing to unset\" message", err)
+	}
+}
+
+// All seven upstream flags must exist, or scripts written against
+// python-octaviaclient break.
+func TestLBQuotaUnset_HasAllSevenFlags(t *testing.T) {
+	cmd := newLBQuotaUnsetCommand(&auth.Options{}, &output.Options{Format: output.FormatTable})
+	for _, name := range []string{"loadbalancer", "listener", "pool", "member", "healthmonitor", "l7policy", "l7rule"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("--%s is not registered on \"loadbalancer quota unset\"", name)
+		}
+	}
+}
+
+// `quota reset` keeps the clear-everything behaviour: DELETE /v2.0/quotas/<id>.
+func TestRunLBQuotaReset_DeletesTheWholeQuotaSet(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotMethod, gotPath string
+	fakeServer.Mux.HandleFunc("/v2.0/quotas/p1", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	var buf bytes.Buffer
+	if err := runLBQuotaReset(context.Background(), lbClient(fakeServer), "p1", &buf); err != nil {
+		t.Fatalf("runLBQuotaReset error: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/v2.0/quotas/p1" {
+		t.Errorf("request = %s %s, want DELETE /v2.0/quotas/p1", gotMethod, gotPath)
+	}
+	if !strings.Contains(buf.String(), "Reset load balancer quotas for project p1") {
+		t.Errorf("output = %q", buf.String())
 	}
 }

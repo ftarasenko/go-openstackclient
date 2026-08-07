@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-06 · `koc` @ `eae6d1a` · 400 leaf commands (visible tree; 2
+**Snapshot:** 2026-08-07 · `koc` @ `f34480d` · 401 leaf commands (visible tree; 2
 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -27,8 +27,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**370 of 831 in-scope upstream commands (45%).** Of `koc`'s 400 leaf commands,
-~371 are upstream-equivalent and 29 are koc-native.
+**372 of 831 in-scope upstream commands (45%).** Of `koc`'s 401 leaf commands,
+~372 are upstream-equivalent and 29 are koc-native.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
@@ -83,7 +83,7 @@ backend capability/pools, host failover, transfers.
 | --- | --- | --- |
 | ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
-| python-octaviaclient (`load balancer`) | 60/82 (73%) | everything except availability zones and profiles (11), the eight `unset` verbs, `listener stats show`, `quota list` and `quota reset`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
+| python-octaviaclient (`load balancer`) | 62/82 (76%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented), `listener stats show` and `quota list`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
 
 ## vs gophercloud v2
@@ -179,6 +179,14 @@ first because it is what `--help` shows.
 | `koc server migration list` | `openstack server migration list` | also as `koc migration list` (hidden) |
 | `koc network extension list` / `show` | `openstack extension list --network` / `extension show` | no |
 | `koc network trunk subport list` | `openstack network subport list` | no |
+
+One deviation was **removed** rather than documented: `koc loadbalancer quota
+unset` used to take no flags and clear all seven quotas, which is upstream's
+`quota reset`, not its `quota unset`. It now takes the seven upstream boolean
+flags (`--loadbalancer`, `--listener`, `--pool`, `--member`, `--healthmonitor`,
+`--l7policy`, `--l7rule`) and clears only the quotas named, and the
+clear-everything behaviour moved to the new `koc loadbalancer quota reset`. This
+is a breaking change for anyone who relied on the old flagless `unset`.
 
 One flag deviates rather than a command: `koc dns service list --service-name`,
 where upstream spells the same filter `--service_name` — the only underscored flag
