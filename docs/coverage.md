@@ -3,8 +3,8 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-07 · `koc` @ `8792f1d` · 403 leaf commands (visible tree; 2
-more are hidden duplicates).
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 403 leaf
+commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
 adds, renames, or removes a `koc` command must update the affected table row and
@@ -20,6 +20,7 @@ the gap list in the same commit.
 | `python-octaviaclient` (OSC plugin) | 3.14.0 | PyPI sdist → `entry_points.txt` (82 commands under `[openstack.load_balancer.v2]`) |
 | `osc-placement` (OSC plugin) | 4.9.0 | PyPI sdist → `entry_points.txt` |
 | `gophercloud/v2` | v2.13.0 | module zip from `proxy.golang.org` (matches the `vendor/` pin) |
+| `python-ironic-inspector-client` (OSC plugin) | 5.4.0 | PyPI sdist → `entry_points.txt` (13 commands under `baremetal introspection`) |
 
 Entry points are the authoritative command list — `openstack`'s own docs lag the
 code, and `opendev.org` is unreachable from CI/agent environments (HTTP 403), so
@@ -27,12 +28,25 @@ PyPI is the source of record.
 
 ## Headline
 
-**374 of 831 in-scope upstream commands (45%).** Of `koc`'s 403 leaf commands,
-~374 are upstream-equivalent and 29 are koc-native.
+**374 of 844 in-scope upstream commands (44%).** Of `koc`'s 403 leaf commands,
+374 are upstream-equivalent and 29 are koc-native.
+
+The denominator grew by 13 against the 2026-08-07 snapshot without a single
+command changing: `python-ironic-inspector-client` is now a **baseline** rather
+than an untracked extra. Its 13 `baremetal introspection` commands used to be
+scored against the `python-ironicclient` baseline, which never contained them —
+so the ironic row read an inflated 35/118 when the honest split is **29/118 for
+ironic and 6/13 for the inspector**. Same six commands, two correct rows.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
-the figure is 310/749 (41%).
+the figure is 305/749 (41%).
+
+In-scope now includes `python-ironic-inspector-client`. The inspector is
+deprecated upstream — ironic removed the `inspector` inspect interface in 33.0.0
+(the 2026.1 cycle) and moved inspection rules into its own API at 1.96 — but
+`koc` supports clouds back to **Zed**, where the inspector is the only in-band
+inspection there is. See "Minimum supported cloud" below.
 
 Leaf counts are of the **visible** tree. Two more commands exist but are hidden
 from `--help` because they duplicate a visible sibling exactly: `koc migration
@@ -52,8 +66,8 @@ until the history-parity pass. When auditing a noun, diff its flags against the
 upstream parser, not just its presence in these tables.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
-`image.v1` are excluded as legacy) plus the four plugins above. 888 commands
-including Swift + Manila; 831 excluding them, since `koc` targets neither.
+`image.v1` are excluded as legacy) plus the five plugins above. 901 commands
+including Swift + Manila; 844 excluding them, since `koc` targets neither.
 
 ## vs python-openstackclient (core)
 
@@ -81,14 +95,15 @@ backend capability/pools, host failover, transfers.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 35/118 (30%) | node lifecycle, power, ports, driver details, stored inventory and inspector introspection are solid; missing allocations, chassis, port groups, traits, VIFs, BIOS settings, history, deploy templates, runbooks, inspection rules, introspection reprocess, volume connectors/targets |
+| ironic (`baremetal`) | 29/118 (25%) | node lifecycle, power, ports, driver details and stored inventory are solid; missing the provision verbs `adopt`/`clean`/`rescue`/`service`, `node validate`, VIFs, BIOS settings, firmware, allocations, chassis, port groups, traits, history, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 63/82 (77%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented) and `listener stats show`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
+| python-ironic-inspector-client (`baremetal introspection`) | 6/13 (46%) | `start`, `status`, `list`, `abort`, `data save`, `interface list`; missing `interface show`, `reprocess` and the five `rule` verbs |
 
 ## vs gophercloud v2
 
-`koc` imports **70 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **69 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -98,7 +113,6 @@ already ships:
 | `compute` | 10/20 |
 | `blockstorage` | 7/24 |
 | `baremetal` | 4/9 |
-| `baremetalintrospection` | 1/3 |
 | `image` | 4/5 |
 | `placement` | 3/6 |
 | `dns` | 6/6 |
@@ -109,12 +123,54 @@ Ten services gophercloud supports have **zero** `koc` surface:
 `db` (6), `objectstorage` (5), `keymanager` (4), `messaging` (3), `workflow` (3),
 `metric` (1), `container` (1).
 
+## Minimum supported cloud
+
+**`koc` targets OpenStack Zed (2022.2) and newer.** The fleet includes old
+clouds; a command that only works on the newest release is not done.
+
+What each service's Zed release caps at, read from the Zed sdists on PyPI:
+
+| Service | Zed version | Max microversion | Consequence |
+| --- | --- | --- | --- |
+| ironic | 21.4.0 | **1.82** | no `unhold` (1.85), `firmware` (1.86), `service` (1.87), child nodes (1.83), runbooks (1.92), inspection rules (1.96) |
+| nova | 26.x | **2.93** | |
+| cinder | 21.3.2 | **3.70** | |
+| placement | 9.0.0 | **1.39** | |
+| keystone, glance, neutron, designate, octavia | — | no microversions | capability is discovered per-extension (`network extension list`) |
+
+`koc`'s defaults (`--os-*-api-version=latest`) already negotiate downward, so the
+common path is safe. The hazard is the *version-gated* command: on Zed, ironic
+answers `/v1/nodes/<n>/firmware` with a 404 because the endpoint does not exist
+below 1.86, and a bare 404 reads like "no such node". Those commands route their
+error through `internal/cli/baremetal.explainMicroversion`, which re-reads the
+endpoint's version document and turns the 404/406 into "requires ironic API 1.86
+(OpenStack 2023.2); this cloud supports up to 1.82".
+
+The rule for new commands: **look up the microversion the API gated the feature
+behind** (`ironic/api/controllers/v1/versions.py` in the sdist is the list) and,
+if it is above the Zed cap in the table, wrap the call in that guard and say so
+in the command's `Short`.
+
+This is also why `python-ironic-inspector-client` is a baseline rather than a
+deprecation note. Ironic removed the `inspector` inspect interface in 33.0.0
+(the 2026.1 cycle) and moved inspection rules into its own API at 1.96, so on a
+new cloud `baremetal node inspect` + `baremetal node inventory show` replace it.
+On Zed the inspector is the only in-band inspection there is, so
+`koc baremetal introspection …` stays.
+
 ## Prioritised gaps
+
+Sequenced into commit-sized batches, with per-batch counts and a definition of
+done, in **`docs/proposals/coverage-tiers.md`**. The tiers below are the
+inventory; that document is the build order.
 
 ### Tier 1 — no vendor change (capability already in `vendor/`, just unwired)
 
 | Vendored package | Unlocks |
 | --- | --- |
+| `baremetal/v1/nodes` (`ChangeProvisionState` targets) | `baremetal node adopt/clean/rescue/unrescue/service/unhold` |
+| `baremetal/v1/nodes` (`Validate`, `ListVirtualInterfaces`/`Attach`/`Detach`, `ListBIOSSettings`/`GetBIOSSetting`, `ListFirmware`, `InjectNMI`) | `baremetal node validate`, `node vif list/attach/detach`, `node bios setting list/show`, `node firmware list`, `node inject nmi` |
+| `baremetal/v1/{drivers,conductors}` (`GetDriverProperties`/`GetDriverDiskProperties`/`Get`) | `baremetal driver property list`, `driver raid property list`, `conductor show` |
 | `identity/v3/roles` (Create/Update/Delete + role-inference rules) | `role create/delete/set`, `implied role create/delete/list` |
 | `compute/v2/servers` (`Shelve`/`Unshelve`/`Rescue`/`Unrescue`/`CreateImage`/`GetPassword`) | `server shelve/unshelve/rescue/unrescue`, `server image create` |
 | `identity/v3/{regions,services,users,tokens}` | `region create/delete/set/show`, `service create/delete/set`, `user password set`, `token revoke` |
@@ -139,12 +195,15 @@ Ten services gophercloud supports have **zero** `koc` surface:
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
 
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
-`block storage cluster/log level/manageable`; ironic chassis, port groups, deploy
-templates, runbooks, traits, VIFs, BIOS, history, volume connectors/targets;
-Neutron metering, flavors, L3 conntrack helpers, local IPs, NDP proxies, segment
-ranges, default SG rules; octavia availability zones and profiles; all of Swift
-and Manila. (Designate is no longer on this list — the raw fallback is written and
-its whole surface is covered; see below.)
+`block storage cluster/log level/manageable`; ironic **inspection rules** (API
+1.96 — the replacement for the deleted introspection commands), chassis, port
+groups, deploy templates, runbooks, traits, history, console, shards, volume
+connectors/targets; Neutron metering, flavors, L3 conntrack helpers, local IPs,
+NDP proxies, segment ranges, default SG rules; octavia availability zones and
+profiles; all of Swift and Manila. (Designate is no longer on this list — the raw
+fallback is written and its whole surface is covered; see below. Ironic VIFs and
+BIOS settings are no longer here either — `baremetal/v1/nodes` carries typed
+calls for both, so they are Tier 1.)
 
 Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
@@ -221,12 +280,15 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (400 leaf commands at the snapshot above)
+# 1. koc's own command tree (397 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
 # import info`. Read runnability off the Usage block — a pure group's only usage
 # form is "<path> [command]".
+# Exclude cobra's five built-ins — `help` and `completion {bash,zsh,fish,powershell}`
+# appear under Available Commands but are not koc surface. Forgetting them is a
+# reliable +5.
 
 # 2. upstream baselines — PyPI is reachable where opendev.org is not
 pip download --no-deps --no-binary :all: python-openstackclient -d osc

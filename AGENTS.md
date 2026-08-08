@@ -112,6 +112,39 @@ call the right `auth.Client` factory. When a command needs a **second** service
 (cross-service name resolution), return the `*auth.Client` too and derive the
 secondary client lazily (see `server/client.go` `newComputeSession`).
 
+## Minimum supported cloud: Zed (2022.2)
+
+`koc` runs against a fleet spanning **OpenStack Zed (2022.2) to current**. A
+command that only works on the newest release is not done. Each service's Zed
+release caps its microversion at:
+
+| Service | Zed version | Max microversion |
+| --- | --- | --- |
+| ironic | 21.4.0 | **1.82** |
+| nova | 26.x | **2.93** |
+| cinder | 21.3.2 | **3.70** |
+| placement | 9.0.0 | **1.39** |
+| keystone, glance, neutron, designate, octavia | — | no microversions; capability is per-extension |
+
+The `--os-*-api-version` defaults are `latest`, which negotiates downward, so
+the common path already works. The hazard is a **version-gated endpoint**: below
+its microversion it does not exist, and ironic answers 404 — indistinguishable
+from "no such node" unless you say otherwise.
+
+So when adding a command: **look up the microversion the API gated the feature
+behind** (`ironic/api/controllers/v1/versions.py` in the sdist is the canonical
+list; PyPI is reachable where opendev.org is not). If it is above the cap in the
+table, route the error through `internal/cli/baremetal.explainMicroversion` (or
+the equivalent for that service) and state the requirement in the command's
+`Short`. Known post-Zed ironic features: `node children list` (1.83), `node
+unhold` (1.85), `node firmware list` (1.86), `node service` (1.87), runbooks
+(1.92), inspection rules (1.96).
+
+The same rule keeps `koc baremetal introspection …` alive: ironic dropped the
+`inspector` inspect interface in 33.0.0 (2026.1) and moved inspection rules into
+its own API at 1.96, but on Zed the inspector is the only in-band inspection
+there is. Both dialects ship.
+
 ## Conventions
 
 - **Errors**: wrap with `fmt.Errorf("...: %w", err)`; non-zero exit on failure
