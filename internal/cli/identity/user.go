@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
 	"github.com/spf13/cobra"
 
@@ -26,6 +27,7 @@ func newUserCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newUserCreateCommand(a, o),
 		newUserDeleteCommand(a, o),
 		newUserSetCommand(a, o),
+		newUserPasswordCommand(a, o),
 	)
 	return cmd
 }
@@ -282,6 +284,70 @@ func runUserSet(ctx context.Context, client *gophercloud.ServiceClient, nameOrID
 	}
 	if _, err := users.Update(ctx, client, id, opts).Extract(); err != nil {
 		return fmt.Errorf("updating user %q: %w", nameOrID, err)
+	}
+	return nil
+}
+
+// --- password set -----------------------------------------------------------
+
+// newUserPasswordCommand builds "user password set". Upstream spells it as a
+// three-word command, so "password" is a nested parent under "user".
+func newUserPasswordCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var password, original string
+	set := &cobra.Command{
+		Use:   "set",
+		Short: "Change the password of the authenticating user",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, ac, err := newIdentityAuthClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			userID, err := authenticatedUserID(ctx, client, ac.Provider.Token())
+			if err != nil {
+				return err
+			}
+			return runUserPasswordSet(ctx, client, userID, password, original)
+		},
+	}
+	fl := set.Flags()
+	fl.StringVar(&password, "password", "", "new password")
+	fl.StringVar(&original, "original-password", "", "current password")
+	_ = set.MarkFlagRequired("password")
+	_ = set.MarkFlagRequired("original-password")
+
+	cmd := &cobra.Command{Use: "password", Short: "Manage the authenticating user's password"}
+	cmd.AddCommand(set)
+	return cmd
+}
+
+// authenticatedUserID introspects the current token to recover the user it was
+// issued for. Keystone's password-change endpoint is addressed by user ID and
+// the ID is not carried on the client, so it has to come from the token.
+func authenticatedUserID(ctx context.Context, client *gophercloud.ServiceClient, token string) (string, error) {
+	u, err := tokens.Get(ctx, client, token).ExtractUser()
+	if err != nil {
+		return "", fmt.Errorf("introspecting the current token: %w", err)
+	}
+	return u.ID, nil
+}
+
+// runUserPasswordSet changes the password of the user the call authenticated
+// as. Keystone's POST /users/{id}/password is self-service only — it requires
+// the original password and refuses to act on another user; changing someone
+// else's password is `user set --password`, which is a different endpoint.
+func runUserPasswordSet(ctx context.Context, client *gophercloud.ServiceClient, userID, password, original string) error {
+	if userID == "" {
+		return fmt.Errorf("could not determine the authenticated user's ID; " +
+			"use \"user set <user> --password\" to change another user's password")
+	}
+	opts := users.ChangePasswordOpts{OriginalPassword: original, Password: password}
+	if err := users.ChangePassword(ctx, client, userID, opts).ExtractErr(); err != nil {
+		return fmt.Errorf("changing password: %w", err)
 	}
 	return nil
 }

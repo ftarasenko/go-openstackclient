@@ -27,5 +27,6 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 		newApplicationCommand(a, o),
 		newTokenCommand(a, o),
 		newGroupCommand(a, o),
+		newImpliedRoleCommand(a, o),
 	}
 }

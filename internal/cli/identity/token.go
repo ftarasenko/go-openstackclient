@@ -23,6 +23,7 @@ import (
 func newTokenCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{Use: "token", Short: "Manage tokens"}
 	cmd.AddCommand(newTokenIssueCommand(a, o))
+	cmd.AddCommand(newTokenRevokeCommand(a, o))
 	return cmd
 }
 
@@ -69,4 +70,37 @@ func runTokenIssue(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	return o.WriteSingle(w,
 		[]string{"id", "expires", "project_id", "user_id"},
 		[]any{id, formatTime(tok.ExpiresAt), projectID, userID})
+}
+
+// --- revoke -----------------------------------------------------------------
+
+func newTokenRevokeCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "revoke <token>",
+		Short: "Revoke an authentication token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newIdentityClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runTokenRevoke(ctx, client, args[0])
+		},
+	}
+}
+
+// runTokenRevoke deletes the subject token. Keystone takes it in the
+// X-Subject-Token header rather than the URL, which gophercloud's Revoke
+// handles — the token being revoked is not the one authenticating the call.
+func runTokenRevoke(ctx context.Context, client *gophercloud.ServiceClient, token string) error {
+	// RevokeResult embeds commonResult, which carries no ExtractErr, so the
+	// error is read off the Result directly.
+	if res := tokens.Revoke(ctx, client, token); res.Err != nil {
+		return fmt.Errorf("revoking token: %w", res.Err)
+	}
+	return nil
 }

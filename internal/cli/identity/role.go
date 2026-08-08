@@ -26,6 +26,9 @@ func newRoleCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newRoleAddCommand(a, o),
 		newRoleRemoveCommand(a, o),
 		newRoleAssignmentCommand(a, o),
+		newRoleCreateCommand(a, o),
+		newRoleSetCommand(a, o),
+		newRoleDeleteCommand(a, o),
 	)
 	return cmd
 }

@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 420 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 435 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**391 of 844 in-scope upstream commands (46%).** Of `koc`'s 420 leaf commands,
-391 are upstream-equivalent and 29 are koc-native.
+**406 of 844 in-scope upstream commands (48%).** Of `koc`'s 435 leaf commands,
+406 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -76,7 +76,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 31/94 (33%) | **31/38 (82%)** |
-| `openstack.identity.v3` | 43/128 (34%) | **43/60 (72%)** |
+| `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
 | `openstack.network.v2` | 57/165 (35%) | **57/92 (62%)** |
 | `openstack.common` | 4/11 (36%) | 4/11 — `quota show/set`, `extension list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
@@ -168,9 +168,7 @@ inventory; that document is the build order.
 
 | Vendored package | Unlocks |
 | --- | --- |
-| `identity/v3/roles` (Create/Update/Delete + role-inference rules) | `role create/delete/set`, `implied role create/delete/list` |
 | `compute/v2/servers` (`Shelve`/`Unshelve`/`Rescue`/`Unrescue`/`CreateImage`/`GetPassword`) | `server shelve/unshelve/rescue/unrescue`, `server image create` |
-| `identity/v3/{regions,services,users,tokens}` | `region create/delete/set/show`, `service create/delete/set`, `user password set`, `token revoke` |
 | `blockstorage/v3/{snapshots,backups}` (`Update`) | `volume snapshot set/unset`, `volume backup set/unset` |
 | `networking/v2/{subnets,security/groups}` (nil-update) | `subnet unset`, `security group unset` (`port unset` is now wired) |
 | `networking/v2/extensions/layer3/routers` (`GatewayInfo`) | `router add/remove gateway` |
