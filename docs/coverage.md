@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 461 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 467 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**432 of 844 in-scope upstream commands (51%).** Of `koc`'s 461 leaf commands,
-432 are upstream-equivalent and 29 are koc-native.
+**438 of 844 in-scope upstream commands (52%).** Of `koc`'s 467 leaf commands,
+438 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -95,7 +95,7 @@ backend capability/pools, host failover, transfers.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 46/118 (39%) | the full provision-state verb set, node lifecycle, power, ports, VIFs, BIOS settings, firmware, the driver and conductor nouns and stored inventory are solid; missing allocations, chassis, port groups, traits, history, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
+| ironic (`baremetal`) | 52/118 (44%) | the full provision-state verb set, node lifecycle, power, ports, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing chassis, port groups, traits, history, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 63/82 (77%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented) and `listener stats show`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
@@ -103,20 +103,21 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **69 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **78 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
 | --- | --- |
 | `networking` | 14/50 |
 | `identity` | 11/27 |
-| `compute` | 10/20 |
-| `blockstorage` | 7/24 |
-| `baremetal` | 4/9 |
+| `compute` | 15/20 |
+| `blockstorage` | 9/24 |
+| `baremetal` | 5/9 |
 | `image` | 4/5 |
 | `placement` | 3/6 |
 | `dns` | 6/6 |
 | `loadbalancer` | 10/13 |
+| `baremetalintrospection` | 1/3 |
 
 Ten services gophercloud supports have **zero** `koc` surface:
 `sharedfilesystems` (14 pkgs), `orchestration` (7), `containerinfra` (6),
@@ -185,7 +186,6 @@ It returns when security-group tag support does.
   `quotasets` are now wired — `volume attachment *`, `quota show/set`)
 - `networking/v2/extensions/{layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments}` (`subnetpools` and `trunks` are now wired)
 - `image/v2/tasks` → `image task list/show` (`imageimport` is now wired — `image import`, `image import info`; `image stage` and `image stores list` remain)
-- `baremetal/v1/allocations` → `baremetal allocation *`
 - `placement/v1/{resourceclasses,usages,allocationcandidates}`
 
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
