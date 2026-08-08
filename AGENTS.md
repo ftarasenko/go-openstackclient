@@ -292,12 +292,38 @@ single vague bullet.
    first: dispatch `delete-release.yml` with the tag, then re-dispatch
    `release.yml`. Do not paper over a partial release by re-running the same tag.
 
+## Private data never leaves the org
+
+`github.com/ftarasenko/go-openstackclient` is a **public** repository. Nothing
+committed to it — code, comments, docs, tests, fixtures, commit messages — may
+carry private data:
+
+- cloud and host names (`*.itkey.com`, node names), internal IPs and URLs,
+  cluster/region names;
+- tokens, passwords, `X-Auth-Token` values, AppRole IDs, certificates, kubeconfigs;
+- customer or project identifiers, real tenant/user UUIDs, real server names;
+- raw request/response captures from a real cloud (`--debug` output), which
+  contain all of the above.
+
+Verification against a real cloud is still expected — report the *findings*
+(ratios, timings, "identical output", upstream `file:line` citations) and keep
+the evidence out of the repository. Fixtures and examples use
+`example.com`/RFC 5737 addresses and synthetic UUIDs. When in doubt, leave it
+out and mention it in the conversation instead.
+
+Two documents predate this rule and still name a real cloud
+(`docs/verification/2026-08-07-parity-pass-results.md`,
+`docs/proposals/kube-credentials.md`); do not add more, and do not copy their
+style.
+
 ## Do / don't
 
 - **Do** keep new work reproducible offline, tested via the `runXxx` seam, and
   routed through the output layer.
+- **Do** scrub private data before every commit — see "Private data never leaves
+  the org".
 - **Do** update `docs/coverage.md` in the same commit as any command-surface
   change.
 - **Don't** hand-edit `vendor/`, import gophercloud v1, format structured output
-  inline, land a new command without touching `docs/coverage.md`, or push to a
-  branch other than the designated feature branch.
+  inline, land a new command without touching `docs/coverage.md`, push private
+  data to GitHub, or push to a branch other than the designated feature branch.
