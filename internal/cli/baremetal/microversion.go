@@ -46,8 +46,9 @@ type ironicFeature struct {
 // MINOR_MAX_VERSION read across the stable series (21.4 → 1.82, 22.0 → 1.83,
 // 23.0 → 1.87, 24.1 → 1.90, 26.1 → 1.93, 29.0 → 1.96).
 var (
-	featureNodeUnhold  = ironicFeature{"baremetal node unhold", "1.85", "OpenStack 2023.2"}
-	featureNodeService = ironicFeature{"baremetal node service", "1.87", "OpenStack 2023.2"}
+	featureNodeUnhold   = ironicFeature{"baremetal node unhold", "1.85", "OpenStack 2023.2"}
+	featureNodeFirmware = ironicFeature{"baremetal node firmware list", "1.86", "OpenStack 2023.2"}
+	featureNodeService  = ironicFeature{"baremetal node service", "1.87", "OpenStack 2023.2"}
 )
 
 // ironicMaxVersionHeader is set by ironic on every response, including errors.

@@ -46,6 +46,11 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newNodeServiceCommand(a, o))
 	cmd.AddCommand(newNodeRescueCommand(a, o))
 	cmd.AddCommand(newNodeUnholdCommand(a, o))
+	cmd.AddCommand(newNodeValidateCommand(a, o))
+	cmd.AddCommand(newNodeVIFCommand(a, o))
+	cmd.AddCommand(newNodeBIOSCommand(a, o))
+	cmd.AddCommand(newNodeFirmwareCommand(a, o))
+	cmd.AddCommand(newNodeInjectNMICommand(a, o))
 	return cmd
 }
 
