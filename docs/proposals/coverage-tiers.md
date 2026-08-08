@@ -315,11 +315,35 @@ These are projections from counted command lists, not estimates — but they
 assume every command lands, and flag parity is a separate axis that moves none
 of these numbers.
 
-## Verifying against the fleet
+## Verifying: the API source, not a cloud probe
 
-`docs/verification/2026-08-08-tier-plan-probe.md` is the prompt for a session
-with cloud access. It settles the question this plan cannot answer offline —
-which of these APIs each cloud actually exposes — and because the fleet spans
-Zed to current, **run it once per distinct release**, not once. Its output is a
-per-cloud capability matrix: the batches every cloud can take, and the ones that
-ship guarded because the oldest cloud cannot.
+Tier 2 and Tier 3 are **not gated on a live probe**. The question a probe would
+answer — "does this endpoint exist here?" — is already answered by the Zed
+sdists on PyPI, and answered better: Zed is the floor, so an endpoint present in
+`nova-26.x` / `cinder-21.x` / `ironic-21.4` / `placement-9.0` is present on
+every cloud in range, and the request shape those controllers validate is the
+shape that has to go on the wire.
+
+So the verification loop for each batch is:
+
+1. **Read the API source** for the endpoint — the controller and its JSON schema
+   in the Zed sdist, plus the same file in a current release when the two might
+   differ. That is what pins the request body, the microversion gate, and the
+   response shape.
+2. **Diff the flags** against the OSC parser for the command.
+3. **Implement**, with fixtures derived from the API source rather than copied
+   from gophercloud's own tests — those have now been wrong twice
+   (`nodes.GetBIOSSetting`, `backups.Update`), each time because a fixture
+   encoded a payload the service never sends.
+4. **Verify** with `go test ./...` through the `runXxx` seam.
+
+What this does *not* answer is which optional neutron extensions a given cloud
+enables. That changes the **priority** of T2.10's sub-batches, not their
+correctness: an absent extension makes the command return neutron's own error,
+which is the right behaviour anyway. `koc network extension list` answers it at
+runtime, for whoever is holding the cloud.
+
+`docs/verification/2026-08-08-tier-plan-probe.md` therefore stops being a gate
+and becomes what it is useful as: a per-release capability snapshot, worth
+running once per distinct cloud when someone has access, not something the
+implementation waits on.

@@ -22,6 +22,7 @@ github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs
 github.com/gophercloud/gophercloud/v2/openstack/compute/v2/quotasets
 github.com/gophercloud/gophercloud/v2/openstack/compute/v2/remoteconsoles
 github.com/gophercloud/gophercloud/v2/openstack/compute/v2/secgroups
+github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups
 github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers
 github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services
 github.com/gophercloud/gophercloud/v2/openstack/compute/v2/volumeattach
