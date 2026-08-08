@@ -311,10 +311,11 @@ the evidence out of the repository. Fixtures and examples use
 `example.com`/RFC 5737 addresses and synthetic UUIDs. When in doubt, leave it
 out and mention it in the conversation instead.
 
-Two documents predate this rule and still name a real cloud
-(`docs/verification/2026-08-07-parity-pass-results.md`,
-`docs/proposals/kube-credentials.md`); do not add more, and do not copy their
-style.
+The rule was applied retroactively: on 2026-08-08 the history was rewritten with
+`git filter-repo --sensitive-data-removal` to purge two documents that named a
+real cloud and its hosts, so every tag and branch changed SHA. Do not make that
+necessary again — anything once pushed survives in forks, clones and pull-request
+refs no matter what the history says afterwards.
 
 ## Do / don't
 
