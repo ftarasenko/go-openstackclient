@@ -90,7 +90,10 @@ func ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref
 	if ref == "" || IsUUID(ref) {
 		return ref, nil
 	}
-	pages, err := servers.List(computeClient, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
+	// ListSimple: nova's non-detail listing returns the ID and name this lookup
+	// needs, where the detail view would ship every attribute of every regex
+	// match (user_data included) to pick one UUID out of it.
+	pages, err := servers.ListSimple(computeClient, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("looking up server %q: %w", ref, err)
 	}

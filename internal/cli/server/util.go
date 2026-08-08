@@ -141,7 +141,12 @@ func resolveServerID(ctx context.Context, client *gophercloud.ServiceClient, ref
 	// (write verbs like delete/stop must work cross-project). Nova silently
 	// ignores all_tenants for non-admin tokens, so setting it here is safe and
 	// does not broaden a regular user's visibility.
-	pages, err := servers.List(client, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
+	//
+	// ListSimple, not List: only the ID and name are read here, and that is
+	// exactly what nova's non-detail listing returns. The detail view would ship
+	// every attribute of every server whose name matches the regex — user_data
+	// included — to pick one UUID out of it.
+	pages, err := servers.ListSimple(client, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolving server %q: %w", ref, err)
 	}
@@ -230,17 +235,66 @@ func formatNetworks(addresses map[string]any) string {
 
 // flavorName extracts a human-readable flavor name from the server's embedded
 // flavor object (the "original_name" key, present from microversion 2.47).
-func flavorName(flavor map[string]any) string {
+// flavorName is the display name of a server's embedded flavor. Nova embeds the
+// name only from microversion 2.47; below that the object carries just an ID, so
+// names resolved separately (see serverFlavorNames) are looked up in names.
+func flavorName(flavor map[string]any, names map[string]string) string {
 	if flavor == nil {
 		return ""
 	}
 	if n, ok := flavor["original_name"].(string); ok {
 		return n
 	}
-	if n, ok := flavor["id"].(string); ok {
+	id, ok := flavor["id"].(string)
+	if !ok {
+		return ""
+	}
+	if n, ok := names[id]; ok {
 		return n
 	}
-	return ""
+	return id
+}
+
+// serverFlavorNames maps flavor ID → name for the servers in list, for the
+// microversions where nova does not embed the name.
+//
+// "server list --long" is the only caller: paying for the 2.47 detail response
+// just to read one string per row costs twenty times the payload, because
+// everything nova added between 2.3 and 2.47 — user_data above all — rides
+// along with it. One flavor listing answers the whole page instead.
+//
+// Best effort by design: this decorates a column that already has a usable
+// value. A flavor the caller cannot see, or a listing that fails outright,
+// leaves the IDs in place rather than failing the list.
+func serverFlavorNames(ctx context.Context, client *gophercloud.ServiceClient, list []servers.Server) map[string]string {
+	needed := false
+	for _, s := range list {
+		if _, named := s.Flavor["original_name"].(string); !named {
+			if _, hasID := s.Flavor["id"].(string); hasID {
+				needed = true
+				break
+			}
+		}
+	}
+	if !needed {
+		return nil
+	}
+	// AllAccess so an admin listing another project's servers still sees their
+	// private flavors; nova silently narrows it to the public set for a
+	// non-admin token rather than rejecting the request.
+	pages, err := flavors.ListDetail(client, flavors.ListOpts{AccessType: flavors.AllAccess}).AllPages(ctx)
+	if err != nil {
+		return nil
+	}
+	all, err := flavors.ExtractFlavors(pages)
+	if err != nil {
+		return nil
+	}
+	names := make(map[string]string, len(all))
+	for _, fl := range all {
+		names[fl.ID] = fl.Name
+	}
+	return names
 }
 
 // imageID extracts the image ID from the server's embedded image object.

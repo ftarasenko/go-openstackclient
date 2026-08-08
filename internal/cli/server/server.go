@@ -130,6 +130,11 @@ type serverListFlags struct {
 	projectDomain string
 	user          string
 	userDomain    string
+
+	// pinMicroversion is set when the operator left the compute microversion at
+	// koc's default, letting the list call negotiate the lowest version that
+	// still answers it — see serverListMicroversion.
+	pinMicroversion bool
 }
 
 // serverListQuery augments gophercloud's servers.ListOpts with the KeyStack
@@ -190,6 +195,7 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			f.pinMicroversion = a.ComputeAPIVersionPinnable()
 			return runServerList(ctx, client, o, f, projectID, userID, cmd.OutOrStdout())
 		},
 	}
@@ -266,19 +272,80 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		DeletedSince:  f.deletedSince,
 		DeletedBefore: f.deletedBefore,
 	}
+	listClient := client
+	if f.pinMicroversion {
+		// setMicroversionHeader rewrites the header from client.Microversion on
+		// every request, so the version is lowered on a shallow copy of the
+		// service client rather than through RequestOpts (same pattern as
+		// serverActionRaw).
+		pinned := *client
+		pinned.Microversion = serverListMicroversion(f)
+		listClient = &pinned
+	}
 	// Nova treats limit only as a page size, so --limit is enforced as a hard
 	// result cap; Collect also stops paging once it is met.
-	all, err := paging.Collect(ctx, servers.List(client, opts), f.limit, servers.ExtractServers)
+	pager := servers.List(listClient, opts)
+	basic := serverListBasic(o, f)
+	if basic {
+		pager = servers.ListSimple(listClient, opts)
+	}
+	all, err := paging.Collect(ctx, pager, f.limit, servers.ExtractServers)
 	if err != nil {
 		if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
 			return keystackExtErr(fmt.Errorf("listing servers: %w", err), "created/deleted server-list filters")
 		}
 		return fmt.Errorf("listing servers: %w", err)
 	}
-	return o.WriteList(w, serverListTable(all, f.long))
+	if basic {
+		return o.WriteList(w, serverBasicTable(all))
+	}
+	var flavorNames map[string]string
+	if f.long {
+		flavorNames = serverFlavorNames(ctx, client, all)
+	}
+	return o.WriteList(w, serverListTable(all, f.long, flavorNames))
 }
 
-func serverListTable(list []servers.Server, long bool) output.Table {
+// serverListMicroversion is the lowest compute microversion that still answers
+// the request in full.
+//
+// koc negotiates "latest", but nova has no way to select fields and widens
+// every entry of /servers/detail as the microversion climbs: 2.3 alone adds
+// OS-EXT-SRV-ATTR:user_data, which grew one measured listing twentyfold — none
+// of it displayed. Each version below is the one nova's own query schema
+// requires, so the rendered table is unchanged.
+func serverListMicroversion(f *serverListFlags) string {
+	// Ordered lowest requirement first; the last match wins.
+	mv := "2.1"
+	if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
+		// The KeyStack created-/deleted-* filters only enter nova's query schema
+		// at 2.66 (api/openstack/compute/schemas/servers.py query_params_v266).
+		mv = "2.66"
+	}
+	if f.user != "" {
+		// user_id is rejected for a non-admin token below 2.83.
+		mv = "2.83"
+	}
+	return mv
+}
+
+// serverListBasic reports whether nova's non-detail listing (GET /servers,
+// which returns id/name/links only) can answer the request. It costs a fraction
+// of /servers/detail, so the scripting idiom "server list -c ID -f value" takes
+// it.
+func serverListBasic(o *output.Options, f *serverListFlags) bool {
+	return !f.long && o.ColumnsWithin("ID", "Name")
+}
+
+func serverBasicTable(list []servers.Server) output.Table {
+	t := output.Table{Columns: []string{"ID", "Name"}, Rows: make([][]any, 0, len(list))}
+	for _, s := range list {
+		t.Rows = append(t.Rows, []any{s.ID, s.Name})
+	}
+	return t
+}
+
+func serverListTable(list []servers.Server, long bool, flavorNames map[string]string) output.Table {
 	cols := []string{"ID", "Name", "Status", "Networks"}
 	if long {
 		cols = append(cols, "Image", "Flavor", "Availability Zone", "Host", "Task State", "Power State")
@@ -287,7 +354,7 @@ func serverListTable(list []servers.Server, long bool) output.Table {
 	for _, s := range list {
 		row := []any{s.ID, s.Name, s.Status, formatNetworks(s.Addresses)}
 		if long {
-			row = append(row, imageID(s.Image), flavorName(s.Flavor), s.AvailabilityZone, s.Host, s.TaskState, s.PowerState)
+			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone, s.Host, s.TaskState, s.PowerState)
 		}
 		t.Rows = append(t.Rows, row)
 	}
@@ -531,7 +598,7 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	fields := []string{"ID", "Name", "Status", "Networks", "Image", "Flavor", "Admin Password"}
 	values := []any{
 		detail.ID, detail.Name, detail.Status, formatNetworks(detail.Addresses),
-		imageID(detail.Image), flavorName(detail.Flavor), adminPass,
+		imageID(detail.Image), flavorName(detail.Flavor, nil), adminPass,
 	}
 	return o.WriteSingle(w, fields, values)
 }

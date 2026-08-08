@@ -304,7 +304,7 @@ func TestRunPortList_ServerFilter(t *testing.T) {
 		gotQuery = r.URL.Query()
 		writeJSON(t, w, http.StatusOK, `{"ports":[{"id":"port-1","status":"ACTIVE"}]}`)
 	})
-	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"servers":[{"id":"server-uuid","name":"vm1"}]}`)
 	})

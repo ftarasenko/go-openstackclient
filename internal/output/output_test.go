@@ -613,3 +613,26 @@ func TestTimestampsInListRows(t *testing.T) {
 		t.Errorf("Deleted At = %v, want null", rows[0]["Deleted At"])
 	}
 }
+
+// ColumnsWithin lets a command skip fetching what nobody selected, so it must
+// answer "no" whenever anything outside the narrow set is still needed.
+func TestColumnsWithin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    Options
+		want bool
+	}{
+		{"no selection means every column", Options{}, false},
+		{"exact", Options{Columns: []string{"ID"}}, true},
+		{"case and space insensitive", Options{Columns: []string{" id ", "NAME"}}, true},
+		{"one column outside the set", Options{Columns: []string{"ID", "Status"}}, false},
+		{"sort key outside the set", Options{Columns: []string{"ID"}, SortColumns: []string{"Status"}}, false},
+		{"sort key inside the set", Options{Columns: []string{"ID"}, SortColumns: []string{"Name"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.o.ColumnsWithin("ID", "Name"); got != tc.want {
+				t.Errorf("ColumnsWithin(ID, Name) = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

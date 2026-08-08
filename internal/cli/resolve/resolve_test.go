@@ -172,7 +172,7 @@ func TestServerID_ExactNameWinsOverSubstringMatch(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("name"); got != "web" {
 			t.Errorf("name filter = %q, want web", got)
 		}
@@ -198,7 +198,7 @@ func TestServerID_ExactNameWinsOverSubstringMatch(t *testing.T) {
 func TestServerID_UUIDPassthroughSkipsAPI(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("a UUID reference must not hit the compute API")
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -217,7 +217,7 @@ func TestServerID_MultipleExactMatchesError(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"servers":[{"id":"srv-1","name":"web"},{"id":"srv-2","name":"web"}]}`))

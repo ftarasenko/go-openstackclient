@@ -430,3 +430,33 @@ func TestOverride_VaultOpenrcOutranksNamedCloud(t *testing.T) {
 		t.Errorf("password = %q, want the named cloud's", ao.Password)
 	}
 }
+
+// Lowering the compute microversion is only allowed while it is still koc's own
+// default: an operator who named a version — on the command line or through
+// OS_COMPUTE_API_VERSION — gets exactly that one.
+func TestComputeAPIVersionPinnable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+		args []string
+		want bool
+	}{
+		{"default", "", nil, true},
+		{"explicit flag", "", []string{"--os-compute-api-version", "2.79"}, false},
+		{"explicit flag naming the default", "", []string{"--os-compute-api-version", "latest"}, false},
+		{"environment", "2.79", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OS_COMPUTE_API_VERSION", tc.env)
+			o := &Options{}
+			fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
+			o.AddFlags(fs)
+			if err := fs.Parse(tc.args); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := o.ComputeAPIVersionPinnable(); got != tc.want {
+				t.Errorf("ComputeAPIVersionPinnable() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

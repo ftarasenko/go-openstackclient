@@ -304,6 +304,45 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 	}
 }
 
+// ColumnsWithin reports whether every column the caller asked to display or
+// sort by is one of names — that is, whether the narrower set is enough to
+// answer the request. An empty -c/--column selection means "all columns", so it
+// is never within a narrower set.
+//
+// It lets a command skip fetching the data behind columns nobody asked for:
+// "server list -c ID" is answered by nova's id/name listing instead of the far
+// larger detail view.
+func (o *Options) ColumnsWithin(names ...string) bool {
+	if len(o.Columns) == 0 {
+		return false
+	}
+	for _, want := range o.Columns {
+		if !matchesAnyColumn(want, names) {
+			return false
+		}
+	}
+	// Sorting runs against the full column set before -c narrows it, so a sort
+	// key that is not displayed still has to be fetched.
+	for _, want := range o.SortColumns {
+		if !matchesAnyColumn(want, names) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesAnyColumn reports whether the requested column name matches one of the
+// available headers, using the same case- and space-insensitive rule as
+// -c/--column selection everywhere else.
+func matchesAnyColumn(want string, available []string) bool {
+	for _, have := range available {
+		if strings.EqualFold(strings.TrimSpace(want), have) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateColumns errors when a requested -c/--column name matches none of the
 // available headers (case-insensitively), matching OSC, which rejects unknown
 // columns rather than silently dropping them.
@@ -313,14 +352,7 @@ func (o *Options) validateColumns(all []string) error {
 	}
 	var unknown []string
 	for _, want := range o.Columns {
-		found := false
-		for _, have := range all {
-			if strings.EqualFold(strings.TrimSpace(want), have) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !matchesAnyColumn(want, all) {
 			unknown = append(unknown, want)
 		}
 	}

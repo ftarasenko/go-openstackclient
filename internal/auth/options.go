@@ -146,6 +146,21 @@ func (o *Options) markForced(flag string) {
 	o.forced[flag] = true
 }
 
+// ComputeAPIVersionPinnable reports whether the compute microversion is still
+// koc's negotiated default, so a command may lower it to the least version that
+// answers the request. An operator who named a microversion gets exactly that
+// one.
+func (o *Options) ComputeAPIVersionPinnable() bool {
+	if o.explicitlySet("os-compute-api-version") {
+		return false
+	}
+	// AddFlags defaults the flag from OS_COMPUTE_API_VERSION, which pflag
+	// cannot tell apart from koc's own default, so the variable is consulted
+	// directly rather than through fs.Changed.
+	return os.Getenv("OS_COMPUTE_API_VERSION") == "" &&
+		o.ComputeAPIVersion == defaultComputeMicroversion
+}
+
 // explicitlySet reports whether the operator actually supplied this flag, as
 // opposed to it sitting at the OS_*-derived default AddFlags installed.
 func (o *Options) explicitlySet(flag string) bool {
