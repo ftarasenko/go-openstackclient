@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 403 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 409 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**374 of 844 in-scope upstream commands (44%).** Of `koc`'s 403 leaf commands,
-374 are upstream-equivalent and 29 are koc-native.
+**380 of 844 in-scope upstream commands (45%).** Of `koc`'s 409 leaf commands,
+380 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -95,7 +95,7 @@ backend capability/pools, host failover, transfers.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 29/118 (25%) | node lifecycle, power, ports, driver details and stored inventory are solid; missing the provision verbs `adopt`/`clean`/`rescue`/`service`, `node validate`, VIFs, BIOS settings, firmware, allocations, chassis, port groups, traits, history, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
+| ironic (`baremetal`) | 35/118 (30%) | the full provision-state verb set, node lifecycle, power, ports, driver details and stored inventory are solid; missing `node validate`, VIFs, BIOS settings, firmware, allocations, chassis, port groups, traits, history, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 63/82 (77%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented) and `listener stats show`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
 | osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
@@ -168,7 +168,6 @@ inventory; that document is the build order.
 
 | Vendored package | Unlocks |
 | --- | --- |
-| `baremetal/v1/nodes` (`ChangeProvisionState` targets) | `baremetal node adopt/clean/rescue/unrescue/service/unhold` |
 | `baremetal/v1/nodes` (`Validate`, `ListVirtualInterfaces`/`Attach`/`Detach`, `ListBIOSSettings`/`GetBIOSSetting`, `ListFirmware`, `InjectNMI`) | `baremetal node validate`, `node vif list/attach/detach`, `node bios setting list/show`, `node firmware list`, `node inject nmi` |
 | `baremetal/v1/{drivers,conductors}` (`GetDriverProperties`/`GetDriverDiskProperties`/`Get`) | `baremetal driver property list`, `driver raid property list`, `conductor show` |
 | `identity/v3/roles` (Create/Update/Delete + role-inference rules) | `role create/delete/set`, `implied role create/delete/list` |

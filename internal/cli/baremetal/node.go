@@ -42,6 +42,10 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	for _, sub := range newNodeProvisionCommands(a, o) {
 		cmd.AddCommand(sub)
 	}
+	cmd.AddCommand(newNodeCleanCommand(a, o))
+	cmd.AddCommand(newNodeServiceCommand(a, o))
+	cmd.AddCommand(newNodeRescueCommand(a, o))
+	cmd.AddCommand(newNodeUnholdCommand(a, o))
 	return cmd
 }
 

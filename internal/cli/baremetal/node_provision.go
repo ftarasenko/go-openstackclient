@@ -32,8 +32,10 @@ type provisionTransition struct {
 	wantState nodes.ProvisionState
 }
 
-// provisionTransitions enumerates the supported provision-state verbs, mirroring
-// upstream `openstack baremetal node <verb>`.
+// provisionTransitions enumerates the provision-state verbs that take no verb
+// specific flags, mirroring upstream `openstack baremetal node <verb>`. The
+// verbs with their own payload (clean, service, rescue) and the one with no
+// single destination state (unhold) are built separately below.
 func provisionTransitions() []provisionTransition {
 	return []provisionTransition{
 		{"manage", "Set a node to the manageable provision state", nodes.TargetManage, nodes.Manageable},
@@ -42,6 +44,8 @@ func provisionTransitions() []provisionTransition {
 		{"undeploy", "Undeploy a node (tear down to available)", nodes.TargetDeleted, nodes.Available},
 		{"rebuild", "Rebuild a node", nodes.TargetRebuild, nodes.Active},
 		{"inspect", "Inspect a node's hardware", nodes.TargetInspect, nodes.Manageable},
+		{"adopt", "Adopt an already-provisioned node into ironic", nodes.TargetAdopt, nodes.Active},
+		{"unrescue", "Return a rescued node to active", nodes.TargetUnrescue, nodes.Active},
 	}
 }
 
