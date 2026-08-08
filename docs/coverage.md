@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 435 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 440 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**406 of 844 in-scope upstream commands (48%).** Of `koc`'s 435 leaf commands,
-406 are upstream-equivalent and 29 are koc-native.
+**411 of 844 in-scope upstream commands (49%).** Of `koc`'s 440 leaf commands,
+411 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -73,7 +73,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 
 | Namespace | Raw | Core (niche subsystems excluded) |
 | --- | --- | --- |
-| `openstack.compute.v2` | 60/100 (60%) | **60/88 (68%)** |
+| `openstack.compute.v2` | 65/100 (65%) | **65/88 (74%)** |
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 31/94 (33%) | **31/38 (82%)** |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
@@ -168,7 +168,6 @@ inventory; that document is the build order.
 
 | Vendored package | Unlocks |
 | --- | --- |
-| `compute/v2/servers` (`Shelve`/`Unshelve`/`Rescue`/`Unrescue`/`CreateImage`/`GetPassword`) | `server shelve/unshelve/rescue/unrescue`, `server image create` |
 | `blockstorage/v3/{snapshots,backups}` (`Update`) | `volume snapshot set/unset`, `volume backup set/unset` |
 | `networking/v2/{subnets,security/groups}` (nil-update) | `subnet unset`, `security group unset` (`port unset` is now wired) |
 | `networking/v2/extensions/layer3/routers` (`GatewayInfo`) | `router add/remove gateway` |
