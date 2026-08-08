@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/drivers"
@@ -21,6 +22,8 @@ func newDriverCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	cmd.AddCommand(newDriverListCommand(a, o))
 	cmd.AddCommand(newDriverShowCommand(a, o))
+	cmd.AddCommand(newDriverPropertyCommand(a, o))
+	cmd.AddCommand(newDriverRAIDCommand(a, o))
 	return cmd
 }
 
@@ -152,6 +155,102 @@ func driverListTable(list []drivers.Driver, long bool) output.Table {
 			row = append(row, d.Type, d.DefaultDeployInterface, d.DefaultBootInterface)
 		}
 		t.Rows = append(t.Rows, row)
+	}
+	return t
+}
+
+// --- driver property list / raid property list -------------------------------
+
+// newDriverPropertyCommand builds "baremetal driver property list", and
+// newDriverRAIDCommand "baremetal driver raid property list". Both render the
+// same shape — ironic returns a flat {property: description} object — so they
+// share a renderer and differ only in the endpoint.
+func newDriverPropertyCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "property",
+		Short: "Inspect the driver_info properties a driver expects",
+	}
+	cmd.AddCommand(newDriverPropertyListCommand(a, o))
+	return cmd
+}
+
+func newDriverPropertyListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list <driver>",
+		Short: "List the driver_info properties a driver expects",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runDriverPropertyList(ctx, client, o, args[0], cmd.OutOrStdout())
+		},
+	}
+}
+
+func runDriverPropertyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	props, err := drivers.GetDriverProperties(ctx, client, name).Extract()
+	if err != nil {
+		return fmt.Errorf("listing properties of baremetal driver %s: %w", name, err)
+	}
+	return o.WriteList(w, propertyTable(*props))
+}
+
+func newDriverRAIDCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	property := &cobra.Command{
+		Use:   "property",
+		Short: "Inspect the target_raid_config properties a driver expects",
+	}
+	property.AddCommand(&cobra.Command{
+		Use:   "list <driver>",
+		Short: "List the target_raid_config properties a driver expects",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runDriverRAIDPropertyList(ctx, client, o, args[0], cmd.OutOrStdout())
+		},
+	})
+	cmd := &cobra.Command{
+		Use:   "raid",
+		Short: "Inspect a driver's RAID capabilities",
+	}
+	cmd.AddCommand(property)
+	return cmd
+}
+
+func runDriverRAIDPropertyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	props, err := drivers.GetDriverDiskProperties(ctx, client, name).Extract()
+	if err != nil {
+		return fmt.Errorf("listing RAID properties of baremetal driver %s: %w", name, err)
+	}
+	return o.WriteList(w, propertyTable(*props))
+}
+
+// propertyTable renders ironic's flat {property: description} object as a
+// two-column listing, sorted by property name — the API returns a JSON object,
+// whose member order is not meaningful, so an arbitrary order would make the
+// output differ run to run.
+func propertyTable[M ~map[string]any](props M) output.Table {
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	t := output.Table{Columns: []string{"Property", "Description"}, Rows: make([][]any, 0, len(names))}
+	for _, name := range names {
+		t.Rows = append(t.Rows, []any{name, props[name]})
 	}
 	return t
 }

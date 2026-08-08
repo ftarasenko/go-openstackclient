@@ -21,6 +21,7 @@ func newConductorCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Short: "Manage baremetal conductors",
 	}
 	cmd.AddCommand(newConductorListCommand(a, o))
+	cmd.AddCommand(newConductorShowCommand(a, o))
 	return cmd
 }
 
@@ -96,4 +97,35 @@ func conductorListTable(list []conductors.Conductor, long bool) output.Table {
 		t.Rows = append(t.Rows, row)
 	}
 	return t
+}
+
+// --- show -------------------------------------------------------------------
+
+func newConductorShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <hostname>",
+		Short: "Show details of a baremetal conductor",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runConductorShow(ctx, client, o, args[0], cmd.OutOrStdout())
+		},
+	}
+}
+
+func runConductorShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, hostname string, w io.Writer) error {
+	c, err := conductors.Get(ctx, client, hostname).Extract()
+	if err != nil {
+		return fmt.Errorf("showing baremetal conductor %s: %w", hostname, err)
+	}
+	fields := []string{"hostname", "conductor_group", "alive", "drivers", "created_at", "updated_at"}
+	values := []any{c.Hostname, c.ConductorGroup, c.Alive, c.Drivers, c.CreatedAt, c.UpdatedAt}
+	return o.WriteSingle(w, fields, values)
 }
