@@ -24,6 +24,7 @@ func newSubnetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newSubnetCreateCommand(a, o))
 	cmd.AddCommand(newSubnetDeleteCommand(a, o))
 	cmd.AddCommand(newSubnetSetCommand(a, o))
+	cmd.AddCommand(newSubnetUnsetCommand(a, o))
 	cmd.AddCommand(newSubnetPoolCommand(a, o))
 	return cmd
 }

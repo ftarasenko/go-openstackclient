@@ -3,8 +3,9 @@
 Companion to `docs/coverage.md`. That file measures the gap; this one says in
 what order to close it, what each step costs, and what "done" means for each.
 
-**Baseline for every number here:** `koc` @ this commit — 403 leaf commands,
-374 upstream-equivalent of 844 in-scope (44%).
+**Baseline for every number here:** 403 leaf commands, 374 upstream-equivalent
+of 844 in-scope (44%), as of the commit that added this file. **Tier 1 has since
+shipped in full** — 447 leaf commands, 418/844 (50%). Tier 2 is next.
 
 ## Scope
 
@@ -99,10 +100,11 @@ Non-negotiable, per AGENTS.md — a batch is one `feat:` commit containing:
 
 ---
 
-## Tier 1 — no vendor change (≈45 commands)
+## Tier 1 — no vendor change (≈45 commands) — **DONE**
 
-Every package below is already in `vendor/`; the capability was verified by
-reading the vendored `requests.go`, not assumed.
+Every package below was already in `vendor/`; the capability was verified by
+reading the vendored `requests.go`, not assumed. All six batches shipped;
+44 commands landed and one was dropped (see T1.6).
 
 ### T1.1 — ironic provision-state verbs (6 commands)
 
@@ -160,18 +162,27 @@ unwieldy: roles+implied roles, then regions/services/users/tokens.
 vendored. `server image create --wait` should poll glance for `active` the way
 `node_provision.go` polls ironic — reuse the polling shape, not the code.
 
-### T1.6 — volume and network metadata updates (8 commands)
+### T1.6 — volume and network metadata updates (7 commands, 1 dropped)
 
 `volume snapshot set` / `unset` · `volume backup set` / `unset`
 (`snapshots.Update` / `backups.Update`) ·
-`subnet unset` · `security group unset` (nil-update, exactly like the shipped
-`port unset`) ·
+`subnet unset` (list-entry removal, exactly like the shipped `port unset`) ·
 `router add gateway` / `remove gateway` (`routers.Update` with `GatewayInfo`).
 
 Mechanical: each mirrors a `set`/`unset` pair `koc` already ships for a sibling
 noun.
 
-**Tier 1 total: ≈45 commands → 419/844 (50%).**
+**Tier 1 total: 44 commands → 418/844 (50%).** Landed. `security group unset`
+was dropped rather than implemented: upstream's `UnsetSecurityGroup` takes only
+`--tag`/`--all-tag`, so the nil-update this plan assumed would have shipped a
+command sharing upstream's name with different behaviour. It returns with
+security-group tag support.
+
+Two gophercloud bugs surfaced on the way, both fixed behind a local helper and
+pinned by a test — `nodes.GetBIOSSetting` decodes a key ironic never sends, and
+`backups.Update` builds its body with an empty parent so cinder's
+`body['backup']` raises. Both are the failure mode AGENTS.md warns about: a
+fixture encoding a payload the service never produces.
 
 ---
 

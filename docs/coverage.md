@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 440 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 447 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**411 of 844 in-scope upstream commands (49%).** Of `koc`'s 440 leaf commands,
-411 are upstream-equivalent and 29 are koc-native.
+**418 of 844 in-scope upstream commands (50%).** Of `koc`'s 447 leaf commands,
+418 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -75,9 +75,9 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | --- | --- | --- |
 | `openstack.compute.v2` | 65/100 (65%) | **65/88 (74%)** |
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
-| `openstack.volume.v3` | 31/94 (33%) | **31/38 (82%)** |
+| `openstack.volume.v3` | 35/94 (37%) | **35/38 (92%)** |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
-| `openstack.network.v2` | 57/165 (35%) | **57/92 (62%)** |
+| `openstack.network.v2` | 60/165 (36%) | **60/92 (65%)** |
 | `openstack.common` | 4/11 (36%) | 4/11 — `quota show/set`, `extension list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
@@ -166,11 +166,18 @@ inventory; that document is the build order.
 
 ### Tier 1 — no vendor change (capability already in `vendor/`, just unwired)
 
-| Vendored package | Unlocks |
-| --- | --- |
-| `blockstorage/v3/{snapshots,backups}` (`Update`) | `volume snapshot set/unset`, `volume backup set/unset` |
-| `networking/v2/{subnets,security/groups}` (nil-update) | `subnet unset`, `security group unset` (`port unset` is now wired) |
-| `networking/v2/extensions/layer3/routers` (`GatewayInfo`) | `router add/remove gateway` |
+**Empty — Tier 1 is fully implemented.** The 44 commands it listed shipped in
+`docs/proposals/coverage-tiers.md` order: ironic provision verbs, node
+read-outs, driver/conductor detail, identity writes, compute state verbs, and
+the volume/network updates.
+
+One entry was **dropped rather than implemented**: `security group unset`.
+Tier 1 assumed it was a nil-update like `port unset`, but upstream's
+`UnsetSecurityGroup` takes only `--tag`/`--all-tag` and does nothing else
+(`openstackclient/network/v2/security_group.py`). Implementing it as a
+nil-update would ship a command that shares upstream's name and does something
+different — the deviation this project removed for `loadbalancer quota unset`.
+It returns when security-group tag support does.
 
 ### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)
 

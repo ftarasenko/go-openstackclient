@@ -29,6 +29,8 @@ func newSnapshotCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newSnapshotShowCommand(a, o))
 	cmd.AddCommand(newSnapshotCreateCommand(a, o))
 	cmd.AddCommand(newSnapshotDeleteCommand(a, o))
+	cmd.AddCommand(newSnapshotSetCommand(a, o))
+	cmd.AddCommand(newSnapshotUnsetCommand(a, o))
 	return cmd
 }
 

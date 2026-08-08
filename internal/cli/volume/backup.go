@@ -30,6 +30,8 @@ func newBackupCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newBackupCreateCommand(a, o))
 	cmd.AddCommand(newBackupDeleteCommand(a, o))
 	cmd.AddCommand(newBackupRestoreCommand(a, o))
+	cmd.AddCommand(newBackupSetCommand(a, o))
+	cmd.AddCommand(newBackupUnsetCommand(a, o))
 	return cmd
 }
 
