@@ -11,6 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/baremetal"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/compute"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/crossservice"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/dns"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/identity"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/image"
@@ -95,6 +96,7 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(network.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(placement.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(quota.NewCommand(authOpts, outOpts))
+	root.AddCommand(crossservice.NewCommands(authOpts, outOpts)...)
 
 	// Upstream spellings of commands koc nests differently (see aliases.go).
 	root.AddCommand(upstreamSpellingCommands(authOpts, outOpts)...)
