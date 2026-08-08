@@ -84,7 +84,8 @@ func newServerAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	floating.AddCommand(newServerAddFloatingIPCommand(a, o))
 	security := &cobra.Command{Use: "security", Short: "Security group attachment"}
 	security.AddCommand(newServerAddSecurityGroupCommand(a, o))
-	cmd.AddCommand(newServerAddVolumeCommand(a, o), floating, security, newServerAddServerGroupCommand(a, o))
+	cmd.AddCommand(newServerAddVolumeCommand(a, o), floating, security, newServerAddServerGroupCommand(a, o),
+		newServerAddPortCommand(a, o), newServerAddNetworkCommand(a, o), newServerAddFixedIPCommand(a, o))
 	return cmd
 }
 
@@ -95,7 +96,8 @@ func newServerRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	floating.AddCommand(newServerRemoveFloatingIPCommand(a, o))
 	security := &cobra.Command{Use: "security", Short: "Security group detachment"}
 	security.AddCommand(newServerRemoveSecurityGroupCommand(a, o))
-	cmd.AddCommand(newServerRemoveVolumeCommand(a, o), floating, security, newServerRemoveServerGroupCommand(a, o))
+	cmd.AddCommand(newServerRemoveVolumeCommand(a, o), floating, security, newServerRemoveServerGroupCommand(a, o),
+		newServerRemovePortCommand(a, o), newServerRemoveNetworkCommand(a, o), newServerRemoveFixedIPCommand(a, o))
 	return cmd
 }
 

@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 451 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 457 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**422 of 844 in-scope upstream commands (50%).** Of `koc`'s 451 leaf commands,
-422 are upstream-equivalent and 29 are koc-native.
+**428 of 844 in-scope upstream commands (51%).** Of `koc`'s 457 leaf commands,
+428 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -73,7 +73,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 
 | Namespace | Raw | Core (niche subsystems excluded) |
 | --- | --- | --- |
-| `openstack.compute.v2` | 69/100 (69%) | **69/88 (78%)** |
+| `openstack.compute.v2` | 75/100 (75%) | **75/88 (85%)** |
 | `openstack.image.v2` | 12/42 (29%) | **12/15 (80%)** |
 | `openstack.volume.v3` | 35/94 (37%) | **35/38 (92%)** |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
@@ -181,7 +181,6 @@ It returns when security-group tag support does.
 
 ### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)
 
-- `compute/v2/attachinterfaces` → `server add/remove port|network|fixed ip`
 - `compute/v2/usage` → `usage list/show`
 - `compute/v2/availabilityzones` + `blockstorage/v3/availabilityzones` → `availability zone list`
 - `compute/v2/limits` + `blockstorage/v3/limits` → `limits show`
