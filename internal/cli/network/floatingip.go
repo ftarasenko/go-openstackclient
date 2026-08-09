@@ -27,6 +27,7 @@ func newFloatingIPCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newFloatingIPDeleteCommand(a, o))
 	cmd.AddCommand(newFloatingIPSetCommand(a, o))
 	cmd.AddCommand(newFloatingIPUnsetCommand(a, o))
+	cmd.AddCommand(newPortForwardingCommand(a, o))
 	return cmd
 }
 

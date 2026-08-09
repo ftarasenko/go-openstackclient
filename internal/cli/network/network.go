@@ -28,6 +28,8 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	networkCmd.AddCommand(newAgentCommand(a, o))
 	networkCmd.AddCommand(newTrunkCommand(a, o))
 	networkCmd.AddCommand(newExtensionCommand(a, o))
+	networkCmd.AddCommand(newRBACCommand(a, o))
+	networkCmd.AddCommand(newSegmentCommand(a, o))
 
 	floating := &cobra.Command{
 		Use:   "floating",
@@ -48,6 +50,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 		newPortCommand(a, o),
 		floating,
 		security,
+		newIPAvailabilityCommand(a, o),
 	}
 	cmds = append(cmds, newAddressCommands(a, o)...)
 	return cmds

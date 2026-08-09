@@ -486,6 +486,7 @@ func newRouterAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(newRouterAddGatewayCommand(a, o))
+	cmd.AddCommand(newRouterAddRouteCommand(a, o))
 	return cmd
 }
 
@@ -565,6 +566,7 @@ func newRouterRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(newRouterRemoveGatewayCommand(a, o))
+	cmd.AddCommand(newRouterRemoveRouteCommand(a, o))
 	return cmd
 }
 

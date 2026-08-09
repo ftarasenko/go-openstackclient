@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 516 leaf
+**Snapshot:** 2026-08-09 · `koc` @ this commit (base `d38f1a8`) · 535 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**487 of 844 in-scope upstream commands (58%).** Of `koc`'s 516 leaf commands,
-487 are upstream-equivalent and 29 are koc-native.
+**506 of 844 in-scope upstream commands (60%).** Of `koc`'s 535 leaf commands,
+506 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -40,7 +40,7 @@ ironic and 6/13 for the inspector**. Same six commands, two correct rows.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
-the figure is 305/749 (41%).
+the figure is 324/749 (43%).
 
 In-scope now includes `python-ironic-inspector-client`. The inspector is
 deprecated upstream — ironic removed the `inspector` inspect interface in 33.0.0
@@ -55,7 +55,7 @@ list` and `koc baremetal node reboot` (see "Naming deviations").
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
 Neutron VPNaaS/FWaaS/metering, Keystone federation, ironic runbooks). Excluding
-those, `koc` covers **52–79%** of each core service — the commands operators
+those, `koc` covers **73–100%** of each core service — the commands operators
 actually run daily. Both numbers are reported below; neither alone is honest.
 
 Counts are **leaf commands, not flags**. A command can be present and still lag
@@ -77,7 +77,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | `openstack.image.v2` | 16/42 (38%) | **15/15 (100%)** — `image stage` and `stores list` land outside the core denominator |
 | `openstack.volume.v3` | 48/94 (51%) | **35/38 (92%)** — QoS and transfers are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
-| `openstack.network.v2` | 71/165 (43%) | **60/92 (65%)** — address scopes and groups land outside the "core" denominator |
+| `openstack.network.v2` | 90/165 (55%) | **74/92 (80%)** — address scopes/groups and RBAC land outside the "core" denominator |
 | `openstack.common` | 8/11 (73%) | 8/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show`, `usage list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
@@ -103,12 +103,12 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **86 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **91 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
 | --- | --- |
-| `networking` | 16/50 |
+| `networking` | 21/50 |
 | `identity` | 11/27 |
 | `compute` | 15/20 |
 | `blockstorage` | 11/24 |
@@ -182,7 +182,10 @@ It returns when security-group tag support does.
 
 ### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)
 
-- `networking/v2/extensions/{layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments}` (`subnetpools` and `trunks` are now wired)
+- `networking/v2/extensions/qos/*` — network QoS policies, rules and rule types
+  are all that is left of Tier 2. Address scopes and groups, floating-IP port
+  forwarding, `router add/remove route`, `ip availability`, network RBAC and
+  network segments are wired.
 
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
 
