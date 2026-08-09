@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 505 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 516 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**476 of 844 in-scope upstream commands (56%).** Of `koc`'s 505 leaf commands,
-476 are upstream-equivalent and 29 are koc-native.
+**487 of 844 in-scope upstream commands (58%).** Of `koc`'s 516 leaf commands,
+487 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -77,7 +77,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | `openstack.image.v2` | 16/42 (38%) | **15/15 (100%)** — `image stage` and `stores list` land outside the core denominator |
 | `openstack.volume.v3` | 48/94 (51%) | **35/38 (92%)** — QoS and transfers are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
-| `openstack.network.v2` | 60/165 (36%) | **60/92 (65%)** |
+| `openstack.network.v2` | 71/165 (43%) | **60/92 (65%)** — address scopes and groups land outside the "core" denominator |
 | `openstack.common` | 8/11 (73%) | 8/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show`, `usage list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
@@ -103,12 +103,12 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **84 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **86 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
 | --- | --- |
-| `networking` | 14/50 |
+| `networking` | 16/50 |
 | `identity` | 11/27 |
 | `compute` | 15/20 |
 | `blockstorage` | 11/24 |

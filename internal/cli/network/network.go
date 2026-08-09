@@ -41,7 +41,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	}
 	security.AddCommand(newSecurityGroupCommand(a, o))
 
-	return []*cobra.Command{
+	cmds := []*cobra.Command{
 		networkCmd,
 		newSubnetCommand(a, o),
 		newRouterCommand(a, o),
@@ -49,6 +49,8 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 		floating,
 		security,
 	}
+	cmds = append(cmds, newAddressCommands(a, o)...)
+	return cmds
 }
 
 // newNetworkClient authenticates once and derives the neutron service client
