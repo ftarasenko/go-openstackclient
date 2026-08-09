@@ -26,5 +26,8 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newImageAddCommand(a, o))
 	cmd.AddCommand(newImageRemoveCommand(a, o))
 	cmd.AddCommand(newImageMemberCommand(a, o))
+	cmd.AddCommand(newImageTaskCommand(a, o))
+	cmd.AddCommand(newImageStageCommand(a, o))
+	cmd.AddCommand(newImageStoresCommand(a, o))
 	return cmd
 }
