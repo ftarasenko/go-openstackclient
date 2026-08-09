@@ -31,6 +31,9 @@ func newProviderInventoryCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	}
 	cmd.AddCommand(newProviderInventoryListCommand(a, o))
 	cmd.AddCommand(newProviderInventoryShowCommand(a, o))
+	cmd.AddCommand(newProviderInventorySetCommand(a, o))
+	cmd.AddCommand(newProviderInventoryDeleteCommand(a, o))
+	cmd.AddCommand(newProviderInventoryClassSetCommand(a, o))
 	return cmd
 }
 
@@ -169,6 +172,7 @@ func newProviderAggregateCommand(a *auth.Options, o *output.Options) *cobra.Comm
 		Short: "Inspect a resource provider's aggregates",
 	}
 	cmd.AddCommand(newProviderAggregateListCommand(a, o))
+	cmd.AddCommand(newProviderAggregateSetCommand(a, o))
 	return cmd
 }
 

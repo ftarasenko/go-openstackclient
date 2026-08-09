@@ -31,14 +31,27 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 		Short: "Placement resource commands",
 	}
 	resource.AddCommand(newProviderCommand(a, o))
+	resource.AddCommand(newResourceClassCommand(a, o))
+	resource.AddCommand(newResourceUsageCommand(a, o))
 
 	trait := &cobra.Command{
 		Use:   "trait",
 		Short: "Placement trait commands",
 	}
-	trait.AddCommand(newTraitListCommand(a, o))
+	trait.AddCommand(
+		newTraitListCommand(a, o),
+		newTraitShowCommand(a, o),
+		newTraitCreateCommand(a, o),
+		newTraitDeleteCommand(a, o),
+	)
 
-	return []*cobra.Command{resource, trait}
+	allocation := &cobra.Command{
+		Use:   "allocation",
+		Short: "Placement allocation commands",
+	}
+	allocation.AddCommand(newAllocationCandidateCommand(a, o))
+
+	return []*cobra.Command{resource, trait, allocation}
 }
 
 // newProviderCommand builds "resource provider ...".
@@ -48,6 +61,8 @@ func newProviderCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Short: "Manage placement resource providers",
 	}
 	cmd.AddCommand(newProviderListCommand(a, o))
+	cmd.AddCommand(newProviderCreateCommand(a, o))
+	cmd.AddCommand(newProviderSetCommand(a, o))
 	cmd.AddCommand(newProviderShowCommand(a, o))
 	cmd.AddCommand(newProviderDeleteCommand(a, o))
 	cmd.AddCommand(newProviderTraitCommand(a, o))
@@ -65,6 +80,8 @@ func newProviderTraitCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		Short: "Manage traits associated with a resource provider",
 	}
 	cmd.AddCommand(newProviderTraitListCommand(a, o))
+	cmd.AddCommand(newProviderTraitSetCommand(a, o))
+	cmd.AddCommand(newProviderTraitDeleteCommand(a, o))
 	return cmd
 }
 
@@ -75,5 +92,8 @@ func newProviderAllocationCommand(a *auth.Options, o *output.Options) *cobra.Com
 		Short: "Manage resource provider allocations",
 	}
 	cmd.AddCommand(newProviderAllocationDeleteCommand(a, o))
+	cmd.AddCommand(newProviderAllocationShowCommand(a, o))
+	cmd.AddCommand(newProviderAllocationSetCommand(a, o))
+	cmd.AddCommand(newProviderAllocationUnsetCommand(a, o))
 	return cmd
 }

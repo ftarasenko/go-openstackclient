@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 484 leaf
+**Snapshot:** 2026-08-08 · `koc` @ this commit (base `d38f1a8`) · 505 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**455 of 844 in-scope upstream commands (54%).** Of `koc`'s 484 leaf commands,
-455 are upstream-equivalent and 29 are koc-native.
+**476 of 844 in-scope upstream commands (56%).** Of `koc`'s 505 leaf commands,
+476 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -98,12 +98,12 @@ backend capability/pools, host failover, transfers.
 | ironic (`baremetal`) | 52/118 (44%) | the full provision-state verb set, node lifecycle, power, ports, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing chassis, port groups, traits, history, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 63/82 (77%) | everything except availability zones and profiles (11), seven of the eight `unset` verbs (`quota unset` is implemented) and `listener stats show`. Diffed name-for-name against `entry_points.txt`: every `koc loadbalancer` leaf maps to an upstream command, none is koc-invented |
-| osc-placement | 10/31 (32%) | read-only resource providers, traits, inventories, per-provider usages and aggregates; no inventory *writes*, resource classes, project/user usages, allocation candidates |
+| osc-placement | **31/31 (100%)** | complete against `entry_points.txt`, diffed name-for-name — resource providers, classes, traits, inventories, aggregates, allocations, allocation candidates and usages, reads and writes alike |
 | python-ironic-inspector-client (`baremetal introspection`) | 6/13 (46%) | `start`, `status`, `list`, `abort`, `data save`, `interface list`; missing `interface show`, `reprocess` and the five `rule` verbs |
 
 ## vs gophercloud v2
 
-`koc` imports **81 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **84 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -114,7 +114,7 @@ already ships:
 | `blockstorage` | 11/24 |
 | `baremetal` | 5/9 |
 | `image` | 5/5 |
-| `placement` | 3/6 |
+| `placement` | 6/6 |
 | `dns` | 6/6 |
 | `loadbalancer` | 10/13 |
 | `baremetalintrospection` | 1/3 |
@@ -183,7 +183,6 @@ It returns when security-group tag support does.
 ### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)
 
 - `networking/v2/extensions/{layer3/addressscopes,security/addressgroups,layer3/portforwarding,layer3/extraroutes,networkipavailabilities,qos/*,rbacpolicies,segments}` (`subnetpools` and `trunks` are now wired)
-- `placement/v1/{resourceclasses,usages,allocationcandidates}`
 
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
 

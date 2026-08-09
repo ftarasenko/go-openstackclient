@@ -88,9 +88,12 @@ github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/trunks
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets
+github.com/gophercloud/gophercloud/v2/openstack/placement/v1/allocationcandidates
 github.com/gophercloud/gophercloud/v2/openstack/placement/v1/allocations
+github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceclasses
 github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceproviders
 github.com/gophercloud/gophercloud/v2/openstack/placement/v1/traits
+github.com/gophercloud/gophercloud/v2/openstack/placement/v1/usages
 github.com/gophercloud/gophercloud/v2/openstack/utils
 github.com/gophercloud/gophercloud/v2/pagination
 github.com/gophercloud/gophercloud/v2/testhelper
