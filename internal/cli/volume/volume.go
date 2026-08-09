@@ -47,6 +47,8 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd.AddCommand(newBackupCommand(a, o))
 	cmd.AddCommand(newTypeCommand(a, o))
 	cmd.AddCommand(newServiceCommand(a, o))
+	cmd.AddCommand(newTransferCommand(a, o))
+	cmd.AddCommand(newQoSCommand(a, o))
 
 	return []*cobra.Command{cmd}
 }
