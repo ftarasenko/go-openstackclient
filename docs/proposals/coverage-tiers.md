@@ -186,7 +186,7 @@ fixture encoding a payload the service never produces.
 
 ---
 
-## Tier 2 — one `make tidy` per batch (≈100 commands)
+## Tier 2 — one `make tidy` per batch (≈100 commands) — **DONE**
 
 All packages confirmed present in the gophercloud v2.13.0 module zip. Land the
 batches back-to-back so `vendor/` churns once per batch and never mid-review.
@@ -219,7 +219,16 @@ Notes that will bite if ignored:
 - Re-run `make tidy` **once per batch**, never per file, and never hand-edit
   `vendor/`.
 
-**Tier 2 total: ≈100 commands → ≈519/844 (61%).**
+**Tier 2 total: 100 commands → 518/844 (61%).** All ten batches shipped; the
+estimate was one command high because T2.10's network QoS is 12 verbs, not 13 —
+upstream has no `network qos policy unset`.
+
+One planned package was **not** vendored: `networking/v2/extensions/qos/rules`.
+Every QoS rule type shares the same `{"<rule>": {…}}` envelope over
+`/qos/policies/{id}/<collection>`, and the typed package models only three of the
+four types (no `minimum_packet_rate`, added in neutron 2023.1), so one raw path
+in `internal/cli/network/qos.go` covers strictly more clouds than a four-way
+typed switch would. `qos/policies` and `qos/ruletypes` are vendored and typed.
 
 ---
 

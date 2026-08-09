@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-09 · `koc` @ this commit (base `d38f1a8`) · 535 leaf
+**Snapshot:** 2026-08-09 · `koc` @ this commit (base `d38f1a8`) · 547 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**506 of 844 in-scope upstream commands (60%).** Of `koc`'s 535 leaf commands,
-506 are upstream-equivalent and 29 are koc-native.
+**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 547 leaf commands,
+518 are upstream-equivalent and 29 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -40,7 +40,7 @@ ironic and 6/13 for the inspector**. Same six commands, two correct rows.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the previous four baselines
-the figure is 324/749 (43%).
+the figure is 336/749 (45%).
 
 In-scope now includes `python-ironic-inspector-client`. The inspector is
 deprecated upstream — ironic removed the `inspector` inspect interface in 33.0.0
@@ -77,7 +77,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | `openstack.image.v2` | 16/42 (38%) | **15/15 (100%)** — `image stage` and `stores list` land outside the core denominator |
 | `openstack.volume.v3` | 48/94 (51%) | **35/38 (92%)** — QoS and transfers are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
-| `openstack.network.v2` | 90/165 (55%) | **74/92 (80%)** — address scopes/groups and RBAC land outside the "core" denominator |
+| `openstack.network.v2` | 102/165 (62%) | **74/92 (80%)** — address scopes/groups, QoS and RBAC land outside the "core" denominator |
 | `openstack.common` | 8/11 (73%) | 8/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show`, `usage list/show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
@@ -103,12 +103,12 @@ backend capability/pools, host failover, transfers.
 
 ## vs gophercloud v2
 
-`koc` imports **91 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **93 of 218** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
 | --- | --- |
-| `networking` | 21/50 |
+| `networking` | 23/50 |
 | `identity` | 11/27 |
 | `compute` | 15/20 |
 | `blockstorage` | 11/24 |
@@ -182,10 +182,16 @@ It returns when security-group tag support does.
 
 ### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)
 
-- `networking/v2/extensions/qos/*` — network QoS policies, rules and rule types
-  are all that is left of Tier 2. Address scopes and groups, floating-IP port
-  forwarding, `router add/remove route`, `ip availability`, network RBAC and
-  network segments are wired.
+**Empty — Tier 2 is fully implemented.** The last batch vendored
+`networking/v2/extensions/{layer3/extraroutes,layer3/portforwarding,networkipavailabilities,rbacpolicies,segments,qos/policies,qos/ruletypes}`
+for address scopes and groups, floating-IP port forwarding, `router add/remove
+route`, `ip availability`, network RBAC, network segments and network QoS.
+
+`qos/rules` was deliberately **not** vendored: every QoS rule type shares one
+`{"<rule>": {…}}` envelope over `/qos/policies/{id}/<collection>`, and the typed
+package models only three of the four types — it has no `minimum_packet_rate`
+(neutron 2023.1) — so `internal/cli/network/qos.go` uses one raw path that
+covers strictly more clouds than a four-way typed switch would.
 
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
 
@@ -204,7 +210,8 @@ Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
-`false` would be dropped), `dns quota reset` (gophercloud's `dns/v2/quotas` is
+`false` would be dropped), `network qos rule create/set/show/delete` (one raw
+path per rule type, since `qos/rules` has no `minimum_packet_rate`), `dns quota reset` (gophercloud's `dns/v2/quotas` is
 Get/Update only — no `DELETE /v2/quotas/<project>`), and **30 of the 60 designate
 commands** — `zone export/import`, `zone blacklist`, `tld`, `zone
 abandon/axfr/move`, `zone nameservers list`, `ptr record`, `dns pool`, `dns

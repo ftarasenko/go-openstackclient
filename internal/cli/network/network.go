@@ -30,6 +30,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	networkCmd.AddCommand(newExtensionCommand(a, o))
 	networkCmd.AddCommand(newRBACCommand(a, o))
 	networkCmd.AddCommand(newSegmentCommand(a, o))
+	networkCmd.AddCommand(newQoSCommand(a, o))
 
 	floating := &cobra.Command{
 		Use:   "floating",
