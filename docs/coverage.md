@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-09 · `koc` @ this commit (base `d38f1a8`) · 547 leaf
+**Snapshot:** 2026-08-10 · `koc` @ this commit (base `d38f1a8`) · 548 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 547 leaf commands,
-518 are upstream-equivalent and 29 are koc-native.
+**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 548 leaf commands,
+518 are upstream-equivalent and 30 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -272,9 +272,17 @@ Python SDK both expose `/v2/pools`, but `python-designateclient` registers no
 dynamic server groups), `koc image member set`, `koc baremetal node inventory show`
 (a table summary of the inventory upstream only offers as a raw `save`), and
 `koc network trunk subport add`/`remove` (upstream folds these into
-`network trunk set`/`unset --subport` flags rather than giving them verbs). The
-two `koc server console …` spellings also count here now that the upstream
-`console …` form is the primary one.
+`network trunk set`/`unset --subport` flags rather than giving them verbs), and
+`koc server password show`. The two `koc server console …` spellings also count
+here now that the upstream `console …` form is the primary one.
+
+`server password show` is the read side of nova's `os-server-password`, i.e.
+`nova get-password`. OSC never ported it — `python_openstackclient` 10.2.1
+registers no server-password entry point at all — but the API is the only way to
+recover the administrator password of a server whose guest agent generated one,
+so the gap is upstream's, not the cloud's. The write side is already reachable:
+`nova clear-password` is `koc server set --no-password`, and changing the
+password is `koc server set --password`.
 
 ## Updating this document
 
