@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -14,6 +17,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -49,11 +54,15 @@ keypair the server booted with, then POSTs it to nova. Without --private-key
 this prints that ciphertext, base64-encoded; with it, koc decrypts locally —
 the private key is never sent anywhere.
 
-The key must be an RSA key in PEM form (PKCS#1 or PKCS#8) — what
-"koc keypair create" hands back. An OpenSSH-format key (the ssh-keygen default
-since OpenSSH 7.8) converts with:
+--private-key takes either encoding: an OpenSSH key (the ssh-keygen default
+since OpenSSH 7.8, "-----BEGIN OPENSSH PRIVATE KEY-----") or a PEM key, PKCS#1
+or PKCS#8 — what "koc keypair create" hands back. If the key is
+passphrase-protected, koc asks for the passphrase on the terminal, without
+echoing it. Non-interactively, redirect the passphrase in instead:
 
-    ssh-keygen -p -m PEM -f <key>
+    koc server password show <server> --private-key <key> < passphrase
+
+or strip it from the key with "ssh-keygen -p -f <key>".
 
 Only RSA can carry this scheme, so a server booted with an ed25519 keypair has
 no recoverable password.
@@ -73,7 +82,7 @@ This is koc-native: the upstream "openstack" client never ported
 		},
 	}
 	cmd.Flags().StringVar(&keyPath, "private-key", "",
-		"RSA private key (PEM) to decrypt the password with; \"-\" reads stdin")
+		"RSA private key (OpenSSH or PEM) to decrypt the password with; \"-\" reads stdin")
 	return cmd
 }
 
@@ -106,8 +115,8 @@ func runServerPasswordShow(ctx context.Context, client *gophercloud.ServiceClien
 	return o.WriteSingle(w, []string{"password"}, []any{password})
 }
 
-// loadRSAPrivateKey reads a PEM RSA private key from path, or from stdin when
-// path is "-".
+// loadRSAPrivateKey reads a private key from path, or from stdin when path is
+// "-".
 func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
 	var raw []byte
 	var err error
@@ -119,41 +128,113 @@ func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the private key: %w", err)
 	}
-	return parseRSAPrivateKey(raw)
+	return parseRSAPrivateKey(raw, passphraseSource(path == "-"))
 }
 
-// parseRSAPrivateKey accepts the two PEM encodings crypto/x509 can read. The
-// formats it cannot are common enough that guessing "invalid key" would be
-// unhelpful, so each gets its own message and, where there is one, the command
-// that converts it.
-func parseRSAPrivateKey(raw []byte) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode(raw)
-	if block == nil {
+// parseRSAPrivateKey accepts every private-key encoding x/crypto/ssh reads:
+// OpenSSH (the ssh-keygen default since 7.8) and PEM, PKCS#1 or PKCS#8, plain
+// or passphrase-protected. passphrase is called only for the protected ones and
+// may be nil, meaning there is no way to ask.
+func parseRSAPrivateKey(raw []byte, passphrase func() ([]byte, error)) (*rsa.PrivateKey, error) {
+	if block, _ := pem.Decode(raw); block == nil {
+		// Both encodings are PEM-framed, so this is a public key, a stray file,
+		// or a truncated one — worth saying before ssh's terser "no key found".
 		return nil, errors.New("the private key is not PEM-encoded (expected a \"-----BEGIN ...-----\" block)")
 	}
-	if block.Type == "OPENSSH PRIVATE KEY" {
-		return nil, errors.New("the private key is in OpenSSH format, which koc cannot read; " +
-			"convert it with: ssh-keygen -p -m PEM -f <key>")
+	parsed, err := ssh.ParseRawPrivateKey(raw)
+	var protected *ssh.PassphraseMissingError
+	if errors.As(err, &protected) {
+		if passphrase == nil {
+			return nil, errors.New("the private key is passphrase-protected and there is nowhere to ask for the passphrase; " +
+				"redirect it in (\"--private-key <key> < passphrase\") or strip it with: ssh-keygen -p -f <key>")
+		}
+		var secret []byte
+		if secret, err = passphrase(); err != nil {
+			return nil, err
+		}
+		parsed, err = ssh.ParseRawPrivateKeyWithPassphrase(raw, secret)
 	}
-	// x509.DecryptPEMBlock is deprecated and its cipher suite is not
-	// authenticated, so passphrase-protected keys are refused rather than
-	// half-supported.
-	if _, encrypted := block.Headers["DEK-Info"]; encrypted || strings.Contains(block.Type, "ENCRYPTED") {
-		return nil, errors.New("the private key is passphrase-protected; " +
-			"decrypt it first with: openssl rsa -in <key> -out <key>.pem")
+	if errors.Is(err, x509.IncorrectPasswordError) {
+		return nil, errors.New("the passphrase does not decrypt the private key")
 	}
-
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return key, nil
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("parsing the private key: %w", err)
 	}
 	key, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
 		// Nova encrypts with RSA PKCS#1 v1.5; no other key type can decrypt it.
-		return nil, fmt.Errorf("the private key is %T, but nova encrypts the password with RSA", parsed)
+		return nil, fmt.Errorf("the private key is %s, but nova encrypts the password with RSA", keyTypeName(parsed))
 	}
 	return key, nil
+}
+
+// keyTypeName names a key the way ssh-keygen's -t does, so a wrong-key-type
+// error does not print a Go type at the operator.
+func keyTypeName(key any) string {
+	switch key.(type) {
+	case ed25519.PrivateKey, *ed25519.PrivateKey:
+		return "an ed25519 key"
+	case *ecdsa.PrivateKey:
+		return "an ECDSA key"
+	}
+	return fmt.Sprintf("a %T", key)
+}
+
+// passphraseSource decides where a protected key's passphrase comes from. A
+// redirect beats the terminal — a script that pipes the passphrase in must not
+// be stopped by a prompt — and when the key itself came from stdin the
+// controlling terminal is all that is left.
+func passphraseSource(keyFromStdin bool) func() ([]byte, error) {
+	stdinIsTerminal := term.IsTerminal(int(os.Stdin.Fd()))
+	switch {
+	case stdinIsTerminal:
+		return func() ([]byte, error) { return readPassphrase(os.Stdin, int(os.Stdin.Fd())) }
+	case !keyFromStdin:
+		return func() ([]byte, error) { return readRedirectedPassphrase(os.Stdin) }
+	default:
+		return promptOnControllingTerminal
+	}
+}
+
+// readRedirectedPassphrase takes the first line of r, for the non-interactive
+// form: "koc server password show <server> --private-key <key> < passphrase".
+func readRedirectedPassphrase(r io.Reader) ([]byte, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("reading the passphrase: %w", err)
+	}
+	// Only the line ending goes: a passphrase may end in a space, and a file
+	// written by an editor ends in a newline.
+	secret := strings.TrimRight(line, "\r\n")
+	if secret == "" {
+		return nil, errors.New("the private key is passphrase-protected and no passphrase arrived on stdin; " +
+			"redirect it in (\"--private-key <key> < passphrase\") or strip it with: ssh-keygen -p -f <key>")
+	}
+	return []byte(secret), nil
+}
+
+// promptOnControllingTerminal asks on /dev/tty, the only source left once the
+// key has taken stdin.
+func promptOnControllingTerminal() ([]byte, error) {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil, errors.New("the private key is passphrase-protected and there is no terminal to ask on; " +
+			"the passphrase cannot share stdin with the key, so pass the key by path and redirect the passphrase in, " +
+			"or strip it with: ssh-keygen -p -f <key>")
+	}
+	defer func() { _ = tty.Close() }()
+	return readPassphrase(tty, int(tty.Fd()))
+}
+
+// readPassphrase asks on a terminal, without echoing what is typed.
+func readPassphrase(prompt io.Writer, fd int) ([]byte, error) {
+	if _, err := fmt.Fprint(prompt, "Enter passphrase for the private key: "); err != nil {
+		return nil, err
+	}
+	secret, err := term.ReadPassword(fd)
+	_, _ = fmt.Fprintln(prompt)
+	if err != nil {
+		return nil, fmt.Errorf("reading the passphrase: %w", err)
+	}
+	return secret, nil
 }
