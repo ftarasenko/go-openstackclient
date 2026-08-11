@@ -284,6 +284,36 @@ func TestExplainMicroversion_FallsBackToVersionDocument(t *testing.T) {
 	}
 }
 
+// An explicitly pinned microversion below the feature's floor makes the route
+// unregistered, and ironic answers with a 404 whose description is empty — less
+// informative than the "Node ... could not be found" a genuinely missing node
+// gets. The guard used to stay silent here, because it only compared the
+// endpoint's maximum (which is high) and never looked at the pin.
+func TestExplainMicroversion_NamesAnExplicitLowPin(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/nodes/"+readoutNodeID+"/firmware", func(w http.ResponseWriter, _ *http.Request) {
+		// A modern cloud: the endpoint itself supports well past 1.86.
+		w.Header().Set("X-OpenStack-Ironic-API-Maximum-Version", "1.111")
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := baremetalClient(fakeServer, "1.82")
+	err := runNodeFirmwareList(context.Background(), client, o, readoutNodeID, &out)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "1.86") || !strings.Contains(err.Error(), "1.82") {
+		t.Errorf("error %q does not name both the requirement and the pin", err)
+	}
+	if !strings.Contains(err.Error(), "os-baremetal-api-version") {
+		t.Errorf("error %q does not point at the flag that caused it", err)
+	}
+}
+
 func TestCompareMicroversions(t *testing.T) {
 	cases := []struct {
 		a, b string

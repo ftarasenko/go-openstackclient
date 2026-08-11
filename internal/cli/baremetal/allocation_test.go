@@ -247,3 +247,80 @@ func TestRunAllocationDelete_DeletesEach(t *testing.T) {
 	}
 	th.AssertDeepEquals(t, []string{allocationID, "second"}, deleted)
 }
+
+// Ironic has carried `owner` on allocations since API 1.60 — below the 1.82 Zed
+// cap, so it is present on every cloud koc supports — but gophercloud v2 models
+// it nowhere. Upstream `openstack baremetal allocation show` prints it, so koc
+// dropping it was a visible gap against OSC.
+func TestRunAllocationShow_RendersOwner(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/allocations/"+allocationID, func(w http.ResponseWriter, r *http.Request) {
+		th.AssertEquals(t, "GET", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uuid": "` + allocationID + `", "name": "alloc-1", "state": "active",
+		  "resource_class": "baremetal", "owner": "proj-42"}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := baremetalClient(fakeServer, "latest")
+	if err := runAllocationShow(context.Background(), client, o, allocationID, &out); err != nil {
+		t.Fatalf("runAllocationShow returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "proj-42") {
+		t.Errorf("output is missing the owner:\n%s", out.String())
+	}
+}
+
+func TestRunAllocationCreate_SendsOwner(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/allocations", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"uuid": "` + allocationID + `", "state": "allocating", "owner": "proj-42"}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := baremetalClient(fakeServer, "latest")
+	f := &allocationCreateFlags{resourceClass: "baremetal", owner: "proj-42"}
+	if err := runAllocationCreate(context.Background(), client, o, f, &out); err != nil {
+		t.Fatalf("runAllocationCreate returned error: %v", err)
+	}
+	th.AssertEquals(t, "proj-42", body["owner"])
+}
+
+// The owner filter is a query parameter gophercloud's ListOpts has no field for.
+func TestRunAllocationList_OwnerFilterReachesTheQuery(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery string
+	fakeServer.Mux.HandleFunc("/allocations", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"allocations": [{"uuid": "` + allocationID + `", "owner": "proj-42"}]}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := baremetalClient(fakeServer, "latest")
+	f := &allocationListFlags{owner: "proj-42", long: true}
+	if err := runAllocationList(context.Background(), client, o, f, &out); err != nil {
+		t.Fatalf("runAllocationList returned error: %v", err)
+	}
+	if !strings.Contains(gotQuery, "owner=proj-42") {
+		t.Errorf("query %q is missing the owner filter", gotQuery)
+	}
+	if !strings.Contains(out.String(), "proj-42") {
+		t.Errorf("--long output is missing the owner column:\n%s", out.String())
+	}
+}

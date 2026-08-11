@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/allocations"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -46,13 +49,58 @@ func newAllocationCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func allocationShowFields(al *allocations.Allocation) ([]string, []any) {
+// allocation is ironic's allocation plus `owner`, which the API has carried
+// since microversion 1.60 — below the 1.82 Zed cap, so it exists on every cloud
+// koc supports — but which gophercloud v2 models nowhere: not on Allocation, not
+// on CreateOpts, not on ListOpts. Upstream `openstack baremetal allocation show`
+// prints it, so leaving it out was a visible gap against OSC.
+//
+// Embedding rather than re-declaring keeps the vendored decoding for every other
+// field; only the one missing attribute is koc's.
+type allocation struct {
+	allocations.Allocation
+	Owner string `json:"owner"`
+}
+
+// allocationListOpts adds ironic's `owner` filter, which gophercloud's ListOpts
+// has no field for. It satisfies the same builder interface, so the vendored
+// List still drives the pager.
+type allocationListOpts struct {
+	allocations.ListOpts
+	Owner string
+}
+
+func (o allocationListOpts) ToAllocationListQuery() (string, error) {
+	q, err := o.ListOpts.ToAllocationListQuery()
+	if err != nil || o.Owner == "" {
+		return q, err
+	}
+	sep := "?"
+	if strings.Contains(q, "?") {
+		sep = "&"
+	}
+	return q + sep + "owner=" + url.QueryEscape(o.Owner), nil
+}
+
+// extractAllocations decodes a page into koc's allocation type so that `owner`
+// survives; allocations.ExtractAllocations would drop it.
+func extractAllocations(page pagination.Page) ([]allocation, error) {
+	var s struct {
+		Allocations []allocation `json:"allocations"`
+	}
+	if err := (page.(allocations.AllocationPage)).ExtractInto(&s); err != nil {
+		return nil, err
+	}
+	return s.Allocations, nil
+}
+
+func allocationShowFields(al *allocation) ([]string, []any) {
 	return []string{
 			"uuid", "name", "state", "node_uuid", "resource_class", "traits",
-			"candidate_nodes", "last_error", "extra", "created_at", "updated_at",
+			"candidate_nodes", "last_error", "extra", "owner", "created_at", "updated_at",
 		}, []any{
 			al.UUID, al.Name, al.State, al.NodeUUID, al.ResourceClass, al.Traits,
-			al.CandidateNodes, al.LastError, al.Extra, al.CreatedAt, al.UpdatedAt,
+			al.CandidateNodes, al.LastError, al.Extra, al.Owner, al.CreatedAt, al.UpdatedAt,
 		}
 }
 
@@ -62,6 +110,7 @@ type allocationListFlags struct {
 	node          string
 	resourceClass string
 	state         string
+	owner         string
 	long          bool
 	limit         int
 	marker        string
@@ -91,6 +140,7 @@ func newAllocationListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	fl.StringVar(&f.node, "node", "", "limit to allocations of this node (name or UUID)")
 	fl.StringVar(&f.resourceClass, "resource-class", "", "limit to allocations of this resource class")
 	fl.StringVar(&f.state, "state", "", "limit to allocations in this state: allocating, active or error")
+	fl.StringVar(&f.owner, "owner", "", "limit to allocations with this owner (project ID)")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of allocations to return")
 	fl.StringVar(&f.marker, "marker", "", "UUID of the last allocation from the previous page")
@@ -103,30 +153,33 @@ func newAllocationListCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runAllocationList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *allocationListFlags, w io.Writer,
 ) error {
-	opts := allocations.ListOpts{
-		Node:          f.node,
-		ResourceClass: f.resourceClass,
-		State:         allocations.AllocationState(f.state),
-		Limit:         f.limit,
-		Marker:        f.marker,
-		SortKey:       f.sortKey,
-		SortDir:       f.sortDir,
+	opts := allocationListOpts{
+		ListOpts: allocations.ListOpts{
+			Node:          f.node,
+			ResourceClass: f.resourceClass,
+			State:         allocations.AllocationState(f.state),
+			Limit:         f.limit,
+			Marker:        f.marker,
+			SortKey:       f.sortKey,
+			SortDir:       f.sortDir,
+		},
+		Owner: f.owner,
 	}
 	// Ironic treats "limit" as a page size, so it is also enforced as a hard
 	// result cap — the same treatment node/port listings get.
-	all, err := paging.Collect(ctx, allocations.List(client, opts), f.limit, allocations.ExtractAllocations)
+	all, err := paging.Collect(ctx, allocations.List(client, opts), f.limit, extractAllocations)
 	if err != nil {
 		return fmt.Errorf("listing baremetal allocations: %w", err)
 	}
 	cols := []string{"UUID", "Name", "Resource Class", "State", "Node UUID"}
 	if f.long {
-		cols = append(cols, "Traits", "Candidate Nodes", "Last Error", "Extra")
+		cols = append(cols, "Traits", "Candidate Nodes", "Last Error", "Extra", "Owner")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, al := range all {
 		row := []any{al.UUID, al.Name, al.ResourceClass, al.State, al.NodeUUID}
 		if f.long {
-			row = append(row, al.Traits, al.CandidateNodes, al.LastError, al.Extra)
+			row = append(row, al.Traits, al.CandidateNodes, al.LastError, al.Extra, al.Owner)
 		}
 		t.Rows = append(t.Rows, row)
 	}
@@ -155,11 +208,11 @@ func newAllocationShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runAllocationShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	al, err := allocations.Get(ctx, client, id).Extract()
-	if err != nil {
+	var al allocation
+	if err := allocations.Get(ctx, client, id).ExtractInto(&al); err != nil {
 		return fmt.Errorf("showing baremetal allocation %s: %w", id, err)
 	}
-	fields, values := allocationShowFields(al)
+	fields, values := allocationShowFields(&al)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -200,11 +253,28 @@ type allocationCreateFlags struct {
 	resourceClass  string
 	name           string
 	uuid           string
+	owner          string
 	traits         []string
 	candidateNodes []string
 	extra          []string
 	wait           bool
 	waitTimeout    time.Duration
+}
+
+// allocationCreateOpts adds ironic's `owner`, absent from gophercloud's
+// CreateOpts. omitempty keeps the body unchanged when it is not given.
+type allocationCreateOpts struct {
+	allocations.CreateOpts
+	Owner string `json:"owner,omitempty"`
+}
+
+func (o allocationCreateOpts) ToAllocationCreateMap() (map[string]any, error) {
+	b, err := o.CreateOpts.ToAllocationCreateMap()
+	if err != nil || o.Owner == "" {
+		return b, err
+	}
+	b["owner"] = o.Owner
+	return b, nil
 }
 
 func newAllocationCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -229,6 +299,7 @@ func newAllocationCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl.StringVar(&f.resourceClass, "resource-class", "", "resource class to allocate a node from")
 	fl.StringVar(&f.name, "name", "", "unique name for the allocation")
 	fl.StringVar(&f.uuid, "uuid", "", "UUID for the allocation (default: generated by ironic)")
+	fl.StringVar(&f.owner, "owner", "", "project that owns the allocation")
 	fl.StringArrayVar(&f.traits, "trait", nil, "trait the allocated node must have (repeatable)")
 	fl.StringArrayVar(&f.candidateNodes, "candidate-node", nil,
 		"node to consider for the allocation (name or UUID, repeatable; default: all available nodes)")
@@ -246,24 +317,29 @@ func runAllocationCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return fmt.Errorf("parsing --extra: %w", err)
 	}
-	opts := allocations.CreateOpts{
-		ResourceClass:  f.resourceClass,
-		Name:           f.name,
-		UUID:           f.uuid,
-		Traits:         f.traits,
-		CandidateNodes: f.candidateNodes,
-		Extra:          extra,
+	opts := allocationCreateOpts{
+		CreateOpts: allocations.CreateOpts{
+			ResourceClass:  f.resourceClass,
+			Name:           f.name,
+			UUID:           f.uuid,
+			Traits:         f.traits,
+			CandidateNodes: f.candidateNodes,
+			Extra:          extra,
+		},
+		Owner: f.owner,
 	}
-	al, err := allocations.Create(ctx, client, opts).Extract()
-	if err != nil {
+	var al allocation
+	if err := allocations.Create(ctx, client, opts).ExtractInto(&al); err != nil {
 		return fmt.Errorf("creating baremetal allocation: %w", err)
 	}
 	if f.wait {
-		if al, err = waitForAllocation(ctx, client, al.UUID, f.waitTimeout); err != nil {
+		settled, err := waitForAllocation(ctx, client, al.UUID, f.waitTimeout)
+		if err != nil {
 			return err
 		}
+		al = *settled
 	}
-	fields, values := allocationShowFields(al)
+	fields, values := allocationShowFields(&al)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -271,7 +347,7 @@ func runAllocationCreate(ctx context.Context, client *gophercloud.ServiceClient,
 // asynchronous: the POST returns immediately in the "allocating" state and a
 // node is only attached once the scheduler finds one, so without this the
 // node_uuid column would almost always be empty.
-func waitForAllocation(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) (*allocations.Allocation, error) {
+func waitForAllocation(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) (*allocation, error) {
 	if timeout <= 0 {
 		timeout = allocationPollTimeout
 	}
@@ -282,8 +358,8 @@ func waitForAllocation(ctx context.Context, client *gophercloud.ServiceClient, i
 	defer ticker.Stop()
 
 	for {
-		al, err := allocations.Get(ctx, client, id).Extract()
-		if err != nil {
+		var al allocation
+		if err := allocations.Get(ctx, client, id).ExtractInto(&al); err != nil {
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("waiting for allocation %s: %w", id, ctx.Err())
 			}
@@ -291,7 +367,7 @@ func waitForAllocation(ctx context.Context, client *gophercloud.ServiceClient, i
 		}
 		switch al.State {
 		case "active":
-			return al, nil
+			return &al, nil
 		case "error":
 			return nil, fmt.Errorf("allocation %s failed: %s", id, al.LastError)
 		}
@@ -406,7 +482,7 @@ type allocationPatchOp struct {
 func patchAllocation(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, ops []allocationPatchOp, w io.Writer,
 ) error {
-	var al allocations.Allocation
+	var al allocation
 	resp, err := client.Patch(ctx, client.ServiceURL("allocations", id), ops, &al, &gophercloud.RequestOpts{
 		OkCodes: []int{200},
 	})

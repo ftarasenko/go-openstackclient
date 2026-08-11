@@ -77,6 +77,18 @@ func explainMicroversion(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 
+	// An explicitly pinned microversion below the feature's floor produces the
+	// same unroutable request as an old cloud, and ironic answers it the same
+	// way — a 404 whose description is empty, which is strictly less informative
+	// than the "Node ... could not be found" a real missing node gets. The pin is
+	// checked first because it is the operator's own doing and can be named
+	// exactly.
+	if pinned := client.Microversion; pinned != "" && pinned != "latest" &&
+		compareMicroversions(pinned, f.min) < 0 {
+		return fmt.Errorf("%s requires ironic API %s (%s), but --os-baremetal-api-version pins %s: %w",
+			f.command, f.min, f.release, pinned, err)
+	}
+
 	// Prefer the header ironic already sent; fall back to the version document
 	// only when it is absent. Either way this costs nothing on the happy path.
 	cloudMax := unexpected.ResponseHeader.Get(ironicMaxVersionHeader)
