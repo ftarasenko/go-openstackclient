@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -808,6 +809,8 @@ func tabsToSpaces(s string) string {
 // RFC 3339 otherwise, which is the spelling the APIs themselves use and what
 // json.Marshal already produced. The dns package converts its own timestamps to
 // designate's spelling before calling in, so it passes through untouched.
+//
+// The offset is spelled numerically — see timeLayout.
 func normalize(v any) any {
 	switch t := v.(type) {
 	case time.Time:
@@ -822,11 +825,23 @@ func normalize(v any) any {
 	}
 }
 
+// timeLayout is RFC 3339 with the UTC offset spelled numerically ("+00:00")
+// rather than as "Z". Both are valid RFC 3339, but the OpenStack services and
+// python-openstackclient emit the numeric form, and koc — which parses
+// timestamps into time.Time and so cannot echo the API's own bytes — has to pick
+// one. Picking "Z" made every timestamp differ from upstream in scripts that
+// compare the rendered string. The fractional part is trailing-zero-trimming, so
+// sub-second precision survives when the API sent it and is absent when it did
+// not.
+const timeLayout = "2006-01-02T15:04:05.999999999-07:00"
+
 func formatTime(t time.Time) any {
 	if t.IsZero() {
 		return nil
 	}
-	return t.Format(time.RFC3339Nano)
+	// UTC first: the layout renders whatever offset the value carries, and every
+	// OpenStack timestamp is UTC regardless of the parsing location.
+	return t.UTC().Format(timeLayout)
 }
 
 func normalizeRow(row []any) []any {
@@ -868,6 +883,14 @@ func cellRaw(v any) string {
 		}
 		return strings.Join(parts, ", ")
 	default:
+		// A *named* string type — gophercloud has several, e.g.
+		// rbacpolicies.PolicyAction — does not match `case string` above, because
+		// a Go type switch matches the exact type and not the underlying kind. It
+		// would otherwise fall through to json.Marshal and render with its quotes
+		// still attached ("access_as_shared"). Render it as the string it is.
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.String {
+			return rv.String()
+		}
 		b, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Sprintf("%v", v)

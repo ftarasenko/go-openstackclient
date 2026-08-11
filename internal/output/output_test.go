@@ -529,6 +529,33 @@ func TestCompareCells_NumericAndString(t *testing.T) {
 	}
 }
 
+// namedString stands in for the defined string types gophercloud returns, e.g.
+// rbacpolicies.PolicyAction.
+type namedString string
+
+// A named string type must render as its bare text, not as JSON. Before this,
+// "koc network rbac list" printed the action column as "access_as_shared",
+// quotes included: a Go type switch matches the exact type and not the
+// underlying kind, so such a value missed `case string` and fell through to
+// json.Marshal.
+func TestCellRendersNamedStringTypeUnquoted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"named string", namedString("access_as_shared"), "access_as_shared"},
+		{"plain string still works", "access_as_shared", "access_as_shared"},
+		{"empty named string", namedString(""), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cell(tc.in); got != tc.want {
+				t.Errorf("cell(%#v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // A time.Time must render one way in every format, and an absent one must not
 // surface Go's zero time. Before this, "koc loadbalancer show" printed
 // updated_at as "0001-01-01 00:00:00 +0000 UTC" in a table and
@@ -546,8 +573,11 @@ func TestTimestampsRenderOneWay(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := b.String()
-		if !strings.Contains(out, "2023-06-15T14:14:55Z") {
+		if !strings.Contains(out, "2023-06-15T14:14:55+00:00") {
 			t.Errorf("table lacks the RFC 3339 timestamp:\n%s", out)
+		}
+		if strings.Contains(out, "2023-06-15T14:14:55Z") {
+			t.Errorf("table used the \"Z\" offset, not upstream's \"+00:00\":\n%s", out)
 		}
 		if strings.Contains(out, "0001-01-01") {
 			t.Errorf("table leaked Go's zero time:\n%s", out)
@@ -567,8 +597,8 @@ func TestTimestampsRenderOneWay(t *testing.T) {
 		if err := json.Unmarshal(b.Bytes(), &m); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if m["created_at"] != "2023-06-15T14:14:55Z" {
-			t.Errorf("created_at = %v, want 2023-06-15T14:14:55Z", m["created_at"])
+		if m["created_at"] != "2023-06-15T14:14:55+00:00" {
+			t.Errorf("created_at = %v, want 2023-06-15T14:14:55+00:00", m["created_at"])
 		}
 		if m["updated_at"] != nil {
 			t.Errorf("updated_at = %v, want null", m["updated_at"])
@@ -603,7 +633,7 @@ func TestTimestampsInListRows(t *testing.T) {
 	if err := json.Unmarshal(b.Bytes(), &rows); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if rows[0]["Created At"] != "2026-08-07T15:36:15Z" {
+	if rows[0]["Created At"] != "2026-08-07T15:36:15+00:00" {
 		t.Errorf("Created At = %v", rows[0]["Created At"])
 	}
 	if rows[0]["Updated At"] != nil {
