@@ -135,6 +135,48 @@ func TestRunImageStoresList_DetailSelectsTheOtherEndpoint(t *testing.T) {
 	}
 }
 
+// glance spells these flags as quoted strings, not JSON booleans. A real
+// deployment answers:
+//
+//	{"stores": [{"id": "file", "default": "true"}, {"id": "http", "read-only": "true"}]}
+//
+// Decoding "default" into a plain bool failed the whole document and took the
+// command out with a Go type error.
+func TestRunImageStoresList_AcceptsQuotedBooleans(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/info/stores", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"stores": [
+		  {"id": "file", "default": "true"},
+		  {"id": "http", "read-only": "true"},
+		  {"id": "cinder"}
+		]}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := imageClient(fakeServer)
+	if err := runImageStoresList(context.Background(), client, o, false, &out); err != nil {
+		t.Fatalf("runImageStoresList returned error: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"file", "http", "cinder"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output is missing store %q:\n%s", want, got)
+		}
+	}
+	// "file" is the default and is not read-only; "http" is the reverse. The
+	// quoted "true" must arrive as a real boolean, not as the string.
+	if !strings.Contains(got, "file\t\ttrue\tfalse") {
+		t.Errorf("file store did not render default=true read-only=false:\n%s", got)
+	}
+	if !strings.Contains(got, "http\t\tfalse\ttrue") {
+		t.Errorf("http store did not render default=false read-only=true:\n%s", got)
+	}
+}
+
 func TestRunImageStoresList_404ExplainsMultiStoreIsOff(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

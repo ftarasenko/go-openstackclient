@@ -2,9 +2,11 @@ package image
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
@@ -226,6 +228,39 @@ func newImageStoresCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// jsonBool decodes a flag that glance spells as a JSON *string* rather than a
+// JSON boolean: /v2/info/stores answers
+//
+//	{"stores": [{"id": "file", "default": "true"}, {"id": "http", "read-only": "true"}]}
+//
+// Decoding those into a plain bool fails the whole document with
+// `cannot unmarshal string into Go struct field .stores.default of type bool`,
+// which took "image stores list" out entirely. Both spellings are accepted
+// because the quoting is glance's own inconsistency, not a documented contract.
+type jsonBool bool
+
+func (b *jsonBool) UnmarshalJSON(data []byte) error {
+	var asBool bool
+	if err := json.Unmarshal(data, &asBool); err == nil {
+		*b = jsonBool(asBool)
+		return nil
+	}
+	var asString string
+	if err := json.Unmarshal(data, &asString); err != nil {
+		return fmt.Errorf("expected a boolean or a quoted boolean, got %s", data)
+	}
+	if asString == "" {
+		*b = false
+		return nil
+	}
+	parsed, err := strconv.ParseBool(asString)
+	if err != nil {
+		return fmt.Errorf("expected a quoted boolean, got %q", asString)
+	}
+	*b = jsonBool(parsed)
+	return nil
+}
+
 // runImageStoresList reads /v2/info/stores. gophercloud has no package for it,
 // so this is a raw GET — a flat list with no pagination.
 //
@@ -239,7 +274,8 @@ func runImageStoresList(ctx context.Context, client *gophercloud.ServiceClient, 
 		Stores []struct {
 			ID          string         `json:"id"`
 			Description string         `json:"description"`
-			Default     bool           `json:"default"`
+			Default     jsonBool       `json:"default"`
+			ReadOnly    jsonBool       `json:"read-only"`
 			Properties  map[string]any `json:"properties"`
 		} `json:"stores"`
 	}
@@ -258,13 +294,13 @@ func runImageStoresList(ctx context.Context, client *gophercloud.ServiceClient, 
 		return fmt.Errorf("listing glance stores: %w", err)
 	}
 
-	cols := []string{"ID", "Description", "Default"}
+	cols := []string{"ID", "Description", "Default", "Read Only"}
 	if detail {
 		cols = append(cols, "Properties")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(doc.Stores))}
 	for _, store := range doc.Stores {
-		row := []any{store.ID, store.Description, store.Default}
+		row := []any{store.ID, store.Description, bool(store.Default), bool(store.ReadOnly)}
 		if detail {
 			row = append(row, store.Properties)
 		}
