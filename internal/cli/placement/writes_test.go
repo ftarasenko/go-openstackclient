@@ -20,9 +20,17 @@ func TestParseInventory_RejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseInventory returned error: %v", err)
 	}
-	th.AssertEquals(t, 64, inv.Total)
-	th.AssertEquals(t, 2, inv.Reserved)
-	th.AssertEquals(t, float32(1.5), inv.AllocationRatio)
+	th.AssertEquals(t, 64, inv["total"])
+	th.AssertEquals(t, 2, inv["reserved"])
+	th.AssertEquals(t, float32(1.5), inv["allocation_ratio"])
+
+	// Only the named fields are carried. Placement puts a `minimum: 1` on
+	// step_size, min_unit and max_unit, so serialising an unmentioned field as its
+	// Go zero would make the request a 400.
+	if _, ok := inv["step_size"]; ok {
+		t.Error("step_size was not given but appears in the body")
+	}
+	th.AssertEquals(t, 3, len(inv))
 
 	// Placement's inventory object is a closed set; a typo here would be a
 	// silently ignored field otherwise.
@@ -122,6 +130,111 @@ func TestRunProviderInventorySet_ReadsGenerationFirst(t *testing.T) {
 	vcpu := body["inventories"].(map[string]any)["VCPU"].(map[string]any)
 	th.AssertEquals(t, float64(16), vcpu["total"])
 	th.AssertEquals(t, float64(16), vcpu["max_unit"])
+	// Only the named fields travel. step_size et al. have a `minimum: 1` in
+	// placement's schema, so serialising them as Go zeroes made every such
+	// request a 400.
+	th.AssertEquals(t, 2, len(vcpu))
+}
+
+// Upstream documents "--resource VCPU=16" as shorthand for
+// "--resource VCPU:total=16"; koc used to reject the bare form outright.
+func TestRunProviderInventorySet_AcceptsBareClassShorthand(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/resource_providers/"+providerUUID+"/inventories", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decoding request body: %v", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resource_provider_generation": 1, "inventories": {}}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := placementClient(fakeServer, "latest")
+	if err := runProviderInventorySet(context.Background(), client, o, providerUUID,
+		[]string{"VCPU=16"}, &out); err != nil {
+		t.Fatalf("runProviderInventorySet returned error: %v", err)
+	}
+	vcpu := body["inventories"].(map[string]any)["VCPU"].(map[string]any)
+	th.AssertEquals(t, float64(16), vcpu["total"])
+}
+
+// "inventory class set" must read the provider generation too. Sending 0 made
+// placement answer 409 on any provider that had ever been written to.
+func TestRunProviderInventoryClassSet_ReadsGenerationAndOmitsUnsetFields(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/resource_providers/"+providerUUID+"/inventories", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resource_provider_generation": 5, "inventories": {}}`))
+	})
+	fakeServer.Mux.HandleFunc("/resource_providers/"+providerUUID+"/inventories/CUSTOM_UNIT", func(w http.ResponseWriter, r *http.Request) {
+		th.AssertEquals(t, http.MethodPut, r.Method)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resource_provider_generation": 6, "total": 8, "reserved": 0,
+		  "min_unit": 1, "max_unit": 8, "step_size": 1, "allocation_ratio": 1.0}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := placementClient(fakeServer, "latest")
+	if err := runProviderInventoryClassSet(context.Background(), client, o, providerUUID,
+		"CUSTOM_UNIT", []string{"total=8"}, &out); err != nil {
+		t.Fatalf("runProviderInventoryClassSet returned error: %v", err)
+	}
+	th.AssertEquals(t, float64(5), body["resource_provider_generation"])
+	th.AssertEquals(t, float64(8), body["total"])
+	if _, ok := body["step_size"]; ok {
+		t.Error("step_size was not given but appears in the body")
+	}
+}
+
+// Placement 1.38 made consumer_type required. koc never sent it, so the command
+// could not succeed on any cloud koc supports.
+func TestRunProviderAllocationSet_SendsConsumerType(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/allocations/consumer-1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decoding request body: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"allocations": {}}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	client := placementClient(fakeServer, "latest")
+	err := runProviderAllocationSet(context.Background(), client, o, "consumer-1",
+		[]string{"rp=" + providerUUID + ",VCPU=2"}, "proj", "user", "INSTANCE", &out)
+	if err != nil {
+		t.Fatalf("runProviderAllocationSet returned error: %v", err)
+	}
+	th.AssertEquals(t, "INSTANCE", body["consumer_type"])
+
+	// Omitting it on a 1.38+ cloud is refused before the request, rather than
+	// letting placement answer with a schema dump.
+	err = runProviderAllocationSet(context.Background(), client, o, "consumer-1",
+		[]string{"rp=" + providerUUID + ",VCPU=2"}, "proj", "user", "", &out)
+	if err == nil || !strings.Contains(err.Error(), "--consumer-type") {
+		t.Errorf("expected a --consumer-type error, got %v", err)
+	}
 }
 
 func TestRunProviderTraitSet_ReplacesTheWholeList(t *testing.T) {
@@ -254,10 +367,11 @@ func TestRunAllocationCandidateList_JoinsResourcesIntoOneParameter(t *testing.T)
 	}
 	// Placement takes one comma-separated `resources` parameter, not repeated
 	// ones — repeating it would make the later value win and silently drop the
-	// rest of the request.
-	if !strings.Contains(gotQuery, "resources=VCPU%3A2%2CMEMORY_MB%3A1024") &&
-		!strings.Contains(gotQuery, "resources=VCPU%3D2%2CMEMORY_MB%3D1024") {
-		t.Errorf("query %q does not carry one joined resources parameter", gotQuery)
+	// rest of the request — and separates class from amount with a colon. The CLI
+	// spelling is CLASS=amount (upstream's), so the translation has to happen
+	// here; passing "=" through is a 400 from placement.
+	if !strings.Contains(gotQuery, "resources=VCPU%3A2%2CMEMORY_MB%3A1024") {
+		t.Errorf("query %q does not carry one joined, colon-separated resources parameter", gotQuery)
 	}
 	if !strings.Contains(out.String(), "VCPU") {
 		t.Errorf("output is missing the provider summary:\n%s", out.String())

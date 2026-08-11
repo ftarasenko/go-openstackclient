@@ -125,63 +125,105 @@ func writeProvider(o *output.Options, w io.Writer, rp *resourceproviders.Resourc
 
 // --- inventory writes -------------------------------------------------------
 
-// inventoryFields parses the key=value pairs shared by the inventory verbs.
+// inventoryBody is the set of inventory fields the operator actually named.
+//
+// It is a map rather than resourceproviders.Inventory because that struct tags
+// none of its fields omitempty, so gophercloud's BuildRequestBody serialises the
+// whole set — and an unmentioned integer serialises as 0. Placement's schema
+// puts a `minimum: 1` on step_size, min_unit and max_unit, so a request built
+// from the struct is rejected outright:
+//
+//	JSON does not validate: 0 is less than the minimum of 1
+//
+// which made both inventory verbs unusable unless the operator spelled out every
+// field. Sending only what was asked for lets placement apply its own defaults,
+// which is what upstream osc-placement does.
+type inventoryBody map[string]any
+
+// parseInventory parses the key=value pairs shared by the inventory verbs.
 // Placement's inventory object is a fixed set of integers plus a float ratio,
 // so an unknown key is a typo worth catching before the round trip.
-func parseInventory(pairs []string) (resourceproviders.Inventory, error) {
-	inv := resourceproviders.Inventory{}
+func parseInventory(pairs []string) (inventoryBody, error) {
+	inv := inventoryBody{}
 	for _, p := range pairs {
 		k, v, ok := strings.Cut(p, "=")
 		if !ok {
 			return inv, fmt.Errorf("expected key=value, got %q", p)
 		}
-		switch strings.TrimSpace(k) {
-		case "total":
+		key := strings.TrimSpace(k)
+		switch key {
+		case "total", "reserved", "min_unit", "max_unit", "step_size":
 			n, err := strconv.Atoi(v)
 			if err != nil {
-				return inv, fmt.Errorf("total: %w", err)
+				return inv, fmt.Errorf("%s: %w", key, err)
 			}
-			inv.Total = n
-		case "reserved":
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return inv, fmt.Errorf("reserved: %w", err)
-			}
-			inv.Reserved = n
-		case "min_unit":
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return inv, fmt.Errorf("min_unit: %w", err)
-			}
-			inv.MinUnit = n
-		case "max_unit":
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return inv, fmt.Errorf("max_unit: %w", err)
-			}
-			inv.MaxUnit = n
-		case "step_size":
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return inv, fmt.Errorf("step_size: %w", err)
-			}
-			inv.StepSize = n
+			inv[key] = n
 		case "allocation_ratio":
 			f, err := strconv.ParseFloat(v, 32)
 			if err != nil {
 				return inv, fmt.Errorf("allocation_ratio: %w", err)
 			}
-			inv.AllocationRatio = float32(f)
+			inv[key] = float32(f)
 		default:
 			return inv, fmt.Errorf("unknown inventory field %q; placement defines total, reserved, "+
-				"min_unit, max_unit, step_size and allocation_ratio", k)
+				"min_unit, max_unit, step_size and allocation_ratio", key)
 		}
 	}
 	return inv, nil
 }
 
+// updateInventoryOpts builds the body for one resource class. It satisfies
+// resourceproviders.UpdateInventoryOptsBuilder so the vendored request function
+// can still be used; only the body construction is koc's.
+type updateInventoryOpts struct {
+	generation int
+	fields     inventoryBody
+}
+
+func (o updateInventoryOpts) ToResourceProviderUpdateInventoryMap() (map[string]any, error) {
+	b := map[string]any{"resource_provider_generation": o.generation}
+	for k, v := range o.fields {
+		b[k] = v
+	}
+	return b, nil
+}
+
+// updateInventoriesOpts builds the whole-provider body, same reasoning.
+type updateInventoriesOpts struct {
+	generation  int
+	inventories map[string]inventoryBody
+}
+
+func (o updateInventoriesOpts) ToResourceProviderUpdateInventoriesMap() (map[string]any, error) {
+	inv := make(map[string]any, len(o.inventories))
+	for class, fields := range o.inventories {
+		inv[class] = map[string]any(fields)
+	}
+	return map[string]any{
+		"resource_provider_generation": o.generation,
+		"inventories":                  inv,
+	}, nil
+}
+
+// inventoryFieldNames are the inventory fields placement defines, in the order
+// upstream osc-placement lists them as flags.
+var inventoryFieldNames = []struct{ name, usage string }{
+	{"total", "total amount of the resource the provider offers"},
+	{"reserved", "amount held back from allocation"},
+	{"min_unit", "smallest allocatable amount"},
+	{"max_unit", "largest allocatable amount"},
+	{"step_size", "allocations must be a multiple of this"},
+	{"allocation_ratio", "over-subscription ratio"},
+}
+
 func newProviderInventoryClassSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var fields []string
+	// Upstream osc-placement spells the fields as one flag each (--total, and so
+	// on) rather than koc's --resource key=value; both are accepted so an upstream
+	// command line works verbatim. They are strings, not ints, so that "not given"
+	// stays distinguishable from an explicit 0 — placement treats an absent field
+	// as "apply the default", which is not the same thing.
+	named := make([]string, len(inventoryFieldNames))
 	class := &cobra.Command{
 		Use:   "set <uuid> <resource-class>",
 		Short: "Replace one resource class's inventory on a provider",
@@ -195,11 +237,20 @@ func newProviderInventoryClassSetCommand(a *auth.Options, o *output.Options) *co
 			if err != nil {
 				return err
 			}
-			return runProviderInventoryClassSet(ctx, client, o, args[0], args[1], fields, cmd.OutOrStdout())
+			all := append([]string{}, fields...)
+			for i, f := range inventoryFieldNames {
+				if named[i] != "" {
+					all = append(all, f.name+"="+named[i])
+				}
+			}
+			return runProviderInventoryClassSet(ctx, client, o, args[0], args[1], all, cmd.OutOrStdout())
 		},
 	}
 	class.Flags().StringArrayVar(&fields, "resource", nil,
 		"inventory field as key=value, e.g. total=64 (repeatable)")
+	for i, f := range inventoryFieldNames {
+		class.Flags().StringVar(&named[i], f.name, "", f.usage)
+	}
 	cmd := &cobra.Command{Use: "class", Short: "Manage one resource class's inventory"}
 	cmd.AddCommand(class)
 	return cmd
@@ -212,8 +263,18 @@ func runProviderInventoryClassSet(ctx context.Context, client *gophercloud.Servi
 	if err != nil {
 		return fmt.Errorf("parsing --resource: %w", err)
 	}
+	if len(inv) == 0 {
+		return fmt.Errorf("nothing to set on %s inventory: give --total (or another inventory field)", class)
+	}
+	// Placement requires the provider's current generation on this write and
+	// rejects a stale one with 409. Reading it here is what makes two writes in a
+	// row work without the caller re-reading in between.
+	current, err := resourceproviders.GetInventories(ctx, client, id).Extract()
+	if err != nil {
+		return fmt.Errorf("reading resource provider %s before writing its inventory: %w", id, err)
+	}
 	got, err := resourceproviders.UpdateInventory(ctx, client, id, class,
-		resourceproviders.UpdateInventoryOpts{Inventory: inv}).Extract()
+		updateInventoryOpts{generation: current.ResourceProviderGeneration, fields: inv}).Extract()
 	if err != nil {
 		return fmt.Errorf("setting %s inventory on resource provider %s: %w", class, id, err)
 	}
@@ -256,11 +317,19 @@ func runProviderInventorySet(ctx context.Context, client *gophercloud.ServiceCli
 	for _, spec := range resources {
 		class, field, ok := strings.Cut(spec, ":")
 		if !ok {
-			return fmt.Errorf("expected CLASS:field=value, got %q", spec)
+			// Upstream documents CLASS=VALUE as shorthand for CLASS:total=VALUE
+			// ("--resource VCPU=16 is equivalent to --resource VCPU:total=16"), so
+			// the bare form is the common one in practice.
+			class, value, isPair := strings.Cut(spec, "=")
+			if !isPair {
+				return fmt.Errorf("expected CLASS:field=value or CLASS=total, got %q", spec)
+			}
+			byClass[class] = append(byClass[class], "total="+value)
+			continue
 		}
 		byClass[class] = append(byClass[class], field)
 	}
-	inventories := map[string]resourceproviders.Inventory{}
+	inventories := map[string]inventoryBody{}
 	for class, fields := range byClass {
 		inv, err := parseInventory(fields)
 		if err != nil {
@@ -273,9 +342,9 @@ func runProviderInventorySet(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return fmt.Errorf("reading resource provider %s before writing its inventory: %w", id, err)
 	}
-	got, err := resourceproviders.UpdateInventories(ctx, client, id, resourceproviders.UpdateInventoriesOpts{
-		ResourceProviderGeneration: current.ResourceProviderGeneration,
-		Inventories:                inventories,
+	got, err := resourceproviders.UpdateInventories(ctx, client, id, updateInventoriesOpts{
+		generation:  current.ResourceProviderGeneration,
+		inventories: inventories,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("setting the inventory of resource provider %s: %w", id, err)
@@ -435,6 +504,9 @@ func runProviderAggregateSet(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return fmt.Errorf("reading resource provider %s before writing its aggregates: %w", id, err)
 	}
+	// UpdateAggregates parses client.Microversion to choose the body shape, so it
+	// needs a number rather than koc's negotiated "latest".
+	client = concreteClient(ctx, client)
 	// The generation is required from placement 1.19; sending the one just read
 	// is what makes the write safe against a concurrent change.
 	generation := current.ResourceProviderGeneration
@@ -492,7 +564,7 @@ func runProviderAllocationShow(ctx context.Context, client *gophercloud.ServiceC
 
 func newProviderAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var allocationSpecs []string
-	var projectID, userID string
+	var projectID, userID, consumerType string
 	cmd := &cobra.Command{
 		Use:   "set <consumer-uuid>",
 		Short: "Replace a consumer's allocations",
@@ -506,7 +578,8 @@ func newProviderAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.
 			if err != nil {
 				return err
 			}
-			return runProviderAllocationSet(ctx, client, o, args[0], allocationSpecs, projectID, userID, cmd.OutOrStdout())
+			return runProviderAllocationSet(ctx, client, o, args[0], allocationSpecs,
+				projectID, userID, consumerType, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -514,15 +587,39 @@ func newProviderAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.
 		"allocation as rp=<provider-uuid>,<CLASS>=<amount> (repeatable)")
 	fl.StringVar(&projectID, "project-id", "", "project the consumer belongs to")
 	fl.StringVar(&userID, "user-id", "", "user the consumer belongs to")
+	fl.StringVar(&consumerType, "consumer-type", "",
+		"consumer type, e.g. INSTANCE or MIGRATION (required by placement 1.38+)")
 	_ = cmd.MarkFlagRequired("allocation")
 	return cmd
+}
+
+// consumerTypeMicroversion is where placement made consumer_type a required
+// property of the allocations PUT body. Zed's placement already tops out at
+// 1.39, so every cloud koc supports is at or above it.
+const consumerTypeMicroversion = "1.38"
+
+// requiresConsumerType reports whether the negotiated microversion makes
+// consumer_type mandatory. koc's default is "latest", which on any supported
+// cloud resolves above 1.38; only an operator who pinned lower gets a false.
+func requiresConsumerType(microversion string) bool {
+	if !isNumericMicroversion(microversion) {
+		return true // "latest" (or unset) — assume the newest behaviour
+	}
+	return compareMicroversions(microversion, consumerTypeMicroversion) >= 0
 }
 
 // runProviderAllocationSet replaces the consumer's allocations wholesale, which
 // is what placement's PUT does — there is no incremental form.
 func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	consumer string, specs []string, projectID, userID string, w io.Writer,
+	consumer string, specs []string, projectID, userID, consumerType string, w io.Writer,
 ) error {
+	// Placement 1.38 made consumer_type required, and it is not a value koc can
+	// invent on the operator's behalf — it describes what the consumer *is*. Say
+	// so here rather than letting placement answer with a schema dump.
+	if consumerType == "" && requiresConsumerType(client.Microversion) {
+		return fmt.Errorf("placement %s and later require a consumer type: pass --consumer-type "+
+			"(e.g. INSTANCE or MIGRATION)", consumerTypeMicroversion)
+	}
 	byProvider := map[string]allocations.ProviderAllocationsOpts{}
 	for _, spec := range specs {
 		provider, resources, err := parseAllocationSpec(spec)
@@ -539,9 +636,10 @@ func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceCl
 		byProvider[provider] = existing
 	}
 	opts := allocations.UpdateOpts{
-		Allocations: byProvider,
-		ProjectID:   projectID,
-		UserID:      userID,
+		Allocations:  byProvider,
+		ProjectID:    projectID,
+		UserID:       userID,
+		ConsumerType: consumerType,
 	}
 	if err := allocations.Update(ctx, client, consumer, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("setting the allocations of consumer %s: %w", consumer, err)
@@ -664,6 +762,36 @@ func contains(haystack []string, needle string) bool {
 
 // --- allocation candidate list ----------------------------------------------
 
+// resourceQuery renders --resource values into placement's `resources` query
+// parameter, which spells each entry CLASS:amount.
+//
+// The CLI spelling is CLASS=amount, matching upstream osc-placement
+// (`--resource <resource_class>=<value>`). Passing that through untranslated is
+// what placement rejects with:
+//
+//	Badly formed resources parameter. Expected resources query string parameter
+//	in form: ?resources=VCPU:2,MEMORY_MB:1024. Got: VCPU=1.
+//
+// The colon form is accepted too, since it is what the wire wants and operators
+// who read the error message reach for it.
+func resourceQuery(resources []string) (string, error) {
+	parts := make([]string, 0, len(resources))
+	for _, r := range resources {
+		class, amount, ok := strings.Cut(r, "=")
+		if !ok {
+			if class, amount, ok = strings.Cut(r, ":"); !ok {
+				return "", fmt.Errorf("expected CLASS=amount, got %q", r)
+			}
+		}
+		class, amount = strings.TrimSpace(class), strings.TrimSpace(amount)
+		if class == "" || amount == "" {
+			return "", fmt.Errorf("expected CLASS=amount, got %q", r)
+		}
+		parts = append(parts, class+":"+amount)
+	}
+	return strings.Join(parts, ","), nil
+}
+
 func newAllocationCandidateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var resources, required, memberOf []string
 	var limit int
@@ -699,9 +827,13 @@ func runAllocationCandidateList(ctx context.Context, client *gophercloud.Service
 	resources, required, memberOf []string, limit int, w io.Writer,
 ) error {
 	// Placement takes the amounts as one comma-separated `resources` parameter,
-	// not as repeated ones.
+	// not as repeated ones, and separates class from amount with a colon.
+	query, err := resourceQuery(resources)
+	if err != nil {
+		return fmt.Errorf("parsing --resource: %w", err)
+	}
 	opts := allocationcandidates.ListOpts{
-		Resources: strings.Join(resources, ","),
+		Resources: query,
 		Required:  required,
 		MemberOf:  memberOf,
 		Limit:     limit,

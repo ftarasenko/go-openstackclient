@@ -87,6 +87,7 @@ type Options struct {
 	BaremetalAPIVersion string
 	ComputeAPIVersion   string
 	VolumeAPIVersion    string
+	PlacementAPIVersion string
 
 	// KeyVRM (in-house service registered in the Keystone catalog as type
 	// "keyvrm"). An explicit endpoint override bypasses catalog discovery,
@@ -249,6 +250,8 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"compute (nova) API microversion (env OS_COMPUTE_API_VERSION)")
 	fs.StringVar(&o.VolumeAPIVersion, "os-volume-api-version", envOr("OS_VOLUME_API_VERSION", defaultVolumeMicroversion),
 		"volume (cinder) API microversion (env OS_VOLUME_API_VERSION)")
+	fs.StringVar(&o.PlacementAPIVersion, "os-placement-api-version", envOr("OS_PLACEMENT_API_VERSION", defaultPlacementMicroversion),
+		"placement API microversion (env OS_PLACEMENT_API_VERSION)")
 
 	fs.StringVar(&o.KeyVRMEndpoint, "keyvrm-endpoint", os.Getenv("OS_KEYVRM_ENDPOINT_OVERRIDE"),
 		"override the KeyVRM endpoint instead of catalog discovery (env OS_KEYVRM_ENDPOINT_OVERRIDE)")

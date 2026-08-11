@@ -179,7 +179,7 @@ func (c *Client) Placement() (*gophercloud.ServiceClient, error) {
 	if err != nil {
 		return nil, wrapService("placement", err)
 	}
-	sc.Microversion = defaultPlacementMicroversion
+	sc.Microversion = c.opts.PlacementAPIVersion
 	return sc, nil
 }
 
