@@ -62,12 +62,14 @@ func newServerShelveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 // runServerShelve shelves each server. --offload issues shelveOffload, whose
 // resting state is SHELVED_OFFLOADED rather than SHELVED; without it nova
-// offloads on its own schedule (shelved_offload_time), so --wait stops at
-// SHELVED and does not sit through a delay it cannot influence.
+// offloads on its own schedule (shelved_offload_time), so --wait accepts either
+// resting state and does not sit through a delay it cannot influence.
 func runServerShelve(ctx context.Context, client *gophercloud.ServiceClient, refs []string,
 	offload, wait bool, waitTimeout time.Duration, w io.Writer,
 ) error {
-	want := "SHELVED"
+	// Either is a finished shelve: nova may offload immediately or after
+	// shelved_offload_time, and both are past the point of no return.
+	want := []string{"SHELVED", "SHELVED_OFFLOADED"}
 	verb := "Shelved"
 	// Shelve and ShelveOffload return different result types, so the action is
 	// wrapped rather than assigned directly.
@@ -75,7 +77,8 @@ func runServerShelve(ctx context.Context, client *gophercloud.ServiceClient, ref
 		return servers.Shelve(ctx, client, id).ExtractErr()
 	}
 	if offload {
-		want = "SHELVED_OFFLOADED"
+		// Explicitly asked for, so only the offloaded state will do.
+		want = []string{"SHELVED_OFFLOADED"}
 		action = func(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
 			return servers.ShelveOffload(ctx, client, id).ExtractErr()
 		}
@@ -89,7 +92,7 @@ func runServerShelve(ctx context.Context, client *gophercloud.ServiceClient, ref
 			return fmt.Errorf("shelving server %q: %w", ref, err)
 		}
 		if wait {
-			if err := waitForServerStatus(ctx, client, id, want, waitTimeout); err != nil {
+			if err := waitForServerStatuses(ctx, client, id, want, waitTimeout); err != nil {
 				return fmt.Errorf("waiting for server %q to shelve: %w", ref, err)
 			}
 		}
@@ -349,6 +352,19 @@ func parseStringMap(pairs []string) (map[string]string, error) {
 // and gives up at the timeout. Nova reports transitional states (SHELVING,
 // UNSHELVING) in between, which are neither success nor failure.
 func waitForServerStatus(ctx context.Context, client *gophercloud.ServiceClient, id, want string, timeout time.Duration) error {
+	return waitForServerStatuses(ctx, client, id, []string{want}, timeout)
+}
+
+// waitForServerStatuses is waitForServerStatus over a set of acceptable resting
+// states, for the transitions that have more than one.
+//
+// Shelve is the case that needs it: nova moves ACTIVE → SHELVED → and then, when
+// shelved_offload_time is 0 (a common setting, and the default in several
+// distributions), straight on to SHELVED_OFFLOADED. Waiting for exactly
+// "SHELVED" then depends on catching a window narrower than the 5s poll
+// interval, and missing it means spinning until --wait-timeout for a status the
+// server has already passed through and will never report again.
+func waitForServerStatuses(ctx context.Context, client *gophercloud.ServiceClient, id string, want []string, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = statusPollTimeout
 	}
@@ -358,25 +374,31 @@ func waitForServerStatus(ctx context.Context, client *gophercloud.ServiceClient,
 	ticker := time.NewTicker(statusPollInterval)
 	defer ticker.Stop()
 
+	accept := make(map[string]bool, len(want))
+	for _, s := range want {
+		accept[s] = true
+	}
+	wanted := strings.Join(want, " or ")
+
 	var last string
 	for {
 		s, err := servers.Get(ctx, client, id).Extract()
 		if err != nil {
 			if ctx.Err() != nil {
-				return fmt.Errorf("waiting for status %q%s: %w", want, lastStatus(last), ctx.Err())
+				return fmt.Errorf("waiting for status %q%s: %w", wanted, lastStatus(last), ctx.Err())
 			}
 			return err
 		}
 		last = s.Status
-		switch s.Status {
-		case want:
+		switch {
+		case accept[s.Status]:
 			return nil
-		case "ERROR":
-			return fmt.Errorf("server entered ERROR status while waiting for %q", want)
+		case s.Status == "ERROR":
+			return fmt.Errorf("server entered ERROR status while waiting for %q", wanted)
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for status %q%s: %w", want, lastStatus(last), ctx.Err())
+			return fmt.Errorf("waiting for status %q%s: %w", wanted, lastStatus(last), ctx.Err())
 		case <-ticker.C:
 		}
 	}

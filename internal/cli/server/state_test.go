@@ -95,6 +95,30 @@ func TestRunServerShelve_OffloadUsesDifferentActionAndRestState(t *testing.T) {
 	}
 }
 
+// With shelved_offload_time=0 nova goes SHELVING → SHELVED_OFFLOADED, and the
+// intermediate SHELVED can pass between two polls. A plain shelve --wait that
+// insisted on exactly "SHELVED" then span until --wait-timeout waiting for a
+// status the server had already left.
+func TestRunServerShelve_WaitAcceptsImmediateOffload(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	captureServerAction(t, fakeServer, stateServerID)
+	serveServerStatuses(fakeServer, stateServerID, "SHELVING", "SHELVED_OFFLOADED")
+
+	defer func(prev time.Duration) { statusPollInterval = prev }(statusPollInterval)
+	statusPollInterval = time.Millisecond
+
+	var out bytes.Buffer
+	client := computeClient(fakeServer, "latest")
+	// offload=false — the operator did not ask for it; nova did it anyway.
+	err := runServerShelve(context.Background(), client, []string{stateServerID}, false, true, 2*time.Second, &out)
+	if err != nil {
+		t.Fatalf("runServerShelve returned error: %v", err)
+	}
+	th.AssertEquals(t, "Shelved server "+stateServerID+"\n", out.String())
+}
+
 func TestRunServerShelve_WaitFailsOnError(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

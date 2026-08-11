@@ -156,6 +156,11 @@ func TestRunUsageList_QueryAndOutput(t *testing.T) {
 			t.Errorf("query %q missing %q", gotQuery, want)
 		}
 	}
+	// nova only includes server_usages when detail is requested; without it the
+	// Servers column below counts an empty slice and is always 0.
+	if !strings.Contains(gotQuery, "detailed=1") {
+		t.Errorf("query %q does not ask for detail, so the server count is always 0", gotQuery)
+	}
 	// The server count comes from the length of server_usages; nova does not
 	// report it as a field.
 	if !strings.Contains(out.String(), "proj-1\t2\t") {

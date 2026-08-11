@@ -107,7 +107,15 @@ func runUsageList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	pages, err := usage.AllTenants(client, usage.AllTenantsOpts{Start: &start, End: &end}).AllPages(ctx)
+	// Detailed is what makes nova include server_usages; without it the summary
+	// response carries only the totals and the Servers column below counts an
+	// empty slice, reporting 0 for every project no matter how many servers ran.
+	// Upstream OSC passes detailed=True for the same reason.
+	pages, err := usage.AllTenants(client, usage.AllTenantsOpts{
+		Start:    &start,
+		End:      &end,
+		Detailed: true,
+	}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing compute usage: %w", err)
 	}
