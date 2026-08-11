@@ -183,3 +183,60 @@ func TestRunAddressGroupRemoveAddresses_UsesRemoveAction(t *testing.T) {
 	}
 	th.AssertEquals(t, "/address-groups/"+addressGroupID+"/remove_addresses", gotPath)
 }
+
+// Neither noun had a name→ID resolver, so `address scope show <name>` put the
+// name straight into the URL and neutron answered 404 for a resource that
+// `address scope list` had just shown.
+func TestRunAddressScopeShow_ResolvesName(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var listQuery string
+	fakeServer.Mux.HandleFunc("/address-scopes", func(w http.ResponseWriter, r *http.Request) {
+		listQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"address_scopes": [{"id": "` + addressScopeID + `", "name": "scope-a"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/address-scopes/"+addressScopeID, func(w http.ResponseWriter, r *http.Request) {
+		th.AssertEquals(t, "GET", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"address_scope": {"id": "` + addressScopeID + `", "name": "scope-a", "ip_version": 4}}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	if err := runAddressScopeShow(context.Background(), networkClient(fakeServer), o, "scope-a", &out); err != nil {
+		t.Fatalf("runAddressScopeShow returned error: %v", err)
+	}
+	if !strings.Contains(listQuery, "name=scope-a") {
+		t.Errorf("query %q did not filter by name", listQuery)
+	}
+	if !strings.Contains(out.String(), addressScopeID) {
+		t.Errorf("output is missing the resolved scope:\n%s", out.String())
+	}
+}
+
+func TestRunAddressGroupShow_ResolvesName(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/address-groups", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"address_groups": [{"id": "` + addressGroupID + `", "name": "group-a"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/address-groups/"+addressGroupID, func(w http.ResponseWriter, r *http.Request) {
+		th.AssertEquals(t, "GET", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"address_group": {"id": "` + addressGroupID + `", "name": "group-a",
+		  "addresses": ["192.0.2.0/24"]}}`))
+	})
+
+	var out bytes.Buffer
+	o := &output.Options{Format: "value"}
+	if err := runAddressGroupShow(context.Background(), networkClient(fakeServer), o, "group-a", &out); err != nil {
+		t.Fatalf("runAddressGroupShow returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), addressGroupID) {
+		t.Errorf("output is missing the resolved group:\n%s", out.String())
+	}
+}

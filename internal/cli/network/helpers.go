@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/addressscopes"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/addressgroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
@@ -111,6 +113,40 @@ func resolvePortID(ctx context.Context, client *gophercloud.ServiceClient, nameO
 		}
 		return ports.ExtractPorts(pages)
 	}, func(p ports.Port) string { return p.ID })
+}
+
+// resolveAddressScopeID and resolveAddressGroupID resolve a name or ID to an ID.
+// Neither noun had a resolver, so `address scope show <name>` put the name
+// straight into the URL and neutron answered 404 for a resource that plainly
+// existed in `list`.
+//
+// Unlike the older resolvers above these short-circuit on a UUID rather than
+// listing first — that is the convention in AGENTS.md ("resolvers pass UUIDs
+// through untouched") and it saves a request on the common path.
+func resolveAddressScopeID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
+	if resolve.IsUUID(nameOrID) {
+		return nameOrID, nil
+	}
+	return resolveByName(client, "address scope", nameOrID, func(c *gophercloud.ServiceClient) ([]addressscopes.AddressScope, error) {
+		pages, err := addressscopes.List(c, addressscopes.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return addressscopes.ExtractAddressScopes(pages)
+	}, func(s addressscopes.AddressScope) string { return s.ID })
+}
+
+func resolveAddressGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
+	if resolve.IsUUID(nameOrID) {
+		return nameOrID, nil
+	}
+	return resolveByName(client, "address group", nameOrID, func(c *gophercloud.ServiceClient) ([]addressgroups.AddressGroup, error) {
+		pages, err := addressgroups.List(c, addressgroups.ListOpts{Name: nameOrID}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return addressgroups.ExtractGroups(pages)
+	}, func(g addressgroups.AddressGroup) string { return g.ID })
 }
 
 func resolveSecGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {

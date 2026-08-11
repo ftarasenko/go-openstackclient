@@ -125,6 +125,10 @@ func newAddressScopeShowCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runAddressScopeShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
+	id, err := resolveAddressScopeID(ctx, client, id)
+	if err != nil {
+		return err
+	}
 	sc, err := addressscopes.Get(ctx, client, id).Extract()
 	if err != nil {
 		return fmt.Errorf("showing address scope %s: %w", id, err)
@@ -211,6 +215,10 @@ func newAddressScopeSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runAddressScopeSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, name string, share, noShare, nameSet bool, w io.Writer,
 ) error {
+	id, err := resolveAddressScopeID(ctx, client, id)
+	if err != nil {
+		return err
+	}
 	opts := addressscopes.UpdateOpts{}
 	if nameSet {
 		opts.Name = &name
@@ -225,9 +233,9 @@ func runAddressScopeSet(ctx context.Context, client *gophercloud.ServiceClient, 
 		f := false
 		opts.Shared = &f
 	}
-	sc, err := addressscopes.Update(ctx, client, id, opts).Extract()
-	if err != nil {
-		return fmt.Errorf("updating address scope %s: %w", id, err)
+	sc, err2 := addressscopes.Update(ctx, client, id, opts).Extract()
+	if err2 != nil {
+		return fmt.Errorf("updating address scope %s: %w", id, err2)
 	}
 	return writeAddressScope(o, w, sc)
 }
@@ -246,9 +254,13 @@ func newAddressScopeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			for _, id := range args {
+			for _, ref := range args {
+				id, err := resolveAddressScopeID(ctx, client, ref)
+				if err != nil {
+					return err
+				}
 				if err := addressscopes.Delete(ctx, client, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting address scope %s: %w", id, err)
+					return fmt.Errorf("deleting address scope %s: %w", ref, err)
 				}
 			}
 			return nil
@@ -320,6 +332,10 @@ func newAddressGroupShowCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runAddressGroupShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
+	id, err := resolveAddressGroupID(ctx, client, id)
+	if err != nil {
+		return err
+	}
 	g, err := addressgroups.Get(ctx, client, id).Extract()
 	if err != nil {
 		return fmt.Errorf("showing address group %s: %w", id, err)
@@ -444,9 +460,13 @@ func newAddressGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			for _, id := range args {
+			for _, ref := range args {
+				id, err := resolveAddressGroupID(cmd.Context(), c, ref)
+				if err != nil {
+					return err
+				}
 				if err := addressgroups.Delete(cmd.Context(), c, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting address group %s: %w", id, err)
+					return fmt.Errorf("deleting address group %s: %w", ref, err)
 				}
 			}
 			return nil
@@ -460,6 +480,10 @@ func newAddressGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Com
 func runAddressGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, name, description string, addresses []string, nameSet, descSet bool, w io.Writer,
 ) error {
+	id, err := resolveAddressGroupID(ctx, client, id)
+	if err != nil {
+		return err
+	}
 	if nameSet || descSet {
 		opts := addressgroups.UpdateOpts{}
 		if nameSet {
@@ -484,6 +508,10 @@ func runAddressGroupSet(ctx context.Context, client *gophercloud.ServiceClient, 
 func runAddressGroupRemoveAddresses(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, addresses []string, w io.Writer,
 ) error {
+	id, err := resolveAddressGroupID(ctx, client, id)
+	if err != nil {
+		return err
+	}
 	if _, err := addressgroups.RemoveAddresses(ctx, client, id,
 		addressgroups.UpdateAddressesOpts{Addresses: addresses}).Extract(); err != nil {
 		return fmt.Errorf("removing addresses from address group %s: %w", id, err)
