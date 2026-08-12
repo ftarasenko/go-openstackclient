@@ -151,7 +151,6 @@ func TestRunPortDelete_MultipleIDs(t *testing.T) {
 
 	deleted := map[string]string{}
 	for _, id := range []string{"port-a", "port-b"} {
-		id := id
 		fakeServer.Mux.HandleFunc("/ports/"+id, func(w http.ResponseWriter, r *http.Request) {
 			deleted[id] = r.Method
 			w.WriteHeader(http.StatusNoContent)

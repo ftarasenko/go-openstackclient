@@ -9,15 +9,59 @@ linters:
   enable:
     - bodyclose
     - contextcheck
+    - copyloopvar
+    - durationcheck
     - errcheck
+    - errname
+    - errorlint
+    - forcetypeassert
     - gosec
     - govet
     - ineffassign
+    - intrange
+    - makezero
     - misspell
+    - nilerr
+    # nilnil is deliberately NOT enabled. All 17 sites it flags in this tree are
+    # the idiomatic "optional value is absent" pattern, not ambiguous not-found
+    # signalling: parseKeyValMap/parseProperties/parseStringKV/parseKeyValues
+    # return a nil map for empty input, buildGatewayInfo returns a nil
+    # *GatewayInfo when no gateway field changed, and imageVisibility returns a
+    # nil pointer when the operator set no visibility. A nil map is readable and
+    # a nil pointer is the "leave unset" signal these callers want, so a sentinel
+    # error would make every call site worse. Re-check before enabling.
+    - noctx
+    - nolintlint
+    - predeclared
     - revive
     - staticcheck
     - unconvert
     - unused
+    - usestdlibvars
+    - wastedassign
+  settings:
+    # revive without a settings block runs only its minimal default rule set,
+    # so the rules the codebase actually holds itself to were enforced by
+    # discipline alone. Name them explicitly to lock the standard in.
+    #
+    #   exported          — doc comments on exported identifiers
+    #   package-comments  — every package has a package comment
+    #   unused-parameter  — unused function parameters must be named _
+    #   deep-exit         — no os.Exit/log.Fatal outside main (exit codes are
+    #                       handled in cmd/koc/main.go; libraries return errors)
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: unused-parameter
+        - name: deep-exit
+    # //nolint directives must name the linter AND carry a rationale. Every
+    # directive in non-test code already does (verified: 0 nolintlint issues);
+    # this keeps it at 100% instead of relying on reviewers noticing.
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
   exclusions:
     generated: lax
     rules:
@@ -25,8 +69,33 @@ linters:
       - path: _test\.go
         linters:
           - gosec
+      # forcetypeassert on test files is noise for the same reason: tests assert
+      # on their own literal fixture maps (`body["server"].(map[string]any)`),
+      # where a wrong type panics and the test fails — which is the intended
+      # outcome. Production code gets no such pass: an unchecked assertion there
+      # panics in an operator's terminal, so it stays flagged.
+      - path: _test\.go
+        linters:
+          - forcetypeassert
+      # False positive in output.go selectColumns: `idx` is a NAMED RETURN that
+      # is `make([]int, len(all))` only on the early-return branch, so on the
+      # branch that appends it is still nil. makezero cannot see the branches are
+      # mutually exclusive. Scoped to that one file+message on purpose — do not
+      # widen it to the linter or the package.
+      - path: internal/output/output\.go
+        linters:
+          - makezero
+        text: "append to slice `idx` with non-zero initialized length"
     paths:
       - vendor
+
+# Report every occurrence. golangci-lint defaults to max-same-issues: 3, which
+# hides how large a class of issue really is — the first run of this config
+# reported "21 issues" where there were in fact 102 — and makes a gate that
+# demands 0 issues arrive in confusing installments as each batch is fixed.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 formatters:
   enable:

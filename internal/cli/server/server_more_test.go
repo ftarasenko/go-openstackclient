@@ -428,7 +428,6 @@ func TestRunServerDelete_MultipleServers(t *testing.T) {
 	const other = "22222222-2222-2222-2222-222222222222"
 	deleted := map[string]string{}
 	for _, id := range []string{serverUUID, other} {
-		id := id
 		fakeServer.Mux.HandleFunc("/servers/"+id, func(w http.ResponseWriter, r *http.Request) {
 			deleted[id] = r.Method
 			w.WriteHeader(http.StatusNoContent)
@@ -499,7 +498,6 @@ func TestRunServerUnset_RemovesEachProperty(t *testing.T) {
 
 	deleted := map[string]string{}
 	for _, key := range []string{"env", "role"} {
-		key := key
 		fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/metadata/"+key, func(w http.ResponseWriter, r *http.Request) {
 			deleted[key] = r.Method
 			w.WriteHeader(http.StatusNoContent)

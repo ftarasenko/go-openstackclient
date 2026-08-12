@@ -89,7 +89,11 @@ func extractAllocations(page pagination.Page) ([]allocation, error) {
 	var s struct {
 		Allocations []allocation `json:"allocations"`
 	}
-	if err := (page.(allocations.AllocationPage)).ExtractInto(&s); err != nil {
+	ap, ok := page.(allocations.AllocationPage)
+	if !ok {
+		return nil, fmt.Errorf("extractAllocations: unexpected page type %T", page)
+	}
+	if err := ap.ExtractInto(&s); err != nil {
 		return nil, err
 	}
 	return s.Allocations, nil

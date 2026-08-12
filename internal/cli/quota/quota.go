@@ -66,7 +66,7 @@ func newSession(ctx context.Context, a *auth.Options) (*session, error) {
 // that is not resolved would silently report the wrong numbers. When no
 // reference is given the invocation's own project is used.
 func (s *session) resolveProject(ctx context.Context, a *auth.Options, args []string) (string, error) {
-	ref := ""
+	var ref string
 	switch {
 	case len(args) == 1:
 		ref = args[0]

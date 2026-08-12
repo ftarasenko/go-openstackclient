@@ -317,7 +317,10 @@ func (opts providerCreateOpts) ToNetworkCreateMap() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := base["network"].(map[string]any)
+	m, ok := base["network"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("providerCreateOpts: unexpected \"network\" body shape %T", base["network"])
+	}
 	if opts.NetworkType != "" {
 		m["provider:network_type"] = opts.NetworkType
 	}

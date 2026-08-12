@@ -552,7 +552,7 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 				h = len(c)
 			}
 		}
-		for li := 0; li < h; li++ {
+		for li := range h {
 			var b strings.Builder
 			b.WriteByte('|')
 			for ci := range cells {

@@ -525,7 +525,6 @@ func TestRunImageDelete_RequestsAndOutput(t *testing.T) {
 
 	deleted := map[string]string{} // id -> method
 	for _, id := range ids {
-		id := id
 		fakeServer.Mux.HandleFunc("/images/"+id, func(w http.ResponseWriter, r *http.Request) {
 			deleted[id] = r.Method
 			th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)

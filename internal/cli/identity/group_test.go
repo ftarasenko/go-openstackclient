@@ -19,7 +19,6 @@ import (
 // has to mock the endpoint it actually asserts on.
 func stubEmptyCollections(fakeServer th.FakeServer, paths map[string]string) {
 	for path, key := range paths {
-		key := key
 		fakeServer.Mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)

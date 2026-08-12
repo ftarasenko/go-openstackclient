@@ -183,13 +183,14 @@ func runTransferCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 func createTransferWithoutSnapshots(ctx context.Context, client *gophercloud.ServiceClient,
 	volumeID, name string,
 ) (*transfers.Transfer, error) {
-	body := map[string]any{"transfer": map[string]any{
+	transfer := map[string]any{
 		"volume_id":    volumeID,
 		"no_snapshots": true,
-	}}
-	if name != "" {
-		body["transfer"].(map[string]any)["name"] = name
 	}
+	if name != "" {
+		transfer["name"] = name
+	}
+	body := map[string]any{"transfer": transfer}
 	// Pin the request to the microversion that introduced the field: on a copy
 	// of the client, since setMicroversionHeader rewrites MoreHeaders on every
 	// request made with it.

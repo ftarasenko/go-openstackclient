@@ -62,7 +62,7 @@ func lbQuotaFields(q *quotas.Quota) ([]string, []any) {
 // resolveQuotaProject resolves the project reference a quota command targets,
 // defaulting to the invocation's own project when none is given.
 func resolveQuotaProject(ctx context.Context, session *auth.Client, a *auth.Options, args []string, domainRef string) (string, error) {
-	ref := ""
+	var ref string
 	switch {
 	case len(args) == 1:
 		ref = args[0]

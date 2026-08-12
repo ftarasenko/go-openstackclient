@@ -154,7 +154,6 @@ func TestRunZoneShareDelete_Request(t *testing.T) {
 	stubZoneList(fakeServer)
 	var deleted []string
 	for _, id := range []string{"sh1", "sh2"} {
-		id := id
 		fakeServer.Mux.HandleFunc("/zones/z1/shares/"+id, func(w http.ResponseWriter, r *http.Request) {
 			th.TestMethod(t, r, http.MethodDelete)
 			deleted = append(deleted, id)

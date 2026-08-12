@@ -116,7 +116,6 @@ func TestRunServerSet_Tags(t *testing.T) {
 
 	got := map[string]string{}
 	for _, tag := range []string{"prod", "web"} {
-		tag := tag
 		fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/tags/"+tag, func(w http.ResponseWriter, r *http.Request) {
 			got[tag] = r.Method
 			// Nova answers 204 when the tag was already present.

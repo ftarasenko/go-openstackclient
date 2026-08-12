@@ -172,7 +172,14 @@ func formatListFlat(list []any) string {
 	if allMaps {
 		parts := make([]string, 0, len(list))
 		for _, e := range list {
-			parts = append(parts, formatDictFlat(e.(map[string]any)))
+			em, ok := e.(map[string]any)
+			if !ok {
+				// allMaps was just verified above; this can't happen, but
+				// degrade to the scalar rendering instead of panicking.
+				parts = append(parts, scalarString(e))
+				continue
+			}
+			parts = append(parts, formatDictFlat(em))
 		}
 		return strings.Join(parts, "\n")
 	}
@@ -189,7 +196,13 @@ func formatListFlat(list []any) string {
 func formatServerAddresses(v any) string {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return flattenServerValue(v).(string)
+		// flattenServerValue only guarantees a string for nil/map/list inputs;
+		// any other shape falls through to scalarString rather than panicking
+		// on an unexpected nova response.
+		if s, ok := flattenServerValue(v).(string); ok {
+			return s
+		}
+		return scalarString(v)
 	}
 	nets := make([]string, 0, len(m))
 	for k := range m {

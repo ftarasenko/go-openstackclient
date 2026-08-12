@@ -450,7 +450,6 @@ func TestRunAttachmentDelete_AcceptsSeveralIDs(t *testing.T) {
 	const second = "bbbbbbbb-2222-2222-2222-222222222222"
 	deleted := map[string]bool{}
 	for _, id := range []string{attachmentID, second} {
-		id := id
 		fakeServer.Mux.HandleFunc("/attachments/"+id, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodDelete {
 				t.Errorf("method = %q, want DELETE", r.Method)

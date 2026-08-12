@@ -128,7 +128,11 @@ func extractServiceExt(page pagination.Page) ([]serviceExt, error) {
 	var s struct {
 		Services []serviceExt `json:"services"`
 	}
-	err := page.(services.ServicePage).ExtractInto(&s)
+	sp, ok := page.(services.ServicePage)
+	if !ok {
+		return nil, fmt.Errorf("extractServiceExt: unexpected page type %T", page)
+	}
+	err := sp.ExtractInto(&s)
 	return s.Services, err
 }
 

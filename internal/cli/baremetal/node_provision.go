@@ -53,7 +53,6 @@ func provisionTransitions() []provisionTransition {
 func newNodeProvisionCommands(a *auth.Options, o *output.Options) []*cobra.Command {
 	var cmds []*cobra.Command
 	for _, tr := range provisionTransitions() {
-		tr := tr
 		var wait bool
 		var waitTimeout time.Duration
 		cmd := &cobra.Command{

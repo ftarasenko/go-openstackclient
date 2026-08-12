@@ -254,7 +254,6 @@ func TestRunProviderDelete_Request(t *testing.T) {
 			gotMethod := map[string]string{}
 			gotAPIVersion := map[string]string{}
 			for _, id := range tc.ids {
-				id := id
 				fakeServer.Mux.HandleFunc("/resource_providers/"+id, func(w http.ResponseWriter, r *http.Request) {
 					gotMethod[id] = r.Method
 					gotAPIVersion[id] = r.Header.Get("OpenStack-API-Version")

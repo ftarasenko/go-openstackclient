@@ -324,3 +324,22 @@ func TestRunAllocationList_OwnerFilterReachesTheQuery(t *testing.T) {
 		t.Errorf("--long output is missing the owner column:\n%s", out.String())
 	}
 }
+
+// fakePage is a minimal pagination.Page that is deliberately not an
+// allocations.AllocationPage, exercising extractAllocations' guard against a
+// page type it wasn't built to decode.
+type fakePage struct{}
+
+func (fakePage) NextPageURL() (string, error) { return "", nil }
+func (fakePage) IsEmpty() (bool, error)       { return true, nil }
+func (fakePage) GetBody() any                 { return nil }
+
+func TestExtractAllocations_WrongPageTypeErrors(t *testing.T) {
+	_, err := extractAllocations(fakePage{})
+	if err == nil {
+		t.Fatal("expected an error for an unexpected page type, got nil")
+	}
+	if !strings.Contains(err.Error(), "unexpected page type") {
+		t.Errorf("error = %q, want it to mention the unexpected page type", err.Error())
+	}
+}

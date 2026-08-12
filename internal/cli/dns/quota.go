@@ -62,7 +62,7 @@ func dnsQuotaFields(q *quotas.Quota) ([]string, []any) {
 // resolveDNSQuotaProject resolves the project a quota command targets, defaulting
 // to the invocation's own project.
 func resolveDNSQuotaProject(ctx context.Context, session *auth.Client, a *auth.Options, args []string, domainRef string) (string, error) {
-	ref := ""
+	var ref string
 	switch {
 	case len(args) == 1:
 		ref = args[0]

@@ -92,7 +92,6 @@ func TestRunNodeDelete_MultipleIDs(t *testing.T) {
 
 	deleted := map[string]string{}
 	for _, id := range []string{"node-a", "node-b"} {
-		id := id
 		fakeServer.Mux.HandleFunc("/nodes/"+id, func(w http.ResponseWriter, r *http.Request) {
 			deleted[id] = r.Method
 			w.WriteHeader(http.StatusNoContent)
