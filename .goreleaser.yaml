@@ -12,18 +12,23 @@
 # not fork.
 version: 2
 
-# Generate shell completions from the CLI itself (cobra ships the `completion`
-# command) so they can be bundled into the release archives. Runs once, offline
-# from vendor/. NOTE: these ride inside the tarballs for manual install; the
-# Homebrew *cask* stages only the binary and cannot auto-wire completions into
-# the shell's fpath (a formula could — casks have no completion stanza). Users
-# installing via brew run `koc completion <shell>` themselves (see README).
-before:
-  hooks:
-    - mkdir -p completions
-    - sh -c 'go run -mod=vendor ./cmd/koc completion bash > completions/koc.bash'
-    - sh -c 'go run -mod=vendor ./cmd/koc completion zsh  > completions/koc.zsh'
-    - sh -c 'go run -mod=vendor ./cmd/koc completion fish > completions/koc.fish'
+# Shell completions are generated from the CLI itself (cobra ships the
+# `completion` command) and bundled into the archives and the .rpm/.deb.
+#
+# They are deliberately NOT a `before: hooks:` entry any more. GoReleaser hooks
+# run inside the same workflow step as GoReleaser, and that step carries
+# HOMEBREW_TAP_TOKEN — a fine-grained PAT with write access to a SECOND
+# repository. Running `go run ./cmd/koc …` there means repository code (plus the
+# whole vendor/ tree) executes with that token in scope on every release. So the
+# generation moved out to `make completions`, run in its own secret-free step
+# (see .github/workflows/release.yml); locally, run `make completions` before
+# `goreleaser release/build`.
+#
+# NOTE: completions ride inside the tarballs for manual install; the Homebrew
+# *cask* stages only the binary and cannot auto-wire completions into the
+# shell's fpath (a formula could — casks have no completion stanza). Users
+# installing via brew run `koc completion <shell>` themselves (see README). The
+# .rpm/.deb DO install them to the system completion directories.
 
 builds:
   - id: koc
@@ -36,6 +41,10 @@ builds:
       - -mod=vendor # vendor/ is committed; build reproduces offline
     ldflags:
       - -s -w -X main.version={{ .Version }}
+    # Byte-reproducibility: without this the binary's mtime is "now", so two
+    # builds of the same tag differ and an air-gapped consumer cannot
+    # independently re-derive the checksums. Pin it to the commit timestamp.
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64] # -> 6 combos, matches the previous hand-rolled matrix
 
@@ -44,17 +53,105 @@ archives:
     ids: [koc]
     formats: [tar.gz]
     name_template: "koc_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # A tar/zip records every member's mtime, so `mod_timestamp` on the build is
+    # not enough on its own: LICENSE, README and the generated completions would
+    # still carry the runner's checkout/generation time and two builds of the
+    # same tag would hash differently. Pin every member to the commit date.
+    # (Careful: these mtime fields want RFC3339 — `.CommitDate` — while the
+    # build's `mod_timestamp` wants unix seconds — `.CommitTimestamp`.)
+    builds_info:
+      mtime: "{{ .CommitDate }}"
     files:
-      - LICENSE
-      - README.md
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
       - src: completions/*
         dst: completions
+        info:
+          mtime: "{{ .CommitDate }}"
     format_overrides:
       - goos: windows
         formats: [zip]
 
+# Linux system packages for the stated target: an air-gapped RHEL-derivative
+# node, where Homebrew is useless. These drop into a local yum/apt mirror.
+# nfpm only applies to the linux builds, so this yields 4 packages
+# (rpm + deb, amd64 + arm64). ConventionalFileName gives each format the naming
+# its own tooling expects — koc-<v>.x86_64.rpm, koc_<v>_arm64.deb — instead of
+# GoReleaser's default archive-style name, so a local yum/apt mirror and the
+# humans reading it see what they expect.
+nfpms:
+  - id: koc
+    ids: [koc]
+    package_name: koc
+    formats: [rpm, deb]
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: ftarasenko
+    homepage: "https://github.com/ftarasenko/go-openstackclient"
+    maintainer: "ftarasenko <ftarasenko@users.noreply.github.com>"
+    description: "Single-binary OpenStack CLI for KeyStack (gophercloud v2)"
+    license: "Apache-2.0"
+    section: utils
+    bindir: /usr/bin
+    # Same reproducibility reason as the archives: without this, nfpm stamps
+    # "now" into the package metadata and every member's mtime.
+    mtime: "{{ .CommitDate }}"
+    contents:
+      - src: completions/koc.bash
+        dst: /usr/share/bash-completion/completions/koc
+      - src: completions/koc.zsh
+        dst: /usr/share/zsh/site-functions/_koc
+      - src: completions/koc.fish
+        dst: /usr/share/fish/vendor_completions.d/koc.fish
+      - src: LICENSE
+        dst: /usr/share/doc/koc/LICENSE
+
 checksum:
   name_template: checksums.txt
+
+# SPDX SBOM per shipped artifact (syft), so an FSTEC/air-gapped consumer can run
+# its own component review without unpacking the tarball. Requires `syft` on
+# PATH — the release workflow installs it before GoReleaser runs.
+sboms:
+  - id: archives
+    artifacts: archive
+    documents: ["${artifact}.spdx.json"]
+    args: ["$artifact", "--output", "spdx-json=$document"]
+  - id: packages
+    artifacts: package
+    documents: ["${artifact}.spdx.json"]
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+# Keyless cosign signature over checksums.txt. checksums.txt alone is not an
+# integrity story — whoever can swap an artifact in the release can swap the
+# checksums with it — but a Sigstore-backed detached signature over it is: the
+# signature roots the trust and the checksums chain to every artifact.
+#
+# Verify (needs the cert, the sig and the file; no key distribution):
+#   cosign verify-blob checksums.txt \
+#     --certificate checksums.txt.pem --signature checksums.txt.sig \
+#     --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#   sha256sum -c checksums.txt
+#
+# Needs `id-token: write` in the release workflow (the OIDC token is what
+# Fulcio signs) plus cosign on PATH — both wired in release.yml.
+signs:
+  - id: cosign-checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    output: true
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
 
 # Release body comes from scripts/release-notes.sh via --release-notes; do not
 # let GoReleaser also compute a changelog.

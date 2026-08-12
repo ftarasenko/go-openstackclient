@@ -16,6 +16,8 @@ on:
 
 permissions:
   contents: write # create the tag + GitHub Release in this repo
+  id-token: write # OIDC token for keyless cosign signing and provenance
+  attestations: write # store the build-provenance attestation on the release
 
 # Air-gap requirement: the compiled artifact builds offline from the committed
 # vendor/. GoReleaser itself is fetched by the action (CI is not air-gapped).
@@ -33,11 +35,22 @@ jobs:
         with:
           fetch-depth: 0 # full history + tags for git describe / release notes
 
+      # Explicit 1.25.x + check-latest instead of `go-version-file: go.mod`:
+      # go.mod pins the full patch `go 1.25.0`, so setup-go would resolve exactly
+      # 1.25.0 and every released binary would carry the original 1.25.0 standard
+      # library and its known vulnerabilities (crypto/x509 name-constraint
+      # verification GO-2025-4175, crypto/tls, encoding/pem GO-2025-4009,
+      # net/http HTTP/2). The floor stays at 1.25.0 in go.mod so contributors are
+      # not forced into a toolchain download.
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
+          check-latest: true
           cache: false
+
+      - name: Report Go toolchain version
+        run: go version
 
       # workflow_dispatch: create the tag at HEAD and push it (CI's GITHUB_TOKEN
       # can push tag refs; the local/agent env cannot), then check it out detached
@@ -71,8 +84,32 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: scripts/release-notes.sh "$TAG" | tee "$RUNNER_TEMP/RELEASE_NOTES.md"
 
-      # Builds the 6-target matrix, publishes the GitHub Release, and pushes
-      # Casks/koc.rb to ftarasenko/homebrew-tap (needs the cross-repo PAT).
+      # Completions used to be a GoReleaser `before:` hook, which runs inside the
+      # GoReleaser step — the one step that holds HOMEBREW_TAP_TOKEN, a
+      # fine-grained PAT with write access to a SECOND repository. That meant
+      # repository code (and the whole vendor/ tree) executed with the tap PAT in
+      # scope on every release. Generating them here keeps `go run` and the PAT in
+      # different steps. Offline, from vendor/, per the Makefile.
+      - name: Generate shell completions (no secrets in scope)
+        run: make completions
+
+      # cosign and syft are required by the `signs:` and `sboms:` blocks in
+      # .goreleaser.yaml. Both are official installers from the projects
+      # themselves.
+      # Pinned to full commit SHAs per repo convention. Both are still on their
+      # original major here; Dependabot's github-actions ecosystem proposes major
+      # bumps as reviewable PRs (cosign-installer v4 and sbom-action have both
+      # moved on), which is the right place to verify changed inputs.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      # Builds the 6-target matrix + the .rpm/.deb, emits per-artifact SPDX SBOMs
+      # and a keyless cosign signature over checksums.txt, publishes the GitHub
+      # Release, and pushes Casks/koc.rb to ftarasenko/homebrew-tap (the only
+      # thing here that needs the cross-repo PAT).
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -81,6 +118,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      # Signed, verifiable statement of *how* each artifact was built (repo,
+      # workflow, commit, runner). Complements the cosign signature over
+      # checksums.txt: that proves the bytes were released by this workflow, this
+      # proves what produced them. Verify with:
+      #   gh attestation verify koc_<v>_linux_amd64.tar.gz \
+      #     --repo ftarasenko/go-openstackclient
+      # Pinned to a full commit SHA per repo convention. Held at v2 because the
+      # inputs below were written against it; v4 is current, and Dependabot will
+      # propose that bump as a reviewable PR.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.rpm
+            dist/*.deb
+            dist/checksums.txt
 
       # GoReleaser v2 accepts --release-notes but leaves the body empty, so set
       # it explicitly from the generated notes after publish (deterministic,
