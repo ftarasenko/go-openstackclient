@@ -866,6 +866,14 @@ func cellRaw(v any) string {
 	case string:
 		return t
 	case fmt.Stringer:
+		// `case nil` above only catches an untyped nil interface. A typed-nil
+		// pointer (e.g. (*Foo)(nil) assigned to an `any`) still matches this
+		// case — it has a concrete type, so the interface itself is non-nil —
+		// and calling String() on it panics whenever the method dereferences
+		// its receiver. Render it the same as a genuinely absent value instead.
+		if rv := reflect.ValueOf(t); rv.Kind() == reflect.Ptr && rv.IsNil() {
+			return ""
+		}
 		return t.String()
 	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return fmt.Sprintf("%v", t)

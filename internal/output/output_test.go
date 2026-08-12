@@ -556,6 +556,28 @@ func TestCellRendersNamedStringTypeUnquoted(t *testing.T) {
 	}
 }
 
+// nilPanicsStringer implements fmt.Stringer with a pointer receiver that
+// dereferences the receiver, the way a typed nil DTO pointer would in real
+// call sites (148 of them pass map[string]any/any straight into the table).
+type nilPanicsStringer struct{ name string }
+
+func (p *nilPanicsStringer) String() string { return p.name }
+
+// A typed-nil fmt.Stringer must render as empty, not panic. `case nil` only
+// matches an untyped nil interface; a (*T)(nil) assigned to `any` still has a
+// concrete type, so it falls into `case fmt.Stringer` and String() dereferences
+// a nil receiver.
+func TestCellRendersTypedNilStringerAsEmpty(t *testing.T) {
+	var p *nilPanicsStringer // typed nil, still satisfies fmt.Stringer
+	if got := cell(p); got != "" {
+		t.Errorf("cell(typed-nil Stringer) = %q, want empty", got)
+	}
+	// A genuinely non-nil Stringer of the same type must still render normally.
+	if got := cell(&nilPanicsStringer{name: "x"}); got != "x" {
+		t.Errorf("cell(non-nil Stringer) = %q, want %q", got, "x")
+	}
+}
+
 // A time.Time must render one way in every format, and an absent one must not
 // surface Go's zero time. Before this, "koc loadbalancer show" printed
 // updated_at as "0001-01-01 00:00:00 +0000 UTC" in a table and
