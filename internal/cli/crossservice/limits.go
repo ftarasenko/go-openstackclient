@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	neturl "net/url"
 
 	"github.com/gophercloud/gophercloud/v2"
 	volumelimits "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/limits"
@@ -184,7 +185,12 @@ func appendRateLimits(ctx context.Context, sc *gophercloud.ServiceClient, servic
 	}
 	url := sc.ServiceURL("limits")
 	if projectID != "" {
-		url += "?tenant_id=" + projectID
+		// resolveLimitsProject falls back to the literal --project ref when it
+		// doesn't resolve to an ID (documented trade-off, README "Known
+		// limitations"), so projectID here is operator-supplied and unescaped
+		// string concatenation would send a malformed or silently different
+		// request for a ref containing a space, "&", or "#".
+		url += "?tenant_id=" + neturl.QueryEscape(projectID)
 	}
 	resp, err := sc.Get(ctx, url, &doc, &gophercloud.RequestOpts{OkCodes: []int{200}})
 	if resp != nil && resp.Body != nil {

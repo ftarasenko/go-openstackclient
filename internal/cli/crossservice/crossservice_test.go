@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +216,48 @@ func TestAppendRateLimits_ReadsTheRateArray(t *testing.T) {
 	th.AssertEquals(t, 1, len(t1.Rows))
 	th.AssertEquals(t, "POST", t1.Rows[0][1])
 	th.AssertEquals(t, 10, t1.Rows[0][4])
+}
+
+// A --project ref that resolveLimitsProject could not turn into a UUID is
+// passed through literally (documented trade-off, README "Known
+// limitations"), so it can contain characters that are not safe to
+// concatenate straight into a query string. tenant_id must be escaped.
+func TestAppendRateLimits_EscapesProjectID(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotRawQuery string
+	fakeServer.Mux.HandleFunc("/limits", func(w http.ResponseWriter, r *http.Request) {
+		gotRawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"limits": {"absolute": {}, "rate": []}}`))
+	})
+
+	t1 := output.Table{Columns: []string{"Service", "Verb", "URI", "Regex", "Limit", "Remaining", "Unit", "Next Available"}}
+	client := serviceClient(fakeServer, "compute", "latest")
+	const rawProject = "my project & co#1"
+	if err := appendRateLimits(context.Background(), client, "compute", rawProject, &t1); err != nil {
+		t.Fatalf("appendRateLimits returned error: %v", err)
+	}
+	want := "tenant_id=" + url.QueryEscape(rawProject)
+	if gotRawQuery != want {
+		t.Errorf("query = %q, want %q (unescaped project ref sent verbatim)", gotRawQuery, want)
+	}
+	// And the query the server actually parsed still decodes back to the
+	// literal ref, proving this isn't merely escaped-looking but wrong.
+	if got := decodeTenantID(gotRawQuery); got != rawProject {
+		t.Errorf("decoded tenant_id = %q, want %q", got, rawProject)
+	}
+}
+
+// decodeTenantID pulls the tenant_id value out of a raw query string, for
+// asserting the escaped form round-trips to the original.
+func decodeTenantID(rawQuery string) string {
+	v, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return ""
+	}
+	return v.Get("tenant_id")
 }
 
 func TestAppendRateLimits_EmptyRateIsNotAnError(t *testing.T) {
