@@ -1,0 +1,317 @@
+name: prune-release-assets
+
+# Manual maintenance workflow: reclaim the GitHub storage that old releases'
+# BUILD OUTPUTS consume, without touching a single release or tag.
+#
+# WHY IT IS SHAPED THIS WAY — prune the bulk, keep the audit trail.
+#
+# Every release publishes ~6 archives at ~15.8 MB of binary each plus 4
+# .rpm/.deb packages; that is the entire storage cost. Alongside them it
+# publishes a handful of kilobyte-sized files: checksums.txt, its keyless cosign
+# signature (checksums.txt.sig) and certificate (checksums.txt.pem), and one
+# SPDX SBOM per archive/package. Those small files are the integrity and
+# supply-chain record an air-gapped / FSTEC-regulated consumer may have to
+# produce years after the binaries are gone — and because builds in this repo
+# are byte-reproducible from the tag (see .goreleaser.yaml: mod_timestamp,
+# archives builds_info.mtime / per-file info.mtime, nfpms mtime), retaining the
+# checksums means a pruned release can still be RE-DERIVED from its tag and
+# verified byte-for-byte. Delete the checksums and that stops being true: the
+# release becomes unverifiable forever, and no storage is saved, because they
+# were kilobytes.
+#
+# So this workflow deletes ONLY *.tar.gz, *.zip, *.rpm, *.deb, and it keeps
+# checksums.txt, *.sig, *.pem and *.spdx.json unconditionally (belt-and-braces:
+# there is both a delete-list and an explicit always-keep list below). Do NOT
+# "simplify" this later into deleting every asset — that trades the entire audit
+# trail for zero additional bytes and is the one thing the design exists to
+# prevent.
+#
+# It never deletes a release and never touches a tag: tags and release notes are
+# the project's history, v* tags are immutable (a tag ruleset enforces it), and
+# release deletion already has its own workflow (delete-release.yml).
+#
+# CONSEQUENCES — READ BEFORE RUNNING. Deleting an asset is irreversible per
+# asset:
+#   * `brew install ftarasenko/tap/koc` at a PRUNED version breaks — the cask
+#     downloads the archive from the release by URL, and that URL 404s.
+#   * Any air-gapped mirror, Ansible/packer role, Dockerfile or internal
+#     repo-sync that pulls koc binaries from GitHub ON DEMAND breaks for those
+#     versions. Mirrors that fetched-and-stored are unaffected.
+#   * Recovery is a rebuild from the tag (reproducible, and verifiable against
+#     the retained checksums.txt) followed by a manual asset upload — not a
+#     click.
+# Recommended keep window: 3 (the default) is sane for this project — it covers
+# the current release plus the two most recent rollbacks. Do not go below 2
+# unless you know no consumer pins the previous version.
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Keep ALL assets on the N most recent non-draft, non-prerelease releases (the latest release is always kept regardless)"
+        required: false
+        default: 3
+        type: number
+      dry_run:
+        description: "Dry run: list what would be deleted, delete nothing. NOTE: deleting assets breaks `brew install` and on-demand mirrors for those versions."
+        required: false
+        default: true
+        type: boolean
+      annotate_pruned_releases:
+        description: "Also append a short 'binaries pruned' note to each pruned release's body (idempotent; edits notes only, never the tag)"
+        required: false
+        default: false
+        type: boolean
+
+# Nothing beyond what deleting assets and editing release bodies requires.
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout and no third-party actions: gh + jq are preinstalled on the
+      # runner and the whole job is API calls against this repository.
+      - name: Prune heavy release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          ANNOTATE: ${{ inputs.annotate_pruned_releases }}
+        run: |
+          set -euo pipefail
+
+          # Summary is written incrementally (header first, per-release rows as
+          # they are processed, totals last) so that if a delete fails and the
+          # job aborts, the summary still records exactly how far it got.
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          TMP="${RUNNER_TEMP:-/tmp}"
+
+          case "$KEEP" in
+            ''|*[!0-9]*) echo "::error::keep must be a non-negative integer (got '$KEEP')"; exit 1 ;;
+          esac
+
+          echo "repository:        $REPO"
+          echo "keep window:       $KEEP most recent non-draft, non-prerelease releases"
+          echo "dry run:           $DRY_RUN"
+          echo "annotate releases: $ANNOTATE"
+          echo
+
+          # One paginated call gets every release together with each asset's id,
+          # name and size — `gh release view` per tag would be the same data in
+          # N+1 requests. `--jq '.[]'` is applied per page, so the output is one
+          # release object per line; jq -s reassembles the array.
+          gh api --paginate "/repos/$REPO/releases?per_page=100" --jq '.[]' \
+            > "$TMP/releases.ndjson"
+          jq -s '.' "$TMP/releases.ndjson" > "$TMP/releases.json"
+
+          TOTAL_RELEASES=$(jq 'length' "$TMP/releases.json")
+          echo "releases found: $TOTAL_RELEASES"
+
+          # The "latest" release is protected regardless of the keep window: it
+          # is what the Homebrew cask and every "download the newest koc" script
+          # resolve to. /releases/latest already excludes drafts and
+          # prereleases; if it 404s (no such release yet) fall back to the newest
+          # non-draft release from the list we already have.
+          if ! LATEST_TAG=$(gh api "/repos/$REPO/releases/latest" --jq '.tag_name' 2>/dev/null); then
+            LATEST_TAG=""
+          fi
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(jq -r '[.[] | select(.draft | not)]
+              | sort_by(.published_at) | reverse | (.[0].tag_name // "")' "$TMP/releases.json")
+          fi
+          echo "latest release (always kept): ${LATEST_TAG:-<none>}"
+
+          # Protected = the KEEP newest non-draft/non-prerelease releases, plus
+          # the latest release, plus every non-draft release published at or
+          # after the oldest of those (drafts are skipped entirely further down).
+          #
+          # That last clause is what keeps an in-flight release candidate safe.
+          # The keep window is counted in STABLE releases, so with keep=3 a fresh
+          # v0.22.0-rc1 sitting on top of three stable releases would otherwise
+          # be "outside the window" and get pruned while the binaries are still
+          # being tested. Protecting anything inside the window's time span
+          # instead of only its stable members fixes that without adding an
+          # input: prereleases age out together with the release they precede.
+          jq --argjson keep "$KEEP" --arg latest "$LATEST_TAG" '
+            [ .[] | select(.draft | not) ] as $published
+            | ( [ $published[] | select(.prerelease | not) ]
+                | sort_by(.published_at) | reverse
+                | .[0:$keep] ) as $window
+            | ($window | map(.tag_name))
+              + (if $latest == "" then [] else [$latest] end)
+              + (if ($window | length) == 0 then []
+                 else ( ($window | last | .published_at) as $cutoff
+                        | [ $published[]
+                            | select(.published_at >= $cutoff)
+                            | .tag_name ] )
+                 end)
+            | unique
+          ' "$TMP/releases.json" > "$TMP/protected.json"
+          echo "protected tags: $(jq -r 'join(", ")' "$TMP/protected.json")"
+          echo
+
+          # Heavy build outputs only. The always-keep list is redundant with the
+          # suffix test above it (an SBOM is named koc_X_os_arch.tar.gz.spdx.json,
+          # which does NOT end in .tar.gz) and that redundancy is deliberate:
+          # if someone ever loosens the delete-list, the audit-trail files still
+          # survive.
+          jq -r --slurpfile protected "$TMP/protected.json" '
+            def heavy:
+              endswith(".tar.gz") or endswith(".zip")
+              or endswith(".rpm") or endswith(".deb");
+            def always_keep:
+              . == "checksums.txt" or endswith(".spdx.json")
+              or endswith(".sig") or endswith(".pem");
+            ($protected[0]) as $keepTags
+            | .[]
+            | select(.draft | not)                                # never touch drafts
+            | . as $rel
+            # Bind the tag before testing membership: inside index(...) the
+            # input is $keepTags, so a bare `.tag_name` there would index the
+            # array and fail.
+            | select(($keepTags | index($rel.tag_name)) == null)  # inside keep window
+            | $rel.assets[]
+            | select((.name | heavy) and ((.name | always_keep) | not))
+            | [$rel.tag_name, (.id | tostring), (.size | tostring), .name]
+            | @tsv
+          ' "$TMP/releases.json" > "$TMP/assets.tsv"
+
+          {
+            echo "## Release asset pruning"
+            echo
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "**DRY RUN** — nothing was deleted."
+            else
+              echo "**LIVE RUN** — assets were permanently deleted."
+              echo
+              echo "> Pruned versions can no longer be installed via \`brew install ftarasenko/tap/koc\`,"
+              echo "> and any mirror that downloads koc binaries from GitHub on demand will 404 for them."
+              echo "> Tags, release notes, \`checksums.txt\`(+\`.sig\`/\`.pem\`) and the SPDX SBOMs are retained,"
+              echo "> and builds are byte-reproducible from the tag."
+            fi
+            echo
+            echo "Keep window: **$KEEP** most recent non-draft, non-prerelease releases; latest (\`${LATEST_TAG:-none}\`) always kept."
+            echo
+            echo "| Release | Assets deleted | Bytes reclaimed |"
+            echo "| --- | --- | --- |"
+          } >> "$SUMMARY"
+
+          if [ ! -s "$TMP/assets.tsv" ]; then
+            echo "Nothing to prune: no heavy assets outside the keep window."
+            {
+              echo "| _(none)_ | 0 | 0 |"
+              echo
+              echo "Nothing to prune: no heavy assets outside the keep window."
+            } >> "$SUMMARY"
+            exit 0
+          fi
+
+          RUNNING=0
+          ASSETS=0
+          RELEASES=0
+          CUR_TAG=""
+          CUR_BYTES=0
+          CUR_COUNT=0
+          : > "$TMP/pruned-tags.txt"
+
+          flush_release() {
+            [ -n "$CUR_TAG" ] || return 0
+            printf '  -> %s: %d asset(s), %s bytes (%s)\n' \
+              "$CUR_TAG" "$CUR_COUNT" "$CUR_BYTES" \
+              "$(numfmt --to=iec --suffix=B "$CUR_BYTES")"
+            printf '| `%s` | %d | %s (%s) |\n' \
+              "$CUR_TAG" "$CUR_COUNT" "$CUR_BYTES" \
+              "$(numfmt --to=iec --suffix=B "$CUR_BYTES")" >> "$SUMMARY"
+            echo "$CUR_TAG" >> "$TMP/pruned-tags.txt"
+          }
+
+          # Redirect the file into the loop rather than piping into it: a pipe
+          # runs the loop in a subshell and every counter below would be lost
+          # (and, with `set -euo pipefail`, a failure inside it is easy to
+          # misread). gh reads from /dev/null so it cannot swallow the input.
+          while IFS=$'\t' read -r tag id size name; do
+            [ -n "${tag:-}" ] || continue
+
+            if [ "$tag" != "$CUR_TAG" ]; then
+              flush_release
+              CUR_TAG="$tag"; CUR_BYTES=0; CUR_COUNT=0
+              RELEASES=$((RELEASES + 1))
+              echo "release $tag:"
+            fi
+
+            RUNNING=$((RUNNING + size))
+            ASSETS=$((ASSETS + 1))
+            CUR_BYTES=$((CUR_BYTES + size))
+            CUR_COUNT=$((CUR_COUNT + 1))
+
+            if [ "$DRY_RUN" = "true" ]; then
+              ACTION="would delete"
+            else
+              # No `|| true`: a failed delete aborts the job (set -e) so the
+              # failure is never mistaken for a completed prune.
+              gh api --method DELETE \
+                "/repos/$REPO/releases/assets/$id" --silent < /dev/null
+              ACTION="deleted     "
+            fi
+
+            printf '  %s  %-44s %12s bytes  | running total: %s bytes (%s)\n' \
+              "$ACTION" "$name" "$size" "$RUNNING" \
+              "$(numfmt --to=iec --suffix=B "$RUNNING")"
+          done < "$TMP/assets.tsv"
+          flush_release
+
+          # Append a short, idempotent note to each pruned release's body. Opt-in
+          # (`annotate_pruned_releases`) because it rewrites published release
+          # notes: `gh release edit --notes*` replaces the body wholesale, so a
+          # bug here would damage the history this workflow exists to protect.
+          # Only the notes are touched — never the tag, never the release itself.
+          # Skipped on a dry run by construction (nothing was pruned).
+          if [ "$ANNOTATE" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+            echo
+            echo "annotating pruned releases:"
+            MARKER="<!-- koc:assets-pruned -->"
+            while read -r tag; do
+              [ -n "${tag:-}" ] || continue
+              BODY=$(gh release view "$tag" --repo "$REPO" --json body --jq '.body // ""' < /dev/null)
+              case "$BODY" in
+                *"$MARKER"*)
+                  echo "  $tag: already annotated, skipping"
+                  continue
+                  ;;
+              esac
+              {
+                printf '%s\n' "$BODY"
+                printf '\n---\n\n%s\n' "$MARKER"
+                printf '> **Build artifacts pruned to save storage.** The archives and packages\n'
+                printf '> (`.tar.gz`, `.zip`, `.rpm`, `.deb`) for this release have been deleted. The tag,\n'
+                printf '> these release notes, `checksums.txt` with its cosign signature\n'
+                printf '> (`checksums.txt.sig`/`.pem`) and the SPDX SBOMs are retained. Builds are\n'
+                printf '> byte-reproducible from tag `%s`, so the binaries can be rebuilt and verified\n' "$tag"
+                printf '> against the retained `checksums.txt`. Consequence: `brew install` and any\n'
+                printf '> on-demand mirror will no longer find binaries for this version — use a newer\n'
+                printf '> release, or rebuild from the tag.\n'
+              } > "$TMP/notes-$tag.md"
+              gh release edit "$tag" --repo "$REPO" \
+                --notes-file "$TMP/notes-$tag.md" < /dev/null
+              echo "  $tag: note appended"
+            done < "$TMP/pruned-tags.txt"
+          fi
+
+          echo
+          echo "==== summary ===="
+          echo "releases processed:    $RELEASES"
+          echo "assets deleted:        $ASSETS  (dry run: $DRY_RUN)"
+          echo "total bytes reclaimed: $RUNNING ($(numfmt --to=iec --suffix=B "$RUNNING"))"
+
+          {
+            echo
+            echo "**Releases processed:** $RELEASES  "
+            echo "**Assets deleted:** $ASSETS  "
+            echo "**Total bytes reclaimed:** $RUNNING ($(numfmt --to=iec --suffix=B "$RUNNING"))"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo
+              echo "_Dry run — re-run with \`dry_run: false\` to actually delete these assets._"
+            fi
+          } >> "$SUMMARY"
