@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -92,6 +94,24 @@ func neAddress(r hostRow, o neOpts) string {
 	return host
 }
 
+// scrapeErrText renders a scrape failure for the Actual Error column without the
+// URL net/http embeds in *url.Error. That URL carries the hypervisor's address,
+// and this column is rendered, copied into tickets and pasted into chat — see
+// AGENTS.md "Private data never leaves the org". The wrapped cause ("connection
+// refused", "context deadline exceeded", "http 500") is what an operator needs.
+func scrapeErrText(err error) string {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		// Never fall through to uerr.Error() — it always embeds the URL, and a
+		// nil cause renders as "%!s(<nil>)" rather than dropping it.
+		if uerr.Err == nil {
+			return "request failed"
+		}
+		return uerr.Err.Error()
+	}
+	return err.Error()
+}
+
 func scrapeNE(ctx context.Context, hc *http.Client, url string) (neSample, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -170,7 +190,7 @@ func gatherActuals(ctx context.Context, rows []hostRow, o neOpts) {
 			url := fmt.Sprintf("%s://%s:%d/metrics", o.scheme, addr, o.port)
 			s1, err := scrapeNE(ctx, hc, url)
 			if err != nil {
-				r.actualErr = err.Error()
+				r.actualErr = scrapeErrText(err)
 				r.cpuPhysPct, r.ramPhysPct = -1, -1
 				return
 			}
@@ -183,7 +203,7 @@ func gatherActuals(ctx context.Context, rows []hostRow, o neOpts) {
 			}
 			s2, err := scrapeNE(ctx, hc, url)
 			if err != nil {
-				r.actualErr = err.Error()
+				r.actualErr = scrapeErrText(err)
 				r.cpuPhysPct, r.ramPhysPct = -1, -1
 				return
 			}

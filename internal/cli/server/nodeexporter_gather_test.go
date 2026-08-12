@@ -1,11 +1,13 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -393,5 +395,59 @@ func TestGatherActuals_AddressFromName(t *testing.T) {
 
 	if rows[0].actualErr != "" || !nearly(rows[0].cpuPhysPct, 75) {
 		t.Errorf("name-addressed row: err=%q cpu=%v", rows[0].actualErr, rows[0].cpuPhysPct)
+	}
+}
+
+// TestScrapeErrText_OmitsTheHypervisorAddress pins that a scrape failure never
+// carries the target URL into the rendered Actual Error column: net/http wraps
+// transport errors in *url.Error, whose Error() embeds the full URL — and that
+// URL contains the hypervisor's address, which AGENTS.md forbids leaking into
+// output operators copy into tickets and chat.
+func TestScrapeErrText_OmitsTheHypervisorAddress(t *testing.T) {
+	t.Parallel()
+
+	const addr = "10.11.12.13"
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "url error is unwrapped to its cause",
+			err:  &url.Error{Op: "Get", URL: "https://" + addr + ":9100/metrics", Err: errors.New("connection refused")},
+			want: "connection refused",
+		},
+		{
+			name: "a plain error is passed through",
+			err:  errors.New("http 500"),
+			want: "http 500",
+		},
+		{
+			name: "a url error with no cause still hides the url",
+			err:  &url.Error{Op: "Get", URL: "https://" + addr + ":9100/metrics"},
+			want: "request failed",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := scrapeErrText(tc.err)
+			if got != tc.want {
+				t.Fatalf("scrapeErrText() = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, addr) {
+				t.Fatalf("scrapeErrText() leaked the hypervisor address: %q", got)
+			}
+		})
+	}
+
+	// The case that matters: the address must be gone.
+	got := scrapeErrText(&url.Error{
+		Op:  "Get",
+		URL: "https://" + addr + ":9100/metrics",
+		Err: errors.New("dial tcp: i/o timeout"),
+	})
+	if strings.Contains(got, addr) {
+		t.Fatalf("scrapeErrText() leaked the hypervisor address: %q", got)
 	}
 }
