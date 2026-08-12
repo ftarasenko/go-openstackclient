@@ -24,7 +24,7 @@ func TestRunUserList_RequestAndTableOutput(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"users":[
 			{"id":"u1","name":"admin","domain_id":"default","enabled":true},
-			{"id":"u2","name":"bob","domain_id":"itkey","enabled":false}
+			{"id":"u2","name":"bob","domain_id":"example","enabled":false}
 		]}`))
 	})
 
@@ -41,7 +41,7 @@ func TestRunUserList_RequestAndTableOutput(t *testing.T) {
 	if gotPath != "/users" {
 		t.Errorf("path = %q, want /users", gotPath)
 	}
-	for _, want := range []string{"u1", "admin", "u2", "bob", "itkey"} {
+	for _, want := range []string{"u1", "admin", "u2", "bob", "example"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("output missing %q\n---\n%s", want, buf.String())
 		}

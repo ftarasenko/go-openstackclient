@@ -23,7 +23,7 @@ func TestRunDomainList_RequestAndTableOutput(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"domains":[
-			{"id":"d1","name":"itkey","enabled":true,"description":"main"},
+			{"id":"d1","name":"example","enabled":true,"description":"main"},
 			{"id":"d2","name":"default","enabled":false,"description":""}
 		]}`))
 	})
@@ -41,7 +41,7 @@ func TestRunDomainList_RequestAndTableOutput(t *testing.T) {
 		t.Errorf("path = %q, want /domains", gotPath)
 	}
 	out := buf.String()
-	for _, want := range []string{"ID", "Name", "Enabled", "d1", "itkey", "d2", "default", "true", "false"} {
+	for _, want := range []string{"ID", "Name", "Enabled", "d1", "example", "d2", "default", "true", "false"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n---\n%s", want, out)
 		}
@@ -57,24 +57,24 @@ func TestRunDomainShow_ResolvesNameAndGets(t *testing.T) {
 		listName = r.URL.Query().Get("name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"domains":[{"id":"d1","name":"itkey"}]}`))
+		_, _ = w.Write([]byte(`{"domains":[{"id":"d1","name":"example"}]}`))
 	})
 	fakeServer.Mux.HandleFunc("/domains/d1", func(w http.ResponseWriter, r *http.Request) {
 		getMethod = r.Method
 		getPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"domain":{"id":"d1","name":"itkey","enabled":true,"description":"main"}}`))
+		_, _ = w.Write([]byte(`{"domain":{"id":"d1","name":"example","enabled":true,"description":"main"}}`))
 	})
 
 	client := identityClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
-	if err := runDomainShow(context.Background(), client, o, "itkey", &buf); err != nil {
+	if err := runDomainShow(context.Background(), client, o, "example", &buf); err != nil {
 		t.Fatalf("runDomainShow error: %v", err)
 	}
-	if listName != "itkey" {
-		t.Errorf("resolve list name = %q, want itkey", listName)
+	if listName != "example" {
+		t.Errorf("resolve list name = %q, want example", listName)
 	}
 	if getMethod != http.MethodGet {
 		t.Errorf("get method = %q, want GET", getMethod)
@@ -82,7 +82,7 @@ func TestRunDomainShow_ResolvesNameAndGets(t *testing.T) {
 	if getPath != "/domains/d1" {
 		t.Errorf("get path = %q, want /domains/d1", getPath)
 	}
-	for _, want := range []string{"d1", "itkey", "main"} {
+	for _, want := range []string{"d1", "example", "main"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("output missing %q\n---\n%s", want, buf.String())
 		}
@@ -127,7 +127,7 @@ func TestRunDomainDelete_ResolvesNameThenDeletes(t *testing.T) {
 	fakeServer.Mux.HandleFunc("/domains", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"domains":[{"id":"d1","name":"itkey"}]}`))
+		_, _ = w.Write([]byte(`{"domains":[{"id":"d1","name":"example"}]}`))
 	})
 	fakeServer.Mux.HandleFunc("/domains/d1", func(w http.ResponseWriter, r *http.Request) {
 		delMethod = r.Method
@@ -136,7 +136,7 @@ func TestRunDomainDelete_ResolvesNameThenDeletes(t *testing.T) {
 	})
 
 	client := identityClient(fakeServer)
-	if err := runDomainDelete(context.Background(), client, "itkey"); err != nil {
+	if err := runDomainDelete(context.Background(), client, "example"); err != nil {
 		t.Fatalf("runDomainDelete error: %v", err)
 	}
 	if delMethod != http.MethodDelete {
@@ -155,7 +155,7 @@ func TestRunDomainSet_ResolvesNameAndPatches(t *testing.T) {
 	fakeServer.Mux.HandleFunc("/domains", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"domains":[{"id":"d1","name":"itkey"}]}`))
+		_, _ = w.Write([]byte(`{"domains":[{"id":"d1","name":"example"}]}`))
 	})
 	fakeServer.Mux.HandleFunc("/domains/d1", func(w http.ResponseWriter, r *http.Request) {
 		patchMethod = r.Method
@@ -167,7 +167,7 @@ func TestRunDomainSet_ResolvesNameAndPatches(t *testing.T) {
 
 	client := identityClient(fakeServer)
 	f := &domainWriteFlags{name: "renamed", description: "updated"}
-	if err := runDomainSet(context.Background(), client, "itkey", f, true); err != nil {
+	if err := runDomainSet(context.Background(), client, "example", f, true); err != nil {
 		t.Fatalf("runDomainSet error: %v", err)
 	}
 	if patchMethod != http.MethodPatch {

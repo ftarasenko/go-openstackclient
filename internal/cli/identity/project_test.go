@@ -16,7 +16,7 @@ import (
 
 const projectListBody = `{
   "projects": [
-    {"id": "p1", "name": "demo", "domain_id": "itkey", "enabled": true, "description": "demo project"},
+    {"id": "p1", "name": "demo", "domain_id": "example", "enabled": true, "description": "demo project"},
     {"id": "p2", "name": "admin", "domain_id": "default", "enabled": true, "description": ""}
   ]
 }`
@@ -52,7 +52,7 @@ func TestRunProjectList_RequestAndTableOutput(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"ID", "Name", "Domain ID", "demo", "admin", "p1", "p2", "itkey"} {
+	for _, want := range []string{"ID", "Name", "Domain ID", "demo", "admin", "p1", "p2", "example"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table output missing %q\n---\n%s", want, out)
 		}
@@ -70,7 +70,7 @@ func TestRunProjectCreate_RequestBody(t *testing.T) {
 		gotBody = string(b)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"project": {"id": "new-id", "name": "demo", "domain_id": "dom-itkey", "enabled": true}}`))
+		_, _ = w.Write([]byte(`{"project": {"id": "new-id", "name": "demo", "domain_id": "dom-example", "enabled": true}}`))
 	})
 
 	client := identityClient(fakeServer)
@@ -78,8 +78,8 @@ func TestRunProjectCreate_RequestBody(t *testing.T) {
 
 	// Pass a domain ID directly and empty properties so the create body maps 1:1
 	// to the flags without extra resolve lookups (domainID passed as-is).
-	f := &projectWriteFlags{domain: "dom-itkey", description: "demo project", properties: []string{"foo=bar"}}
-	// domain "dom-itkey" would normally be resolved; register a stub that returns
+	f := &projectWriteFlags{domain: "dom-example", description: "demo project", properties: []string{"foo=bar"}}
+	// domain "dom-example" would normally be resolved; register a stub that returns
 	// no match so it falls through to the literal ID.
 	fakeServer.Mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -95,7 +95,7 @@ func TestRunProjectCreate_RequestBody(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Errorf("request method = %q, want POST", gotMethod)
 	}
-	for _, want := range []string{`"name":"demo"`, `"domain_id":"dom-itkey"`, `"description":"demo project"`, `"foo":"bar"`} {
+	for _, want := range []string{`"name":"demo"`, `"domain_id":"dom-example"`, `"description":"demo project"`, `"foo":"bar"`} {
 		if !strings.Contains(gotBody, want) {
 			t.Errorf("create body missing %q\n---\n%s", want, gotBody)
 		}
