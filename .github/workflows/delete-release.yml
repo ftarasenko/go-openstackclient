@@ -1,13 +1,19 @@
 name: delete-release
 
-# Manual maintenance workflow: delete a GitHub Release and its tag. Runs
+# Manual maintenance workflow: delete a GitHub Release, and then its tag. Runs
 # server-side with GITHUB_TOKEN, since the environment blocks pushing (and
 # deleting) tag refs over git.
+#
+# This exists for ONE case, per AGENTS.md "Cutting a release": a release that
+# failed before it fully published, so the version never reached consumers and
+# can be freed for a clean re-cut. It is not a way to unpublish a release people
+# already have — versions are immutable, and deleting one that shipped would
+# swap the bytes under a name Homebrew and air-gapped mirrors have cached.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to delete (removes both the release and the tag)"
+        description: "Release tag to delete (removes the release, then the tag)"
         required: true
         type: string
 
@@ -17,12 +23,48 @@ permissions:
 jobs:
   delete:
     runs-on: ubuntu-latest
+    # Requires a human approval before anything is destroyed. This is the one
+    # workflow in the repo that removes published artifacts, so unlike the
+    # `release` environment (a secret-scoping boundary with no reviewers) this
+    # one is a genuine gate.
+    environment: release-admin
     steps:
-      - name: Delete release and tag
+      # Deleting the release and deleting the tag are separate steps on purpose.
+      # A ruleset protecting `refs/tags/v*` — which is what makes the documented
+      # immutability real — denies GITHUB_TOKEN the deletion, so a combined
+      # `--cleanup-tag` would report the whole run as failed *after* the release
+      # was already gone, leaving an ambiguous state. Splitting them means the
+      # log says exactly what happened and what is left to do.
+      - name: Delete the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
         run: |
-          gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes
-          echo "Deleted release and tag $TAG"
+          gh release delete "$TAG" --repo "$REPO" --yes
+          echo "Deleted release $TAG (the tag still exists)."
+
+      - name: Delete the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh api --method DELETE "repos/$REPO/git/refs/tags/$TAG" --silent; then
+            echo "Deleted tag $TAG. The version is free for a clean re-cut."
+            exit 0
+          fi
+          # Expected when a tag ruleset protects v* and only admins may bypass it.
+          {
+            echo "### Tag \`$TAG\` was NOT deleted"
+            echo
+            echo "The release is gone, but the tag is protected by a ruleset that"
+            echo "\`GITHUB_TOKEN\` cannot bypass — which is the intended behaviour."
+            echo "A repository admin must remove it before the version can be re-cut:"
+            echo
+            echo '```sh'
+            echo "git push --delete origin $TAG"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::release $TAG deleted, but tag $TAG is ruleset-protected; an admin must delete it (see the run summary)."
+          exit 1
