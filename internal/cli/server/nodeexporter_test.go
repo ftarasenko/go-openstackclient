@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 const neFixture = `# HELP node_cpu_seconds_total ...
 node_cpu_seconds_total{cpu="0",mode="idle"} 100
@@ -45,6 +48,35 @@ func TestComputeActual_NoDelta(t *testing.T) {
 	cpu, _, memPct := computeActual(s, s)
 	if cpu != -1 || memPct != -1 {
 		t.Errorf("expected -1/-1 for no data, got %v/%v", cpu, memPct)
+	}
+}
+
+// The --ne-insecure transport must still be a clone of http.DefaultTransport
+// (proxy support, dial/handshake timeouts, HTTP/2), not a bare &http.Transport{}
+// that only sets TLSClientConfig and silently drops all of that.
+func TestNEHTTPClient_InsecureTransportClonesDefault(t *testing.T) {
+	hc := neHTTPClient(neOpts{scheme: "https", insecure: true, timeout: 5})
+	tr, ok := hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport = %T, want *http.Transport", hc.Transport)
+	}
+	if tr.TLSClientConfig == nil || !tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify not set on the transport")
+	}
+	if tr.Proxy == nil {
+		t.Error("Proxy is nil: transport was built from scratch instead of cloning http.DefaultTransport, losing HTTPS_PROXY/NO_PROXY support")
+	}
+	if tr.TLSHandshakeTimeout == 0 {
+		t.Error("TLSHandshakeTimeout is 0: transport did not inherit http.DefaultTransport's timeouts")
+	}
+}
+
+// Without --ne-insecure (or on http), the client keeps its default transport —
+// no need for a custom one at all.
+func TestNEHTTPClient_DefaultsToStdlibTransport(t *testing.T) {
+	hc := neHTTPClient(neOpts{scheme: "http", insecure: false, timeout: 5})
+	if hc.Transport != nil {
+		t.Errorf("Transport = %v, want nil (net/http.Client uses DefaultTransport)", hc.Transport)
 	}
 }
 

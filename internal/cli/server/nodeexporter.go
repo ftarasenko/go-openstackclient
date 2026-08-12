@@ -112,15 +112,30 @@ func scrapeNE(ctx context.Context, hc *http.Client, url string) (neSample, error
 	return parseNEMetrics(string(body)), nil
 }
 
-// gatherActuals queries node_exporter on each hypervisor concurrently and fills
-// the actual-usage fields on rows in place.
-func gatherActuals(ctx context.Context, rows []hostRow, o neOpts) {
+// neHTTPClient builds the client gatherActuals scrapes node_exporter with.
+//
+// The --ne-insecure transport clones http.DefaultTransport rather than
+// building one from scratch: a bare &http.Transport{} loses proxy support
+// (HTTPS_PROXY/NO_PROXY), the dial and TLS-handshake timeouts, and HTTP/2 —
+// all of which DefaultTransport already configures sensibly. Only
+// TLSClientConfig needs overriding here.
+func neHTTPClient(o neOpts) *http.Client {
 	hc := &http.Client{
 		Timeout: time.Duration(o.timeout * float64(time.Second)),
 	}
 	if o.scheme == "https" && o.insecure {
-		hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // opt-in via --ne-insecure
+		//nolint:forcetypeassert // net/http guarantees DefaultTransport is *http.Transport; same pattern as internal/auth, internal/kube, internal/vault's transport.go
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in via --ne-insecure
+		hc.Transport = t
 	}
+	return hc
+}
+
+// gatherActuals queries node_exporter on each hypervisor concurrently and fills
+// the actual-usage fields on rows in place.
+func gatherActuals(ctx context.Context, rows []hostRow, o neOpts) {
+	hc := neHTTPClient(o)
 	interval := time.Duration(o.sampleInterval * float64(time.Second))
 
 	conc := o.concurrency
