@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -386,22 +386,19 @@ func newNetworkDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runNetworkDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
-	var errs []error
-	for _, nameOrID := range names {
+	return batchdelete.Each(names, func(nameOrID string) error {
 		id, err := resolveNetworkID(ctx, client, nameOrID)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := networks.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting network %s: %w", nameOrID, err))
-			continue
+			return fmt.Errorf("deleting network %s: %w", nameOrID, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted network %s\n", nameOrID); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type networkSetFlags struct {

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -317,7 +318,7 @@ func runZoneBlacklistDelete(ctx context.Context, client *gophercloud.ServiceClie
 	refs []string, common *commonOptions, w io.Writer,
 ) error {
 	headers := common.headers()
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveBlacklistID(ctx, client, ref, headers)
 		if err != nil {
 			return err
@@ -328,8 +329,8 @@ func runZoneBlacklistDelete(ctx context.Context, client *gophercloud.ServiceClie
 		if _, err := fmt.Fprintf(w, "Deleted blacklist %s\n", ref); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- tld -------------------------------------------------------------------
@@ -620,7 +621,7 @@ func runTLDDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	refs []string, common *commonOptions, w io.Writer,
 ) error {
 	headers := common.headers()
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveTLDID(ctx, client, ref, headers)
 		if err != nil {
 			return err
@@ -631,6 +632,6 @@ func runTLDDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if _, err := fmt.Fprintf(w, "Deleted TLD %s\n", ref); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }

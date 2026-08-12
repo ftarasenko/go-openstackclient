@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -628,7 +629,7 @@ func newTSIGKeyDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runTSIGKeyDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveTSIGKeyID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -639,6 +640,6 @@ func runTSIGKeyDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 		if _, werr := fmt.Fprintf(w, "Deleted TSIG key %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -455,7 +456,7 @@ func newL7PolicyDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runL7PolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveL7PolicyID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -466,8 +467,8 @@ func runL7PolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, r
 		if _, werr := fmt.Fprintf(w, "Requested deletion of l7 policy %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- l7rule ----------------------------------------------------------------
@@ -781,13 +782,13 @@ func runL7RuleDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	for _, ruleID := range ruleIDs {
+	return batchdelete.Each(ruleIDs, func(ruleID string) error {
 		if derr := l7policies.DeleteRule(ctx, client, policyID, ruleID).ExtractErr(); derr != nil {
 			return fmt.Errorf("deleting rule %s of l7 policy %q: %w", ruleID, policyRef, derr)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of l7 rule %s\n", ruleID); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }

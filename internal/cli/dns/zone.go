@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -282,22 +282,19 @@ func newZoneDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runZoneDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	var errs []error
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveZoneID(ctx, client, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if _, err := zones.Delete(ctx, client, id).Extract(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting dns zone %s: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting dns zone %s: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted zone %s\n", ref); err != nil {
 			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 // zoneSetFlags holds the mutable attributes accepted by "zone set".

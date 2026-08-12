@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -438,7 +439,7 @@ func newLBDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runLBDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string,
 	cascade, wait bool, waitTimeout time.Duration, w io.Writer,
 ) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveLoadBalancerID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -453,15 +454,15 @@ func runLBDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []
 			if _, werr := fmt.Fprintf(w, "Deleted load balancer %s\n", ref); werr != nil {
 				return werr
 			}
-			continue
+			return nil
 		}
 		// Without --wait the delete is only accepted, not finished: octavia leaves
 		// the record in PENDING_DELETE and rejects further writes until it settles.
 		if _, werr := fmt.Fprintf(w, "Requested deletion of load balancer %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- failover --------------------------------------------------------------

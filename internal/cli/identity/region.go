@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -167,12 +168,12 @@ func newRegionDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRegionDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		if err := regions.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting region %q: %w", id, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func newRegionSetCommand(a *auth.Options, o *output.Options) *cobra.Command {

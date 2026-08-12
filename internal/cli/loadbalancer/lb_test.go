@@ -312,6 +312,40 @@ func TestRunLBDelete_CascadeAndWording(t *testing.T) {
 	}
 }
 
+// TestRunLBDelete_AggregatesFailures asserts that a mid-list delete failure
+// does not abort the remaining deletes and that the returned error names the
+// failed ref.
+func TestRunLBDelete_AggregatesFailures(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	stubLBList(fakeServer)
+	var deleted []string
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/lb1", func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, "lb1")
+		w.WriteHeader(http.StatusNoContent)
+	})
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/bad", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	})
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/lb2", func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, "lb2")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	var buf bytes.Buffer
+	err := runLBDelete(context.Background(), lbClient(fakeServer), []string{"lb1", "bad", "lb2"}, false, false, 0, &buf)
+	if err == nil {
+		t.Fatal("runLBDelete returned nil error; want a failure for the bad ref")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error missing failed ref %q: %v", "bad", err)
+	}
+	if len(deleted) != 2 || deleted[0] != "lb1" || deleted[1] != "lb2" {
+		t.Errorf("deleted = %v, want both [lb1 lb2] attempted despite the failure between them", deleted)
+	}
+}
+
 func TestRunLBFailover_Request(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

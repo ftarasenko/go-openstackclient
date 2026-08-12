@@ -2,7 +2,6 @@ package baremetal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -146,18 +146,17 @@ func newNodeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func runNodeDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	// Attempt every id (as OSC does) rather than aborting on the first failure;
-	// report the successes and join the failures into a single error.
-	var errs []error
-	for _, id := range ids {
+	// batchdelete.Each reports the successes and joins the failures into a
+	// single error.
+	return batchdelete.Each(ids, func(id string) error {
 		if err := nodes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting baremetal node %s: %w", id, err))
-			continue
+			return fmt.Errorf("deleting baremetal node %s: %w", id, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted node %s\n", id); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 // nodeSetFlags holds the mutable attributes accepted by "node set".

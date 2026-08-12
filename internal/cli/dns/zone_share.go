@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -213,13 +214,13 @@ func runZoneShareDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	for _, shareID := range shareIDs {
+	return batchdelete.Each(shareIDs, func(shareID string) error {
 		if derr := zones.Unshare(ctx, client, zoneID, shareID).ExtractErr(); derr != nil {
 			return fmt.Errorf("removing share %s from zone %q: %w", shareID, zoneRef, derr)
 		}
 		if _, werr := fmt.Fprintf(w, "Removed share %s from zone %s\n", shareID, zoneRef); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }

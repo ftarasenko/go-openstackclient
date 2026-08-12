@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -464,7 +465,7 @@ func newPoolDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPoolDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolvePoolID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -475,6 +476,6 @@ func runPoolDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 		if _, werr := fmt.Fprintf(w, "Requested deletion of pool %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }

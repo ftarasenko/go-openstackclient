@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -439,7 +440,7 @@ func newSubnetPoolDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runSubnetPoolDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveSubnetPoolID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -450,6 +451,6 @@ func runSubnetPoolDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if _, err := fmt.Fprintf(w, "Deleted subnet pool %s\n", ref); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }

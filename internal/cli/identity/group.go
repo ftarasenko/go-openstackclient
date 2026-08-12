@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -248,7 +249,7 @@ func runGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs
 	if err != nil {
 		return err
 	}
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, rerr := resolveGroupID(ctx, client, ref, domainID)
 		if rerr != nil {
 			return rerr
@@ -259,8 +260,8 @@ func runGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs
 		if _, werr := fmt.Fprintf(w, "Deleted group %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- set -------------------------------------------------------------------

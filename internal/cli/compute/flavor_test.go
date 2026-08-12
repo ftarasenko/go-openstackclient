@@ -283,6 +283,46 @@ func TestRunFlavorDelete_RequestMethod(t *testing.T) {
 	}
 }
 
+// TestRunFlavorDelete_AggregatesFailures asserts that a bad ref in the middle
+// of the batch does not stop the good refs around it from being deleted, and
+// that the returned error names the failing ref.
+func TestRunFlavorDelete_AggregatesFailures(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+
+	var deleted []string
+	fakeServer.Mux.HandleFunc("/flavors/1", func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, "1")
+		w.WriteHeader(http.StatusAccepted)
+	})
+	fakeServer.Mux.HandleFunc("/flavors/2", func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, "2")
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "2.1")
+
+	var buf bytes.Buffer
+	// "9" does not resolve to any flavor; "1" and "2" flank it and must still
+	// both be deleted.
+	err := runFlavorDelete(context.Background(), client, []string{"1", "9", "2"}, &buf)
+	if err == nil {
+		t.Fatal("runFlavorDelete returned nil error; want a failure for the unresolvable ref")
+	}
+	if !strings.Contains(err.Error(), "9") {
+		t.Errorf("error missing failed ref %q: %v", "9", err)
+	}
+	if len(deleted) != 2 || deleted[0] != "1" || deleted[1] != "2" {
+		t.Errorf("deleted = %v, want both [1 2] attempted despite the failure between them", deleted)
+	}
+}
+
 func TestRunFlavorSet_RequestBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

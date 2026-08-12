@@ -2,7 +2,6 @@ package volume
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -225,22 +225,19 @@ func newBackupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runBackupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	var errs []error
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveBackupID(ctx, client, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := backups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting backup %q: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting backup %q: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted backup: %s\n", ref); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type backupRestoreFlags struct {

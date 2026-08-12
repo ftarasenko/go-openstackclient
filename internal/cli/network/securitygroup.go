@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -160,22 +160,19 @@ func newSecurityGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runSecurityGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
-	var errs []error
-	for _, nameOrID := range names {
+	return batchdelete.Each(names, func(nameOrID string) error {
 		id, err := resolveSecGroupID(ctx, client, nameOrID)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := groups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting security group %s: %w", nameOrID, err))
-			continue
+			return fmt.Errorf("deleting security group %s: %w", nameOrID, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted security group %s\n", nameOrID); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type secGroupSetFlags struct {
@@ -499,15 +496,13 @@ func newSecurityGroupRuleDeleteCommand(a *auth.Options, o *output.Options) *cobr
 }
 
 func runSecurityGroupRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
-	var errs []error
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		if err := rules.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting security group rule %s: %w", id, err))
-			continue
+			return fmt.Errorf("deleting security group rule %s: %w", id, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted security group rule %s\n", id); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }

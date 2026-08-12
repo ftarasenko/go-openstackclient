@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -946,12 +947,12 @@ func newTraitDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTraitDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string) error {
-	for _, name := range names {
+	return batchdelete.Each(names, func(name string) error {
 		if err := traits.Delete(ctx, client, name).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting trait %s: %w", name, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func newTraitShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

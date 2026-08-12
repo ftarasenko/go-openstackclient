@@ -2,7 +2,6 @@ package volume
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -355,17 +355,15 @@ func runAttachmentDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	if err := requireVolumeMicroversion(client, attachmentsMicroversion, "volume attachment delete"); err != nil {
 		return err
 	}
-	var errs []error
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		if err := attachments.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting volume attachment %q: %w", id, err))
-			continue
+			return fmt.Errorf("deleting volume attachment %q: %w", id, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume attachment: %s\n", id); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 func newAttachmentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {

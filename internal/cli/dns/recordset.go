@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -274,22 +274,19 @@ func runRecordSetDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	var errs []error
-	for _, ref := range rsRefs {
+	return batchdelete.Each(rsRefs, func(ref string) error {
 		rsID, err := resolveRecordSetID(ctx, client, zoneID, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := recordsets.Delete(ctx, client, zoneID, rsID).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting recordset %s: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting recordset %s: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted recordset %s\n", ref); err != nil {
 			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 // recordSetSetFlags holds the mutable attributes accepted by "recordset set".

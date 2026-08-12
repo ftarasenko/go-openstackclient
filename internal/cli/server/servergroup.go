@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -283,7 +284,7 @@ func newServerGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runServerGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveServerGroupID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -291,6 +292,6 @@ func runServerGroupDelete(ctx context.Context, client *gophercloud.ServiceClient
 		if err := servergroups.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting server group %q: %w", ref, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -175,7 +176,7 @@ func runLBQuotaList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		}
 		resp, err := client.Get(ctx, url, &page, nil)
 		if resp != nil {
-			defer func() { _ = resp.Body.Close() }()
+			_ = resp.Body.Close()
 		}
 		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
 			return fmt.Errorf("listing load balancer quotas: %w", err)
@@ -715,17 +716,15 @@ func newAmphoraDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 
 // runAmphoraDelete DELETEs /v2.0/octavia/amphorae/<id> — again no typed call.
 func runAmphoraDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
-	for _, id := range ids {
-		// Closed inside the loop rather than deferred, so a long argument list does
-		// not hold every response body open until the function returns.
+	return batchdelete.Each(ids, func(id string) error {
 		if err := deleteAmphoraRaw(ctx, client, id); err != nil {
 			return fmt.Errorf("deleting amphora %s: %w", id, err)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of amphora %s\n", id); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func deleteAmphoraRaw(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
@@ -1168,7 +1167,7 @@ func newFlavorDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveFlavorID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -1179,8 +1178,8 @@ func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if _, werr := fmt.Fprintf(w, "Deleted load balancer flavor %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- flavorprofile ---------------------------------------------------------
@@ -1402,7 +1401,7 @@ func newFlavorProfileDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runFlavorProfileDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveFlavorProfileID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -1413,6 +1412,6 @@ func runFlavorProfileDelete(ctx context.Context, client *gophercloud.ServiceClie
 		if _, werr := fmt.Fprintf(w, "Deleted flavor profile %s\n", ref); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }

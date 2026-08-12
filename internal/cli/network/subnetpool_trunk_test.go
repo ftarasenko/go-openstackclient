@@ -240,6 +240,47 @@ func TestRunTrunkList_FiltersAndSubportRendering(t *testing.T) {
 	}
 }
 
+// TestRunTrunkDelete_AggregatesFailures asserts that a mid-list delete failure
+// does not abort the remaining deletes and that the returned error names the
+// failed ref.
+func TestRunTrunkDelete_AggregatesFailures(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	// resolveTrunkID's name lookup always misses here, so each ref falls back
+	// to being treated as a literal ID (the documented zero-match behavior).
+	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"trunks": []}`))
+	})
+
+	var deleted []string
+	fakeServer.Mux.HandleFunc("/trunks/t1", func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, "t1")
+		w.WriteHeader(http.StatusNoContent)
+	})
+	fakeServer.Mux.HandleFunc("/trunks/bad", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	})
+	fakeServer.Mux.HandleFunc("/trunks/t2", func(w http.ResponseWriter, _ *http.Request) {
+		deleted = append(deleted, "t2")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	var buf bytes.Buffer
+	err := runTrunkDelete(context.Background(), networkClient(fakeServer), []string{"t1", "bad", "t2"}, &buf)
+	if err == nil {
+		t.Fatal("runTrunkDelete returned nil error; want a failure for the bad ref")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error missing failed ref %q: %v", "bad", err)
+	}
+	if len(deleted) != 2 || deleted[0] != "t1" || deleted[1] != "t2" {
+		t.Errorf("deleted = %v, want both [t1 t2] attempted despite the failure between them", deleted)
+	}
+}
+
 func TestRunTrunkCreate_RequestBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

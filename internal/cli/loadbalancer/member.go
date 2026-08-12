@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -421,7 +422,7 @@ func runMemberDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	for _, ref := range memberRefs {
+	return batchdelete.Each(memberRefs, func(ref string) error {
 		memberID, rerr := resolveMemberID(ctx, client, poolID, ref)
 		if rerr != nil {
 			return rerr
@@ -432,6 +433,6 @@ func runMemberDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if _, werr := fmt.Fprintf(w, "Requested removal of member %s from pool %s\n", ref, poolRef); werr != nil {
 			return werr
 		}
-	}
-	return nil
+		return nil
+	})
 }

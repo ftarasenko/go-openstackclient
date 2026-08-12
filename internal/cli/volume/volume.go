@@ -5,7 +5,6 @@ package volume
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -17,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -431,22 +431,19 @@ func newVolumeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runVolumeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	var errs []error
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveVolumeID(ctx, client, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := volumes.Delete(ctx, client, id, nil).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting volume %q: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting volume %q: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume: %s\n", ref); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 // volumeSetFlags holds the mutations accepted by "volume set".

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -267,22 +267,19 @@ func newAggregateDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runAggregateDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	var errs []error
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveAggregateID(ctx, client, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := aggregates.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting aggregate %q: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting aggregate %q: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted aggregate %s\n", ref); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type aggregateSetFlags struct {

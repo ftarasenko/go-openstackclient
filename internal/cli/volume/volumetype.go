@@ -2,7 +2,6 @@ package volume
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -187,22 +187,19 @@ func newTypeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTypeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	var errs []error
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveVolumeTypeID(ctx, client, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := volumetypes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting volume type %q: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting volume type %q: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume type: %s\n", ref); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type typeSetFlags struct {
@@ -287,11 +284,10 @@ func runTypeUnset(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	}
 	// Cinder deletes one extra-spec per request (DELETE
 	// /types/{id}/extra_specs/{key}), so issue one call per key.
-	var errs []error
-	for _, key := range f.property {
+	return batchdelete.Each(f.property, func(key string) error {
 		if err := volumetypes.DeleteExtraSpec(ctx, client, id, key).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("removing extra-spec %q from volume type %q: %w", key, ref, err))
+			return fmt.Errorf("removing extra-spec %q from volume type %q: %w", key, ref, err)
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }

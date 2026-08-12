@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -349,10 +350,10 @@ func newKeypairDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runKeypairDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, _ io.Writer) error {
-	for _, name := range names {
+	return batchdelete.Each(names, func(name string) error {
 		if err := keypairs.Delete(ctx, client, name, keypairs.DeleteOpts{}).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting keypair %q: %w", name, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }

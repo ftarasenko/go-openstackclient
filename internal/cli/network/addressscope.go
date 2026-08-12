@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -254,18 +255,22 @@ func newAddressScopeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			for _, ref := range args {
-				id, err := resolveAddressScopeID(ctx, client, ref)
-				if err != nil {
-					return err
-				}
-				if err := addressscopes.Delete(ctx, client, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting address scope %s: %w", ref, err)
-				}
-			}
-			return nil
+			return runAddressScopeDelete(ctx, client, args)
 		},
 	}
+}
+
+func runAddressScopeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string) error {
+	return batchdelete.Each(refs, func(ref string) error {
+		id, err := resolveAddressScopeID(ctx, client, ref)
+		if err != nil {
+			return err
+		}
+		if err := addressscopes.Delete(ctx, client, id).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting address scope %s: %w", ref, err)
+		}
+		return nil
+	})
 }
 
 // --- address group ----------------------------------------------------------
@@ -460,18 +465,22 @@ func newAddressGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			for _, ref := range args {
-				id, err := resolveAddressGroupID(cmd.Context(), c, ref)
-				if err != nil {
-					return err
-				}
-				if err := addressgroups.Delete(cmd.Context(), c, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting address group %s: %w", ref, err)
-				}
-			}
-			return nil
+			return runAddressGroupDelete(cmd.Context(), c, args)
 		},
 	}
+}
+
+func runAddressGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string) error {
+	return batchdelete.Each(refs, func(ref string) error {
+		id, err := resolveAddressGroupID(ctx, client, ref)
+		if err != nil {
+			return err
+		}
+		if err := addressgroups.Delete(ctx, client, id).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting address group %s: %w", ref, err)
+		}
+		return nil
+	})
 }
 
 // runAddressGroupSet renames or re-describes the group and, with --address,

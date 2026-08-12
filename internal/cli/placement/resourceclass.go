@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -174,10 +175,10 @@ func newResourceClassDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runResourceClassDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string) error {
-	for _, name := range names {
+	return batchdelete.Each(names, func(name string) error {
 		if err := resourceclasses.Delete(ctx, client, name).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting resource class %s: %w", name, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }

@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -633,24 +634,22 @@ func newServerDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	// Attempt every ref; collect failures so one bad server does not prevent the
-	// rest from being deleted, then report all errors together.
-	var errs []error
-	for _, ref := range refs {
+	// Attempt every ref; batchdelete.Each collects failures so one bad server
+	// does not prevent the rest from being deleted, then reports all of them
+	// together.
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveServerID(ctx, client, ref)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := servers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting server %q: %w", ref, err))
-			continue
+			return fmt.Errorf("deleting server %q: %w", ref, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted server %s\n", ref); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 // serverSetFlags holds the mutable attributes accepted by "server set".

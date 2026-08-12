@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -198,7 +199,7 @@ func newServiceDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runServiceDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveServiceID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -206,8 +207,8 @@ func runServiceDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 		if err := services.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting service %q: %w", ref, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func newServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Command {

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -232,12 +233,12 @@ func newTransferDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runTransferDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		if err := transfers.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting volume transfer request %s: %w", id, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func newTransferAcceptCommand(a *auth.Options, o *output.Options) *cobra.Command {

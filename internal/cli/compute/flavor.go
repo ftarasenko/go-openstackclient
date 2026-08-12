@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -254,7 +255,7 @@ func newFlavorDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, _ io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveFlavorID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -262,8 +263,8 @@ func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err := flavors.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting flavor %q: %w", ref, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // ---------------------------------------------------------------------------

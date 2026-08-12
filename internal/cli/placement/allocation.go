@@ -2,7 +2,6 @@ package placement
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -35,15 +35,13 @@ func newProviderAllocationDeleteCommand(a *auth.Options, o *output.Options) *cob
 }
 
 func runProviderAllocationDelete(ctx context.Context, client *gophercloud.ServiceClient, consumers []string, w io.Writer) error {
-	var errs []error
-	for _, c := range consumers {
+	return batchdelete.Each(consumers, func(c string) error {
 		if err := allocations.Delete(ctx, client, c).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting allocations for consumer %s: %w", c, err))
-			continue
+			return fmt.Errorf("deleting allocations for consumer %s: %w", c, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted allocations for consumer %s\n", c); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }

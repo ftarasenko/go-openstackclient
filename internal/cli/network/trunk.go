@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -409,7 +410,7 @@ func newTrunkDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTrunkDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveTrunkID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -420,8 +421,8 @@ func runTrunkDelete(ctx context.Context, client *gophercloud.ServiceClient, refs
 		if _, err := fmt.Fprintf(w, "Deleted network trunk %s\n", ref); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- subport list/add/remove ------------------------------------------------

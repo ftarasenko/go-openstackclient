@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -208,7 +209,7 @@ func newQoSDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runQoSDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, force bool) error {
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveQoSID(ctx, client, ref)
 		if err != nil {
 			return err
@@ -216,8 +217,8 @@ func runQoSDelete(ctx context.Context, client *gophercloud.ServiceClient, refs [
 		if err := qos.Delete(ctx, client, id, qos.DeleteOpts{Force: force}).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting volume QoS specification %q: %w", ref, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- set / unset ------------------------------------------------------------

@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -217,22 +217,19 @@ func newFloatingIPDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runFloatingIPDelete(ctx context.Context, client *gophercloud.ServiceClient, addrs []string, w io.Writer) error {
-	var errs []error
-	for _, addrOrID := range addrs {
+	return batchdelete.Each(addrs, func(addrOrID string) error {
 		id, err := resolveFloatingIPID(ctx, client, addrOrID)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := floatingips.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting floating IP %s: %w", addrOrID, err))
-			continue
+			return fmt.Errorf("deleting floating IP %s: %w", addrOrID, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted floating IP %s\n", addrOrID); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type floatingIPSetFlags struct {

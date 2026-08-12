@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -291,22 +291,19 @@ func newSubnetDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runSubnetDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
-	var errs []error
-	for _, nameOrID := range names {
+	return batchdelete.Each(names, func(nameOrID string) error {
 		id, err := resolveSubnetID(ctx, client, nameOrID)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := subnets.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting subnet %s: %w", nameOrID, err))
-			continue
+			return fmt.Errorf("deleting subnet %s: %w", nameOrID, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted subnet %s\n", nameOrID); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type subnetSetFlags struct {

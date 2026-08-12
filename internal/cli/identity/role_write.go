@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -107,7 +108,7 @@ func runRoleDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 	if err != nil {
 		return err
 	}
-	for _, ref := range refs {
+	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveRoleID(ctx, client, ref, domainID)
 		if err != nil {
 			return err
@@ -115,8 +116,8 @@ func runRoleDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 		if err := roles.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting role %q: %w", ref, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- role set ---------------------------------------------------------------

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -273,15 +274,15 @@ func newZoneTransferRequestDeleteCommand(a *auth.Options, o *output.Options) *co
 }
 
 func runZoneTransferRequestDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		if err := request.Delete(ctx, client, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting zone transfer request %s: %w", id, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted zone transfer request %s\n", id); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- zone transfer accept --------------------------------------------------

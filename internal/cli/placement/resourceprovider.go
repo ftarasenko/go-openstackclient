@@ -2,7 +2,6 @@ package placement
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -146,17 +146,15 @@ func newProviderDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runProviderDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
-	var errs []error
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		if err := resourceproviders.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting resource provider %s: %w", id, err))
-			continue
+			return fmt.Errorf("deleting resource provider %s: %w", id, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted resource provider %s\n", id); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 func newProviderTraitListCommand(a *auth.Options, o *output.Options) *cobra.Command {

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -286,7 +287,7 @@ func runZoneExportDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	ids []string, common *commonOptions, w io.Writer,
 ) error {
 	headers := common.headers()
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		url := client.ServiceURL("zones", "tasks", "exports", id)
 		if err := dnsDelete(ctx, client, url, headers); err != nil {
 			return fmt.Errorf("deleting zone export %s: %w", id, err)
@@ -294,8 +295,8 @@ func runZoneExportDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if _, err := fmt.Fprintf(w, "Deleted zone export %s\n", id); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- zone import -----------------------------------------------------------
@@ -524,7 +525,7 @@ func runZoneImportDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	ids []string, common *commonOptions, w io.Writer,
 ) error {
 	headers := common.headers()
-	for _, id := range ids {
+	return batchdelete.Each(ids, func(id string) error {
 		url := client.ServiceURL("zones", "tasks", "imports", id)
 		if err := dnsDelete(ctx, client, url, headers); err != nil {
 			return fmt.Errorf("deleting zone import %s: %w", id, err)
@@ -532,6 +533,6 @@ func runZoneImportDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if _, err := fmt.Fprintf(w, "Deleted zone import %s\n", id); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }

@@ -2,7 +2,6 @@ package image
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -315,30 +315,27 @@ func newImageDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ids := make([]string, 0, len(args))
-			for _, ref := range args {
-				id, err := resolveImageID(ctx, client, ref)
-				if err != nil {
-					return err
-				}
-				ids = append(ids, id)
-			}
-			return runImageDelete(ctx, client, ids, cmd.OutOrStdout())
+			return runImageDelete(ctx, client, args, cmd.OutOrStdout())
 		},
 	}
 	return cmd
 }
 
-func runImageDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
-	var errs []error
-	for _, id := range ids {
+// runImageDelete resolves and deletes each ref in turn. Resolution happens
+// per-ref (not up front) so a bad ref in the middle of the list cannot stop
+// the refs around it from being resolved and deleted.
+func runImageDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+	return batchdelete.Each(refs, func(ref string) error {
+		id, err := resolveImageID(ctx, client, ref)
+		if err != nil {
+			return err
+		}
 		if err := images.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting image %s: %w", id, err))
-			continue
+			return fmt.Errorf("deleting image %s: %w", ref, err)
 		}
-		if _, err := fmt.Fprintf(w, "Deleted image %s\n", id); err != nil {
-			errs = append(errs, err)
+		if _, err := fmt.Fprintf(w, "Deleted image %s\n", ref); err != nil {
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }

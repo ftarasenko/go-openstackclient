@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -311,14 +312,18 @@ func newRBACDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			for _, id := range args {
-				if err := rbacpolicies.Delete(cmd.Context(), c, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting network RBAC policy %s: %w", id, err)
-				}
-			}
-			return nil
+			return runRBACDelete(cmd.Context(), c, args)
 		},
 	}
+}
+
+func runRBACDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
+	return batchdelete.Each(ids, func(id string) error {
+		if err := rbacpolicies.Delete(ctx, client, id).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting network RBAC policy %s: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // --- network segment --------------------------------------------------------
@@ -531,14 +536,18 @@ func newSegmentDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			for _, id := range args {
-				if err := segments.Delete(cmd.Context(), c, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting network segment %s: %w", id, err)
-				}
-			}
-			return nil
+			return runSegmentDelete(cmd.Context(), c, args)
 		},
 	}
+}
+
+func runSegmentDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
+	return batchdelete.Each(ids, func(id string) error {
+		if err := segments.Delete(ctx, client, id).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting network segment %s: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // --- floating ip port forwarding --------------------------------------------
@@ -773,14 +782,18 @@ func newPortForwardingDeleteCommand(a *auth.Options, o *output.Options) *cobra.C
 			if err != nil {
 				return err
 			}
-			for _, id := range args[1:] {
-				if err := portforwarding.Delete(cmd.Context(), c, args[0], id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting port forwarding %s: %w", id, err)
-				}
-			}
-			return nil
+			return runPortForwardingDelete(cmd.Context(), c, args[0], args[1:])
 		},
 	}
+}
+
+func runPortForwardingDelete(ctx context.Context, client *gophercloud.ServiceClient, fipID string, ids []string) error {
+	return batchdelete.Each(ids, func(id string) error {
+		if err := portforwarding.Delete(ctx, client, fipID, id).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting port forwarding %s: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // --- router add/remove route ------------------------------------------------

@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -13,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -535,22 +535,19 @@ func newPortDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, w io.Writer) error {
-	var errs []error
-	for _, nameOrID := range names {
+	return batchdelete.Each(names, func(nameOrID string) error {
 		id, err := resolvePortID(ctx, client, nameOrID)
 		if err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		if err := ports.Delete(ctx, client, id).ExtractErr(); err != nil {
-			errs = append(errs, fmt.Errorf("deleting port %s: %w", nameOrID, err))
-			continue
+			return fmt.Errorf("deleting port %s: %w", nameOrID, err)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted port %s\n", nameOrID); err != nil {
-			errs = append(errs, err)
+			return err
 		}
-	}
-	return errors.Join(errs...)
+		return nil
+	})
 }
 
 type portSetFlags struct {

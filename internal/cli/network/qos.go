@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -275,18 +276,22 @@ func newQoSPolicyDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			for _, ref := range args {
-				id, err := resolveQoSPolicyID(cmd.Context(), c, ref)
-				if err != nil {
-					return err
-				}
-				if err := policies.Delete(cmd.Context(), c, id).ExtractErr(); err != nil {
-					return fmt.Errorf("deleting network QoS policy %s: %w", ref, err)
-				}
-			}
-			return nil
+			return runQoSPolicyDelete(cmd.Context(), c, args)
 		},
 	}
+}
+
+func runQoSPolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string) error {
+	return batchdelete.Each(refs, func(ref string) error {
+		id, err := resolveQoSPolicyID(ctx, client, ref)
+		if err != nil {
+			return err
+		}
+		if err := policies.Delete(ctx, client, id).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting network QoS policy %s: %w", ref, err)
+		}
+		return nil
+	})
 }
 
 func resolveQoSPolicyID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
@@ -684,7 +689,7 @@ func newQoSRuleDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runQoSRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, ref string, ruleIDs []string) error {
-	for _, ruleID := range ruleIDs {
+	return batchdelete.Each(ruleIDs, func(ruleID string) error {
 		policyID, k, err := resolveQoSRule(ctx, client, ref, ruleID)
 		if err != nil {
 			return err
@@ -693,8 +698,8 @@ func runQoSRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 			qosRuleURL(client, k, policyID, ruleID), k, nil); err != nil {
 			return fmt.Errorf("deleting QoS rule %s: %w", ruleID, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // --- network qos rule type ---------------------------------------------------
