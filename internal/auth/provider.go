@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"os"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/config"
@@ -30,6 +29,12 @@ type Client struct {
 // documented precedence (clouds.yaml → OS_* env → application credentials) and
 // wires the resolved TLS config into it.
 func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
+	// An environment variable koc could not parse is reported before any
+	// credential is used: the affected toggles are security ones, so silently
+	// running on a default the operator did not choose is not acceptable.
+	if err := envError(); err != nil {
+		return nil, err
+	}
 	if o.CredsFromNS != "" && o.CredsFromVault != "" {
 		return nil, fmt.Errorf("--creds-from-ns and --creds-from-vault are mutually exclusive")
 	}
@@ -66,20 +71,20 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	if insecure {
-		fmt.Fprintln(os.Stderr, "WARNING: TLS certificate verification is disabled (--insecure); connections are not secure")
+		warnInsecure("the OpenStack API (--insecure)")
 	}
+	warnCleartext("the OpenStack identity endpoint", ao.IdentityEndpoint)
 
-	provider, err := config.NewProviderClient(ctx, ao, config.WithTLSConfig(tlsCfg))
+	// The HTTP client is built here and handed to gophercloud, rather than letting
+	// config.WithTLSConfig build one, for three reasons: WithTLSConfig replaces
+	// Transport wholesale (dropping the debug/timing wrappers and the proxy-aware
+	// DefaultTransport clone), a zero-value http.Client has no timeout at all, and
+	// NewProviderClient POSTs /v3/auth/tokens *inside* the call — so anything
+	// attached afterwards cannot see the token request, the returned catalog, or an
+	// authentication failure.
+	provider, err := config.NewProviderClient(ctx, ao, config.WithHTTPClient(o.httpClient(tlsCfg)))
 	if err != nil {
 		return nil, fmt.Errorf("authenticating to OpenStack: %w", err)
-	}
-	if o.Debug {
-		provider.HTTPClient.Transport = newDebugTransport(provider.HTTPClient.Transport)
-	}
-	// Wrapped outermost so its measurement includes the debug dump's own cost
-	// only when --debug is also set, and so the timing line follows that dump.
-	if o.Timing {
-		provider.HTTPClient.Transport = newTimingTransport(provider.HTTPClient.Transport, os.Stderr)
 	}
 
 	return &Client{Provider: provider, Endpoint: eo, opts: o}, nil

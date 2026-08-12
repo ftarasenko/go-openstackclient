@@ -3,10 +3,13 @@ package auth
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
@@ -84,8 +87,8 @@ func TestApplyOpenrcVars_FlagPrecedenceAndNormalize(t *testing.T) {
 }
 
 func TestSiblingVaultPathAndCertNames(t *testing.T) {
-	const openrc = "deployments/itkey/e2e-lcm/reg/reg-cp/openrc"
-	if got := siblingVaultPath(openrc, "ssl_certificates"); got != "deployments/itkey/e2e-lcm/reg/reg-cp/ssl_certificates" {
+	const openrc = "deployments/example/dev/reg/reg-cp/openrc"
+	if got := siblingVaultPath(openrc, "ssl_certificates"); got != "deployments/example/dev/reg/reg-cp/ssl_certificates" {
 		t.Errorf("siblingVaultPath = %q", got)
 	}
 	if got := siblingVaultPath("openrc", "ssl_certificates"); got != "ssl_certificates" {
@@ -204,6 +207,125 @@ func TestVaultNeedsDiscovery(t *testing.T) {
 		if got := c.o.vaultNeedsDiscovery(); got != c.want {
 			t.Errorf("case %d: vaultNeedsDiscovery = %v, want %v", i, got, c.want)
 		}
+	}
+}
+
+// fakeAPIServer serves the two objects --creds-from-ns reads: the Ironic CR and
+// its API credentials secret. tlsCertName empty means the CR has no certificate,
+// which is what makes koc fall back to plain http.
+func fakeAPIServer(t *testing.T, tlsCertName string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/apis/ironic.metal3.io/v1alpha1/namespaces/metal3/ironics":
+			_, _ = fmt.Fprintf(w, `{"items":[{"metadata":{"name":"ironic"},"spec":{"apiCredentialsName":"ironic-htpasswd","networking":{"ipAddress":"192.0.2.10"},"tls":{"certificateName":%q}}}]}`, tlsCertName)
+		case "/api/v1/namespaces/metal3/secrets/ironic-htpasswd":
+			_, _ = fmt.Fprintf(w, `{"data":{"username":%q,"password":%q}}`,
+				base64.StdEncoding.EncodeToString([]byte("ironic")),
+				base64.StdEncoding.EncodeToString([]byte("pw")))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// writeKubeconfig writes a minimal kubeconfig pointing at server.
+func writeKubeconfig(t *testing.T, server string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	doc := fmt.Sprintf(`apiVersion: v1
+current-context: test
+clusters:
+- name: test
+  cluster:
+    server: %s
+users:
+- name: test
+  user:
+    token: fake-bearer-token
+contexts:
+- name: test
+  context:
+    cluster: test
+    user: test
+`, server)
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The --creds-from-ns branch returns before the Keystone branch's warning, so it
+// has to emit its own: it honors --insecure, and an Ironic CR without a TLS
+// certificate puts the basic-auth credentials on plain http.
+func TestLoadIronicCreds_WarnsInsecureAndCleartext(t *testing.T) {
+	api := fakeAPIServer(t, "")
+	o := &Options{
+		CredsFromNS: "metal3",
+		Kubeconfig:  writeKubeconfig(t, api.URL),
+		Insecure:    true,
+	}
+
+	var ic *ironicCreds
+	var err error
+	out := captureStderr(t, func() { ic, err = o.loadIronicCreds(context.Background()) })
+	if err != nil {
+		t.Fatalf("loadIronicCreds: %v", err)
+	}
+	if ic.endpoint != "http://192.0.2.10:6385/" {
+		t.Fatalf("endpoint = %q", ic.endpoint)
+	}
+	if !strings.Contains(out, "TLS certificate verification is disabled") {
+		t.Errorf("no --insecure warning:\n%s", out)
+	}
+	if !strings.Contains(out, "plain HTTP") {
+		t.Errorf("no cleartext warning for an http:// ironic endpoint:\n%s", out)
+	}
+}
+
+// basicAuthTransport injects on every request the client makes, redirects
+// included, which used to re-add the credentials net/http had just stripped for a
+// cross-host hop.
+func TestBasicAuthTransport_NoCredentialsOnAnotherHost(t *testing.T) {
+	var foreignAuth string
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		foreignAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"nodes":[]}`))
+	}))
+	defer foreign.Close()
+
+	var originAuth string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originAuth = r.Header.Get("Authorization")
+		http.Redirect(w, r, foreign.URL+"/v1/nodes", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	ic := &ironicCreds{endpoint: origin.URL + "/", username: "ironic", password: "pw"}
+	sc, err := ic.baremetalClient("1.82")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, origin.URL+"/v1/nodes", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := sc.HTTPClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	if originAuth == "" {
+		t.Error("the ironic endpoint itself must still receive basic auth")
+	}
+	if foreignAuth != "" {
+		t.Errorf("a foreign host received the ironic credentials: %q", foreignAuth)
 	}
 }
 

@@ -67,8 +67,14 @@ func TestApplyDomainScope_SingleDomainCommonCase(t *testing.T) {
 		t.Errorf("user domain = %q, want Default", ao.DomainName)
 	}
 	scope := scopeJSON(t, &ao)
-	proj := scope["project"].(map[string]any)
-	dom := proj["domain"].(map[string]any)
+	proj, ok := scope["project"].(map[string]any)
+	if !ok {
+		t.Fatalf("scope has no project: %#v", scope)
+	}
+	dom, ok := proj["domain"].(map[string]any)
+	if !ok {
+		t.Fatalf("project scope has no domain: %#v", proj)
+	}
 	if proj["name"] != "admin" || dom["name"] != "Default" {
 		t.Errorf("unexpected project scope: %#v", proj)
 	}
@@ -80,7 +86,10 @@ func TestApplyDomainScope_ProjectByID(t *testing.T) {
 	o.applyAuthOverrides(&ao)
 
 	scope := scopeJSON(t, &ao)
-	proj := scope["project"].(map[string]any)
+	proj, ok := scope["project"].(map[string]any)
+	if !ok {
+		t.Fatalf("scope has no project: %#v", scope)
+	}
 	if proj["id"] != "pid-123" {
 		t.Errorf("scope project id = %v, want pid-123", proj["id"])
 	}
@@ -130,7 +139,10 @@ func TestResolveAuth_EnvSplitDomainNoProjectID(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a project scope, got %#v", scope)
 	}
-	dom := proj["domain"].(map[string]any)
+	dom, ok := proj["domain"].(map[string]any)
+	if !ok {
+		t.Fatalf("project scope has no domain: %#v", proj)
+	}
 	if proj["name"] != "admin" || dom["name"] != "Default" {
 		t.Errorf("unexpected project scope: %#v", proj)
 	}

@@ -24,8 +24,12 @@
 package auth
 
 import (
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/pflag"
 )
@@ -38,6 +42,14 @@ const (
 	defaultComputeMicroversion   = "latest"
 	defaultVolumeMicroversion    = "latest"
 )
+
+// defaultHTTPTimeout is the default whole-exchange cap, and it is deliberately
+// 0 (unbounded). The failure it would guard against — an endpoint that accepts
+// the connection and then answers nothing — is already bounded by
+// responseHeaderTimeout, which fires without also capping a legitimate transfer.
+// A whole-exchange default would silently break the long ones (image save/create
+// over a slow link), so a hard cap stays opt-in via --timeout.
+const defaultHTTPTimeout = 0
 
 // Options carries every global auth/TLS/microversion/debug flag. It is
 // registered once on the root command's persistent flags and shared with all
@@ -118,6 +130,12 @@ type Options struct {
 	VaultKVPrefix    string
 	VaultCACert      string
 	VaultInsecure    bool
+
+	// Timeout caps a single HTTP request/response exchange on every client koc
+	// builds (OpenStack, standalone ironic, Vault, Kubernetes). Zero disables the
+	// cap. It is per request, not per command, so the --wait polling loops — which
+	// issue discrete requests — are unaffected.
+	Timeout time.Duration
 
 	// Diagnostics.
 	Debug bool
@@ -241,8 +259,14 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"path to a client certificate for mutual TLS (env OS_CERT)")
 	fs.StringVar(&o.ClientKey, "os-key", os.Getenv("OS_KEY"),
 		"path to the client certificate key for mutual TLS (env OS_KEY)")
-	fs.BoolVar(&o.Insecure, "insecure", envBool("OS_INSECURE"),
+	fs.BoolVar(&o.Insecure, "insecure", EnvBool("OS_INSECURE"),
 		"disable TLS certificate verification (env OS_INSECURE); logs a warning")
+
+	// UNVERIFIED against KeyStack: python-openstackclient has no --timeout, it is
+	// a keystoneauth session setting. koc exposes it because a zero timeout is not
+	// a safe default for a CLI.
+	fs.DurationVar(&o.Timeout, "timeout", envDuration("OS_TIMEOUT", defaultHTTPTimeout),
+		"whole-exchange HTTP timeout, e.g. 90s; 0 (the default) leaves transfers unbounded — a wedged endpoint is caught by the 60s response-header timeout either way (env OS_TIMEOUT)")
 
 	fs.StringVar(&o.BaremetalAPIVersion, "os-baremetal-api-version", envOr("OS_BAREMETAL_API_VERSION", defaultBaremetalMicroversion),
 		"baremetal (ironic) API microversion (env OS_BAREMETAL_API_VERSION)")
@@ -256,7 +280,7 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.KeyVRMEndpoint, "keyvrm-endpoint", os.Getenv("OS_KEYVRM_ENDPOINT_OVERRIDE"),
 		"override the KeyVRM endpoint instead of catalog discovery (env OS_KEYVRM_ENDPOINT_OVERRIDE)")
 
-	fs.BoolVar(&o.Debug, "debug", envBool("OS_DEBUG"),
+	fs.BoolVar(&o.Debug, "debug", EnvBool("OS_DEBUG"),
 		"log HTTP requests and responses to stderr (tokens redacted)")
 	fs.BoolVar(&o.Timing, "timing", false,
 		"print the wall-clock duration of each API call to stderr")
@@ -298,9 +322,9 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	// --creds-from-vault. The global --insecure governs only the OpenStack/
 	// Keystone TLS, not Vault, so this is a separate opt-out. --vault-insecure is
 	// kept as a hidden back-compat alias (both bind to the same value).
-	fs.BoolVar(&o.VaultInsecure, "insecure-vault", envBool("VAULT_SKIP_VERIFY"),
+	fs.BoolVar(&o.VaultInsecure, "insecure-vault", EnvBool("VAULT_SKIP_VERIFY"),
 		"disable TLS verification for the Vault endpoint (env VAULT_SKIP_VERIFY)")
-	fs.BoolVar(&o.VaultInsecure, "vault-insecure", envBool("VAULT_SKIP_VERIFY"),
+	fs.BoolVar(&o.VaultInsecure, "vault-insecure", EnvBool("VAULT_SKIP_VERIFY"),
 		"deprecated alias of --insecure-vault (env VAULT_SKIP_VERIFY)")
 
 	// Advanced knobs for the Vault / Kubernetes credential sources. They stay
@@ -333,16 +357,106 @@ func envOr(key, def string) string {
 	return def
 }
 
-func envBool(key string) bool {
-	v := os.Getenv(key)
+// EnvBool parses a boolean environment variable used as a flag default. It is
+// the single implementation for the whole binary — internal/cli/vault calls it
+// too — so a given spelling means the same thing everywhere.
+//
+// It fails CLOSED. These variables gate security behavior (OS_INSECURE,
+// VAULT_SKIP_VERIFY, VAULT_SRC_SKIP_VERIFY), so a value koc does not understand
+// must never be read as "yes, turn certificate verification off".
+// strconv.ParseBool alone is not enough: it rejects the spellings operators
+// actually write (no, off, disabled), and treating an unparseable value as
+// truthy — as koc used to — made OS_INSECURE=no *disable* TLS verification.
+//
+// An unrecognised value is surfaced twice: a warning on stderr immediately
+// (flag defaults are computed before any command runs, so this is the only
+// place that can still name the variable in context) and a hard error from
+// Authenticate / VaultConfig via envError, so it cannot pass unnoticed.
+func EnvBool(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
 		return false
 	}
-	b, err := strconv.ParseBool(v)
+	b, err := parseBoolLax(v)
 	if err != nil {
-		// Treat any non-empty, non-parseable value as truthy, matching the lax
-		// behavior of most OS_* boolean toggles.
-		return true
+		recordBadEnv(key, v, "expected a boolean: true/false, yes/no, on/off, 1/0")
+		return false
 	}
 	return b
+}
+
+// parseBoolLax accepts the shell spellings of a boolean in addition to the ones
+// strconv.ParseBool knows, and rejects everything else.
+func parseBoolLax(v string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "1", "t", "true", "y", "yes", "on", "enable", "enabled":
+		return true, nil
+	case "0", "f", "false", "n", "no", "off", "disable", "disabled":
+		return false, nil
+	}
+	return false, fmt.Errorf("not a boolean: %q", v)
+}
+
+// envDuration parses a duration environment variable, accepting both a Go
+// duration ("90s", "2m") and a bare number of seconds ("90"), and falls back to
+// def — recording the same visible error as EnvBool — when it is neither.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+		return d
+	}
+	if secs, err := strconv.ParseFloat(v, 64); err == nil && secs >= 0 {
+		return time.Duration(secs * float64(time.Second))
+	}
+	recordBadEnv(key, v, "expected a duration (90s, 2m) or a number of seconds")
+	return def
+}
+
+// badEnv collects the environment variables whose value koc could not parse, so
+// the failure is reported as an error by the first command that authenticates
+// instead of only as a warning nobody scrolled back to.
+var badEnv struct {
+	mu   sync.Mutex
+	seen map[string]bool
+	msgs []string
+}
+
+func recordBadEnv(key, val, hint string) {
+	msg := fmt.Sprintf("%s=%q: %s", key, val, hint)
+
+	badEnv.mu.Lock()
+	defer badEnv.mu.Unlock()
+	if badEnv.seen[msg] {
+		return
+	}
+	if badEnv.seen == nil {
+		badEnv.seen = map[string]bool{}
+	}
+	badEnv.seen[msg] = true
+	badEnv.msgs = append(badEnv.msgs, msg)
+	fmt.Fprintf(os.Stderr, "WARNING: %s; ignoring it\n", msg)
+}
+
+// envError reports the unparseable environment variables recorded so far. It is
+// checked before any credential is used: running on a safe default the operator
+// did not ask for is a silent surprise, and for OS_INSECURE that surprise used
+// to go the unsafe way.
+func envError() error {
+	badEnv.mu.Lock()
+	defer badEnv.mu.Unlock()
+	if len(badEnv.msgs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unusable environment variable(s): %s", strings.Join(badEnv.msgs, "; "))
+}
+
+// resetBadEnv clears the recorded environment errors. Tests only: the recorder
+// is process-global because flag defaults are.
+func resetBadEnv() {
+	badEnv.mu.Lock()
+	defer badEnv.mu.Unlock()
+	badEnv.seen, badEnv.msgs = nil, nil
 }

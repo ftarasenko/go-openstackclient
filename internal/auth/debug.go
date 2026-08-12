@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,14 +35,42 @@ func newDebugTransport(rt http.RoundTripper) http.RoundTripper {
 // maxDumpBody caps how much of a textual body we are willing to dump.
 const maxDumpBody = 1 << 20 // 1 MiB
 
-// tokenHeaderRe matches the value of token-bearing headers for redaction.
-var tokenHeaderRe = regexp.MustCompile(`(?i)^(X-Auth-Token|X-Subject-Token):\s*.*$`)
+// tokenHeaderRe matches the value of credential-bearing headers for redaction.
+// Authorization covers both the basic-auth standalone ironic path and a bearer
+// token; Proxy-Authorization covers a proxy's own credentials.
+var tokenHeaderRe = regexp.MustCompile(`(?i)^(X-Auth-Token|X-Subject-Token|X-Vault-Token|Authorization|Proxy-Authorization):\s*.*$`)
 
-// secretJSONRe matches JSON string values of credential fields so the re-auth
-// request body — which gophercloud re-POSTs with AllowReauth — never prints
-// plaintext credentials. Scoped to genuine secrets to avoid redacting resource
-// IDs or the token object in responses.
-var secretJSONRe = regexp.MustCompile(`(?i)"(password|secret|application_credential_secret|passcode)"\s*:\s*"[^"]*"`)
+// secretKeys are the JSON keys whose scalar value is a credential and must never
+// be printed. Matching is by KEY, case-insensitively, at any depth — matching the
+// value's shape instead is how adminPass (server create/rescue/evacuate/password
+// set) and private_key (keypair create, which nova returns exactly once) used to
+// print verbatim.
+//
+// Only scalars are redacted: `"token": { … }` in a Keystone response is the token
+// *object*, whose catalog is the single most useful thing --debug shows, and the
+// token string itself travels in the X-Subject-Token header, which is redacted
+// above.
+var secretKeys = map[string]bool{
+	"password":                      true,
+	"secret":                        true,
+	"application_credential_secret": true,
+	"passcode":                      true,
+	"adminpass":                     true,
+	"admin_pass":                    true,
+	"private_key":                   true,
+	"secret_id":                     true,
+	"role_id":                       true,
+	"token":                         true,
+	"blob":                          true,
+}
+
+// secretJSONRe is the fallback for a body that is not valid JSON (a truncated
+// dump, a form-encoded payload). The value pattern tolerates escaped quotes:
+// `"[^"]*"` stopped at the backslash-quote inside a password, leaking its tail
+// and corrupting the rest of the dump.
+var secretJSONRe = regexp.MustCompile(`(?i)"(` + secretKeyAlternation + `)"\s*:\s*"(?:[^"\\]|\\.)*"`)
+
+const redactedValue = "<redacted>"
 
 func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if dump, err := httputil.DumpRequestOut(req, dumpBody(req.Header)); err == nil {
@@ -75,25 +105,129 @@ func dumpBody(h http.Header) bool {
 	return true
 }
 
+// secretKeyAlternation is the regexp alternation of secretKeys, so the fallback
+// path and the JSON path share one denylist.
+var secretKeyAlternation = func() string {
+	keys := make([]string, 0, len(secretKeys))
+	for k := range secretKeys {
+		keys = append(keys, regexp.QuoteMeta(k))
+	}
+	sort.Strings(keys) // deterministic, and irrelevant to matching: the key is anchored by quotes
+	return strings.Join(keys, "|")
+}()
+
+// redact removes credentials from one dumped HTTP message: the credential-bearing
+// headers line by line, then the body by JSON key.
 func redact(s string) string {
-	// Redact token-bearing headers (line-oriented).
-	lines := strings.Split(s, "\n")
+	head, sep, body := splitMessage(s)
+	head = redactHeaders(head)
+	if sep == "" {
+		return head
+	}
+	return head + sep + redactBody(body)
+}
+
+// splitMessage separates the start line + headers from the body, returning the
+// exact separator so the dump is reassembled byte for byte.
+func splitMessage(s string) (head, sep, body string) {
+	if i := strings.Index(s, "\r\n\r\n"); i >= 0 {
+		return s[:i], "\r\n\r\n", s[i+4:]
+	}
+	if i := strings.Index(s, "\n\n"); i >= 0 {
+		return s[:i], "\n\n", s[i+2:]
+	}
+	return s, "", ""
+}
+
+func redactHeaders(head string) string {
+	lines := strings.Split(head, "\n")
 	for i, line := range lines {
-		if tokenHeaderRe.MatchString(line) {
-			if c := strings.IndexByte(line, ':'); c >= 0 {
-				lines[i] = line[:c] + ": <redacted>"
+		if !tokenHeaderRe.MatchString(line) {
+			continue
+		}
+		if c := strings.IndexByte(line, ':'); c >= 0 {
+			// Keep any trailing \r so CRLF framing survives.
+			cr := ""
+			if strings.HasSuffix(line, "\r") {
+				cr = "\r"
+			}
+			lines[i] = line[:c] + ": " + redactedValue + cr
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// redactBody redacts by JSON key when the body parses as JSON — the only way to
+// catch every credential field wherever it is nested — and falls back to the
+// regexp when it does not (a chunked or truncated dump, a form-encoded body).
+// The JSON path re-encodes, so a redacted body is reformatted; that is a fair
+// price for not leaking a password.
+func redactBody(body string) string {
+	trimmed := strings.TrimSpace(body)
+	if trimmed != "" && (trimmed[0] == '{' || trimmed[0] == '[') {
+		var v any
+		if err := json.Unmarshal([]byte(trimmed), &v); err == nil {
+			if out, err := marshalUnescaped(redactJSON(v)); err == nil {
+				return out
 			}
 		}
 	}
-	out := strings.Join(lines, "\n")
-	// Redact credential values that appear in a JSON auth body.
-	out = secretJSONRe.ReplaceAllStringFunc(out, func(m string) string {
+	return redactSecretValues(body)
+}
+
+// marshalUnescaped re-encodes a redacted body without json.Marshal's HTML
+// escaping, so a dump stays readable (and "<redacted>" does not come out as
+// "<redacted>").
+func marshalUnescaped(v any) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+// redactJSON walks a decoded JSON document and replaces the scalar value of every
+// denylisted key, at any depth, inside objects and arrays alike.
+func redactJSON(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if secretKeys[strings.ToLower(k)] && isScalar(val) {
+				t[k] = redactedValue
+				continue
+			}
+			t[k] = redactJSON(val)
+		}
+		return t
+	case []any:
+		for i, val := range t {
+			t[i] = redactJSON(val)
+		}
+		return t
+	default:
+		return v
+	}
+}
+
+// isScalar reports whether a decoded JSON value is a leaf, i.e. the kind of value
+// that can itself be a credential.
+func isScalar(v any) bool {
+	switch v.(type) {
+	case map[string]any, []any:
+		return false
+	}
+	return true
+}
+
+func redactSecretValues(s string) string {
+	return secretJSONRe.ReplaceAllStringFunc(s, func(m string) string {
 		if c := strings.IndexByte(m, ':'); c >= 0 {
-			return m[:c] + `: "<redacted>"`
+			return m[:c] + `: "` + redactedValue + `"`
 		}
 		return m
 	})
-	return out
 }
 
 // timingTransport prints the wall-clock duration of every HTTP round trip to

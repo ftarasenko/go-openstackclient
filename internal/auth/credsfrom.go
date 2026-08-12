@@ -8,10 +8,12 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"gopkg.in/yaml.v3"
@@ -23,6 +25,12 @@ import (
 // LCM deployment conventions for Vault connection auto-discovery: the operator's
 // lcm-config ConfigMap and the AppRole secret-id Secret. These let
 // --creds-from-vault run with no --vault-* flags on a cluster node.
+//
+// These names are a deliberate, reviewed exception to the "no private data in a
+// public repo" rule (AGENTS.md): they are load-bearing code, not examples — the
+// discovery cannot find anything without them — and they name generic Kubernetes
+// objects of the LCM operator, no cloud, host, region or tenant. Do not add
+// anything cloud-specific here.
 const (
 	lcmConfigNamespace    = "k0s-system"
 	lcmConfigName         = "lcm-config"
@@ -48,13 +56,15 @@ type ironicCreds struct {
 	serverName string // cert SAN to verify while dialing by IP
 	insecure   bool
 	debug      bool
+	timing     bool
+	timeout    time.Duration
 }
 
 // loadIronicCreds reads the Ironic instance in o.CredsFromNS and its API secret
 // over the Kubernetes API, resolving the live credentials secret from the CR's
 // spec.apiCredentialsName (never guessing among rotated secrets).
 func (o *Options) loadIronicCreds(ctx context.Context) (*ironicCreds, error) {
-	kc, err := kube.Load(kube.Options{Kubeconfig: o.Kubeconfig, Context: o.KubeContext, Debug: o.Debug})
+	kc, err := kube.Load(kube.Options{Kubeconfig: o.Kubeconfig, Context: o.KubeContext, Debug: o.Debug, Timeout: o.Timeout})
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +96,8 @@ func (o *Options) loadIronicCreds(ctx context.Context) (*ironicCreds, error) {
 		password: pass,
 		insecure: o.Insecure,
 		debug:    o.Debug,
+		timing:   o.Timing,
+		timeout:  o.Timeout,
 	}
 
 	scheme := "https"
@@ -103,6 +115,14 @@ func (o *Options) loadIronicCreds(ctx context.Context) (*ironicCreds, error) {
 	}
 
 	ic.endpoint = fmt.Sprintf("%s://%s:%d/", scheme, api.IPAddress, port)
+
+	// This path returns before the Keystone branch's warnings, so it emits its own:
+	// --insecure is honored here too, and an Ironic CR without a TLS certificate
+	// leaves the API on plain http — with the basic-auth credentials on it.
+	if ic.insecure {
+		warnInsecure("the standalone ironic API at " + ic.endpoint + " (--insecure)")
+	}
+	warnCleartext("the standalone ironic API", ic.endpoint)
 	return ic, nil
 }
 
@@ -128,19 +148,33 @@ func (ic *ironicCreds) baremetalClient(microversion string) (*gophercloud.Servic
 		}
 	}
 
+	endpointURL, err := url.Parse(ic.endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("ironic endpoint %q: %w", ic.endpoint, err)
+	}
+
 	// Basic auth is injected by the RoundTripper; --debug wraps it on the OUTSIDE
 	// so the Authorization header is never present when the request is logged.
+	// (redact() covers Authorization as well now, so this is belt and braces.)
 	var rt http.RoundTripper = &basicAuthTransport{
-		base:     &http.Transport{TLSClientConfig: tlsCfg},
+		base:     newHTTPTransport(tlsCfg),
+		host:     endpointURL.Host,
 		username: ic.username,
 		password: ic.password,
 	}
 	if ic.debug {
 		rt = newDebugTransport(rt)
 	}
+	if ic.timing {
+		rt = newTimingTransport(rt, os.Stderr)
+	}
 
 	pc := &gophercloud.ProviderClient{}
-	pc.HTTPClient = http.Client{Transport: rt}
+	pc.HTTPClient = http.Client{
+		Transport:     rt,
+		Timeout:       ic.timeout,
+		CheckRedirect: sameHostRedirect,
+	}
 	pc.UserAgent.Prepend("koc")
 
 	return &gophercloud.ServiceClient{
@@ -152,14 +186,25 @@ func (ic *ironicCreds) baremetalClient(microversion string) (*gophercloud.Servic
 	}, nil
 }
 
-// basicAuthTransport injects HTTP Basic credentials onto every request.
+// basicAuthTransport injects HTTP Basic credentials onto every request bound for
+// the configured host.
+//
+// The host check is the security-relevant part: injecting at the RoundTripper
+// runs on every request the client makes *including each redirected one*, which
+// re-adds the credentials after net/http has stripped them for a cross-host hop.
+// Restricting injection to the endpoint's own host means a 302 to somewhere else
+// cannot collect the standalone ironic password.
 type basicAuthTransport struct {
 	base     http.RoundTripper
+	host     string // host:port of the ironic endpoint; other hosts get no credentials
 	username string
 	password string
 }
 
 func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.host != "" && req.URL.Host != t.host {
+		return t.base.RoundTrip(req)
+	}
 	r := req.Clone(req.Context())
 	r.SetBasicAuth(t.username, t.password)
 	return t.base.RoundTrip(r)
@@ -189,6 +234,12 @@ func firstCertDNSName(pemBytes []byte) string {
 // incomplete — LCM cluster auto-discovery. It is exported because `koc vault kv`
 // needs the same resolved config without going through Keystone auth at all.
 func (o *Options) VaultConfig(ctx context.Context) (vault.Config, error) {
+	// "koc vault kv" never authenticates to Keystone, so this is where an
+	// unparseable VAULT_* boolean has to be reported for that command group.
+	if err := envError(); err != nil {
+		return vault.Config{}, err
+	}
+
 	// Token precedence, matching the Vault CLI: --vault-token / VAULT_TOKEN, then
 	// the cached ~/.vault-token from `vault login`. A cached token is only used
 	// when no explicit AppRole was given, so `--vault-role-id/-secret-id` still
@@ -234,6 +285,7 @@ func (o *Options) VaultConfig(ctx context.Context) (vault.Config, error) {
 		KVMount:     o.VaultKVMount,
 		CACertPEM:   caPEM,
 		Insecure:    o.VaultInsecure,
+		Timeout:     o.Timeout,
 		Debug:       o.Debug,
 	}, nil
 }
@@ -424,7 +476,7 @@ type lcmVaultConfig struct {
 // VAULT_* env values always win. TLS uses the system roots (the LCM Vault
 // endpoint presents a publicly-trusted certificate).
 func (o *Options) discoverVaultFromCluster(ctx context.Context) error {
-	kc, err := kube.Load(kube.Options{Kubeconfig: o.Kubeconfig, Context: o.KubeContext, Debug: o.Debug})
+	kc, err := kube.Load(kube.Options{Kubeconfig: o.Kubeconfig, Context: o.KubeContext, Debug: o.Debug, Timeout: o.Timeout})
 	if err != nil {
 		return err
 	}

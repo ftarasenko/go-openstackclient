@@ -58,7 +58,7 @@ func (s *srcFlags) addTo(fs *pflag.FlagSet) {
 		"path prefix for a relative source path (env VAULT_SRC_PREFIX; default: the destination's)")
 	fs.StringVar(&s.cacert, "src-vault-cacert", os.Getenv("VAULT_SRC_CACERT"),
 		"CA bundle for the source Vault endpoint (env VAULT_SRC_CACERT; default: the destination's)")
-	fs.BoolVar(&s.insecure, "insecure-src-vault", envBool("VAULT_SRC_SKIP_VERIFY"),
+	fs.BoolVar(&s.insecure, "insecure-src-vault", auth.EnvBool("VAULT_SRC_SKIP_VERIFY"),
 		"disable TLS verification for the source Vault (env VAULT_SRC_SKIP_VERIFY)")
 }
 
@@ -135,14 +135,4 @@ func newVaultClientPair(ctx context.Context, a *auth.Options, s *srcFlags) (src,
 		return nil, nil, fmt.Errorf("destination vault: %w", err)
 	}
 	return src, dst, nil
-}
-
-// envBool mirrors auth's lax OS_*/VAULT_* boolean handling: any non-empty,
-// non-parseable value is truthy.
-func envBool(key string) bool {
-	switch os.Getenv(key) {
-	case "", "0", "false", "FALSE", "False", "no", "off":
-		return false
-	}
-	return true
 }

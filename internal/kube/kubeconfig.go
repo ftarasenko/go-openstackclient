@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -60,6 +59,10 @@ type Options struct {
 	Kubeconfig string
 	Context    string
 	Debug      bool
+
+	// Timeout caps a single apiserver request; zero means defaultTimeout (30s) and
+	// a negative value disables the cap. koc's --timeout feeds this.
+	Timeout time.Duration
 }
 
 // Load resolves the kubeconfig, selects the context, and builds a ready REST
@@ -105,14 +108,21 @@ func Load(o Options) (*Client, error) {
 		return nil, err
 	}
 
+	warnCleartext("the Kubernetes apiserver", server)
+
+	timeout := o.Timeout
+	switch {
+	case timeout == 0:
+		timeout = defaultTimeout
+	case timeout < 0:
+		timeout = 0 // explicitly uncapped
+	}
+
 	return &Client{
 		server: server,
 		token:  token,
 		debug:  o.Debug,
-		hc: &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsCfg},
-		},
+		hc:     newHTTPClient(tlsCfg, timeout),
 	}, nil
 }
 
@@ -144,6 +154,7 @@ func clusterTLS(kc *kubeconfig, name string) (string, *tls.Config, error) {
 		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 		if c.Cluster.Insecure {
 			cfg.InsecureSkipVerify = true
+			warnInsecure(fmt.Sprintf("the Kubernetes cluster %q (insecure-skip-tls-verify)", name))
 		} else {
 			ca, err := pemFromDataOrFile(c.Cluster.CAData, c.Cluster.CAFile)
 			if err != nil {
