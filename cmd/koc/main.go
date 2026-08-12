@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -87,15 +86,10 @@ func main() {
 //   - An unknown noun/verb under a group (including a top-level noun, since
 //     the root is itself such a group) is instead reported by that group's own
 //     RunE — after PersistentPreRunE already flipped SilenceUsage to true — so
-//     it is recognised by groups.go's own stable wording instead.
+//     it is recognised by the cli.ErrUnknownCommand sentinel that RunE wraps.
 func isUsageError(cmd *cobra.Command, err error) bool {
 	if cmd != nil && !cmd.SilenceUsage {
 		return true
 	}
-	// requireSubcommands (groups.go) always spells its own error this exact
-	// way; cobra's built-in Args validators that produce the same wording
-	// (legacyArgs, NoArgs) are otherwise unreachable here, since every pure
-	// group command in the tree — root included — gets its Args overridden
-	// by that same pass.
-	return strings.HasPrefix(err.Error(), "unknown command ")
+	return errors.Is(err, cli.ErrUnknownCommand)
 }
