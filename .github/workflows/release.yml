@@ -29,6 +29,18 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The `release` environment exists to SCOPE the cross-repo Homebrew PAT, not
+    # to gate the release: it has no required reviewers, so tagging still
+    # publishes with no extra approval step.
+    #
+    # What it buys: HOMEBREW_TAP_TOKEN lives as an *environment* secret, and the
+    # environment's deployment rule only admits refs matching `v*`. A repository
+    # secret is readable by any workflow run on any ref, so a branch carrying a
+    # modified release.yml could print the PAT; an environment secret restricted
+    # to `v*` tags cannot be reached that way, and tag creation is itself
+    # governed by the tag ruleset. Configure it under
+    # Settings -> Environments -> release (see SECURITY.md).
+    environment: release
     steps:
       # Actions pinned to commit SHAs (supply-chain hygiene); comment = version.
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
