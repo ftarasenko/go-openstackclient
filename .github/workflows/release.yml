@@ -51,7 +51,7 @@ jobs:
     environment: release
     steps:
       # Actions pinned to commit SHAs (supply-chain hygiene); comment = version.
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history + tags for git describe / release notes
 
@@ -63,7 +63,7 @@ jobs:
       # net/http HTTP/2). The floor stays at 1.25.0 in go.mod so contributors are
       # not forced into a toolchain download.
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.25.x"
           check-latest: true
@@ -97,7 +97,7 @@ jobs:
       # bumps as reviewable PRs (cosign-installer v4 and sbom-action have both
       # moved on), which is the right place to verify changed inputs.
       - name: Install cosign
-        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Install syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -125,7 +125,7 @@ jobs:
       # inputs below were written against it; v4 is current, and Dependabot will
       # propose that bump as a reviewable PR.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/*.tar.gz
