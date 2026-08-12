@@ -1,21 +1,29 @@
 name: release
 
+# Pushing an annotated `v*` tag is the ONE way to cut a release:
+#
+#   git tag -a v1.2.3 -m v1.2.3 && git push origin v1.2.3
+#
+# There is deliberately no workflow_dispatch. A dispatch run's ref is the branch
+# it was started from, never the tag it would go on to create, so it can never
+# satisfy the `release` environment's `v*`-tag deployment rule — the run is
+# rejected before any step executes, with no way for the workflow to explain
+# itself. Splitting tag creation into an earlier job does not help either:
+# GitHub does not trigger workflows from a ref pushed with GITHUB_TOKEN, so the
+# release run would simply never start.
+#
+# Driving it from the tag push instead makes three things fall out for free: the
+# environment rule becomes meaningful (only a `v*` tag can reach the Homebrew
+# PAT), immutability needs no scripted pre-check because `git push` of an
+# existing tag fails on its own, and an agent cannot cut a release unilaterally
+# since pushing a tag ref is blocked outside a maintainer's workstation.
 on:
   push:
     tags:
       - "v*"
-  # Publish on demand by supplying the tag to create. This environment blocks
-  # pushing tag refs from a workstation (see AGENTS.md), so the workflow creates
-  # the tag server-side with its own GITHUB_TOKEN, then hands it to GoReleaser.
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to create and publish (e.g. v0.3.1)"
-        required: true
-        type: string
 
 permissions:
-  contents: write # create the tag + GitHub Release in this repo
+  contents: write # create the GitHub Release in this repo
   id-token: write # OIDC token for keyless cosign signing and provenance
   attestations: write # store the build-provenance attestation on the release
 
@@ -33,12 +41,12 @@ jobs:
     # to gate the release: it has no required reviewers, so tagging still
     # publishes with no extra approval step.
     #
-    # What it buys: HOMEBREW_TAP_TOKEN lives as an *environment* secret, and the
-    # environment's deployment rule only admits refs matching `v*`. A repository
-    # secret is readable by any workflow run on any ref, so a branch carrying a
-    # modified release.yml could print the PAT; an environment secret restricted
-    # to `v*` tags cannot be reached that way, and tag creation is itself
-    # governed by the tag ruleset. Configure it under
+    # What it buys: HOMEBREW_TAP_TOKEN lives as an *environment* secret whose
+    # deployment rule admits only refs matching `v*` with type `tag`. A
+    # repository secret is readable by any workflow run on any ref, so a branch
+    # carrying a modified release.yml could print the PAT; an environment secret
+    # restricted to `v*` tags cannot be reached that way. This is why the
+    # workflow is tag-triggered — see the note on `on:` above. Configure it under
     # Settings -> Environments -> release (see SECURITY.md).
     environment: release
     steps:
@@ -64,36 +72,12 @@ jobs:
       - name: Report Go toolchain version
         run: go version
 
-      # workflow_dispatch: create the tag at HEAD and push it (CI's GITHUB_TOKEN
-      # can push tag refs; the local/agent env cannot), then check it out detached
-      # so HEAD == the tag commit, which GoReleaser requires. On a tag-push
-      # trigger the checkout is already at the tag, so this step is skipped.
-      #
-      # Versions are IMMUTABLE: a published tag is never moved or re-released. If
-      # the tag already exists we stop — bump the version instead. To recover a
-      # release that failed before it fully published, delete it first via the
-      # delete-release workflow, which frees the version for a clean re-cut.
-      - name: Create tag and check it out
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::tag $TAG already exists; releases are immutable. Bump the version, or delete it via the delete-release workflow before re-cutting."
-            exit 1
-          fi
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "refs/tags/$TAG"
-          git checkout --detach "$TAG"
-
       # Release body = Conventional-Commits notes from the committed script (the
       # single source of truth). Written OUTSIDE the work tree so GoReleaser does
       # not refuse on a dirty git state.
       - name: Build release notes from Conventional Commits
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: scripts/release-notes.sh "$TAG" | tee "$RUNNER_TEMP/RELEASE_NOTES.md"
 
       # Completions used to be a GoReleaser `before:` hook, which runs inside the
@@ -156,5 +140,5 @@ jobs:
       - name: Set release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md"

@@ -336,10 +336,15 @@ weakened by a check that happens to need a proxy.
   `scripts/release-notes.sh` keeps categorising its commits correctly. Dependabot
   re-runs `go mod vendor` in its gomod PRs; `vendor-integrity` is the check that a
   PR which forgot to did not land.
-- `.github/workflows/release.yml` — drives **GoReleaser** (`.goreleaser.yaml`) on
-  a `v*` tag or `workflow_dispatch` (with a `tag` input; the workflow creates the
-  tag server-side via `GITHUB_TOKEN`, since the environment blocks pushing tag
-  refs). GoReleaser builds the six static binaries (linux/darwin/windows ×
+- `.github/workflows/release.yml` — drives **GoReleaser** (`.goreleaser.yaml`),
+  triggered **only** by pushing a `v*` tag. There is deliberately no
+  `workflow_dispatch`: a dispatch run's ref is the branch it started from, never
+  the tag it would create, so it cannot satisfy the `release` environment's
+  `v*`-tag deployment rule and is rejected before any step runs. Creating the tag
+  in an earlier job does not help either — GitHub does not trigger workflows from
+  a ref pushed with `GITHUB_TOKEN`. Tag-driven instead means the environment rule
+  is meaningful, immutability needs no scripted pre-check, and an agent cannot cut
+  a release unilaterally. GoReleaser builds the six static binaries (linux/darwin/windows ×
   amd64/arm64), four **`.rpm`/`.deb` packages** (nfpms — the target is an
   air-gapped RHEL-derivative node where Homebrew is useless; these install the
   shell completions to the system directories, which the cask cannot), a
@@ -348,13 +353,28 @@ weakened by a check that happens to need a proxy.
   **Homebrew cask** (`Casks/koc.rb`) to `ftarasenko/homebrew-tap` — so
   `brew install ftarasenko/tap/koc` works. The workflow additionally records a
   **build-provenance attestation** for the artifacts. Pushing to the tap needs a
-  cross-repo fine-grained PAT stored as the `HOMEBREW_TAP_TOKEN` repo secret (the
-  built-in `GITHUB_TOKEN` cannot push to a second repo); cosign's keyless signing
-  needs `id-token: write`. The `go build` stays offline via `-mod=vendor`; the
+  cross-repo fine-grained PAT stored as `HOMEBREW_TAP_TOKEN` in the **`release`
+  environment** (the built-in `GITHUB_TOKEN` cannot push to a second repo). That
+  environment has no required reviewers — it is a scoping boundary, not a gate —
+  but its deployment rule admits only `v*` **tags**, so no run on an arbitrary
+  branch can reach the PAT. cosign's keyless signing needs `id-token: write`. The `go build` stays offline via `-mod=vendor`; the
   release body is **not** GoReleaser's changelog (disabled) — after publish the
   workflow sets it with `gh release edit --notes-file` from
   `scripts/release-notes.sh` (GoReleaser v2 ignores `--release-notes`; see below).
-- `.github/workflows/delete-release.yml` — dispatch to delete a release + tag.
+- `.github/workflows/delete-release.yml` — dispatch to delete a release, then its
+  tag, in two separate steps. It runs in the `release-admin` environment, which
+  **does** require a reviewer: it is the only workflow that destroys published
+  artifacts. The steps are split because a ruleset protecting `refs/tags/v*`
+  denies `GITHUB_TOKEN` the tag deletion, so a combined `--cleanup-tag` would fail
+  the run after the release was already gone; separated, the run summary says
+  exactly which half succeeded and what an admin must still do.
+- `.github/workflows/prune-release-assets.yml` — dispatch (`dry_run` defaults to
+  true) to reclaim storage by deleting `.tar.gz`/`.zip`/`.rpm`/`.deb` from
+  releases outside a keep window, while **retaining** `checksums.txt`, its
+  signature/certificate and the SBOMs. Because builds are byte-reproducible from
+  the tag, a pruned release stays verifiable and re-derivable; deleting the
+  checksums would end that, which is why the retain list is redundant with the
+  delete list on purpose. Pruned versions stop installing via the Homebrew cask.
 
 `checksums.txt` on its own is not an integrity story: whoever can swap an artifact
 in a release can swap the checksums with it. The cosign signature is what roots
@@ -432,20 +452,24 @@ correct if only one is present.
 3. **Preview the notes** locally: `scripts/release-notes.sh vX.Y.Z`. If a bullet
    reads badly, fix it by rewording the offending commit (e.g. `git commit
    --amend` before it is tagged), not by hand-editing the release afterwards.
-4. **Trigger the build** via `workflow_dispatch` on `release.yml` with the `tag`
-   input — the environment blocks pushing tag refs, so the workflow (running with
-   its own `GITHUB_TOKEN`) creates the tag server-side, builds the six binaries,
-   generates the notes, and publishes.
+4. **Push the tag** from a maintainer's workstation — that push *is* the trigger:
+   ```sh
+   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
+   ```
+   The workflow then builds the six binaries, signs and attests them, generates
+   the notes and publishes. Note that an agent sandbox cannot do this (pushing a
+   tag ref returns 403), which is intentional — a release is a human act.
 5. **Versions are immutable.** A published tag is never moved or re-released —
-   `release.yml` refuses to run if the tag already exists, and there is no
+   pushing a tag that already exists fails at the git level, and there is no
    `mode: replace`. Once `vX.Y.Z` is out, the next change ships as a new version;
    re-cutting the same number would swap the bytes under a name consumers (e.g.
    Homebrew, which keys on the version string) have already cached and would not
    re-download. If a release **fails before it fully publishes** (e.g. a transient
    `uploads.github.com` flake → GoReleaser aborts before pushing the cask), it
    never reached consumers, so free the version for a clean re-cut by deleting it
-   first: dispatch `delete-release.yml` with the tag, then re-dispatch
-   `release.yml`. Do not paper over a partial release by re-running the same tag.
+   first: dispatch `delete-release.yml` with the tag (approve the `release-admin`
+   gate, and delete the tag yourself if a ruleset protects it), then push the tag
+   again. Do not paper over a partial release by re-using the same tag.
 
 ## Private data never leaves the org
 

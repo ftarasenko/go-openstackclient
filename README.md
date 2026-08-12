@@ -118,9 +118,9 @@ or just `make build`.
 
 Releases are cut by GoReleaser (`.goreleaser.yaml`): the `release` workflow builds
 the six static binaries, publishes the GitHub release, and pushes the Homebrew
-cask to `ftarasenko/homebrew-tap`. Trigger it via `workflow_dispatch` with the
-`tag` input (this environment blocks pushing tag refs from a workstation; the
-workflow creates the tag server-side) — see AGENTS.md "Cutting a release".
+cask to `ftarasenko/homebrew-tap`. It is triggered by pushing a `v*` tag
+(`git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`) — see AGENTS.md
+"Cutting a release".
 
 ### Air-gapped / offline build
 
