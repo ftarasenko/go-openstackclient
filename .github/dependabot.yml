@@ -1,0 +1,48 @@
+version: 2
+
+# Two ecosystems, both relevant to the air-gapped/FSTEC target:
+#
+#  * gomod          — dependency updates. Dependabot detects the committed
+#                     vendor/ directory and re-runs `go mod vendor` in its PR, so
+#                     the offline build stays consistent. STILL VERIFY: the
+#                     supply-chain workflow's vendor-integrity job re-derives the
+#                     tree and diffs it, so a Dependabot PR that forgets vendor/
+#                     fails CI instead of landing.
+#  * github-actions — keeps the SHA pins current. Dependabot understands
+#                     `uses: owner/action@<sha> # vX.Y.Z` and bumps both the SHA
+#                     and the trailing version comment, which is exactly the
+#                     convention this repo pins by.
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      # Conventional Commits (AGENTS.md): the subject line drives the release
+      # notes and the version bump, so make Dependabot speak the same dialect.
+      prefix: build
+      prefix-development: build
+      include: scope
+    groups:
+      # One PR for the whole graph: every bump has to be re-vendored anyway, and
+      # a single vendor/ diff is far easier to review than several conflicting
+      # ones.
+      go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      github-actions:
+        patterns:
+          - "*"

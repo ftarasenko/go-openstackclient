@@ -1,0 +1,114 @@
+name: supply-chain
+
+# NETWORK-ALLOWED checks. Everything here needs a module proxy, the Go
+# vulnerability database, or the GitHub dependency graph, so it is deliberately
+# kept OUT of ci.yml: none of these jobs is a dependency of the offline
+# build/test/lint jobs, and none of them can weaken the air-gap invariant
+# (`GOFLAGS=-mod=vendor GOPROXY=off CGO_ENABLED=0 go build ./...`).
+on:
+  push:
+    branches:
+      - master
+      - "claude/**"
+  pull_request:
+  schedule:
+    # Weekly, so a newly-published advisory against a pinned dependency shows up
+    # without waiting for the next push. Monday 04:17 UTC (off the hour, to avoid
+    # the scheduling stampede).
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The gap this closes: `-mod=vendor` does not consult go.sum, and the CI
+  # vendor check in ci.yml only detects vendor/modules.txt drifting from go.mod.
+  # Reproduced twice: appending a line to a vendored gophercloud source file
+  # still gives a green `go build`, `go vet` AND `go mod verify`. So the only way
+  # to know vendor/ is what upstream published is to re-derive it and diff.
+  #
+  # If this job fails: either an intentional dependency change did not run
+  # `make tidy` (re-run it and commit vendor/ + go.mod + go.sum), or vendor/ was
+  # edited by hand — which AGENTS.md forbids and this job now catches.
+  vendor-integrity:
+    name: vendor tree re-derives from upstream
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: "" # must NOT be -mod=vendor: this job rebuilds the vendor tree
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.x"
+          check-latest: true
+          cache: false
+
+      # go mod verify checks the module cache against go.sum; combined with a
+      # fresh download that means the bytes came from upstream unmodified.
+      - name: Download modules and verify against go.sum
+        run: |
+          go mod download
+          go mod verify
+
+      # ...and this proves the committed vendor/ is exactly what those verified
+      # modules produce. go mod vendor is deterministic, so any difference is a
+      # real difference.
+      - name: Re-derive vendor/ and diff against the committed tree
+        run: |
+          go mod vendor
+          if ! git diff --exit-code -- vendor/ go.mod go.sum; then
+            echo "::error::vendor/ does not match what 'go mod vendor' produces from the verified modules. Run 'make tidy' and commit vendor/, go.mod and go.sum."
+            exit 1
+          fi
+          echo "vendor/ is byte-identical to the re-derived tree"
+
+  # Known vulnerabilities in the dependency graph AND in the standard library of
+  # the Go toolchain being used — the latter is what caught the release binaries
+  # shipping the original go1.25.0 stdlib (crypto/x509 name constraints,
+  # crypto/tls, encoding/pem, net/http HTTP/2).
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: "" # `go install pkg@version` rejects -mod=vendor
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.x"
+          check-latest: true
+          cache: false
+
+      # Installed from the Go module proxy (checksum-verified via sum.golang.org)
+      # at a pinned version rather than via a third-party action, so there is no
+      # extra action to trust or pin. Bump the version deliberately.
+      - name: Install govulncheck v1.6.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      - name: govulncheck ./...
+        run: govulncheck ./...
+
+  # Flags dependency additions/upgrades that carry a known advisory or an
+  # incompatible license, on the PR that introduces them. Pull-request only: the
+  # action compares the PR's dependency graph against the base ref.
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      # Pinned to a full commit SHA per repo convention. Held on v4 because the
+      # inputs below were written against it; v5 is current, and Dependabot will
+      # propose that bump as a reviewable PR.
+      - name: Dependency review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          # Apache-2.0 project; flag copyleft/unknown licences entering the graph.
+          deny-licenses: AGPL-3.0, GPL-2.0, GPL-3.0

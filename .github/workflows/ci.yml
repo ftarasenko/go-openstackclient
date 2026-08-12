@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Every job in this workflow is OFFLINE: -mod=vendor against the committed
+# vendor/ with no module proxy. Anything that needs network (vendor integrity
+# re-derivation, govulncheck, dependency review) lives in
+# .github/workflows/supply-chain.yml and must never become a dependency of the
+# jobs here — that is what keeps the air-gap invariant honest.
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -25,18 +30,33 @@ jobs:
       # the human-readable version each SHA corresponds to.
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
+      # Do NOT use `go-version-file: go.mod` here. go.mod pins a full patch
+      # version (`go 1.25.0`), so setup-go resolves 1.25.0 EXACTLY and the
+      # release binaries would ship the original 1.25.0 standard library — which
+      # has dozens of known vulnerabilities, including crypto/x509 name-
+      # constraint verification (GO-2025-4175), crypto/tls, encoding/pem
+      # (GO-2025-4009, on input koc genuinely parses: CA bundles, Vault-supplied
+      # certs, k8s secrets) and net/http HTTP/2 issues. A `1.25.x` range with
+      # check-latest resolves to the newest 1.25 patch instead, without raising
+      # the floor in go.mod (which would force a toolchain download and break the
+      # offline build for contributors).
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
+          check-latest: true
           cache: false
+
+      - name: Report Go toolchain version
+        run: go version
 
       - name: go vet
         run: go vet ./...
 
       # A -mod=vendor build fails with "inconsistent vendoring" if vendor/ or
       # vendor/modules.txt drifts from go.mod, so this step doubles as the
-      # air-gap vendor-consistency gate.
+      # air-gap vendor-consistency gate. It does NOT verify vendored file
+      # contents — that is the vendor-integrity job in supply-chain.yml.
       - name: Build static binary (offline, from vendor/)
         run: |
           go build -trimpath \
@@ -44,8 +64,85 @@ jobs:
             -o koc ./cmd/koc
           file koc
 
+      # A single binary is the whole product, so a size jump is a signal. Record
+      # it in the log (and the step summary) so a regression is visible in the
+      # build that caused it. No compression (deliberately no UPX: it breaks
+      # checksum-based inventory, trips EDR packer heuristics, and inserts a
+      # decompress step into a binary someone has to certify).
+      - name: Record binary size
+        run: |
+          SIZE=$(stat -c%s koc)
+          echo "koc size: ${SIZE} bytes ($((SIZE / 1024 / 1024)) MiB)"
+          echo "\`koc\` binary size: **${SIZE}** bytes ($((SIZE / 1024 / 1024)) MiB)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Test
         run: go test ./...
+
+  # The release ships six targets; CI used to compile one. A build-tag or
+  # syscall mistake in a darwin/windows path was therefore first discovered at
+  # release time. Build-only (no test binaries can run cross-platform), and
+  # still fully offline so the air-gap invariant is not weakened.
+  crossbuild:
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -mod=vendor
+      GOPROXY: "off"
+      CGO_ENABLED: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        # Must stay in sync with .goreleaser.yaml `goos`/`goarch` and the
+        # Makefile PLATFORMS list.
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.x"
+          check-latest: true
+          cache: false
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }} (offline)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+  # Race detector on the primary target. Separate job because -race requires
+  # cgo (CGO_ENABLED=1), which the shipped static binaries must never use — so
+  # it cannot share the build-test job's env. Still offline: vendor/ only.
+  test-race:
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -mod=vendor
+      GOPROXY: "off"
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.x"
+          check-latest: true
+          cache: false
+
+      - name: Test (race detector)
+        run: go test -race ./...
 
   lint:
     runs-on: ubuntu-latest
@@ -58,7 +155,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
+          check-latest: true
           cache: false
 
       # Pin the exact golangci-lint version used in development and verify the

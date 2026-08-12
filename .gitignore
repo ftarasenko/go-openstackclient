@@ -22,3 +22,37 @@ koc-windows-*
 clouds.yaml
 secure.yaml
 /completions/
+
+# Key material and credential files — never commit.
+#
+# The project's own docs tell operators to create some of these IN the working
+# tree: `koc vault kv export --help` and README "Encrypted Vault export" say to
+# run `openssl genrsa -out koc-export.key 4096` and write the report to
+# .junit/vault.xml. Without these lines a single `git add -A` publishes the
+# export identity's PRIVATE key to a public repository.
+*.key
+*.pem
+*.crt
+*.cer
+*.csr
+*.p12
+*.pfx
+*.jks
+koc-export.*
+# openrc / kubeconfig files pasted in for a quick check against a real cloud
+openrc
+*.openrc
+*openrc.sh
+kubeconfig
+*.kubeconfig
+
+# Encrypted-export reports (contain real Vault paths even when payloads are
+# sealed) and other local test-report output.
+.junit/
+
+# Supply-chain artifacts produced locally by goreleaser/syft/cosign; the
+# release versions live on the GitHub Release, never in git.
+*.sbom.json
+*.spdx.json
+*.sig
+
