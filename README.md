@@ -28,7 +28,7 @@ deployment. No Python at runtime.
 >   security group (+rule), agent
 > - **loadbalancer** (octavia) — load balancer, listener, pool, member, health
 >   monitor, l7policy, l7rule, quota, amphora, provider, flavor and flavorprofile
->   (60 of python-octaviaclient's 82 commands), plus failover, stats and a
+>   (62 of python-octaviaclient's 82 commands), plus failover, stats and a
 >   flattened status tree
 > - **placement** — resource provider (list/show/delete/trait), allocation, trait
 > - **keyvrm** (Keystack Virtual Resource Manager — in-house) — app-config,
@@ -74,6 +74,20 @@ users wire it up with the command above.)
 Each release publishes static binaries for **linux/amd64, linux/arm64,
 darwin/amd64, darwin/arm64, windows/amd64, windows/arm64** with a
 `checksums.txt`, attached to the [GitHub release](https://github.com/ftarasenko/go-openstackclient/releases).
+Alongside them: **`.rpm` and `.deb` packages** for the two linux architectures
+(for a local yum/apt mirror on an air-gapped node — these do install the shell
+completions), an **SPDX SBOM** (`*.spdx.json`) per artifact, a keyless **cosign
+signature** over `checksums.txt` (`checksums.txt.sig` + `.pem`), and a GitHub
+**build-provenance attestation**. Builds are byte-reproducible, so the checksums
+can be re-derived independently from the tag.
+
+```sh
+cosign verify-blob checksums.txt \
+  --certificate checksums.txt.pem --signature checksums.txt.sig \
+  --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum -c checksums.txt
+```
 
 ## Build
 
@@ -113,9 +127,9 @@ koc server list --all-projects --long
 koc server create --image ubuntu-cloudimage --flavor 1 --network private myvm
 koc server create --image ubuntu-cloudimage --flavor 1 --nic net-id=<uuid> \
   --boot-from-volume 20 --boot-volume-type ssd --config-drive myvm
-koc server add floating ip myvm 10.0.0.5
+koc server add floating ip myvm 192.0.2.5
 koc flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny
-koc project create demo --domain itkey
+koc project create demo --domain example
 koc volume create --size 1 test-volume
 koc volume set stuck-volume --state available --detached
 koc volume attachment create test-volume myvm --connect --initiator iqn.2026-08.local:node1
@@ -123,7 +137,7 @@ koc network list --long
 koc resource provider show <uuid> --allocations -f json
 koc hypervisor list --gauge --sort ram --aggregate compute-hp
 koc keyvrm recommendation list
-koc vault kv copy -r deployments/itkey/dev deployments/itkey/e2e
+koc vault kv copy -r deployments/example/dev deployments/example/staging
 ```
 
 ### Authentication
@@ -188,6 +202,30 @@ Hostname verification is on by default and the minimum TLS version is 1.2.
 `--insecure` logs a warning to stderr. clouds.yaml `verify: false` is honored
 unless overridden by an explicit flag/env.
 
+### Timeouts
+
+| Purpose                        | Flag        | Env / default              |
+| ------------------------------ | ----------- | -------------------------- |
+| Whole-exchange HTTP cap        | `--timeout` | `OS_TIMEOUT` / `0` (unbounded) |
+
+`--timeout <duration>` (e.g. `--timeout 90s`) caps a single HTTP request/response
+exchange on **every** client `koc` builds — OpenStack, standalone Ironic, Vault
+and Kubernetes. It is per request, not per command, so the `--wait` polling loops
+are unaffected.
+
+It **defaults to 0, meaning unbounded**, on purpose. A whole-exchange cap counts
+the body transfer, so any default large enough for `koc image save` of a
+multi-gigabyte image over a slow link is too large to be a useful guard, and any
+default small enough to be useful would break those transfers. The failure a
+default would be reaching for — an endpoint that accepts the connection and then
+never answers — is bounded regardless by a fixed **60s response-header timeout**
+that always applies and cannot be disabled: it fires on silence without ever
+capping a transfer that is making progress. Set `--timeout` when you want a hard
+ceiling on a specific invocation (a CI step, a health probe).
+
+There is no upstream equivalent: keystoneauth has a session `timeout`, but
+`python-openstackclient` registers no global flag for it.
+
 ### Output formats
 
 `-f/--format` selects the renderer; `-c/--column` selects columns (repeatable,
@@ -200,6 +238,19 @@ case-insensitive, order-preserving); `--sort-column` sorts list output
 - `value` — plain, **tab-separated**, no headers, for scripting
 - `csv` — RFC 4180 with a header row
 
+**`-f value` is tab-separated, where `openstack` uses a single space.** Most
+values that appear in it contain spaces (status strings, flavor names, fixed-IP
+lists), so a space-joined row cannot be split back into its cells; a tab can.
+The consequence for scripts: `openstack … -f value | cut -d' ' -f2` picks the
+wrong field under `koc`. Use `cut -f2` (tab is `cut`'s default), `awk '{print
+$2}'`, or `-c <column>` to select one column outright. Cells are otherwise
+unquoted in both clients, so a value that itself contains a tab or a newline
+breaks the one-cell-per-tab, one-row-per-line contract — prefer `-f csv` or `-f
+json` for fields that may hold arbitrary text (image descriptions, `properties`,
+server metadata). Newlines are passed through on purpose so that `koc zone export
+showfile <id> -f value > zone.txt` yields a zonefile `zone import create` can read
+back; control characters and ANSI escapes are stripped regardless.
+
 Table output fits the terminal width: over-long cells wrap across lines when
 stdout is a TTY (piped output stays unbounded, matching `openstack`). `--max-width
 <n>` caps the width explicitly and `--fit-width` forces fitting even when piped.
@@ -211,7 +262,7 @@ table to a `<N bytes; …>` placeholder; the full value is always available via
 **`-f json` renders the same view the table does, not the raw API object.** Keys
 are the column titles a list command displays (`"Project ID"`, `"Service Name"`),
 and a composite cell arrives pre-formatted — a port's `fixed_ips` is the string
-`ip_address='10.0.0.5', subnet_id='…'` where `openstack -f json` gives an array
+`ip_address='192.0.2.5', subnet_id='…'` where `openstack -f json` gives an array
 of objects. It is the right shape for `-c`-narrowed output and for reading, but
 it is **not** a drop-in for upstream's JSON in a script that indexes into nested
 fields. Timestamps are normalised: RFC 3339 when set, `null` when absent (never
@@ -288,10 +339,10 @@ A koc-specific command group — Vault is not an OpenStack service, and there is
 (never Keystone), so it works on a host that has no cloud credentials at all:
 
 ```sh
-koc vault kv list  deployments/itkey/dev
-koc vault kv get   deployments/itkey/dev/openrc     # prints values in cleartext
-koc vault kv copy -r deployments/itkey/dev deployments/itkey/e2e
-koc vault kv export deployments/itkey/dev --recipient koc-export.pub -o .junit/vault.xml
+koc vault kv list  deployments/example/dev
+koc vault kv get   deployments/example/dev/openrc     # prints values in cleartext
+koc vault kv copy -r deployments/example/dev deployments/example/staging
+koc vault kv export deployments/example/dev --recipient koc-export.pub -o .junit/vault.xml
 koc vault kv decrypt .junit/vault.xml -i koc-export.key
 ```
 
@@ -330,7 +381,7 @@ match the variables the KeyStack e2e pipeline already exports for its
 ```sh
 export VAULT_ADDR=… VAULT_TOKEN=…                  # destination
 export VAULT_SRC_ADDR=… VAULT_SRC_TOKEN=…          # source
-export VAULT_SRC_ENGINE=secret_v2 VAULT_SRC_PREFIX=deployments/itkey
+export VAULT_SRC_ENGINE=secret_v2 VAULT_SRC_PREFIX=deployments/example
 koc vault kv copy -r dev dev
 ```
 
@@ -358,7 +409,7 @@ openssl genrsa -out koc-export.key 4096
 openssl rsa -in koc-export.key -pubout -out koc-export.pub
 
 # in CI, with the public key only (env KOC_EXPORT_RECIPIENT also works)
-koc vault kv export deployments/itkey/dev --recipient koc-export.pub -o .junit/vault.xml
+koc vault kv export deployments/example/dev --recipient koc-export.pub -o .junit/vault.xml
 
 # later, by the key holder — prints Path/Key/Value rows, honours -f/-c
 koc vault kv decrypt .junit/vault.xml -i koc-export.key
@@ -402,10 +453,14 @@ internal/cli/keyvrm/       KeyVRM in-house catalog service (raw request layer)
 ## Development
 
 ```sh
-make test     # go test ./...
-make vet      # go vet ./...
-make lint     # golangci-lint run ./...
-make tidy     # go mod tidy && go mod vendor
+make test        # go test ./...
+make race        # go test -race ./...  (needs cgo; shipped binaries stay CGO_ENABLED=0)
+make vet         # go vet ./...
+make lint        # golangci-lint run ./...
+make crossbuild  # compile all six release targets (build-only, offline)
+make completions # generate completions/koc.{bash,zsh,fish}
+make size        # print the built binary size
+make tidy        # go mod tidy && go mod vendor
 ```
 
 ## Known limitations
@@ -415,10 +470,13 @@ scoping, nova floating-IP microversion, `--wait` semantics, `--limit`, metadata
 unset, cross-service resolution, debug redaction, and more). A few lower-risk
 items are deferred and worth noting:
 
-- **Name-not-found on list filters is silent.** A name→ID resolver that finds no
-  match passes the reference through as a literal ID, so a mistyped `--domain`/
-  `--project` filter yields an empty result rather than an error (write paths
-  still 404 loudly). UUIDs always short-circuit resolution.
+- **Name-not-found resolution is silent.** A name→ID resolver that finds no match
+  passes the reference through as a literal ID, so a mistyped `--domain`/
+  `--project` filter yields an empty result rather than an error, and
+  `koc network delete typo-name` reports neutron's error for a malformed UUID
+  rather than koc's "no such network". The `server` package is the exception and
+  does error properly (`no server found with name "…"`); the other resolvers
+  should be brought in line with it. UUIDs always short-circuit resolution.
 - **`baremetal node set` uses JSON-patch `replace`** for scalar attributes; on
   some ironic builds `add` is needed for a previously-absent attribute.
 - **`role assignment list` with both `--project` and `--domain`** sends both
