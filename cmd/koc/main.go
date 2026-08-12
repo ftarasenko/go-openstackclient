@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+
+	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli"
@@ -35,14 +38,64 @@ func main() {
 	// once its name is spelled in full.
 	args := cli.ExpandCommandPrefixes(root, os.Args[1:])
 	root.SetArgs(cli.ExpandFlagPrefixes(root, args))
-	err := root.ExecuteContext(ctx)
+	// ExecuteContextC (rather than ExecuteContext) also hands back the command
+	// cobra resolved the args to, which is what lets the exit-code switch below
+	// tell "cobra rejected the invocation" from "a command ran and failed"
+	// without touching root.go or groups.go: PersistentPreRunE (root.go) sets
+	// SilenceUsage on that command only once cobra's own flag/argument
+	// validation has passed, so it is still false whenever validation itself
+	// is what failed.
+	cmd, err := root.ExecuteContextC(ctx)
 	// After the command, and on the failure path too: a slow call is often
 	// exactly why it failed. No-op unless --timing was given.
 	auth.ReportTiming()
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			fmt.Fprintln(os.Stderr, "koc: "+err.Error())
-		}
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, context.Canceled):
+		// Ctrl-C during e.g. `node deploy --wait`: the operation itself keeps
+		// running server-side, unwatched, so silence here would be actively
+		// misleading. 130 is the conventional "killed by SIGINT" exit status
+		// (128 + SIGINT's signal number 2).
+		fmt.Fprintln(os.Stderr, "koc: interrupted (the server-side operation may still be running)")
+		os.Exit(130)
+	case isUsageError(cmd, err):
+		// cobra rejected the invocation itself — unknown flag, wrong argument
+		// count, or an unknown noun/verb — the same class of error cliff/OSC
+		// exits 2 for.
+		fmt.Fprintln(os.Stderr, "koc: "+err.Error())
+		os.Exit(2)
+	default:
+		fmt.Fprintln(os.Stderr, "koc: "+err.Error())
 		os.Exit(1)
 	}
+}
+
+// isUsageError reports whether err comes from cobra rejecting the invocation
+// rather than from a command that actually ran.
+//
+// Two distinct signals are needed, because koc's command groups (see
+// groups.go's requireSubcommands, including the root command itself: it is a
+// pure dispatcher with no RunE of its own before that pass runs) surface an
+// unknown verb from their own RunE rather than from cobra's usual pre-RunE
+// validation:
+//
+//   - An unknown flag or a bad argument count on a real leaf command is caught
+//     by cobra before PersistentPreRunE ever runs, so SilenceUsage — set on cmd
+//     by root.go's PersistentPreRunE once validation has passed — is still
+//     false.
+//   - An unknown noun/verb under a group (including a top-level noun, since
+//     the root is itself such a group) is instead reported by that group's own
+//     RunE — after PersistentPreRunE already flipped SilenceUsage to true — so
+//     it is recognised by groups.go's own stable wording instead.
+func isUsageError(cmd *cobra.Command, err error) bool {
+	if cmd != nil && !cmd.SilenceUsage {
+		return true
+	}
+	// requireSubcommands (groups.go) always spells its own error this exact
+	// way; cobra's built-in Args validators that produce the same wording
+	// (legacyArgs, NoArgs) are otherwise unreachable here, since every pure
+	// group command in the tree — root included — gets its Args overridden
+	// by that same pass.
+	return strings.HasPrefix(err.Error(), "unknown command ")
 }
