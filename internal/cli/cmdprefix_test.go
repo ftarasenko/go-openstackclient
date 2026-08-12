@@ -78,6 +78,32 @@ func TestExpandCommandPrefixes(t *testing.T) {
 			want: []string{"--os-cloud=li", "server", "list"},
 		},
 		{
+			// The critical case: --os-clo is not a defined flag name, so an
+			// exact lookup misses it. Without the prefix fallback its value
+			// "net" was treated as unclaimed and rewritten to the command
+			// "network" (soleChildWithPrefix matches "net" -> "network").
+			// --os-clo unambiguously prefixes only --os-cloud, so its value
+			// must be skipped exactly as the full spelling would skip it.
+			name: "an abbreviated flag's value is never rewritten",
+			in:   []string{"--os-clo", "net", "image", "list"},
+			want: []string{"--os-clo", "net", "image", "list"},
+		},
+		{
+			// Same hazard with a value that would itself resolve to a
+			// command: "ima" unambiguously prefixes "image".
+			name: "an abbreviated flag's value that prefixes a command is never rewritten",
+			in:   []string{"--os-clo", "ima", "image", "list"},
+			want: []string{"--os-clo", "ima", "image", "list"},
+		},
+		{
+			// "--os-clo=" is an inline value; already handled by the hasValue
+			// branch, but confirms the abbreviated name is left as-is there
+			// too (ExpandFlagPrefixes, run afterwards, repairs the name).
+			name: "an abbreviated flag with an inline value is untouched",
+			in:   []string{"--os-clo=net", "image", "list"},
+			want: []string{"--os-clo=net", "image", "list"},
+		},
+		{
 			name: "shorthand with a separate value is skipped",
 			in:   []string{"-f", "json", "server", "li"},
 			want: []string{"-f", "json", "server", "list"},
@@ -139,5 +165,22 @@ func TestAbbreviatedCommandExecutes(t *testing.T) {
 	}
 	if !strings.Contains(out, "List compute servers") {
 		t.Errorf("koc server li --help did not reach `server list`:\n%s", out)
+	}
+}
+
+// commandWordIndex must also resolve a shorthand *cluster*'s trailing value
+// flag, exactly as it resolves a single shorthand. "vault kv copy" is the only
+// command with a local shorthand ("-r", --recursive); paired with the
+// inherited global "-f"/--format in a cluster, "-rf" must still consume its
+// separate value rather than exposing it as a command word.
+func TestCommandWordIndex_ShorthandClusterSkipsItsValue(t *testing.T) {
+	root := NewRootCommand("test")
+	copyCmd, _, err := root.Find([]string{"vault", "kv", "copy"})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	args := []string{"-rf", "json", "extra"}
+	if got := commandWordIndex(copyCmd, args, 0); got != 2 {
+		t.Errorf("commandWordIndex(%v) = %d, want 2 (both -rf and its value %q skipped)", args, got, args[1])
 	}
 }

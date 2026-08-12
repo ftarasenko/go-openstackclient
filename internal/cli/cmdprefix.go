@@ -121,6 +121,15 @@ func soleChildWithPrefix(cmd *cobra.Command, word string) (string, bool) {
 // a value, and rewriting it to a command name would corrupt the invocation.
 // Whether a flag consumes the following token is read off pflag's NoOptDefVal,
 // which is set exactly for flags usable without one (bools).
+//
+// A `--long` token is resolved the same way ExpandFlagPrefixes resolves it: an
+// exact name first, then — because this runs BEFORE flag expansion — its
+// unambiguous prefix. Without the prefix fallback, an abbreviated flag such as
+// `--os-clo` misses the exact lookup, so its value is treated as unclaimed and
+// walks straight into soleChildWithPrefix, which happily rewrites a cloud name
+// like "net" into the command "network". Resolving the same prefix here, before
+// any rewriting happens, keeps the two expansion passes looking at the same
+// flag.
 func commandWordIndex(cmd *cobra.Command, args []string, from int) int {
 	// Walk the ancestor chain rather than trusting cmd.InheritedFlags(): this
 	// runs before Execute, and a command's own Flags() does not yet carry the
@@ -143,6 +152,25 @@ func commandWordIndex(cmd *cobra.Command, args []string, from int) int {
 		return find(func(fs *pflag.FlagSet) *pflag.Flag { return fs.ShorthandLookup(sh) })
 	}
 
+	// allFlagNames is every long flag name reachable from cmd (its own plus
+	// every ancestor's), computed at most once and only if an exact lookup
+	// ever misses — most invocations use full flag names and never need it.
+	var allFlagNames map[string]bool
+	lookupPrefixed := func(name string) *pflag.Flag {
+		if allFlagNames == nil {
+			allFlagNames = make(map[string]bool)
+			for c := cmd; c != nil; c = c.Parent() {
+				c.Flags().VisitAll(func(f *pflag.Flag) { allFlagNames[f.Name] = true })
+				c.PersistentFlags().VisitAll(func(f *pflag.Flag) { allFlagNames[f.Name] = true })
+			}
+		}
+		full, ok := soleFlagWithPrefix(allFlagNames, name)
+		if !ok {
+			return nil
+		}
+		return lookup(full)
+	}
+
 	for i := from; i < len(args); i++ {
 		tok := args[i]
 		switch {
@@ -153,7 +181,11 @@ func commandWordIndex(cmd *cobra.Command, args []string, from int) int {
 			if hasValue {
 				continue
 			}
-			if f := lookup(name); f != nil && f.NoOptDefVal == "" {
+			f := lookup(name)
+			if f == nil {
+				f = lookupPrefixed(name)
+			}
+			if f != nil && f.NoOptDefVal == "" {
 				i++ // the value is the next token
 			}
 		case strings.HasPrefix(tok, "-") && len(tok) > 1:
