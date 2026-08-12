@@ -87,7 +87,22 @@ cosign verify-blob checksums.txt \
   --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum -c checksums.txt
+
+# What built it: repo, workflow, commit, runner.
+gh attestation verify koc_<version>_linux_amd64.tar.gz \
+  --repo ftarasenko/go-openstackclient
 ```
+
+The two identity flags are the part that matters — without them you have checked
+only that *somebody* signed the file. Verify the signature first, then let
+`sha256sum -c` carry that trust to each artifact.
+
+Both commands reach the network by default (`cosign` consults the public Rekor
+log, `gh` calls the GitHub API), so on an isolated network capture a
+`--bundle` on a connected host and verify from it with `cosign verify-blob
+--bundle … --offline`. `sha256sum -c checksums.txt` is fully offline and is what
+you gate the install on. See [SECURITY.md](SECURITY.md) for the air-gapped
+procedure, the supported-version policy, and how to report a vulnerability.
 
 ## Build
 
