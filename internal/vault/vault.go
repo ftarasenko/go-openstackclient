@@ -41,7 +41,12 @@ type Config struct {
 	KVMount     string // KV v2 mount; default "secret_v2"
 	CACertPEM   []byte // optional CA bundle for the Vault TLS endpoint
 	Insecure    bool   // skip TLS verification
-	Debug       bool
+
+	// Timeout caps a single Vault request; zero means defaultTimeout (30s) and a
+	// negative value disables the cap. koc's --timeout feeds this.
+	Timeout time.Duration
+
+	Debug bool
 }
 
 // DefaultApprolePath and DefaultKVMount match the LCM deployment defaults.
@@ -73,6 +78,10 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.Insecure {
 		tlsCfg.InsecureSkipVerify = true
+		// This endpoint carries the Vault token and, on the --creds-from-vault path,
+		// every OpenStack credential the openrc holds. Never disable verification
+		// here silently.
+		warnInsecure("Vault at " + strings.TrimRight(cfg.Addr, "/") + " (--insecure-vault)")
 	} else if len(cfg.CACertPEM) > 0 {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(cfg.CACertPEM) {
@@ -80,14 +89,20 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		}
 		tlsCfg.RootCAs = pool
 	}
+	warnCleartext("the Vault endpoint", cfg.Addr)
+
+	timeout := cfg.Timeout
+	switch {
+	case timeout == 0:
+		timeout = defaultTimeout
+	case timeout < 0:
+		timeout = 0 // explicitly uncapped
+	}
 
 	c := &Client{
 		cfg:   cfg,
 		token: cfg.Token,
-		hc: &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsCfg},
-		},
+		hc:    newHTTPClient(tlsCfg, timeout),
 	}
 
 	if c.token == "" {
@@ -222,6 +237,12 @@ func (c *Client) WalkKV(ctx context.Context, mount, root string) ([]string, erro
 			if k == "" {
 				continue
 			}
+			// The listing is data from the server, and callers join it onto a
+			// destination path, so a key that could escape the subtree fails the walk
+			// rather than being silently carried along.
+			if err := ValidateRelPath(strings.TrimSuffix(k, "/")); err != nil {
+				return fmt.Errorf("vault listing of %q returned an unusable key %q: %w", joinKV(root, rel), k, err)
+			}
 			if strings.HasSuffix(k, "/") {
 				if err := walk(joinKV(rel, strings.TrimSuffix(k, "/"))); err != nil {
 					return err
@@ -240,12 +261,47 @@ func (c *Client) WalkKV(ctx context.Context, mount, root string) ([]string, erro
 }
 
 // kvPath builds "/v1/<mount>/<api>/<path>" for the KV v2 data/metadata APIs.
+//
+// Every segment is escaped individually. Plain concatenation let a secret path
+// steer the request instead of naming it: a "?" started a query string (so
+// "x?list=true" turned a read into a listing) and a "../" segment normalised out
+// of the mount entirely. Splitting on "/" keeps the path structure while
+// url.PathEscape neutralises everything inside a segment.
 func kvPath(mount, api, path string) string {
-	p := fmt.Sprintf("/v1/%s/%s", strings.Trim(mount, "/"), api)
-	if s := strings.Trim(path, "/"); s != "" {
-		p += "/" + s
+	p := "/v1/" + url.PathEscape(strings.Trim(mount, "/")) + "/" + api
+	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+		if seg == "" {
+			continue
+		}
+		p += "/" + url.PathEscape(seg)
 	}
 	return p
+}
+
+// ValidateRelPath rejects a relative KV path that must not be joined onto a base
+// path. It is the guard for paths koc did not choose itself: the keys "kv copy
+// -r" and "kv export" join come from the SOURCE Vault's own LIST response, so a
+// hostile or spoofed source answering "../../../prod/openrc" would otherwise
+// steer a write outside the subtree the operator named — which guardSelfCopy
+// cannot see, because it compares the paths before the join.
+func ValidateRelPath(rel string) error {
+	if rel == "" {
+		return nil
+	}
+	if strings.HasPrefix(rel, "/") {
+		return fmt.Errorf("must be relative, not %q", rel)
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		switch {
+		case seg == "" || seg == ".":
+			return fmt.Errorf("empty path segment in %q", rel)
+		case strings.Contains(seg, ".."):
+			return fmt.Errorf("path segment %q traverses out of the subtree", seg)
+		case strings.ContainsAny(seg, "?#"):
+			return fmt.Errorf("path segment %q contains a URL metacharacter", seg)
+		}
+	}
+	return nil
 }
 
 // joinKV joins two KV path segments, tolerating empty ones.

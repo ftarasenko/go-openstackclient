@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -186,4 +189,55 @@ func TestRunKVDecrypt_Rejections(t *testing.T) {
 			t.Errorf("err = %v, want an authentication failure", err)
 		}
 	})
+}
+
+// O_CREATE's mode only applies when the file is created, so exporting over a
+// pre-existing world-readable file left it world-readable while the comment
+// claimed 0600.
+func TestOpenExportOutput_EnforcesModeOnExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.xml")
+	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w, closeOut, err := openExportOutput(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "<testsuite/>"); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeOut(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("mode = %04o, want 0600", perm)
+	}
+}
+
+// A new file is created 0600 as well, and a fresh export truncates the old one.
+func TestOpenExportOutput_CreatesPrivateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.xml")
+	w, closeOut, err := openExportOutput(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeOut(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("mode = %04o, want 0600", perm)
+	}
 }

@@ -82,6 +82,11 @@ func runKVExport(ctx context.Context, c *vault.Client, pub *rsa.PublicKey, base 
 
 	suite := junitSuite{Name: "vault:" + base}
 	for _, rel := range rels {
+		// Same guard as "kv copy": rel is the source Vault's own listing, and it is
+		// joined onto the exported base path.
+		if err := vault.ValidateRelPath(rel); err != nil {
+			return fmt.Errorf("listing %q returned an unsafe secret path %q: %w", base, rel, err)
+		}
 		path := joinPath(base, rel)
 
 		data, err := c.ReadKVDataAt(ctx, mount, path, 0)
@@ -177,9 +182,15 @@ func exportCases(pub *rsa.PublicKey, path string, data map[string]any) ([]junitC
 	}}, nil
 }
 
-// openExportOutput returns the writer for --output, and a closer. An export file
-// is created 0600: it is ciphertext, but there is no reason to make it readable
-// to everyone on the runner.
+// openExportOutput returns the writer for --output, and a closer. The export file
+// ends up 0600: it is ciphertext, but there is no reason to make it readable to
+// everyone on the runner.
+//
+// The mode is applied twice on purpose. O_CREATE's permission argument only takes
+// effect when the file is created, so exporting over an already-existing
+// world-readable file (a re-run in the same CI workspace) would otherwise keep
+// its 0644 — the mode is therefore also enforced on the open handle, before
+// anything is written to it.
 func openExportOutput(path string) (io.Writer, func() error, error) {
 	if path == "" || path == "-" {
 		return os.Stdout, func() error { return nil }, nil
@@ -188,5 +199,23 @@ func openExportOutput(path string) (io.Writer, func() error, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating --output %q: %w", path, err)
 	}
+	if err := enforceFileMode(f, 0o600); err != nil {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("securing --output %q: %w", path, err)
+	}
 	return f, f.Close, nil
+}
+
+// enforceFileMode chmods an open file to mode. Only regular files are chmod-ed:
+// --output may legitimately name a pipe or a device (/dev/stdout), where the mode
+// is neither ours to change nor meaningful.
+func enforceFileMode(f *os.File, mode os.FileMode) error {
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() || st.Mode().Perm() == mode {
+		return nil
+	}
+	return f.Chmod(mode)
 }

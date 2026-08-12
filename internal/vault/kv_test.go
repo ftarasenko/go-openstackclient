@@ -7,11 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestResolvePath(t *testing.T) {
-	const prefix = "deployments/itkey/e2e-lcm/reg"
+	const prefix = "deployments/example/dev/reg"
 	const mount = "secret_v2"
 	full := prefix + "/reg-cp/openrc"
 	cases := []struct {
@@ -24,13 +25,101 @@ func TestResolvePath(t *testing.T) {
 		{prefix, prefix, prefix},                          // equal to prefix
 		{"/reg/", "reg-cp/openrc", "reg/reg-cp/openrc"},   // prefix slashes trimmed
 		// Vault "mount/path" form: leading mount is stripped, rest is absolute.
-		{prefix, "/secret_v2/deployments/itkey/dev/x/openrc", "deployments/itkey/dev/x/openrc"},
-		{prefix, "secret_v2/deployments/itkey/dev/x/openrc", "deployments/itkey/dev/x/openrc"},
+		{prefix, "/secret_v2/deployments/example/other/x/openrc", "deployments/example/other/x/openrc"},
+		{prefix, "secret_v2/deployments/example/other/x/openrc", "deployments/example/other/x/openrc"},
 	}
 	for _, c := range cases {
 		if got := ResolvePath(c.prefix, mount, c.arg); got != c.want {
 			t.Errorf("ResolvePath(%q,%q,%q) = %q, want %q", c.prefix, mount, c.arg, got, c.want)
 		}
+	}
+}
+
+// kvPath used to concatenate raw segments, so a secret name could steer the
+// request instead of naming it: "?" started a query string and "../" normalised
+// out of the mount.
+func TestKVPath_EscapesSegments(t *testing.T) {
+	cases := []struct{ mount, api, path, want string }{
+		{"secret_v2", "metadata", "deployments/dev", "/v1/secret_v2/metadata/deployments/dev"},
+		{"secret_v2", "data", "", "/v1/secret_v2/data"},
+		{"secret_v2", "data", "a?list=true", "/v1/secret_v2/data/a%3Flist=true"},
+		{"secret_v2", "data", "a#frag", "/v1/secret_v2/data/a%23frag"},
+		{"secret_v2", "data", "a/../../b", "/v1/secret_v2/data/a/../../b"},
+		{"weird mount", "data", "x", "/v1/weird%20mount/data/x"},
+	}
+	for _, c := range cases {
+		if got := kvPath(c.mount, c.api, c.path); got != c.want {
+			t.Errorf("kvPath(%q,%q,%q) = %q, want %q", c.mount, c.api, c.path, got, c.want)
+		}
+	}
+}
+
+// End to end: a "?" in a path must reach the server as part of the path, never as
+// a query parameter that changes what the request means.
+func TestReadKVDataAt_QueryInjection(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"data":{"data":{"k":"v"}}}`))
+	}))
+	defer srv.Close()
+
+	c, _ := New(context.Background(), Config{Addr: srv.URL, Token: "t"})
+	if _, err := c.ReadKVDataAt(context.Background(), "kv", "openrc?list=true", 0); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/kv/data/openrc?list=true" {
+		t.Errorf("path = %q, want the ? inside the path segment", gotPath)
+	}
+	if gotQuery != "" {
+		t.Errorf("query = %q, want empty: the path must not inject parameters", gotQuery)
+	}
+}
+
+func TestValidateRelPath(t *testing.T) {
+	valid := []string{"", "openrc", "nested/accounts", "a-b_c.1/x"}
+	for _, rel := range valid {
+		if err := ValidateRelPath(rel); err != nil {
+			t.Errorf("ValidateRelPath(%q) = %v, want nil", rel, err)
+		}
+	}
+	invalid := []string{
+		"../../../prod/openrc", // the write-escape case
+		"..",
+		"a/../b",
+		"/absolute",
+		"a//b",
+		"a?list=true",
+		"a#frag",
+	}
+	for _, rel := range invalid {
+		if err := ValidateRelPath(rel); err == nil {
+			t.Errorf("ValidateRelPath(%q) = nil, want an error", rel)
+		}
+	}
+}
+
+// A hostile or spoofed source Vault answering a LIST with a traversing key must
+// fail the walk, not hand the key to a caller that will join it onto a
+// destination path.
+func TestWalkKV_RejectsTraversingKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/kv/metadata/root" {
+			_, _ = w.Write([]byte(`{"data":{"keys":["ok","../../../prod/openrc"]}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errors":[]}`))
+	}))
+	defer srv.Close()
+
+	c, _ := New(context.Background(), Config{Addr: srv.URL, Token: "t"})
+	_, err := c.WalkKV(context.Background(), "kv", "root")
+	if err == nil {
+		t.Fatal("WalkKV should reject a traversing key")
+	}
+	if !strings.Contains(err.Error(), "prod/openrc") {
+		t.Errorf("err = %v, want it to name the offending key", err)
 	}
 }
 

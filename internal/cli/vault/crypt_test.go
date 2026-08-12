@@ -22,7 +22,7 @@ var testKey = func() *rsa.PrivateKey {
 }()
 
 func TestEncryptDecryptPayload(t *testing.T) {
-	const aad = "deployments/itkey/dev/openrc"
+	const aad = "deployments/example/dev/openrc"
 	plaintext := []byte(`{"OS_PASSWORD":"s3cret"}`)
 
 	envelope, err := encryptPayload(&testKey.PublicKey, aad, plaintext)

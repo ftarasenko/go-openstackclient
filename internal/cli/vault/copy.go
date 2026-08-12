@@ -57,6 +57,13 @@ func runKVCopy(ctx context.Context, src, dst *vault.Client, o *output.Options, o
 	rows := make([][]any, 0, len(rels))
 	var skipped int
 	for _, rel := range rels {
+		// rel comes from the SOURCE Vault's listing, and it is about to be joined
+		// onto the destination path: a key like "../../../prod/openrc" would put the
+		// WRITE outside the subtree the operator named, which guardSelfCopy cannot
+		// catch because it only sees the paths before the join.
+		if err := vault.ValidateRelPath(rel); err != nil {
+			return fmt.Errorf("source %q returned an unsafe secret path %q: %w", opts.srcDisplay, rel, err)
+		}
 		from, to := joinPath(opts.srcPath, rel), joinPath(opts.dstPath, rel)
 
 		if opts.skipExisting {

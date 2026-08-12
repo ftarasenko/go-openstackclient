@@ -254,6 +254,71 @@ func TestRunKVCopy_SelfCopyGuard(t *testing.T) {
 	}
 }
 
+// A copy joins keys the SOURCE Vault reported onto the destination path, so a
+// hostile or spoofed source answering with "../../../prod/openrc" could steer the
+// WRITE outside the subtree the operator named — guardSelfCopy compares only the
+// pre-join prefixes and cannot see it.
+func TestRunKVCopy_RejectsTraversingSourceKey(t *testing.T) {
+	srcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/src_kv/metadata/src/dev" {
+			_, _ = w.Write([]byte(`{"data":{"keys":["openrc","../../../prod/openrc"]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"data":{"value":"x"}}}`))
+	}))
+	defer srcSrv.Close()
+	dstSrv, writes := dstVaultFixture(t)
+	src, dst := clients(t, srcSrv.URL, dstSrv.URL)
+
+	err := runKVCopy(context.Background(), src, dst, &output.Options{Format: output.FormatValue}, copyOpts(true), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("a traversing source key must fail the copy")
+	}
+	if !strings.Contains(err.Error(), "prod/openrc") {
+		t.Errorf("err = %v, want it to name the offending path", err)
+	}
+	if len(writes) != 0 {
+		t.Errorf("nothing must be written outside the chosen subtree, got %v", writes)
+	}
+}
+
+// VAULT_SRC_SKIP_VERIFY must mean the same thing here as OS_INSECURE does in
+// internal/auth: this group used to carry its own divergent envBool, whose comment
+// claimed to mirror auth's while doing something else.
+func TestInsecureSrcVault_EnvBoolFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		val  string
+		want bool
+	}{
+		{"no", false},
+		{"off", false},
+		{"disabled", false},
+		{"0", false},
+		{"false", false},
+		{"maybe", false}, // unparseable → closed
+		{"yes", true},
+		{"1", true},
+	} {
+		t.Run("VAULT_SRC_SKIP_VERIFY="+tc.val, func(t *testing.T) {
+			clearSrcEnv(t)
+			t.Setenv("VAULT_SRC_SKIP_VERIFY", tc.val)
+
+			s := &srcFlags{}
+			s.addTo(pflag.NewFlagSet("t", pflag.ContinueOnError))
+			if s.insecure != tc.want {
+				t.Errorf("insecure = %v, want %v", s.insecure, tc.want)
+			}
+			got, err := s.config(vault.Config{Addr: "https://dst", Token: "t"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Insecure != tc.want {
+				t.Errorf("config Insecure = %v, want %v", got.Insecure, tc.want)
+			}
+		})
+	}
+}
+
 // TestSrcFlagsConfig covers the inheritance rule: unset --src-vault-* fields
 // come from the destination, and any explicit source credential replaces the
 // destination's whole credential set.

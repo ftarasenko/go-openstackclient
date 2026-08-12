@@ -116,14 +116,18 @@ func newKVCopyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// The examples deliberately pass no token on the command line: an argument is
+// visible in the process list and in shell history, so the source credential
+// belongs in VAULT_SRC_TOKEN (or an AppRole) instead.
 const kvCopyExample = `  # Within one Vault: copy a deployment's secrets to another prefix
-  koc vault kv copy -r deployments/itkey/dev deployments/itkey/e2e
+  koc vault kv copy -r deployments/example/dev deployments/example/e2e
 
-  # From another Vault, previewing first
+  # From another Vault, previewing first (credentials via VAULT_SRC_TOKEN,
+  # or --src-vault-role-id/--src-vault-secret-id)
   koc vault kv copy -r --dry-run \
-    --src-vault-addr https://vault.old --src-vault-token s.xxxx \
+    --src-vault-addr https://vault.example.com \
     --src-vault-kv-mount secret_v2 \
-    deployments/itkey/prod deployments/itkey/e2e`
+    deployments/example/prod deployments/example/e2e`
 
 func newKVListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -171,7 +175,7 @@ const kvExportExample = `  # once, on the operator's machine
   openssl rsa -in koc-export.key -pubout -out koc-export.pub
 
   # in CI, with the public key only
-  koc vault kv export deployments/itkey/dev --recipient koc-export.pub -o .junit/vault.xml
+  koc vault kv export deployments/example/dev --recipient koc-export.pub -o .junit/vault.xml
 
   # later, by the key holder
   koc vault kv decrypt .junit/vault.xml --identity koc-export.key`
@@ -242,7 +246,7 @@ Pass "-" to read the report from stdin. This command needs no Vault access.`,
 			}
 			r := cmd.InOrStdin()
 			if args[0] != "-" {
-				f, err := os.Open(args[0]) //nolint:gosec // G304: operator-supplied report path
+				f, err := os.Open(args[0])
 				if err != nil {
 					return fmt.Errorf("opening %q: %w", args[0], err)
 				}
