@@ -164,6 +164,33 @@ func TestRenderGauge_CompactVsFull(t *testing.T) {
 	}
 }
 
+// round2 must round to nearest, not truncate toward zero: the old
+// float64(int64(f*100+0.5))/100 gave round2(-1) == -0.99, corrupting the -1
+// UNKNOWN sentinel that cpuPhysPct/ramPhysPct carry when node_exporter
+// couldn't be scraped (see gaugeRawTable, which pipes both through round2 for
+// non-table formats).
+func TestRound2(t *testing.T) {
+	tests := []struct {
+		name string
+		in   float64
+		want float64
+	}{
+		{"unknown sentinel round-trips intact", -1, -1},
+		{"positive rounds up at .5", 12.345, 12.35},
+		{"positive rounds down below .5", 12.344, 12.34},
+		{"negative rounds to nearest, not toward zero", -1.234, -1.23},
+		{"negative rounds away from zero at .5", -1.235, -1.24},
+		{"zero", 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := round2(tt.in); got != tt.want {
+				t.Errorf("round2(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderGauge_ColorAndThreshold(t *testing.T) {
 	on := true
 	o := &gaugeOpts{width: 80, warnPct: 70, critPct: 90, color: &on}
