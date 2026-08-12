@@ -405,6 +405,7 @@ to `master`, so it would yield only a compare link. Commit-type → heading:
 | `perf`                 | `### Performance`          |
 | `refactor`             | `### Refactoring`          |
 | `docs`                 | `### Documentation`        |
+| `test`                 | `### Tests`                |
 | `build`/`ci`/`chore`   | `### Build & tooling`      |
 | (unrecognized)         | `### Other`                |
 
@@ -412,6 +413,13 @@ to `master`, so it would yield only a compare link. Commit-type → heading:
 `<description>` becomes one bullet verbatim (its scope is bolded). So keep
 commits focused and their subjects self-describing; a single mega-commit yields a
 single vague bullet.
+
+A breaking change is listed **once**, under `### ⚠️ Breaking changes`, and not
+again under its own type — the heading is the one line a consumer must not miss,
+and a duplicated bullet buries it. Breaking is detected from either signal the
+spec allows: `!` after the type/scope, or a `BREAKING CHANGE:` footer in the
+body. Use both, as the "Breaking changes" rule above says, but the notes are
+correct if only one is present.
 
 ### Cutting a release (do this every time)
 
