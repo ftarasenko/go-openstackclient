@@ -1,0 +1,11 @@
++-------+------------------------------------+
+| Name  | Description                        |
++-------+------------------------------------+
+| prose | a short sentence that has to wrap  |
+|       | at spaces because it is long       |
+| token | abcdefghijklmnopqrstuvwxyz01234567 |
+|       | 89abcdefghijklmnopqrstuvwxyz       |
+| mixed | word                               |
+|       | ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567 |
+|       | 89ABCDEFGHIJ tail                  |
++-------+------------------------------------+

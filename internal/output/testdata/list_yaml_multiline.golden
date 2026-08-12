@@ -1,0 +1,9 @@
+- Name: example.com.
+  Records: |-
+    ns1.example.com.
+    ns2.example.com.
+    ns3.example.com.
+  TTL: 3600
+- Name: sub.example.com.
+  Records: single.example.com.
+  TTL: 300
