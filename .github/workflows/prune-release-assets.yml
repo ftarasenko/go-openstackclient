@@ -157,17 +157,24 @@ jobs:
           echo "protected tags: $(jq -r 'join(", ")' "$TMP/protected.json")"
           echo
 
-          # Heavy build outputs only. The always-keep list is redundant with the
-          # NOTE the SBOM bundle is koc_<ver>_sboms.tar.gz — it DOES end in
-          # .tar.gz, so unlike the other retained files it is not naturally
-          # excluded by the suffix test and the always_keep guard is what saves
-          # it. Deleting it would leave a release whose checksums.txt still lists
-          # an SBOM nobody can fetch. Releases cut before the bundle landed have
-          # loose per-artifact documents instead, hence both patterns.
-          # (A per-artifact SBOM is named koc_X_os_arch.tar.gz.spdx.json,
-          # which does NOT end in .tar.gz) and that redundancy is deliberate:
-          # if someone ever loosens the delete-list, the audit-trail files still
-          # survive.
+          # Heavy build outputs only, with the always_keep list below as a second
+          # guard.
+          #
+          # For most retained files that guard is redundant with the suffix test:
+          # a per-artifact SBOM is named koc_X_os_arch.tar.gz.spdx.json, which
+          # does NOT end in .tar.gz, so `heavy` never matches it in the first
+          # place. The redundancy is deliberate — if someone later loosens the
+          # delete-list, the audit-trail files still survive.
+          #
+          # The SBOM bundle is the one exception: koc_<ver>_sboms.tar.gz DOES end
+          # in .tar.gz, so always_keep is the only thing standing between it and
+          # deletion. Losing it would leave a release whose checksums.txt lists
+          # an SBOM nobody can fetch.
+          #
+          # Two spellings appear for both the SBOM and the signature because this
+          # workflow runs across every release: the bundle forms (_sboms.tar.gz,
+          # checksums.txt.bundle) from v0.23.0, and the loose forms (.spdx.json,
+          # checksums.txt.sig/.pem) on everything before it.
           jq -r --slurpfile protected "$TMP/protected.json" '
             def heavy:
               endswith(".tar.gz") or endswith(".zip")
