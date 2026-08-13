@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -73,6 +74,7 @@ type zoneListFlags struct {
 
 func newZoneListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &zoneListFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List DNS zones",
@@ -82,11 +84,11 @@ func newZoneListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runZoneList(ctx, client, o, f, cmd.OutOrStdout())
+			return runZoneList(ctx, client, o, f, common.allProjects, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -97,10 +99,13 @@ func newZoneListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.status, "status", "", "filter by status")
 	fl.IntVar(&f.limit, "limit", 0, "page size for the API request (default 1000; all pages are still fetched)")
 	fl.StringVar(&f.marker, "marker", "", "ID of the last zone from the previous page")
+	common.bind(cmd)
 	return cmd
 }
 
-func runZoneList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *zoneListFlags, w io.Writer) error {
+func runZoneList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *zoneListFlags,
+	allProjects bool, w io.Writer,
+) error {
 	opts := zones.ListOpts{
 		Name:   f.name,
 		Email:  f.email,
@@ -115,21 +120,31 @@ func runZoneList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("listing dns zones: %w", err)
 	}
-	return o.WriteList(w, zoneListTable(all))
+	return o.WriteList(w, zoneListTable(all, allProjects))
 }
 
-func zoneListTable(list []zones.Zone) output.Table {
-	t := output.Table{
-		Columns: []string{"ID", "Name", "Type", "Email", "TTL", "Serial", "Status", "Action"},
-		Rows:    make([][]any, 0, len(list)),
+// zoneListTable renders the list. A cross-project listing gains a Project ID
+// column, because without it the rows of a multi-project result are
+// indistinguishable — upstream inserts the same column for the same reason
+// (designateclient/v2/cli/zones.py ListZonesCommand).
+func zoneListTable(list []zones.Zone, allProjects bool) output.Table {
+	cols := []string{"ID", "Name", "Type", "Email", "TTL", "Serial", "Status", "Action"}
+	if allProjects {
+		cols = slices.Insert(cols, 1, "Project ID")
 	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, z := range list {
-		t.Rows = append(t.Rows, []any{z.ID, z.Name, z.Type, z.Email, z.TTL, z.Serial, z.Status, z.Action})
+		row := []any{z.ID, z.Name, z.Type, z.Email, z.TTL, z.Serial, z.Status, z.Action}
+		if allProjects {
+			row = slices.Insert(row, 1, any(z.ProjectID))
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return t
 }
 
 func newZoneShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "show <zone>",
 		Short: "Show details of a DNS zone",
@@ -139,13 +154,14 @@ func newZoneShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneShow(ctx, client, o, args[0], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
 	return cmd
 }
 
@@ -178,6 +194,7 @@ type zoneCreateFlags struct {
 
 func newZoneCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &zoneCreateFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new DNS zone",
@@ -187,7 +204,7 @@ func newZoneCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -203,6 +220,7 @@ func newZoneCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	// --email is required for PRIMARY zones only and must be omitted for
 	// SECONDARY zones (which require --master instead), so the requirement is
 	// enforced conditionally in runZoneCreate rather than via MarkFlagRequired.
+	common.bind(cmd)
 	return cmd
 }
 
@@ -262,6 +280,7 @@ func runZoneCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 }
 
 func newZoneDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "delete <zone> [<zone> ...]",
 		Short: "Delete DNS zone(s)",
@@ -271,13 +290,14 @@ func newZoneDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneDelete(ctx, client, args, cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
 	return cmd
 }
 
@@ -310,6 +330,7 @@ type zoneSetFlags struct {
 
 func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &zoneSetFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "set <zone>",
 		Short: "Update a DNS zone",
@@ -319,7 +340,7 @@ func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -333,6 +354,7 @@ func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.email, "email", "", "set the zone email")
 	fl.IntVar(&f.ttl, "ttl", 0, "set the zone TTL (seconds)")
 	fl.StringVar(&f.description, "description", "", "set the zone description")
+	common.bind(cmd)
 	return cmd
 }
 

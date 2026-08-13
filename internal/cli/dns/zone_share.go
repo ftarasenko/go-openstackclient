@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
@@ -45,6 +46,7 @@ func zoneShareFields(s *zones.ZoneShare) ([]string, []any) {
 
 func newZoneShareCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var targetProjectDomain string
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "create <zone> <target-project>",
 		Short: "Share a zone with a target project",
@@ -54,7 +56,7 @@ func newZoneShareCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, session, err := newDNSSession(ctx, a)
+			client, session, err := common.session(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -67,6 +69,7 @@ func newZoneShareCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	}
 	cmd.Flags().StringVar(&targetProjectDomain, "target-project-domain", "",
 		"domain owning the target project, to disambiguate the name (name or ID)")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -102,7 +105,7 @@ func runZoneShareCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 // --- list ------------------------------------------------------------------
 
 func newZoneShareListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var allProjects bool
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "list <zone>",
 		Short: "List the projects a zone is shared with",
@@ -112,16 +115,18 @@ func newZoneShareListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runZoneShareList(ctx, client, o, args[0], allProjects, cmd.OutOrStdout())
+			return runZoneShareList(ctx, client, o, args[0], common.allProjects, cmd.OutOrStdout())
 		},
 	}
-	// Designate's cross-project reads use the X-Auth-All-Projects header rather
-	// than a query parameter; gophercloud's ListSharesOpts carries it.
-	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "list shares across all projects (admin)")
+	// --all-projects is designate's X-Auth-All-Projects header, not a query
+	// parameter, and it is bound through commonOptions so it reaches the zone
+	// name→ID lookup as well: listing the shares of *another* project's zone is
+	// impossible if only the share request is cross-project.
+	common.bind(cmd)
 	return cmd
 }
 
@@ -132,7 +137,7 @@ func runZoneShareList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	pages, err := zones.ListShares(client, zoneID, zones.ListSharesOpts{AllProjects: allProjects}).AllPages(ctx)
+	pages, err := zones.ListShares(client, zoneID, zones.ListSharesOpts{}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing shares of zone %q: %w", zoneRef, err)
 	}
@@ -140,12 +145,17 @@ func runZoneShareList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return fmt.Errorf("parsing zone share list: %w", err)
 	}
-	t := output.Table{
-		Columns: []string{"ID", "Zone ID", "Target Project ID", "Created At"},
-		Rows:    make([][]any, 0, len(all)),
+	cols := []string{"ID", "Zone ID", "Target Project ID", "Created At"}
+	if allProjects {
+		cols = slices.Insert(cols, 1, "Project ID")
 	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, s := range all {
-		t.Rows = append(t.Rows, []any{s.ID, s.ZoneID, s.TargetProjectID, dnsTime(s.CreatedAt)})
+		row := []any{s.ID, s.ZoneID, s.TargetProjectID, dnsTime(s.CreatedAt)}
+		if allProjects {
+			row = slices.Insert(row, 1, any(s.ProjectID))
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }
@@ -153,7 +163,8 @@ func runZoneShareList(ctx context.Context, client *gophercloud.ServiceClient, o 
 // --- show ------------------------------------------------------------------
 
 func newZoneShareShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	common := &commonOptions{}
+	cmd := &cobra.Command{
 		Use:   "show <zone> <share-id>",
 		Short: "Show details of one zone share",
 		Args:  cobra.ExactArgs(2),
@@ -162,13 +173,15 @@ func newZoneShareShowCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneShareShow(ctx, client, o, args[0], args[1], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
+	return cmd
 }
 
 func runZoneShareShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
@@ -189,7 +202,8 @@ func runZoneShareShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 // --- delete ----------------------------------------------------------------
 
 func newZoneShareDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	common := &commonOptions{}
+	cmd := &cobra.Command{
 		Use:   "delete <zone> <share-id> [<share-id>...]",
 		Short: "Stop sharing a zone with a project",
 		Args:  cobra.MinimumNArgs(2),
@@ -198,13 +212,15 @@ func newZoneShareDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneShareDelete(ctx, client, args[0], args[1:], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
+	return cmd
 }
 
 func runZoneShareDelete(ctx context.Context, client *gophercloud.ServiceClient,

@@ -321,6 +321,14 @@ rewritten, and a prefix matching zero or **more than one** flag is left alone so
 `koc` reports the usual "unknown flag" rather than guessing. Everything after a
 bare `--` is positional and is not examined.
 
+`--all` is therefore not one flag. Where upstream defines it, it is a real flag
+with its own meaning — `image list --all` lists every *visibility*, `flavor list
+--all` every flavor, `quota show --all` every service — and expansion does not
+apply. Where the command has exactly one `--all…` flag it expands to that one
+(`volume list --all` → `--all-projects`). Where it has several, as `server unset`
+does with `--all-properties` and `--all-tags`, a bare `--all` is ambiguous and
+rejected, which is what `openstack` does too.
+
 ### Microversions
 
 Each service client sets its own microversion; defaults negotiate the latest the
@@ -511,6 +519,15 @@ items are deferred and worth noting:
   tokens and credential fields; it does not pretty-print JSON.
 - **`-f json` mirrors the rendered table**, not the API object — see "Output
   formats" above before consuming it from a script.
+- **`baremetal port --name` can be set but not shown.** `port create`/`port set`
+  send ironic's `name` attribute (API 1.88, OpenStack 2024.1), but gophercloud's
+  port result type has no field for it and no catch-all, so `port show`/`port
+  list` cannot render it back. Reading it needs a koc-owned DTO for the port
+  reads.
+- **`server delete/start/stop --all-projects` is accepted, not required.** koc
+  always resolves a server name across projects, so the flag upstream needs for
+  that is a no-op here rather than a gate; it exists so an `openstack`
+  invocation carrying it does not fail on an unknown flag.
 
 ## KeyStack documentation caveat
 

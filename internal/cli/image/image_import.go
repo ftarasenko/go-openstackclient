@@ -48,7 +48,7 @@ func newImageImportCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runImageImport(ctx, client, args[0], id, method, f.uri, cmd.OutOrStdout())
+			return runImageImport(ctx, client, args[0], id, method, f.uri, f.stores, f.allStores, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -59,6 +59,9 @@ func newImageImportCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.method, "method", "", "import method: web-download or glance-direct (default web-download when --uri is given)")
 	fl.StringVar(&f.importMethod, "import-method", "", "alias of --method (upstream OSC spelling)")
 	fl.StringVar(&f.uri, "uri", "", "source URL for the web-download method")
+	fl.StringSliceVar(&f.stores, "store", nil, "backend store to import into (repeatable)")
+	fl.BoolVar(&f.allStores, "all-stores", false, "import into every backend store glance has")
+	cmd.MarkFlagsMutuallyExclusive("store", "all-stores")
 
 	cmd.AddCommand(newImageImportInfoCommand(a, o))
 	return cmd
@@ -68,6 +71,8 @@ type imageImportFlags struct {
 	method       string
 	importMethod string
 	uri          string
+	stores       []string
+	allStores    bool
 }
 
 // importMethods are the methods glance's Import API defines. The endpoint
@@ -109,13 +114,47 @@ func (f *imageImportFlags) resolveMethod(cmd *cobra.Command) (imageimport.Import
 	return imageimport.ImportMethod(f.method), nil
 }
 
+// importStoreOpts adds glance's multi-store keys to an import request.
+// gophercloud's imageimport.CreateOpts only carries the `method` object, but
+// `stores` / `all_stores` sit next to it at the *top* level of the body (see
+// openstacksdk `image/v2/image.py import_image`), so the builder interface is
+// implemented here rather than reaching for a raw Post: everything else about
+// the call — URL, 202 OkCodes, error wrapping — stays gophercloud's.
+//
+// Both keys are omitted unless asked for, keeping the default request
+// byte-identical to one built from CreateOpts alone. Upstream OSC always sends
+// `all_stores: false`, which is the same request with an extra key.
+type importStoreOpts struct {
+	imageimport.CreateOpts
+	Stores    []string
+	AllStores bool
+}
+
+func (o importStoreOpts) ToImportCreateMap() (map[string]any, error) {
+	b, err := o.CreateOpts.ToImportCreateMap()
+	if err != nil {
+		return nil, err
+	}
+	if o.AllStores {
+		b["all_stores"] = true
+	}
+	if len(o.Stores) > 0 {
+		b["stores"] = o.Stores
+	}
+	return b, nil
+}
+
 // runImageImport kicks off the import. Glance returns 202 with no body: the
 // import runs asynchronously, so progress is observed with `image show`
 // (status goes importing → active) rather than reported here.
 func runImageImport(ctx context.Context, client *gophercloud.ServiceClient, ref, id string,
-	method imageimport.ImportMethod, uri string, w io.Writer,
+	method imageimport.ImportMethod, uri string, stores []string, allStores bool, w io.Writer,
 ) error {
-	opts := imageimport.CreateOpts{Name: method, URI: uri}
+	opts := importStoreOpts{
+		CreateOpts: imageimport.CreateOpts{Name: method, URI: uri},
+		Stores:     stores,
+		AllStores:  allStores,
+	}
 	if err := imageimport.Create(ctx, client, id, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("importing image %q: %w", ref, err)
 	}

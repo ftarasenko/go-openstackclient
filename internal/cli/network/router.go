@@ -47,6 +47,7 @@ func routerShowFields(r *routers.Router) ([]string, []any) {
 }
 
 func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var name string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List routers",
@@ -60,14 +61,15 @@ func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runRouterList(ctx, client, o, cmd.OutOrStdout())
+			return runRouterList(ctx, client, o, name, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "filter routers by name")
 	return cmd
 }
 
-func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := routers.List(client, routers.ListOpts{}).AllPages(ctx)
+func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	pages, err := routers.List(client, routers.ListOpts{Name: name}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing routers: %w", err)
 	}

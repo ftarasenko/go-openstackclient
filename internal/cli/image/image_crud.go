@@ -49,7 +49,17 @@ type imageListFlags struct {
 	private   bool
 	shared    bool
 	community bool
+	all       bool
 }
+
+// imageVisibilityAll is glance's fifth visibility *filter* value: it disables the
+// visibility restriction the API otherwise applies, so the list spans public,
+// private, shared and community images at once. gophercloud has no constant for
+// it because it is a query value only and never an image's own visibility
+// (`glance/api/v2/images.py _get_filters` accepts it; `db/sqlalchemy/api.py`
+// skips the filter when it is set), which is also why `--all` is not simply the
+// default: without it glance hides other projects' community images.
+const imageVisibilityAll images.ImageVisibility = "all"
 
 func (f *imageListFlags) visibility() images.ImageVisibility {
 	switch {
@@ -61,6 +71,8 @@ func (f *imageListFlags) visibility() images.ImageVisibility {
 		return images.ImageVisibilityShared
 	case f.community:
 		return images.ImageVisibilityCommunity
+	case f.all:
+		return imageVisibilityAll
 	default:
 		return ""
 	}
@@ -91,7 +103,8 @@ func newImageListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.private, "private", false, "list only private images")
 	fl.BoolVar(&f.shared, "shared", false, "list only shared images")
 	fl.BoolVar(&f.community, "community", false, "list only community images")
-	cmd.MarkFlagsMutuallyExclusive("public", "private", "shared", "community")
+	fl.BoolVar(&f.all, "all", false, "list images of every visibility")
+	cmd.MarkFlagsMutuallyExclusive("public", "private", "shared", "community", "all")
 	return cmd
 }
 

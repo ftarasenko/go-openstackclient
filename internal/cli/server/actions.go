@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -25,7 +26,7 @@ type simpleAction func(ctx context.Context, client *gophercloud.ServiceClient, i
 // newSimpleActionCommand builds a "server <verb> <server>" command whose only
 // behavior is to resolve the server reference to an ID and invoke fn.
 func newSimpleActionCommand(a *auth.Options, o *output.Options, use, short, done string, fn simpleAction) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   use + " <server>",
 		Short: short,
 		Args:  cobra.ExactArgs(1),
@@ -41,7 +42,20 @@ func newSimpleActionCommand(a *auth.Options, o *output.Options, use, short, done
 			return runSimpleAction(ctx, client, args[0], done, fn, cmd.OutOrStdout())
 		},
 	}
+	// Upstream registers --all-projects on `server start` and `server stop` only,
+	// not on the rest of these one-shot actions, so the flag is opt-in per verb
+	// rather than blanket — koc advertising it on `server pause` would be a
+	// deviation of its own.
+	if allProjectsVerbs[use] {
+		var allProjects bool
+		allprojects.Bind(cmd, &allProjects, allProjectsAlwaysOn)
+	}
+	return cmd
 }
+
+// allProjectsVerbs names the newSimpleActionCommand verbs upstream OSC gives an
+// --all-projects flag (openstackclient/compute/v2/server.py StartServer/StopServer).
+var allProjectsVerbs = map[string]bool{"start": true, "stop": true}
 
 func runSimpleAction(ctx context.Context, client *gophercloud.ServiceClient, ref, done string, fn simpleAction, w io.Writer) error {
 	id, err := resolveServerID(ctx, client, ref)
@@ -456,7 +470,7 @@ func runServerResize(ctx context.Context, client *gophercloud.ServiceClient, ref
 // rebuild ----------------------------------------------------------------------
 
 func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var image string
+	var image, name string
 	cmd := &cobra.Command{
 		Use:   "rebuild <server>",
 		Short: "Rebuild a server from an image",
@@ -473,19 +487,25 @@ func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			return runServerRebuild(ctx, client, o, args[0], image, cmd.OutOrStdout())
+			return runServerRebuild(ctx, client, o, args[0], image, name, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&image, "image", "", "image ID to rebuild from (required; pass an ID)")
+	fl := cmd.Flags()
+	fl.StringVar(&image, "image", "", "image ID to rebuild from (required; pass an ID)")
+	fl.StringVar(&name, "name", "", "rename the server as part of the rebuild")
 	return cmd
 }
 
-func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, image string, w io.Writer) error {
+func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	ref, image, name string, w io.Writer,
+) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	s, err := servers.Rebuild(ctx, client, id, servers.RebuildOpts{ImageRef: image}).Extract()
+	// RebuildOpts.Name is tagged omitempty, so an unset --name leaves the body
+	// exactly as it was before this flag existed and nova keeps the current name.
+	s, err := servers.Rebuild(ctx, client, id, servers.RebuildOpts{ImageRef: image, Name: name}).Extract()
 	if err != nil {
 		return fmt.Errorf("rebuilding server %q: %w", ref, err)
 	}

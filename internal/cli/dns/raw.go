@@ -10,6 +10,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
+
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 )
 
 // Raw designate fallbacks.
@@ -269,6 +271,34 @@ func withCommonHeaders(client *gophercloud.ServiceClient, c *commonOptions) *gop
 	copied := *client
 	copied.MoreHeaders = cloneHeaders(h)
 	return &copied
+}
+
+// client builds the designate service client for a command with the common
+// headers already applied, so *every* request the command makes carries them —
+// not just its final one.
+//
+// That distinction is the whole point. These verbs take a zone or recordset by
+// name and resolve it to an ID first, and a resource in another project cannot
+// be found by name unless the lookup itself is cross-project. Upstream gets this
+// for free because `common.set_all_common_headers` mutates the session
+// (designateclient/v2/cli/common.py), which every subsequent call inherits;
+// setting them on the client is the same scope.
+func (c *commonOptions) client(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, error) {
+	client, err := newDNSClient(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	return withCommonHeaders(client, c), nil
+}
+
+// session is commonOptions.client for the one verb that also needs keystone
+// ("zone share create" takes its target project by name).
+func (c *commonOptions) session(ctx context.Context, a *auth.Options) (*gophercloud.ServiceClient, *auth.Client, error) {
+	client, session, err := newDNSSession(ctx, a)
+	if err != nil {
+		return nil, nil, err
+	}
+	return withCommonHeaders(client, c), session, nil
 }
 
 // --- timestamps ------------------------------------------------------------

@@ -12,6 +12,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -493,5 +494,37 @@ func TestRunLBCreate_WaitTimeoutStillRendersTheLoadBalancer(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "lb-1") {
 		t.Errorf("the created load balancer must reach stdout so its ID is recoverable\n---\n%s", buf.String())
+	}
+}
+
+// Every octavia create verb names the new resource with --name upstream and has
+// no positional for it, while koc grew the positional first. Both spellings must
+// work on all of them, so this walks the tree rather than testing one command.
+func TestLoadBalancerCreateVerbs_AcceptNameFlagAndPositional(t *testing.T) {
+	root := NewCommand(&auth.Options{}, &output.Options{})
+	verbs := [][]string{
+		{"create"},
+		{"listener", "create"},
+		{"pool", "create"},
+		{"member", "create"},
+		{"healthmonitor", "create"},
+		{"l7policy", "create"},
+		{"flavor", "create"},
+		{"flavorprofile", "create"},
+	}
+	for _, path := range verbs {
+		leaf, _, err := root.Find(path)
+		if err != nil || leaf == nil {
+			t.Fatalf("loadbalancer %s: not found: %v", strings.Join(path, " "), err)
+		}
+		if leaf.Flags().Lookup("name") == nil {
+			t.Errorf("koc loadbalancer %s: missing --name", strings.Join(path, " "))
+		}
+		// The positional that used to carry the name must now be optional, or the
+		// upstream flag-only form fails argument validation before RunE is reached.
+		if !strings.Contains(leaf.Use, "[<name>]") {
+			t.Errorf("koc loadbalancer %s: usage %q should make the name optional",
+				strings.Join(path, " "), leaf.Use)
+		}
 	}
 }

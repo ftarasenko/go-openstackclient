@@ -11,6 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/qos/policies"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/qos/ruletypes"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -711,7 +712,8 @@ func newQoSRuleTypeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func newQoSRuleTypeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	var allSupported, allRules bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the supported QoS rule types",
 		Args:  cobra.NoArgs,
@@ -723,13 +725,39 @@ func newQoSRuleTypeListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return runQoSRuleTypeList(cmd.Context(), c, o, cmd.OutOrStdout())
+			return runQoSRuleTypeList(cmd.Context(), c, o, allSupported, allRules, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.BoolVar(&allSupported, "all-supported", false,
+		"list the union of the rule types every loaded mechanism driver supports")
+	fl.BoolVar(&allRules, "all-rules", false, "list every rule type implemented in neutron's QoS driver")
+	cmd.MarkFlagsMutuallyExclusive("all-supported", "all-rules")
+	return cmd
 }
 
-func runQoSRuleTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := ruletypes.ListRuleTypes(client).AllPages(ctx)
+// ruleTypesQuery is the rule-type listing gophercloud does not model: its
+// ListRuleTypes takes no options at all, while neutron accepts all_supported and
+// all_rules — the difference between "what this cloud can enforce" and "what the
+// code knows about". The pager is rebuilt around the same page type rather than
+// dropping to a raw Get, so ExtractRuleTypes keeps decoding the body.
+func ruleTypesQuery(client *gophercloud.ServiceClient, allSupported, allRules bool) pagination.Pager {
+	url := client.ServiceURL("qos", "rule-types")
+	switch {
+	case allSupported:
+		url += "?all_supported=true"
+	case allRules:
+		url += "?all_rules=true"
+	}
+	return pagination.NewPager(client, url, func(r pagination.PageResult) pagination.Page {
+		return ruletypes.ListRuleTypesPage{SinglePageBase: pagination.SinglePageBase(r)}
+	})
+}
+
+func runQoSRuleTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	allSupported, allRules bool, w io.Writer,
+) error {
+	pages, err := ruleTypesQuery(client, allSupported, allRules).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing QoS rule types: %w", err)
 	}

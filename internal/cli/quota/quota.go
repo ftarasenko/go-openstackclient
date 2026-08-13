@@ -106,7 +106,17 @@ func (s serviceSelection) resolved() serviceSelection {
 
 func registerServiceFlags(cmd *cobra.Command, s *serviceSelection) {
 	fl := cmd.Flags()
+	// --all is upstream's explicit spelling of the default (its --compute /
+	// --volume / --network / --all group all set one `service` value, defaulting
+	// to "all"). It selects nothing of its own here — resolved() already treats
+	// "no service flag" as all three — but it has to exist, both because
+	// `openstack quota show --all` is in scripts and because without it koc's
+	// unambiguous-prefix expansion turns a typed `--all` into `--all-projects`
+	// on commands that have one.
+	var all bool
+	fl.BoolVar(&all, "all", false, "show quotas for all services (the default)")
 	fl.BoolVar(&s.compute, "compute", false, "restrict to compute (nova) quotas")
 	fl.BoolVar(&s.volume, "volume", false, "restrict to volume (cinder) quotas")
 	fl.BoolVar(&s.network, "network", false, "restrict to network (neutron) quotas")
+	cmd.MarkFlagsMutuallyExclusive("all", "compute", "volume", "network")
 }

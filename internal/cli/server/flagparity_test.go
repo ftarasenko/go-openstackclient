@@ -9,6 +9,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -152,5 +153,58 @@ func TestRunComputeServiceList_RejectsUnknownStatus(t *testing.T) {
 		&serviceListFlags{status: "up"}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "enabled or disabled") {
 		t.Fatalf("expected an invalid-status error, got %v", err)
+	}
+}
+
+// Upstream OSC registers --all-projects on `server list`, `server delete`,
+// `server start` and `server stop`, and on no other compute verb, defaulting each
+// from the ALL_PROJECTS envvar (openstackclient/compute/v2/server.py). koc had it
+// on `server list` only, so `openstack server delete --all-projects …` died on an
+// unknown flag. This pins both halves: the four verbs that must carry it, and the
+// neighbours that must not grow it by accident.
+func TestServerCommands_AllProjectsFlagMatchesUpstream(t *testing.T) {
+	t.Setenv("ALL_PROJECTS", "")
+	root := NewCommand(&auth.Options{}, &output.Options{})
+	want := []string{"list", "delete", "start", "stop"}
+	absent := []string{"pause", "unpause", "suspend", "resume", "lock", "unlock", "reboot", "show"}
+
+	for _, verb := range want {
+		leaf, _, err := root.Find([]string{verb})
+		if err != nil || leaf == nil {
+			t.Fatalf("server %s: not found: %v", verb, err)
+		}
+		if leaf.Flags().Lookup("all-projects") == nil {
+			t.Errorf("koc server %s: missing --all-projects", verb)
+		}
+	}
+	for _, verb := range absent {
+		leaf, _, err := root.Find([]string{verb})
+		if err != nil || leaf == nil {
+			t.Fatalf("server %s: not found: %v", verb, err)
+		}
+		if leaf.Flags().Lookup("all-projects") != nil {
+			t.Errorf("koc server %s: --all-projects is not an upstream flag here", verb)
+		}
+	}
+}
+
+// The ALL_PROJECTS envvar is the reason the flag is registered through a shared
+// helper: an operator who exports it once expects every one of these verbs to
+// pick it up, exactly as under `openstack`.
+func TestServerCommands_AllProjectsDefaultsFromEnvironment(t *testing.T) {
+	t.Setenv("ALL_PROJECTS", "1")
+	root := NewCommand(&auth.Options{}, &output.Options{})
+	for _, verb := range []string{"list", "delete", "start", "stop"} {
+		leaf, _, err := root.Find([]string{verb})
+		if err != nil || leaf == nil {
+			t.Fatalf("server %s: not found: %v", verb, err)
+		}
+		flag := leaf.Flags().Lookup("all-projects")
+		if flag == nil {
+			t.Fatalf("koc server %s: missing --all-projects", verb)
+		}
+		if flag.DefValue != "true" {
+			t.Errorf("koc server %s: --all-projects default = %q, want true from ALL_PROJECTS", verb, flag.DefValue)
+		}
 	}
 }

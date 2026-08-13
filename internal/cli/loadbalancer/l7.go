@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -240,6 +241,9 @@ func (f *l7PolicyWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl.BoolVar(&f.enable, "enable", false, "administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "administratively down")
 	if isCreate {
+		// Upstream octavia names a new policy with --name and has no positional
+		// for it; koc grew the positional first. Both work — see internal/cli/nameflag.
+		fl.StringVar(&f.name, "name", "", "name of the policy (upstream spelling; the positional form also works)")
 		fl.StringVar(&f.listener, "listener", "", "listener to attach the policy to (name or ID, required)")
 		fl.StringVar(&f.action, "action", "",
 			"policy action: REDIRECT_TO_POOL, REDIRECT_TO_URL, REDIRECT_PREFIX or REJECT (required)")
@@ -254,11 +258,15 @@ func (f *l7PolicyWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 func newL7PolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &l7PolicyWriteFlags{}
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create [<name>]",
 		Short: "Create a layer-7 policy on a listener",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, f.name, false)
+			if err != nil {
 				return err
 			}
 			fl := cmd.Flags()
@@ -283,7 +291,7 @@ func newL7PolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 			if err != nil {
 				return err
 			}
-			return runL7PolicyCreate(ctx, client, o, args[0], f, refs.projectID, cmd.OutOrStdout())
+			return runL7PolicyCreate(ctx, client, o, name, f, refs.projectID, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, true)

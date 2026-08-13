@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -65,6 +66,7 @@ type recordSetListFlags struct {
 
 func newRecordSetListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &recordSetListFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "list <zone>",
 		Short: "List recordsets in a DNS zone",
@@ -74,11 +76,11 @@ func newRecordSetListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runRecordSetList(ctx, client, o, args[0], f, cmd.OutOrStdout())
+			return runRecordSetList(ctx, client, o, args[0], f, common.allProjects, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -89,6 +91,7 @@ func newRecordSetListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.status, "status", "", "filter by status")
 	fl.IntVar(&f.limit, "limit", 0, "page size for the API request (default 1000; all pages are still fetched)")
 	fl.StringVar(&f.marker, "marker", "", "ID of the last recordset from the previous page")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -120,7 +123,9 @@ func recordSetNameFilter(name string) string {
 	return "*" + name + "*"
 }
 
-func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, zoneRef string, f *recordSetListFlags, w io.Writer) error {
+func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, zoneRef string,
+	f *recordSetListFlags, allProjects bool, w io.Writer,
+) error {
 	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
@@ -139,21 +144,30 @@ func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return fmt.Errorf("listing recordsets in zone %s: %w", zoneRef, err)
 	}
-	return o.WriteList(w, recordSetListTable(all))
+	return o.WriteList(w, recordSetListTable(all, allProjects))
 }
 
-func recordSetListTable(list []recordsets.RecordSet) output.Table {
-	t := output.Table{
-		Columns: []string{"ID", "Name", "Type", "Records", "TTL", "Status", "Action"},
-		Rows:    make([][]any, 0, len(list)),
+// recordSetListTable renders the list, gaining a Project ID column for a
+// cross-project listing so rows owned by different projects stay distinguishable
+// (upstream inserts the same column — designateclient/v2/cli/recordsets.py).
+func recordSetListTable(list []recordsets.RecordSet, allProjects bool) output.Table {
+	cols := []string{"ID", "Name", "Type", "Records", "TTL", "Status", "Action"}
+	if allProjects {
+		cols = slices.Insert(cols, 1, "Project ID")
 	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, rs := range list {
-		t.Rows = append(t.Rows, []any{rs.ID, rs.Name, rs.Type, rs.Records, rs.TTL, rs.Status, rs.Action})
+		row := []any{rs.ID, rs.Name, rs.Type, rs.Records, rs.TTL, rs.Status, rs.Action}
+		if allProjects {
+			row = slices.Insert(row, 1, any(rs.ProjectID))
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return t
 }
 
 func newRecordSetShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "show <zone> <recordset>",
 		Short: "Show details of a recordset",
@@ -163,13 +177,14 @@ func newRecordSetShowCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runRecordSetShow(ctx, client, o, args[0], args[1], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
 	return cmd
 }
 
@@ -204,6 +219,7 @@ type recordSetCreateFlags struct {
 
 func newRecordSetCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &recordSetCreateFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "create <zone> <name>",
 		Short: "Create a recordset in a DNS zone",
@@ -213,7 +229,7 @@ func newRecordSetCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -226,6 +242,7 @@ func newRecordSetCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	fl.IntVar(&f.ttl, "ttl", 0, "time to live (seconds) for the recordset")
 	fl.StringVar(&f.description, "description", "", "description of the recordset")
 	_ = cmd.MarkFlagRequired("type")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -250,6 +267,7 @@ func runRecordSetCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 }
 
 func newRecordSetDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "delete <zone> <recordset> [<recordset> ...]",
 		Short: "Delete recordset(s) from a DNS zone",
@@ -259,13 +277,14 @@ func newRecordSetDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runRecordSetDelete(ctx, client, args[0], args[1:], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
 	return cmd
 }
 
@@ -302,6 +321,7 @@ type recordSetSetFlags struct {
 
 func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &recordSetSetFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use: "set <zone> <recordset>",
 		// python-designateclient spells this verb "update"; accept both.
@@ -313,7 +333,7 @@ func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -327,6 +347,7 @@ func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.records, "record", nil, "replace record data; repeat for multiple records")
 	fl.IntVar(&f.ttl, "ttl", 0, "set the recordset TTL (seconds)")
 	fl.StringVar(&f.description, "description", "", "set the recordset description")
+	common.bind(cmd)
 	return cmd
 }
 

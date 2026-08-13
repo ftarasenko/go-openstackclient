@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
@@ -114,7 +115,7 @@ func newAttachmentListCommand(a *auth.Options, o *output.Options) *cobra.Command
 		},
 	}
 	fl := cmd.Flags()
-	fl.BoolVar(&f.allProjects, "all-projects", false, "list attachments from all projects (admin)")
+	allprojects.Bind(cmd, &f.allProjects, "list attachments from all projects (admin)")
 	fl.StringVar(&f.project, "project", "", "filter by project (ID or name; admin)")
 	fl.StringVar(&f.volume, "volume-id", "", "filter by volume (ID or name)")
 	fl.StringVar(&f.status, "status", "", "filter by attachment status")

@@ -14,6 +14,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -398,6 +399,7 @@ type tsigKeyListFlags struct {
 
 func newTSIGKeyListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &tsigKeyListFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List TSIG keys",
@@ -407,7 +409,7 @@ func newTSIGKeyListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -419,6 +421,7 @@ func newTSIGKeyListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.algorithm, "algorithm", "", "filter by algorithm, e.g. hmac-sha256")
 	fl.StringVar(&f.scope, "scope", "", "filter by scope: POOL or ZONE")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of keys to return")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -448,6 +451,7 @@ func runTSIGKeyList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 
 func newTSIGKeyShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var showSecret bool
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "show <tsigkey>",
 		Short: "Show TSIG key details",
@@ -457,7 +461,7 @@ func newTSIGKeyShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -466,6 +470,7 @@ func newTSIGKeyShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&showSecret, "show-secret", false,
 		"include the shared secret in the output (omitted by default so it does not land in logs)")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -502,12 +507,19 @@ type tsigKeyWriteFlags struct {
 
 func newTSIGKeyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &tsigKeyWriteFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		// Upstream designate names the key with --name and takes no positional;
+		// koc has always taken it positionally. Both work — see internal/cli/nameflag.
+		Use:   "create [<name>]",
 		Short: "Create a TSIG key",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, f.name, true)
+			if err != nil {
 				return err
 			}
 			// designate requires all four; naming the missing one beats a 400.
@@ -522,18 +534,20 @@ func newTSIGKeyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				}
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runTSIGKeyCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
+			return runTSIGKeyCreate(ctx, client, o, name, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "name of the key (upstream spelling; the positional form also works)")
 	fl.StringVar(&f.algorithm, "algorithm", "", "TSIG algorithm, e.g. hmac-sha256 (required)")
 	fl.StringVar(&f.secret, "secret", "", "shared secret (required)")
 	fl.StringVar(&f.scope, "scope", "", "scope: POOL or ZONE (required)")
 	fl.StringVar(&f.resourceID, "resource-id", "", "ID of the pool or zone the key applies to (required)")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -556,6 +570,7 @@ func runTSIGKeyCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 
 func newTSIGKeySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &tsigKeyWriteFlags{}
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "set <tsigkey>",
 		Short: "Update a TSIG key",
@@ -570,7 +585,7 @@ func newTSIGKeySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return fmt.Errorf("nothing to set: pass at least one attribute flag")
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -583,6 +598,7 @@ func newTSIGKeySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.secret, "secret", "", "new shared secret")
 	fl.StringVar(&f.scope, "scope", "", "new scope: POOL or ZONE")
 	fl.StringVar(&f.resourceID, "resource-id", "", "new pool or zone ID")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -610,7 +626,8 @@ func runTSIGKeySet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 }
 
 func newTSIGKeyDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	common := &commonOptions{}
+	cmd := &cobra.Command{
 		Use:   "delete <tsigkey> [<tsigkey>...]",
 		Short: "Delete one or more TSIG keys",
 		Args:  cobra.MinimumNArgs(1),
@@ -619,13 +636,15 @@ func newTSIGKeyDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runTSIGKeyDelete(ctx, client, args, cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
+	return cmd
 }
 
 func runTSIGKeyDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {

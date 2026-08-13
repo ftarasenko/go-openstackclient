@@ -3,6 +3,7 @@ package quota
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 	"github.com/spf13/pflag"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -385,5 +387,28 @@ func TestRunQuotaShow_UsesProjectIDInURL(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "10") {
 		t.Errorf("output missing the instances quota:\n%s", buf.String())
+	}
+}
+
+// Upstream's --compute / --volume / --network / --all form one mutually exclusive
+// group whose default is "all", so `quota show --all` is the explicit spelling of
+// the default. It carries no behaviour of its own; what matters is that it exists
+// (scripts pass it) and that it cannot be combined with a single-service flag.
+func TestQuotaShow_AllFlag(t *testing.T) {
+	cmd := newQuotaShowCommand(&auth.Options{}, &output.Options{})
+	if cmd.Flags().Lookup("all") == nil {
+		t.Fatal("koc quota show: missing --all")
+	}
+	// Cobra reports group violations from Execute, not from Flags().Parse, so the
+	// command is driven the way an operator would.
+	cmd.SetArgs([]string{"--all", "--compute"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("--all with --compute should be rejected")
+	}
+	if !strings.Contains(err.Error(), "all") || !strings.Contains(err.Error(), "compute") {
+		t.Errorf("error %q should name the conflicting flags", err.Error())
 	}
 }

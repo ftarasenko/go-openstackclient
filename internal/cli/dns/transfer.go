@@ -78,6 +78,7 @@ func newZoneTransferRequestCommand(a *auth.Options, o *output.Options) *cobra.Co
 
 func newZoneTransferRequestCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var targetProject, targetProjectDomain, description string
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "create <zone>",
 		Short: "Offer a zone for transfer",
@@ -87,7 +88,7 @@ func newZoneTransferRequestCreateCommand(a *auth.Options, o *output.Options) *co
 				return err
 			}
 			ctx := cmd.Context()
-			client, session, err := newDNSSession(ctx, a)
+			client, session, err := common.session(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -109,6 +110,7 @@ func newZoneTransferRequestCreateCommand(a *auth.Options, o *output.Options) *co
 	fl.StringVar(&targetProjectDomain, "target-project-domain", "",
 		"domain owning the target project, to disambiguate the name (name or ID)")
 	fl.StringVar(&description, "description", "", "description for the transfer request")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -132,6 +134,7 @@ func runZoneTransferRequestCreate(ctx context.Context, client *gophercloud.Servi
 
 func newZoneTransferRequestListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var status string
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List zone transfer requests",
@@ -141,7 +144,7 @@ func newZoneTransferRequestListCommand(a *auth.Options, o *output.Options) *cobr
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -149,6 +152,7 @@ func newZoneTransferRequestListCommand(a *auth.Options, o *output.Options) *cobr
 		},
 	}
 	cmd.Flags().StringVar(&status, "status", "", "filter by status, e.g. ACTIVE or COMPLETE")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -174,7 +178,8 @@ func runZoneTransferRequestList(ctx context.Context, client *gophercloud.Service
 }
 
 func newZoneTransferRequestShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	common := &commonOptions{}
+	cmd := &cobra.Command{
 		Use:   "show <transfer-request-id>",
 		Short: "Show a zone transfer request",
 		Args:  cobra.ExactArgs(1),
@@ -183,13 +188,15 @@ func newZoneTransferRequestShowCommand(a *auth.Options, o *output.Options) *cobr
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneTransferRequestShow(ctx, client, o, args[0], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
+	return cmd
 }
 
 // Transfer requests have no name, so the reference is always the ID.
@@ -204,6 +211,7 @@ func runZoneTransferRequestShow(ctx context.Context, client *gophercloud.Service
 
 func newZoneTransferRequestSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var targetProject, targetProjectDomain, description string
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "set <transfer-request-id>",
 		Short: "Update a zone transfer request",
@@ -217,7 +225,7 @@ func newZoneTransferRequestSetCommand(a *auth.Options, o *output.Options) *cobra
 				return fmt.Errorf("nothing to set: pass --target-project and/or --description")
 			}
 			ctx := cmd.Context()
-			client, session, err := newDNSSession(ctx, a)
+			client, session, err := common.session(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -235,6 +243,7 @@ func newZoneTransferRequestSetCommand(a *auth.Options, o *output.Options) *cobra
 	fl.StringVar(&targetProject, "target-project", "", "restrict the transfer to this project (name or ID)")
 	fl.StringVar(&targetProjectDomain, "target-project-domain", "", "domain owning the target project (name or ID)")
 	fl.StringVar(&description, "description", "", "new description")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -255,7 +264,8 @@ func runZoneTransferRequestSet(ctx context.Context, client *gophercloud.ServiceC
 }
 
 func newZoneTransferRequestDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	common := &commonOptions{}
+	cmd := &cobra.Command{
 		Use:   "delete <transfer-request-id> [<transfer-request-id>...]",
 		Short: "Withdraw one or more zone transfer requests",
 		Args:  cobra.MinimumNArgs(1),
@@ -264,13 +274,15 @@ func newZoneTransferRequestDeleteCommand(a *auth.Options, o *output.Options) *co
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneTransferRequestDelete(ctx, client, args, cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
+	return cmd
 }
 
 func runZoneTransferRequestDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
@@ -308,6 +320,7 @@ func newZoneTransferAcceptCommand(a *auth.Options, o *output.Options) *cobra.Com
 // request" rather than naming a noun.
 func newZoneTransferAcceptRequestCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var transferID, key string
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "request",
 		Short: "Accept a zone transfer request using its key",
@@ -320,7 +333,7 @@ func newZoneTransferAcceptRequestCommand(a *auth.Options, o *output.Options) *co
 				return fmt.Errorf("--transfer-id and --key are both required: the key is what authorises the transfer")
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -330,6 +343,7 @@ func newZoneTransferAcceptRequestCommand(a *auth.Options, o *output.Options) *co
 	fl := cmd.Flags()
 	fl.StringVar(&transferID, "transfer-id", "", "ID of the zone transfer request to accept (required)")
 	fl.StringVar(&key, "key", "", "transfer key the zone's owner shared with you (required)")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -349,6 +363,7 @@ func runZoneTransferAcceptRequest(ctx context.Context, client *gophercloud.Servi
 
 func newZoneTransferAcceptListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var status string
+	common := &commonOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List zone transfer accepts",
@@ -358,7 +373,7 @@ func newZoneTransferAcceptListCommand(a *auth.Options, o *output.Options) *cobra
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
@@ -366,6 +381,7 @@ func newZoneTransferAcceptListCommand(a *auth.Options, o *output.Options) *cobra
 		},
 	}
 	cmd.Flags().StringVar(&status, "status", "", "filter by status, e.g. COMPLETE")
+	common.bind(cmd)
 	return cmd
 }
 
@@ -391,7 +407,8 @@ func runZoneTransferAcceptList(ctx context.Context, client *gophercloud.ServiceC
 }
 
 func newZoneTransferAcceptShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	common := &commonOptions{}
+	cmd := &cobra.Command{
 		Use:   "show <transfer-accept-id>",
 		Short: "Show a zone transfer accept",
 		Args:  cobra.ExactArgs(1),
@@ -400,13 +417,15 @@ func newZoneTransferAcceptShowCommand(a *auth.Options, o *output.Options) *cobra
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newDNSClient(ctx, a)
+			client, err := common.client(ctx, a)
 			if err != nil {
 				return err
 			}
 			return runZoneTransferAcceptShow(ctx, client, o, args[0], cmd.OutOrStdout())
 		},
 	}
+	common.bind(cmd)
+	return cmd
 }
 
 func runZoneTransferAcceptShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {

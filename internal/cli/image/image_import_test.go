@@ -33,7 +33,7 @@ func TestRunImageImport_WebDownloadRequestBody(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runImageImport(context.Background(), imageClient(fakeServer), "cirros", testImageUUID,
-		imageimport.WebDownloadMethod, "https://example.invalid/cirros.qcow2", &buf)
+		imageimport.WebDownloadMethod, "https://example.invalid/cirros.qcow2", nil, false, &buf)
 	if err != nil {
 		t.Fatalf("runImageImport error: %v", err)
 	}
@@ -60,9 +60,50 @@ func TestRunImageImport_GlanceDirectOmitsURI(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runImageImport(context.Background(), imageClient(fakeServer), testImageUUID, testImageUUID,
-		imageimport.GlanceDirectMethod, "", &buf)
+		imageimport.GlanceDirectMethod, "", nil, false, &buf)
 	if err != nil {
 		t.Fatalf("runImageImport error: %v", err)
+	}
+}
+
+// --all-stores and --store are the only import options that land outside the
+// "method" object, so the assertion that matters is where they sit in the body.
+func TestRunImageImport_StoreOptionsSitBesideMethod(t *testing.T) {
+	tests := []struct {
+		name      string
+		stores    []string
+		allStores bool
+		wantBody  string
+	}{
+		{
+			name:      "all stores",
+			allStores: true,
+			wantBody:  `{"all_stores": true, "method": {"name": "web-download", "uri": "https://example.invalid/i.qcow2"}}`,
+		},
+		{
+			name:     "named stores",
+			stores:   []string{"cheap", "fast"},
+			wantBody: `{"stores": ["cheap", "fast"], "method": {"name": "web-download", "uri": "https://example.invalid/i.qcow2"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			fakeServer.Mux.HandleFunc("/images/"+testImageUUID+"/import", func(w http.ResponseWriter, r *http.Request) {
+				th.TestMethod(t, r, http.MethodPost)
+				th.TestJSONRequest(t, r, tc.wantBody)
+				w.WriteHeader(http.StatusAccepted)
+			})
+
+			var buf bytes.Buffer
+			err := runImageImport(context.Background(), imageClient(fakeServer), "img", testImageUUID,
+				imageimport.WebDownloadMethod, "https://example.invalid/i.qcow2", tc.stores, tc.allStores, &buf)
+			if err != nil {
+				t.Fatalf("runImageImport error: %v", err)
+			}
+		})
 	}
 }
 

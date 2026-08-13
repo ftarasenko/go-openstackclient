@@ -67,8 +67,29 @@ Counts are **leaf commands, not flags**. A command can be present and still lag
 upstream's option surface, so a flag-parity pass changes no number here: `port
 list` was counted from the start, but only carried 4 of upstream's 17 filters
 until `055dc95`, and `subnet list` was counted while accepting no filters at all
-until the history-parity pass. When auditing a noun, diff its flags against the
-upstream parser, not just its presence in these tables.
+until the history-parity pass. `image list` was counted while rejecting `--all`,
+and every designate verb was counted while only some of them accepted
+`--all-projects`, until the cross-project/name pass. When auditing a noun, diff
+its flags against the upstream parser, not just its presence in these tables.
+
+Two flag families have been diffed exhaustively across the whole tree, so a new
+command that omits one is a regression rather than a known gap:
+
+- **cross-project** — `--all`, `--all-projects`, `--all-tenants`, and the
+  narrower `--all-properties` / `--all-tags` / `--all-rules` / `--all-supported`
+  / `--all-stores` / `--target-all-projects`. Every command in this tree that
+  upstream gives one of these now has it; `ALL_PROJECTS` in the environment
+  defaults `--all-projects` on the compute and block-storage verbs upstream reads
+  it for (`internal/cli/allprojects`).
+- **`--name`** — both as a list filter and as the *create* spelling. Upstream
+  python-designateclient and python-octaviaclient name a new resource with
+  `--name` and take no positional for it, where koc grew the positional first;
+  the affected create verbs accept either (`internal/cli/nameflag`), so the
+  positional is optional in their usage strings.
+
+`internal/cli/dns/dns_test.go`, `internal/cli/server/flagparity_test.go` and
+`internal/cli/loadbalancer/lb_test.go` assert the three lists by walking the
+command tree, which is what keeps this claim true.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
 `image.v1` are excluded as legacy) plus the five plugins above. 901 commands

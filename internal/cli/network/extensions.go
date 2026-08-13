@@ -223,8 +223,15 @@ func writeRBAC(o *output.Options, w io.Writer, p *rbacpolicies.RBACPolicy) error
 		[]any{p.ID, p.ObjectType, p.ObjectID, p.Action, p.TargetTenant, p.ProjectID})
 }
 
+// rbacAllProjects is neutron's wildcard target_tenant: an RBAC policy whose
+// target is "*" grants the object to every project. Upstream OSC spells it
+// --target-all-projects rather than making the operator know the wildcard
+// (openstackclient/network/v2/network_rbac.py).
+const rbacAllProjects = "*"
+
 func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var action, objectType, targetProject string
+	var targetAllProjects bool
 	cmd := &cobra.Command{
 		Use:   "create <object-id>",
 		Short: "Create a network RBAC policy",
@@ -232,6 +239,12 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
+			}
+			if targetProject == "" && !targetAllProjects {
+				return fmt.Errorf("one of --target-project or --target-all-projects is required")
+			}
+			if targetAllProjects {
+				targetProject = rbacAllProjects
 			}
 			c, err := newNetworkClient(cmd.Context(), a)
 			if err != nil {
@@ -244,9 +257,12 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&action, "action", "", "access_as_external or access_as_shared")
 	fl.StringVar(&objectType, "type", "", "object type, e.g. network or qos_policy")
 	fl.StringVar(&targetProject, "target-project", "", "project to grant access to")
+	fl.BoolVar(&targetAllProjects, "target-all-projects", false, "grant access to every project")
 	_ = cmd.MarkFlagRequired("action")
 	_ = cmd.MarkFlagRequired("type")
-	_ = cmd.MarkFlagRequired("target-project")
+	// --target-project is no longer cobra-required because --target-all-projects
+	// satisfies the same requirement; exactly one of the two is enforced in RunE.
+	cmd.MarkFlagsMutuallyExclusive("target-project", "target-all-projects")
 	return cmd
 }
 

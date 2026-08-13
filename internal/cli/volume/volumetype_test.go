@@ -182,3 +182,58 @@ func TestRunTypeDelete_ByName(t *testing.T) {
 		t.Errorf("delete output missing confirmation:\n%s", buf.String())
 	}
 }
+
+// A rename and an extra-spec change land on different endpoints, so "volume type
+// set" can issue two requests. The order matters: the rename goes first so a later
+// extra-spec failure still leaves the type findable under its new name.
+func TestRunTypeSet_NameAndPropertyAreSeparateRequests(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var order []string
+	// resolveVolumeTypeID GETs the reference first, so the same path serves both
+	// the lookup and the rename.
+	fakeServer.Mux.HandleFunc("/types/t-1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			th.TestJSONRequest(t, r, `{"volume_type": {"name": "gold"}}`)
+			order = append(order, "rename")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volume_type": {"id": "t-1", "name": "gold"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/types/t-1/extra_specs", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"extra_specs": {"volume_backend_name": "ssd"}}`)
+		order = append(order, "extra_specs")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"extra_specs": {"volume_backend_name": "ssd"}}`))
+	})
+
+	f := &typeSetFlags{name: "gold", property: []string{"volume_backend_name=ssd"}}
+	if err := runTypeSet(context.Background(), volumeClient(fakeServer, "3.70"), "t-1", f); err != nil {
+		t.Fatalf("runTypeSet error: %v", err)
+	}
+	if len(order) != 2 || order[0] != "rename" || order[1] != "extra_specs" {
+		t.Errorf("request order = %v, want [rename extra_specs]", order)
+	}
+}
+
+// --name alone must not POST an empty extra-specs body, which cinder accepts and
+// which would make the request look like a property change in an audit log.
+func TestRunTypeSet_NameOnlySkipsExtraSpecs(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/types/t-1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volume_type": {"id": "t-1", "name": "gold"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/types/t-1/extra_specs", func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("--name alone must not touch extra_specs")
+	})
+
+	f := &typeSetFlags{name: "gold"}
+	if err := runTypeSet(context.Background(), volumeClient(fakeServer, "3.70"), "t-1", f); err != nil {
+		t.Fatalf("runTypeSet error: %v", err)
+	}
+}

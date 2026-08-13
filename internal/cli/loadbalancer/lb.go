@@ -12,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -179,6 +180,7 @@ func runLBShow(ctx context.Context, client *gophercloud.ServiceClient, o *output
 // --- create ----------------------------------------------------------------
 
 type lbCreateFlags struct {
+	name             string
 	description      string
 	vipSubnet        string
 	vipNetwork       string
@@ -202,11 +204,15 @@ type lbCreateFlags struct {
 func newLBCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &lbCreateFlags{}
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create [<name>]",
 		Short: "Create a new load balancer",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, f.name, false)
+			if err != nil {
 				return err
 			}
 			fl := cmd.Flags()
@@ -239,10 +245,13 @@ func newLBCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runLBCreate(ctx, client, o, args[0], f, refs, cmd.OutOrStdout())
+			return runLBCreate(ctx, client, o, name, f, refs, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
+	// Upstream octavia names a new load balancer with --name and has no positional
+	// for it; koc grew the positional first. Both work — see internal/cli/nameflag.
+	fl.StringVar(&f.name, "name", "", "name of the load balancer (upstream spelling; the positional form also works)")
 	fl.StringVar(&f.description, "description", "", "load balancer description")
 	fl.StringVar(&f.vipSubnet, "vip-subnet-id", "", "subnet to allocate the VIP from (name or ID)")
 	fl.StringVar(&f.vipNetwork, "vip-network-id", "", "network to allocate the VIP from (name or ID)")

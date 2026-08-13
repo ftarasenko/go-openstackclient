@@ -17,6 +17,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -928,7 +929,8 @@ func resolveFlavorID(ctx context.Context, client *gophercloud.ServiceClient, ref
 }
 
 func newFlavorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	var name string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List load balancer flavors",
 		Args:  cobra.NoArgs,
@@ -941,13 +943,15 @@ func newFlavorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runFlavorList(ctx, client, o, cmd.OutOrStdout())
+			return runFlavorList(ctx, client, o, name, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "filter flavors by name")
+	return cmd
 }
 
-func runFlavorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := flavors.List(client, flavors.ListOpts{}).AllPages(ctx)
+func runFlavorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	pages, err := flavors.List(client, flavors.ListOpts{Name: name}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing load balancer flavors: %w", err)
 	}
@@ -999,14 +1003,18 @@ func runFlavorShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 }
 
 func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var description, flavorProfile string
+	var flagName, description, flavorProfile string
 	var disable bool
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create [<name>]",
 		Short: "Create a load balancer flavor",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, flagName, true)
+			if err != nil {
 				return err
 			}
 			if flavorProfile == "" {
@@ -1017,10 +1025,13 @@ func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runFlavorCreate(ctx, client, o, args[0], description, flavorProfile, !disable, cmd.OutOrStdout())
+			return runFlavorCreate(ctx, client, o, name, description, flavorProfile, !disable, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
+	// Upstream octavia requires --name here and takes no positional; koc grew the
+	// positional first. Both work — see internal/cli/nameflag.
+	fl.StringVar(&flagName, "name", "", "name of the flavor (upstream spelling; the positional form also works)")
 	fl.StringVar(&description, "description", "", "flavor description")
 	fl.StringVar(&flavorProfile, "flavor-profile", "", "flavor profile to base the flavor on (name or ID, required)")
 	fl.BoolVar(&disable, "disable", false, "create the flavor disabled, so it cannot be selected yet")
@@ -1221,7 +1232,8 @@ func resolveFlavorProfileID(ctx context.Context, client *gophercloud.ServiceClie
 }
 
 func newFlavorProfileListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	var name string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List flavor profiles",
 		Args:  cobra.NoArgs,
@@ -1234,13 +1246,15 @@ func newFlavorProfileListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			return runFlavorProfileList(ctx, client, o, cmd.OutOrStdout())
+			return runFlavorProfileList(ctx, client, o, name, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "filter flavor profiles by name")
+	return cmd
 }
 
-func runFlavorProfileList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := flavorprofiles.List(client, flavorprofiles.ListOpts{}).AllPages(ctx)
+func runFlavorProfileList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	pages, err := flavorprofiles.List(client, flavorprofiles.ListOpts{Name: name}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing flavor profiles: %w", err)
 	}
@@ -1289,13 +1303,17 @@ func runFlavorProfileShow(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func newFlavorProfileCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var providerName, flavorData string
+	var flagName, providerName, flavorData string
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create [<name>]",
 		Short: "Create a flavor profile",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, flagName, true)
+			if err != nil {
 				return err
 			}
 			if providerName == "" || flavorData == "" {
@@ -1306,10 +1324,12 @@ func newFlavorProfileCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 			if err != nil {
 				return err
 			}
-			return runFlavorProfileCreate(ctx, client, o, args[0], providerName, flavorData, cmd.OutOrStdout())
+			return runFlavorProfileCreate(ctx, client, o, name, providerName, flavorData, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
+	// As for `loadbalancer flavor create`, upstream spells this --name only.
+	fl.StringVar(&flagName, "name", "", "name of the flavor profile (upstream spelling; the positional form also works)")
 	fl.StringVar(&providerName, "provider", "", "provider driver the profile targets, e.g. amphora (required)")
 	fl.StringVar(&flavorData, "flavor-data", "", "driver-specific JSON, e.g. '{\"loadbalancer_topology\": \"ACTIVE_STANDBY\"}' (required)")
 	return cmd

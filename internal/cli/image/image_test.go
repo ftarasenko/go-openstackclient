@@ -345,6 +345,27 @@ func TestRunImageList_VisibilityFilter(t *testing.T) {
 	}
 }
 
+// --all is the one visibility that is not also an image attribute: it asks glance
+// to drop the visibility restriction instead of matching a value, so the test
+// asserts the literal query param rather than a rendered column.
+func TestRunImageList_AllVisibility(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/images", func(w http.ResponseWriter, r *http.Request) {
+		th.TestFormValues(t, r, map[string]string{"visibility": "all"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"images": []}`))
+	})
+
+	var buf bytes.Buffer
+	o := &output.Options{Format: output.FormatValue}
+	if err := runImageList(context.Background(), imageClient(fakeServer), o, &imageListFlags{all: true}, &buf); err != nil {
+		t.Fatalf("runImageList returned error: %v", err)
+	}
+}
+
 const imageCreateResponse = `{
   "id": "33333333-3333-3333-3333-333333333333",
   "name": "myimage",

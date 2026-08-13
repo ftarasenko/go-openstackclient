@@ -129,6 +129,17 @@ func parseKeyValStrings(pairs []string) (map[string]string, error) {
 	return m, nil
 }
 
+// allProjectsAlwaysOn is the --all-projects help text for the server-scoped write
+// verbs (delete/start/stop). Upstream OSC needs the flag to look a server up
+// outside the current project — `find_server(..., all_projects=...)` — whereas
+// resolveServerID below always resolves cross-project, so on koc the flag is
+// already in effect and is registered for compatibility: an `openstack`
+// invocation that passes it must not fail with "unknown flag", and one that omits
+// it keeps working exactly as before. Narrowing resolution to honour the flag
+// would be the alternative, and it would break every koc script that deletes
+// another project's server today.
+const allProjectsAlwaysOn = "look the server up in any project (admin); koc always does, so this is accepted for compatibility"
+
 // resolveServerID accepts either a server ID or a server name and returns the
 // server's ID. Nova's server-scoped endpoints all key on the ID, while operators
 // routinely pass names, so this performs the name→ID lookup where required. A

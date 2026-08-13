@@ -31,7 +31,8 @@ func newDomainCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func newDomainListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	var name string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List domains",
 		Args:  cobra.NoArgs,
@@ -44,13 +45,15 @@ func newDomainListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runDomainList(ctx, client, o, cmd.OutOrStdout())
+			return runDomainList(ctx, client, o, name, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "filter domains by name")
+	return cmd
 }
 
-func runDomainList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := domains.List(client, domains.ListOpts{}).AllPages(ctx)
+func runDomainList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	pages, err := domains.List(client, domains.ListOpts{Name: name}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing domains: %w", err)
 	}

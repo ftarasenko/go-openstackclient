@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -230,6 +231,9 @@ func (f *poolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl.BoolVar(&f.enable, "enable", false, "administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "administratively down")
 	if isCreate {
+		// Upstream octavia names a new pool with --name and has no positional
+		// for it; koc grew the positional first. Both work — see internal/cli/nameflag.
+		fl.StringVar(&f.name, "name", "", "name of the pool (upstream spelling; the positional form also works)")
 		fl.StringVar(&f.loadBalancer, "loadbalancer", "", "load balancer to attach the pool to (name or ID)")
 		fl.StringVar(&f.listener, "listener", "", "listener to attach the pool to (name or ID)")
 		fl.StringVar(&f.protocol, "protocol", "", "pool protocol: HTTP, HTTPS, TCP, PROXY, PROXYV2, UDP or SCTP (required)")
@@ -246,11 +250,15 @@ func (f *poolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 func newPoolCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &poolWriteFlags{}
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create [<name>]",
 		Short: "Create a new pool",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, f.name, false)
+			if err != nil {
 				return err
 			}
 			fl := cmd.Flags()
@@ -274,7 +282,7 @@ func newPoolCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPoolCreate(ctx, client, o, args[0], f, refs.projectID, cmd.OutOrStdout())
+			return runPoolCreate(ctx, client, o, name, f, refs.projectID, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, true)

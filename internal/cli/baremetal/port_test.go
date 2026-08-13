@@ -229,3 +229,100 @@ func TestRunPortSet_NoFlagsErrors(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// testPortNodeUUID is the node the ports in these tests hang off.
+const testPortNodeUUID = "aaaaaaaa-0000-0000-0000-000000000009"
+
+// A port name is an ironic 1.88 attribute, so gophercloud's CreateOpts has no
+// field for it and koc adds the key through its own builder. That the key lands in
+// the create body — and stays out of it when --name is absent — is the contract.
+func TestRunPortCreate_NameInBody(t *testing.T) {
+	tests := []struct {
+		name     string
+		portName string
+		wantBody string
+	}{
+		{
+			name:     "without --name",
+			wantBody: `{"node_uuid": "` + testPortNodeUUID + `", "address": "52:54:00:aa:bb:cc"}`,
+		},
+		{
+			name:     "with --name",
+			portName: "eno1",
+			wantBody: `{"node_uuid": "` + testPortNodeUUID + `", "address": "52:54:00:aa:bb:cc", "name": "eno1"}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+				th.TestMethod(t, r, http.MethodPost)
+				th.TestJSONRequest(t, r, tc.wantBody)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"uuid": "p-1", "address": "52:54:00:aa:bb:cc",
+                  "node_uuid": "` + testPortNodeUUID + `"}`))
+			})
+
+			o := &output.Options{Format: output.FormatTable}
+			var buf bytes.Buffer
+			f := &portCreateFlags{node: testPortNodeUUID, address: "52:54:00:aa:bb:cc", name: tc.portName}
+			if err := runPortCreate(context.Background(), baremetalClient(fakeServer, "1.82"), o, f, &buf); err != nil {
+				t.Fatalf("runPortCreate error: %v", err)
+			}
+		})
+	}
+}
+
+// On a Zed cloud the name attribute does not exist, and ironic rejects it with a
+// bare 400 about the body rather than about the version — exactly the case
+// explainMicroversion exists for.
+func TestRunPortCreate_NameBelowMicroversionExplains(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(ironicMaxVersionHeader, "1.82")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error_message": "Unknown attribute for argument port: name"}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portCreateFlags{node: testPortNodeUUID, address: "52:54:00:aa:bb:cc", name: "eno1"}
+	err := runPortCreate(context.Background(), baremetalClient(fakeServer, "1.82"), o, f, &buf)
+	if err == nil {
+		t.Fatal("runPortCreate should fail when the cloud predates ironic 1.88")
+	}
+	for _, want := range []string{"1.88", "1.82"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %s", err.Error(), want)
+		}
+	}
+}
+
+// --name on "port set" is an ordinary JSON-Patch replace, so the assertion is that
+// it is one operation among the others rather than a separate request.
+func TestRunPortSet_NamePatchOperation(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/ports/p-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPatch)
+		th.TestJSONRequest(t, r, `[
+          {"op": "replace", "path": "/address", "value": "52:54:00:dd:ee:ff"},
+          {"op": "replace", "path": "/name", "value": "eno2"}
+        ]`)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uuid": "p-1", "address": "52:54:00:dd:ee:ff"}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portSetFlags{address: "52:54:00:dd:ee:ff", name: "eno2"}
+	if err := runPortSet(context.Background(), baremetalClient(fakeServer, "1.88"), o, "p-1", f, &buf); err != nil {
+		t.Fatalf("runPortSet error: %v", err)
+	}
+}

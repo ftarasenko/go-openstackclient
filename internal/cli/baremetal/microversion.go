@@ -49,6 +49,7 @@ var (
 	featureNodeUnhold   = ironicFeature{"baremetal node unhold", "1.85", "OpenStack 2023.2"}
 	featureNodeFirmware = ironicFeature{"baremetal node firmware list", "1.86", "OpenStack 2023.2"}
 	featureNodeService  = ironicFeature{"baremetal node service", "1.87", "OpenStack 2023.2"}
+	featurePortName     = ironicFeature{"baremetal port --name", "1.88", "OpenStack 2024.1"}
 )
 
 // ironicMaxVersionHeader is set by ironic on every response, including errors.

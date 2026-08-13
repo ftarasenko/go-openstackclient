@@ -68,7 +68,10 @@ func TestRunZoneShareCreate_RequestBody(t *testing.T) {
 }
 
 // Designate's cross-project reads use the X-Auth-All-Projects header, not a query
-// parameter — that is the thing worth pinning down.
+// parameter, and the header rides on the *client* so it also covers the zone
+// name→ID lookup this verb does first — listing the shares of another project's
+// zone is impossible if only the shares request is cross-project. Both halves are
+// what this pins down.
 func TestRunZoneShareList_AllProjectsUsesHeader(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -83,7 +86,14 @@ func TestRunZoneShareList_AllProjectsUsesHeader(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
 
-			stubZoneList(fakeServer)
+			var lookupHeader string
+			fakeServer.Mux.HandleFunc("/zones", func(w http.ResponseWriter, r *http.Request) {
+				lookupHeader = r.Header.Get("X-Auth-All-Projects")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"zones": [
+                  {"id": "z1", "name": "example.com.", "type": "PRIMARY", "status": "ACTIVE"}
+                ]}`))
+			})
 			var gotHeader string
 			var sawQuery bool
 			fakeServer.Mux.HandleFunc("/zones/z1/shares", func(w http.ResponseWriter, r *http.Request) {
@@ -97,14 +107,20 @@ func TestRunZoneShareList_AllProjectsUsesHeader(t *testing.T) {
                 ]}`))
 			})
 
+			// "z1" is not a UUID, so the seam resolves it through the zone list
+			// first — the request that must carry the header too.
+			client := withCommonHeaders(dnsShareClient(fakeServer), &commonOptions{allProjects: tc.allProjects})
 			o := &output.Options{Format: output.FormatTable}
 			var buf bytes.Buffer
-			err := runZoneShareList(context.Background(), dnsShareClient(fakeServer), o, "z1", tc.allProjects, &buf)
+			err := runZoneShareList(context.Background(), client, o, "z1", tc.allProjects, &buf)
 			if err != nil {
 				t.Fatalf("runZoneShareList error: %v", err)
 			}
 			if gotHeader != tc.wantHeader {
-				t.Errorf("X-Auth-All-Projects = %q, want %q", gotHeader, tc.wantHeader)
+				t.Errorf("X-Auth-All-Projects on the shares request = %q, want %q", gotHeader, tc.wantHeader)
+			}
+			if lookupHeader != tc.wantHeader {
+				t.Errorf("X-Auth-All-Projects on the zone lookup = %q, want %q", lookupHeader, tc.wantHeader)
 			}
 			if sawQuery {
 				t.Error("all_projects must be a header, not a query parameter")
@@ -113,6 +129,9 @@ func TestRunZoneShareList_AllProjectsUsesHeader(t *testing.T) {
 				if !strings.Contains(buf.String(), want) {
 					t.Errorf("output missing %q\n---\n%s", want, buf.String())
 				}
+			}
+			if tc.allProjects && !strings.Contains(buf.String(), "Project ID") {
+				t.Errorf("a cross-project listing should show the owning project:\n%s", buf.String())
 			}
 		})
 	}

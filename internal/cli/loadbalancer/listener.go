@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -243,6 +244,9 @@ func (f *listenerWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl.BoolVar(&f.enable, "enable", false, "administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "administratively down")
 	if isCreate {
+		// Upstream octavia names a new listener with --name and has no positional
+		// for it; koc grew the positional first. Both work — see internal/cli/nameflag.
+		fl.StringVar(&f.name, "name", "", "name of the listener (upstream spelling; the positional form also works)")
 		fl.StringVar(&f.loadBalancer, "loadbalancer", "", "load balancer to attach the listener to (name or ID, required)")
 		fl.StringVar(&f.protocol, "protocol", "", "listener protocol: HTTP, HTTPS, TCP, TERMINATED_HTTPS, UDP, SCTP or PROMETHEUS (required)")
 		fl.IntVar(&f.protocolPort, "protocol-port", 0, "port to listen on (required)")
@@ -256,11 +260,15 @@ func (f *listenerWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 func newListenerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &listenerWriteFlags{}
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create [<name>]",
 		Short: "Create a new listener",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
+				return err
+			}
+			name, err := nameflag.Resolve(args, f.name, false)
+			if err != nil {
 				return err
 			}
 			fl := cmd.Flags()
@@ -283,7 +291,7 @@ func newListenerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 			if err != nil {
 				return err
 			}
-			return runListenerCreate(ctx, client, o, args[0], f, refs.projectID, cmd.OutOrStdout())
+			return runListenerCreate(ctx, client, o, name, f, refs.projectID, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, true)

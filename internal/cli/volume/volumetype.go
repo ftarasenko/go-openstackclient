@@ -204,13 +204,14 @@ func runTypeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 
 type typeSetFlags struct {
 	property []string
+	name     string
 }
 
 func newTypeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &typeSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <type>",
-		Short: "Set extra-spec properties on a volume type",
+		Short: "Set a volume type's name or extra-spec properties",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -224,13 +225,15 @@ func newTypeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runTypeSet(ctx, client, args[0], f)
 		},
 	}
-	cmd.Flags().StringArrayVar(&f.property, "property", nil, "set an extra-spec key=value (repeatable)")
+	fl := cmd.Flags()
+	fl.StringArrayVar(&f.property, "property", nil, "set an extra-spec key=value (repeatable)")
+	fl.StringVar(&f.name, "name", "", "rename the volume type")
 	return cmd
 }
 
 func runTypeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *typeSetFlags) error {
-	if len(f.property) == 0 {
-		return fmt.Errorf("nothing to set: specify at least one --property key=value")
+	if len(f.property) == 0 && f.name == "" {
+		return fmt.Errorf("nothing to set: specify --name and/or at least one --property key=value")
 	}
 	specs, err := parseKeyValMap(f.property)
 	if err != nil {
@@ -239,6 +242,18 @@ func runTypeSet(ctx context.Context, client *gophercloud.ServiceClient, ref stri
 	id, err := resolveVolumeTypeID(ctx, client, ref)
 	if err != nil {
 		return err
+	}
+	// The name lives on the volume type itself, the extra-specs on a subresource,
+	// so they are two requests. The rename goes first: if it succeeds and the
+	// extra-specs call then fails, the type is findable under its new name, which
+	// is the order that leaves the least confusing partial state.
+	if f.name != "" {
+		if _, err := volumetypes.Update(ctx, client, id, volumetypes.UpdateOpts{Name: &f.name}).Extract(); err != nil {
+			return fmt.Errorf("renaming volume type %q: %w", ref, err)
+		}
+	}
+	if len(specs) == 0 {
+		return nil
 	}
 	// CreateExtraSpecs POSTs {"extra_specs":{...}} to /types/{id}/extra_specs,
 	// which cinder treats as create-or-update for the given keys.

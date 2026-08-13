@@ -155,11 +155,36 @@ func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 type portCreateFlags struct {
 	node            string
 	address         string
+	name            string
 	portGroup       string
 	physicalNetwork string
 	pxeEnabled      bool
 	pxeEnabledSet   bool
 	extra           []string
+}
+
+// portNameOpts adds ironic's port `name` to a create body. gophercloud's
+// ports.CreateOpts has no such field — the attribute arrived in API 1.88, after
+// the package was written — so the builder interface is implemented here rather
+// than hand-rolling the whole request.
+//
+// gophercloud's ports.Port has no Name field either, and no catch-all, so
+// `port show` cannot render the name back yet: doing that needs a koc-owned DTO
+// for the port reads, which is a larger change than accepting the flag.
+type portNameOpts struct {
+	ports.CreateOpts
+	Name string
+}
+
+func (o portNameOpts) ToPortCreateMap() (map[string]any, error) {
+	b, err := o.CreateOpts.ToPortCreateMap()
+	if err != nil {
+		return nil, err
+	}
+	if o.Name != "" {
+		b["name"] = o.Name
+	}
+	return b, nil
 }
 
 func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -184,6 +209,7 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.node, "node", "", "UUID of the node this port belongs to (required)")
+	fl.StringVar(&f.name, "name", "", "name for the port (requires ironic API 1.88, OpenStack 2024.1)")
 	fl.StringVar(&f.portGroup, "port-group", "", "UUID of the portgroup this port belongs to")
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "name of the physical network")
 	fl.BoolVar(&f.pxeEnabled, "pxe-enabled", false, "whether PXE is enabled on the port")
@@ -197,18 +223,26 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("parsing --extra: %w", err)
 	}
-	opts := ports.CreateOpts{
-		NodeUUID:        f.node,
-		Address:         f.address,
-		PortGroupUUID:   f.portGroup,
-		PhysicalNetwork: f.physicalNetwork,
-		Extra:           extra,
+	opts := portNameOpts{
+		CreateOpts: ports.CreateOpts{
+			NodeUUID:        f.node,
+			Address:         f.address,
+			PortGroupUUID:   f.portGroup,
+			PhysicalNetwork: f.physicalNetwork,
+			Extra:           extra,
+		},
+		Name: f.name,
 	}
 	if f.pxeEnabledSet {
 		opts.PXEEnabled = &f.pxeEnabled
 	}
 	p, err := ports.Create(ctx, client, opts).Extract()
 	if err != nil {
+		if f.name != "" {
+			// A port name is rejected as an unknown attribute below ironic 1.88,
+			// which surfaces as a bare 400 about the body rather than the version.
+			return fmt.Errorf("creating baremetal port: %w", explainMicroversion(ctx, client, featurePortName, err))
+		}
 		return fmt.Errorf("creating baremetal port: %w", err)
 	}
 	fields, values := portShowFields(p)
@@ -254,6 +288,7 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, ids [
 type portSetFlags struct {
 	node            string
 	address         string
+	name            string
 	physicalNetwork string
 	pxeEnabled      bool
 	pxeEnabledSet   bool
@@ -282,6 +317,7 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.node, "node", "", "set the owning node UUID")
 	fl.StringVar(&f.address, "address", "", "set the MAC address")
+	fl.StringVar(&f.name, "name", "", "set the port name (requires ironic API 1.88, OpenStack 2024.1)")
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "set the physical network name")
 	fl.BoolVar(&f.pxeEnabled, "pxe-enabled", false, "set whether PXE is enabled")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
@@ -295,6 +331,9 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	}
 	if f.address != "" {
 		ops = append(ops, ports.UpdateOperation{Op: ports.ReplaceOp, Path: "/address", Value: f.address})
+	}
+	if f.name != "" {
+		ops = append(ops, ports.UpdateOperation{Op: ports.ReplaceOp, Path: "/name", Value: f.name})
 	}
 	if f.physicalNetwork != "" {
 		ops = append(ops, ports.UpdateOperation{Op: ports.ReplaceOp, Path: "/physical_network", Value: f.physicalNetwork})
@@ -314,6 +353,10 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	}
 	p, err := ports.Update(ctx, client, id, ops).Extract()
 	if err != nil {
+		if f.name != "" {
+			return fmt.Errorf("updating baremetal port %s: %w", id,
+				explainMicroversion(ctx, client, featurePortName, err))
+		}
 		return fmt.Errorf("updating baremetal port %s: %w", id, err)
 	}
 	fields, values := portShowFields(p)

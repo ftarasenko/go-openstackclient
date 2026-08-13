@@ -31,7 +31,7 @@ func TestRunDomainList_RequestAndTableOutput(t *testing.T) {
 	client := identityClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runDomainList(context.Background(), client, o, &buf); err != nil {
+	if err := runDomainList(context.Background(), client, o, "", &buf); err != nil {
 		t.Fatalf("runDomainList error: %v", err)
 	}
 	if gotMethod != http.MethodGet {

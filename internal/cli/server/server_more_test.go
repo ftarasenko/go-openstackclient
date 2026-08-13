@@ -506,11 +506,83 @@ func TestRunServerUnset_RemovesEachProperty(t *testing.T) {
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerUnset(context.Background(), client, serverUUID, []string{"env", "role"}, &buf); err != nil {
+	f := &serverUnsetFlags{properties: []string{"env", "role"}}
+	if err := runServerUnset(context.Background(), client, serverUUID, f, &buf); err != nil {
 		t.Fatalf("runServerUnset: %v", err)
 	}
 	if deleted["env"] != http.MethodDelete || deleted["role"] != http.MethodDelete {
 		t.Errorf("methods = %v, want both DELETE", deleted)
+	}
+}
+
+// --all-properties and --all-tags are collection-wide clears, so each maps to a
+// single request against the collection rather than one per item: an empty
+// metadata PUT and a DELETE of /tags. Getting the shape wrong is silent (nova
+// would just clear nothing), which is why the requests are asserted directly.
+func TestRunServerUnset_AllPropertiesAndAllTags(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var metaMethod string
+	var metaBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/metadata", func(w http.ResponseWriter, r *http.Request) {
+		metaMethod = r.Method
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &metaBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"metadata": {}}`))
+	})
+	var tagsMethod string
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/tags", func(w http.ResponseWriter, r *http.Request) {
+		tagsMethod = r.Method
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	var buf bytes.Buffer
+	f := &serverUnsetFlags{allProperties: true, allTags: true}
+	if err := runServerUnset(context.Background(), client, serverUUID, f, &buf); err != nil {
+		t.Fatalf("runServerUnset: %v", err)
+	}
+	if metaMethod != http.MethodPut {
+		t.Errorf("metadata method = %q, want PUT", metaMethod)
+	}
+	if meta, ok := metaBody["metadata"].(map[string]any); !ok || len(meta) != 0 {
+		t.Errorf("metadata body = %v, want an empty metadata object", metaBody)
+	}
+	if tagsMethod != http.MethodDelete {
+		t.Errorf("tags method = %q, want DELETE", tagsMethod)
+	}
+}
+
+// A single --tag targets the tag's own URL, not the collection — deleting the
+// collection instead would silently drop every other tag.
+func TestRunServerUnset_SingleTag(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var collectionHit bool
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/tags", func(w http.ResponseWriter, _ *http.Request) {
+		collectionHit = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	var gotMethod string
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/tags/prod", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	var buf bytes.Buffer
+	f := &serverUnsetFlags{tags: []string{"prod"}}
+	if err := runServerUnset(context.Background(), client, serverUUID, f, &buf); err != nil {
+		t.Fatalf("runServerUnset: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("tag method = %q, want DELETE", gotMethod)
+	}
+	if collectionHit {
+		t.Error("--tag must not delete the whole tag collection")
 	}
 }
 
@@ -639,7 +711,7 @@ func TestRunServerRebuild_RequestAndOutput(t *testing.T) {
 	client := computeClient(fakeServer, "2.79")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerRebuild(context.Background(), client, o, serverUUID, "img-new", &buf); err != nil {
+	if err := runServerRebuild(context.Background(), client, o, serverUUID, "img-new", "", &buf); err != nil {
 		t.Fatalf("runServerRebuild: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -649,11 +721,26 @@ func TestRunServerRebuild_RequestAndOutput(t *testing.T) {
 	if rebuild["imageRef"] != "img-new" {
 		t.Errorf("rebuild.imageRef = %v, want img-new", rebuild["imageRef"])
 	}
+	// An unset --name must leave "name" out of the body entirely, or nova would
+	// rename the server to the empty string.
+	if _, present := rebuild["name"]; present {
+		t.Errorf("rebuild body should omit name when --name is unset, got %v", rebuild)
+	}
 	out := buf.String()
 	for _, want := range []string{serverUUID, "web-1", "REBUILD"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rebuild output missing %q\n---\n%s", want, out)
 		}
+	}
+
+	// ... and a given --name must reach nova in the same action body.
+	var renamed bytes.Buffer
+	if err := runServerRebuild(context.Background(), client, o, serverUUID, "img-new", "web-2", &renamed); err != nil {
+		t.Fatalf("runServerRebuild with --name: %v", err)
+	}
+	rebuild, _ = gotBody["rebuild"].(map[string]any)
+	if rebuild["name"] != "web-2" {
+		t.Errorf("rebuild.name = %v, want web-2", rebuild["name"])
 	}
 }
 

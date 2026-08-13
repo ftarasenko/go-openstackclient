@@ -12,7 +12,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
+	"github.com/spf13/cobra"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -66,7 +68,7 @@ func TestRunZoneList_RequestAndTableOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runZoneList(context.Background(), client, o, &zoneListFlags{}, &buf); err != nil {
+	if err := runZoneList(context.Background(), client, o, &zoneListFlags{}, false, &buf); err != nil {
 		t.Fatalf("runZoneList returned error: %v", err)
 	}
 
@@ -214,7 +216,7 @@ func TestRunZoneList_LimitTruncates(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runZoneList(context.Background(), client, o, &zoneListFlags{limit: 1}, &buf); err != nil {
+	if err := runZoneList(context.Background(), client, o, &zoneListFlags{limit: 1}, false, &buf); err != nil {
 		t.Fatalf("runZoneList returned error: %v", err)
 	}
 	out := buf.String()
@@ -316,7 +318,7 @@ func TestRunRecordSetList_ResolvesZoneAndLists(t *testing.T) {
 
 	var buf bytes.Buffer
 	// Reference the zone by name (without trailing dot) to exercise resolution.
-	if err := runRecordSetList(context.Background(), client, o, "example.com", &recordSetListFlags{}, &buf); err != nil {
+	if err := runRecordSetList(context.Background(), client, o, "example.com", &recordSetListFlags{}, false, &buf); err != nil {
 		t.Fatalf("runRecordSetList returned error: %v", err)
 	}
 
@@ -372,7 +374,7 @@ func TestRunRecordSetList_NameFilterWildcardsSubstring(t *testing.T) {
 
 	var buf bytes.Buffer
 	f := &recordSetListFlags{name: "pslav"}
-	if err := runRecordSetList(context.Background(), client, o, "example.com", f, &buf); err != nil {
+	if err := runRecordSetList(context.Background(), client, o, "example.com", f, false, &buf); err != nil {
 		t.Fatalf("runRecordSetList returned error: %v", err)
 	}
 	if gotName != "*pslav*" {
@@ -836,5 +838,109 @@ func TestRunRecordSetSet_NoFieldsErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "at least one of") {
 		t.Errorf("error = %v, want mention of required fields", err)
+	}
+}
+
+// Upstream designate accepts --all-projects / --sudo-project-id on *every* verb,
+// read and write alike (designateclient/v2/cli/common.py add_all_common_options),
+// and koc used to register them on only some. This walks the whole dns command
+// tree and checks each verb upstream binds them on has them, so a newly added
+// verb that forgets cannot pass unnoticed.
+func TestDNSCommonOptions_BoundOnEveryUpstreamVerb(t *testing.T) {
+	a := &auth.Options{}
+	o := &output.Options{}
+	// Paths are relative to each top-level noun this package registers.
+	want := map[string][]string{
+		"zone": {
+			"list", "show", "create", "set", "delete",
+			"share create", "share list", "share show", "share delete",
+			"transfer request create", "transfer request list", "transfer request show",
+			"transfer request set", "transfer request delete",
+			"transfer accept request", "transfer accept list", "transfer accept show",
+			"export create", "export list", "export show", "export delete", "export showfile",
+			"import create", "import list", "import show", "import delete",
+			"nameservers list", "abandon", "axfr", "move",
+			"blacklist create", "blacklist list", "blacklist show", "blacklist set", "blacklist delete",
+		},
+		"recordset": {"list", "show", "create", "set", "delete"},
+		"tsigkey":   {"list", "show", "create", "set", "delete"},
+		"tld":       {"create", "list", "show", "set", "delete"},
+		"dns":       {"quota list", "quota set", "quota reset", "service list", "service show", "limit list"},
+	}
+	roots := make(map[string]*cobra.Command)
+	for _, root := range NewCommand(a, o) {
+		roots[root.Name()] = root
+	}
+	for noun, paths := range want {
+		root, ok := roots[noun]
+		if !ok {
+			t.Errorf("no top-level %q command", noun)
+			continue
+		}
+		for _, path := range paths {
+			leaf, _, err := root.Find(strings.Fields(path))
+			if err != nil || leaf == nil {
+				t.Errorf("%s %s: not found: %v", noun, path, err)
+				continue
+			}
+			for _, flag := range []string{"all-projects", "sudo-project-id"} {
+				if leaf.Flags().Lookup(flag) == nil {
+					t.Errorf("koc %s %s: missing --%s", noun, path, flag)
+				}
+			}
+		}
+	}
+}
+
+// A cross-project listing gains a Project ID column, because rows from several
+// projects are otherwise indistinguishable — upstream designate inserts the same
+// column for the same reason. The default listing must not grow it.
+func TestZoneAndRecordSetList_ProjectColumnOnlyWhenCrossProject(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/zones", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"zones": [{"id": "z1", "name": "example.com.", "type": "PRIMARY",
+          "email": "admin@example.com", "ttl": 3600, "serial": 1, "status": "ACTIVE",
+          "action": "NONE", "project_id": "other-project"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/zones/z1/recordsets", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"recordsets": [{"id": "rs1", "name": "www.example.com.",
+          "type": "A", "records": ["192.0.2.1"], "ttl": 300, "status": "ACTIVE",
+          "action": "NONE", "project_id": "other-project"}]}`))
+	})
+
+	client := dnsClient(fakeServer)
+	o := &output.Options{Format: output.FormatTable}
+	for _, tc := range []struct {
+		name        string
+		allProjects bool
+		wantColumn  bool
+	}{
+		{name: "default", allProjects: false, wantColumn: false},
+		{name: "--all-projects", allProjects: true, wantColumn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var zones, recordsets bytes.Buffer
+			if err := runZoneList(context.Background(), client, o, &zoneListFlags{}, tc.allProjects, &zones); err != nil {
+				t.Fatalf("runZoneList error: %v", err)
+			}
+			if err := runRecordSetList(context.Background(), client, o, "z1",
+				&recordSetListFlags{}, tc.allProjects, &recordsets); err != nil {
+				t.Fatalf("runRecordSetList error: %v", err)
+			}
+			for verb, out := range map[string]string{"zone list": zones.String(), "recordset list": recordsets.String()} {
+				hasColumn := strings.Contains(out, "Project ID")
+				if hasColumn != tc.wantColumn {
+					t.Errorf("%s: Project ID column present = %v, want %v\n---\n%s",
+						verb, hasColumn, tc.wantColumn, out)
+				}
+				if tc.wantColumn && !strings.Contains(out, "other-project") {
+					t.Errorf("%s: cross-project listing should show the owner\n---\n%s", verb, out)
+				}
+			}
+		})
 	}
 }

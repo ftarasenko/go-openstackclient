@@ -547,7 +547,7 @@ func TestRunRouterList_RequestAndOutput(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runRouterList(context.Background(), client, o, &buf); err != nil {
+	if err := runRouterList(context.Background(), client, o, "", &buf); err != nil {
 		t.Fatalf("runRouterList: %v", err)
 	}
 	for _, want := range []string{"rtr-1", "r", "ACTIVE", "UP"} {

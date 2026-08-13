@@ -337,3 +337,85 @@ func TestMatchesAnyFixedIP_PartialSpecs(t *testing.T) {
 		})
 	}
 }
+
+// Neutron's rule-type listing takes all_supported / all_rules, but gophercloud's
+// ListRuleTypes accepts no options at all, so koc rebuilds the pager with the
+// query appended. That the params reach the wire — and that the default request
+// still carries none — is the whole contract.
+func TestRunQoSRuleTypeList_AllFlagsBecomeQueryParams(t *testing.T) {
+	tests := []struct {
+		name         string
+		allSupported bool
+		allRules     bool
+		wantQuery    map[string]string
+		absent       []string
+	}{
+		{name: "default", absent: []string{"all_supported", "all_rules"}},
+		{name: "--all-supported", allSupported: true,
+			wantQuery: map[string]string{"all_supported": "true"}, absent: []string{"all_rules"}},
+		{name: "--all-rules", allRules: true,
+			wantQuery: map[string]string{"all_rules": "true"}, absent: []string{"all_supported"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			fakeServer.Mux.HandleFunc("/qos/rule-types", func(w http.ResponseWriter, r *http.Request) {
+				th.TestMethod(t, r, http.MethodGet)
+				if len(tc.wantQuery) > 0 {
+					th.TestFormValues(t, r, tc.wantQuery)
+				}
+				for _, key := range tc.absent {
+					if r.URL.Query().Has(key) {
+						t.Errorf("query should not carry %s: %s", key, r.URL.RawQuery)
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"rule_types": [{"type": "bandwidth_limit"}]}`))
+			})
+
+			o := &output.Options{Format: output.FormatTable}
+			var buf bytes.Buffer
+			err := runQoSRuleTypeList(context.Background(), networkClient(fakeServer), o,
+				tc.allSupported, tc.allRules, &buf)
+			if err != nil {
+				t.Fatalf("runQoSRuleTypeList error: %v", err)
+			}
+			if !strings.Contains(buf.String(), "bandwidth_limit") {
+				t.Errorf("output missing the rule type\n---\n%s", buf.String())
+			}
+		})
+	}
+}
+
+// --target-all-projects is a friendlier spelling of neutron's target_tenant "*";
+// the wildcard is what must actually be sent.
+func TestRunRBACCreate_TargetAllProjectsSendsWildcard(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/rbac-policies", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"rbac_policy": {
+          "action": "access_as_shared", "object_type": "network",
+          "object_id": "net-1", "target_tenant": "*"
+        }}`)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"rbac_policy": {"id": "rb-1", "object_type": "network",
+          "object_id": "net-1", "action": "access_as_shared", "target_tenant": "*",
+          "project_id": "p1"}}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	err := runRBACCreate(context.Background(), networkClient(fakeServer), o,
+		"net-1", "access_as_shared", "network", rbacAllProjects, &buf)
+	if err != nil {
+		t.Fatalf("runRBACCreate error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "rb-1") {
+		t.Errorf("output missing the created policy\n---\n%s", buf.String())
+	}
+}

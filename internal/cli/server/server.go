@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
@@ -210,8 +211,8 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.BoolVar(&f.all, "all", false, "list servers across all projects (admin); alias of --all-projects")
-	fl.BoolVar(&f.allProjects, "all-projects", false, "list servers across all projects (admin)")
+	fl.BoolVar(&f.all, "all", allprojects.Default(), "list servers across all projects (admin); alias of --all-projects")
+	allprojects.Bind(cmd, &f.allProjects, "list servers across all projects (admin)")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.StringVar(&f.name, "name", "", "filter by server name (regular expression)")
 	fl.StringVar(&f.status, "status", "", "filter by server status, e.g. ACTIVE")
@@ -614,6 +615,7 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 }
 
 func newServerDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var allProjects bool
 	cmd := &cobra.Command{
 		Use:   "delete <server> [<server> ...]",
 		Short: "Delete one or more servers",
@@ -630,6 +632,7 @@ func newServerDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runServerDelete(ctx, client, args, cmd.OutOrStdout())
 		},
 	}
+	allprojects.Bind(cmd, &allProjects, allProjectsAlwaysOn)
 	return cmd
 }
 
@@ -886,11 +889,20 @@ func promptNewPassword(w io.Writer) (string, error) {
 	return first, nil
 }
 
+// serverUnsetFlags holds what "server unset" can clear. The two --all-* forms are
+// each mutually exclusive with their per-item counterpart, as upstream has them.
+type serverUnsetFlags struct {
+	properties    []string
+	allProperties bool
+	tags          []string
+	allTags       bool
+}
+
 func newServerUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var properties []string
+	f := &serverUnsetFlags{}
 	cmd := &cobra.Command{
 		Use:   "unset <server>",
-		Short: "Unset server properties",
+		Short: "Unset server properties and tags",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -901,24 +913,72 @@ func newServerUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runServerUnset(ctx, client, args[0], properties, cmd.OutOrStdout())
+			if (len(f.tags) > 0 || f.allTags) && !computeSupportsMicroversion(client, "2.26") {
+				return fmt.Errorf("--tag/--all-tags require compute API microversion 2.26 or later (--os-compute-api-version)")
+			}
+			return runServerUnset(ctx, client, args[0], f, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringArrayVar(&properties, "property", nil, "metadata key to remove; repeatable")
+	fl := cmd.Flags()
+	fl.StringArrayVar(&f.properties, "property", nil, "metadata key to remove; repeatable")
+	fl.BoolVar(&f.allProperties, "all-properties", false, "remove every property (metadata key) the server has")
+	fl.StringArrayVar(&f.tags, "tag", nil, "tag to remove from the server; repeatable (nova 2.26+)")
+	fl.BoolVar(&f.allTags, "all-tags", false, "remove every tag the server has (nova 2.26+)")
+	cmd.MarkFlagsMutuallyExclusive("property", "all-properties")
+	cmd.MarkFlagsMutuallyExclusive("tag", "all-tags")
 	return cmd
 }
 
-func runServerUnset(ctx context.Context, client *gophercloud.ServiceClient, ref string, properties []string, _ io.Writer) error {
+func runServerUnset(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *serverUnsetFlags, _ io.Writer) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	keys := append([]string(nil), properties...)
+	if f.allProperties {
+		// One PUT of an empty map, not a DELETE per key: nova's metadata endpoint
+		// replaces the whole collection, so this cannot race a key added between
+		// the read and the deletes the way "list then delete each" can. (Upstream's
+		// SDK does read-then-delete-each — same outcome, more round trips.)
+		if _, err := servers.ResetMetadata(ctx, client, id, servers.MetadataOpts{}).Extract(); err != nil {
+			return fmt.Errorf("removing all metadata from server %q: %w", ref, err)
+		}
+	}
+	keys := append([]string(nil), f.properties...)
 	sort.Strings(keys)
 	for _, k := range keys {
 		if err := servers.DeleteMetadatum(ctx, client, id, k).ExtractErr(); err != nil {
 			return fmt.Errorf("removing metadata %q from server %q: %w", k, ref, err)
 		}
 	}
+	for _, tag := range f.tags {
+		if err := deleteServerTag(ctx, client, id, tag); err != nil {
+			return fmt.Errorf("removing tag %q from server %q: %w", tag, ref, err)
+		}
+	}
+	if f.allTags {
+		if err := deleteServerTags(ctx, client, id); err != nil {
+			return fmt.Errorf("removing all tags from server %q: %w", ref, err)
+		}
+	}
 	return nil
+}
+
+// deleteServerTag removes one tag from a server (nova 2.26+). Like addServerTag
+// this is a raw call: gophercloud v2 has no typed server-tags API.
+func deleteServerTag(ctx context.Context, client *gophercloud.ServiceClient, id, tag string) error {
+	return serverTagsDelete(ctx, client, client.ServiceURL("servers", id, "tags", tag))
+}
+
+// deleteServerTags removes every tag from a server (nova 2.26+).
+func deleteServerTags(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
+	return serverTagsDelete(ctx, client, client.ServiceURL("servers", id, "tags"))
+}
+
+func serverTagsDelete(ctx context.Context, client *gophercloud.ServiceClient, url string) error {
+	resp, err := client.Delete(ctx, url, &gophercloud.RequestOpts{OkCodes: []int{204}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
