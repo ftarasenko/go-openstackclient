@@ -103,9 +103,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Pinned to a full commit SHA per repo convention. Held on v4 because the
-      # inputs below were written against it; v5 is current, and Dependabot will
-      # propose that bump as a reviewable PR.
+      # Pinned to a full commit SHA per repo convention. On v5, whose only
+      # breaking change was the node24 runtime (needs runner >= v2.327.1, which
+      # ubuntu-latest satisfies); both inputs below are unchanged from v4.
       - name: Dependency review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:

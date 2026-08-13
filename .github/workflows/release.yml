@@ -126,9 +126,11 @@ jobs:
       # proves what produced them. Verify with:
       #   gh attestation verify koc_<v>_linux_amd64.tar.gz \
       #     --repo ftarasenko/go-openstackclient
-      # Pinned to a full commit SHA per repo convention. Held at v2 because the
-      # inputs below were written against it; v4 is current, and Dependabot will
-      # propose that bump as a reviewable PR.
+      # Pinned to a full commit SHA per repo convention. On v4, which upstream
+      # has reduced to a thin wrapper over actions/attest — `subject-path` still
+      # behaves as it did on v2, which is the only input used here. New work
+      # should reach for actions/attest directly; this stays until there is a
+      # reason to move it.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
