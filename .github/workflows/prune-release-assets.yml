@@ -20,7 +20,8 @@ name: prune-release-assets
 # were kilobytes.
 #
 # So this workflow deletes ONLY *.tar.gz, *.zip, *.rpm, *.deb, and it keeps
-# checksums.txt, *.sig, *.pem and *.spdx.json unconditionally (belt-and-braces:
+# checksums.txt, *.sig, *.pem, the *_sboms.tar.gz bundle and any legacy
+# *.spdx.json unconditionally (belt-and-braces:
 # there is both a delete-list and an explicit always-keep list below). Do NOT
 # "simplify" this later into deleting every asset — that trades the entire audit
 # trail for zero additional bytes and is the one thing the design exists to
@@ -153,7 +154,13 @@ jobs:
           echo
 
           # Heavy build outputs only. The always-keep list is redundant with the
-          # suffix test above it (an SBOM is named koc_X_os_arch.tar.gz.spdx.json,
+          # NOTE the SBOM bundle is koc_<ver>_sboms.tar.gz — it DOES end in
+          # .tar.gz, so unlike the other retained files it is not naturally
+          # excluded by the suffix test and the always_keep guard is what saves
+          # it. Deleting it would leave a release whose checksums.txt still lists
+          # an SBOM nobody can fetch. Releases cut before the bundle landed have
+          # loose per-artifact documents instead, hence both patterns.
+          # (A per-artifact SBOM is named koc_X_os_arch.tar.gz.spdx.json,
           # which does NOT end in .tar.gz) and that redundancy is deliberate:
           # if someone ever loosens the delete-list, the audit-trail files still
           # survive.
@@ -163,6 +170,7 @@ jobs:
               or endswith(".rpm") or endswith(".deb");
             def always_keep:
               . == "checksums.txt" or endswith(".spdx.json")
+              or endswith("_sboms.tar.gz")
               or endswith(".sig") or endswith(".pem");
             ($protected[0]) as $keepTags
             | .[]

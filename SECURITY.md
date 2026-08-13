@@ -65,10 +65,12 @@ fast one.
 ## Verifying a release
 
 Every release ships a `checksums.txt` covering all artifacts, a **keyless cosign
-signature** over that file, and an **SPDX SBOM** per artifact. `checksums.txt`
-on its own proves nothing — whoever could swap an artifact could swap the
-checksums with it — so the signature is what roots the trust, and the checksums
-chain from it to each artifact.
+signature** over that file, and one **SPDX SBOM per artifact**, tarred together
+as `koc_<version>_sboms.tar.gz`.
+
+`checksums.txt` on its own proves nothing — whoever could swap an artifact could
+swap the checksums with it — so the signature is what roots the trust, and the
+checksums chain from it to each artifact.
 
 Verify the signature, then the artifact:
 
@@ -93,8 +95,19 @@ gh attestation verify koc_<version>_linux_amd64.tar.gz \
   --repo ftarasenko/go-openstackclient
 ```
 
-The SBOMs are `<artifact>.spdx.json`, SPDX 2.3 JSON as produced by syft, for
-feeding an inventory or licence scanner.
+The SBOMs ship as one asset, `koc_<version>_sboms.tar.gz`. Unpack it to get one
+SPDX 2.3 JSON document per artifact, named `<artifact>.spdx.json`, for feeding an
+inventory or licence scanner:
+
+```sh
+tar xzf koc_<version>_sboms.tar.gz
+```
+
+The bundle is listed in `checksums.txt`, so it is covered by the signature above
+like every other artifact. Its documents are normalised to be byte-reproducible:
+syft otherwise stamps each one with a wall-clock timestamp and a random
+namespace UUID, which would make the SBOM line in `checksums.txt` impossible to
+re-derive from a rebuild.
 
 ### Verifying without internet access
 

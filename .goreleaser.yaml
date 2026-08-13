@@ -115,15 +115,33 @@ checksum:
 # SPDX SBOM per shipped artifact (syft), so an FSTEC/air-gapped consumer can run
 # its own component review without unpacking the tarball. Requires `syft` on
 # PATH — the release workflow installs it before GoReleaser runs.
+#
+# The per-artifact documents are delivered as ONE bundle rather than 10 loose
+# `<artifact>.spdx.json` assets: with 10 real downloads the loose files made the
+# release page 23 assets and buried the binaries. `artifacts: any` runs the
+# command exactly once (no per-artifact fan-out), and scripts/sbom-bundle.sh does
+# the syft-per-artifact loop itself, then tars the documents. Fidelity is
+# unchanged — the tarball still holds one SPDX document per artifact.
+#
+# Critically this stays INSIDE the sbom pipe, which runs before `checksum` and
+# `sign`: the bundle is registered as a GoReleaser document, so it is listed in
+# checksums.txt and thereby covered by the cosign signature over it. Building it
+# in a workflow step or attaching it via release.extra_files would put it outside
+# that chain. (Verified: no checksum.extra_files entry is needed — an sbom
+# document is a tracked artifact and is checksummed automatically.)
+#
+# NOTE cmd is `../scripts/…` because GoReleaser runs sbom commands with the
+# working directory set to `dist/`. The two timestamp args are what let the
+# script pin the tar's mtime and syft's `created` field to the same commit
+# instant the builds/archives/packages are pinned to — syft ignores
+# SOURCE_DATE_EPOCH, so without them the bundle's hash changes every run and the
+# release stops being byte-reproducible.
 sboms:
-  - id: archives
-    artifacts: archive
-    documents: ["${artifact}.spdx.json"]
-    args: ["$artifact", "--output", "spdx-json=$document"]
-  - id: packages
-    artifacts: package
-    documents: ["${artifact}.spdx.json"]
-    args: ["$artifact", "--output", "spdx-json=$document"]
+  - id: sboms
+    artifacts: any
+    cmd: ../scripts/sbom-bundle.sh
+    documents: ["koc_{{ .Version }}_sboms.tar.gz"]
+    args: ["$document", "{{ .CommitTimestamp }}", "{{ .CommitDate }}"]
 
 # Keyless cosign signature over checksums.txt. checksums.txt alone is not an
 # integrity story — whoever can swap an artifact in the release can swap the

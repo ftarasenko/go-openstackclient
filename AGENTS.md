@@ -348,7 +348,9 @@ weakened by a check that happens to need a proxy.
   amd64/arm64), four **`.rpm`/`.deb` packages** (nfpms — the target is an
   air-gapped RHEL-derivative node where Homebrew is useless; these install the
   shell completions to the system directories, which the cask cannot), a
-  `checksums.txt`, an **SPDX SBOM per artifact** (syft), a **keyless cosign
+  `checksums.txt`, a **bundle of per-artifact SPDX SBOMs** (syft, tarred by
+  `scripts/sbom-bundle.sh` into one `koc_<ver>_sboms.tar.gz` so ten loose
+  documents stop burying the binaries on the release page), a **keyless cosign
   signature** over `checksums.txt`, and the GitHub Release, then publishes a
   **Homebrew cask** (`Casks/koc.rb`) to `ftarasenko/homebrew-tap` — so
   `brew install ftarasenko/tap/koc` works. The workflow additionally records a
@@ -371,7 +373,9 @@ weakened by a check that happens to need a proxy.
 - `.github/workflows/prune-release-assets.yml` — dispatch (`dry_run` defaults to
   true) to reclaim storage by deleting `.tar.gz`/`.zip`/`.rpm`/`.deb` from
   releases outside a keep window, while **retaining** `checksums.txt`, its
-  signature/certificate and the SBOMs. Because builds are byte-reproducible from
+  signature/certificate and the SBOM bundle — note the bundle ends in `.tar.gz`,
+  so its always-keep guard, not the suffix filter, is what protects it. Because
+  builds are byte-reproducible from
   the tag, a pruned release stays verifiable and re-derivable; deleting the
   checksums would end that, which is why the retain list is redundant with the
   delete list on purpose. Pruned versions stop installing via the Homebrew cask.

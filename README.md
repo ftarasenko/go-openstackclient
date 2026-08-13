@@ -76,7 +76,8 @@ darwin/amd64, darwin/arm64, windows/amd64, windows/arm64** with a
 `checksums.txt`, attached to the [GitHub release](https://github.com/ftarasenko/go-openstackclient/releases).
 Alongside them: **`.rpm` and `.deb` packages** for the two linux architectures
 (for a local yum/apt mirror on an air-gapped node — these do install the shell
-completions), an **SPDX SBOM** (`*.spdx.json`) per artifact, a keyless **cosign
+completions), an **SPDX SBOM bundle** (`koc_<ver>_sboms.tar.gz`, one
+`*.spdx.json` per artifact inside), a keyless **cosign
 signature** over `checksums.txt` (`checksums.txt.sig` + `.pem`), and a GitHub
 **build-provenance attestation**. Builds are byte-reproducible, so the checksums
 can be re-derived independently from the tag.
