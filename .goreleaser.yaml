@@ -145,15 +145,25 @@ sboms:
 
 # Keyless cosign signature over checksums.txt. checksums.txt alone is not an
 # integrity story — whoever can swap an artifact in the release can swap the
-# checksums with it — but a Sigstore-backed detached signature over it is: the
-# signature roots the trust and the checksums chain to every artifact.
+# checksums with it — but a Sigstore-backed signature over it is: the signature
+# roots the trust and the checksums chain to every artifact.
 #
-# Verify (needs the cert, the sig and the file; no key distribution):
-#   cosign verify-blob checksums.txt \
-#     --certificate checksums.txt.pem --signature checksums.txt.sig \
+# Verify (the bundle carries signature, certificate and transparency-log
+# inclusion proof, so it is the only extra file needed; no key distribution):
+#   cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
 #     --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #   sha256sum -c checksums.txt
+#
+# --new-bundle-format is cosign v3's default, but it is named explicitly here on
+# purpose: the previous config passed --output-signature/--output-certificate,
+# and when that default flipped from false to true in v3 those flags became
+# silently IGNORED ("deprecated when using --new-bundle-format and will be
+# ignored") rather than an error. The release then produced no .sig/.pem at all,
+# and because release.yml only runs on a v* tag, nothing would have caught it
+# before the tag was already burned. Stating the format keeps this block correct
+# under either default, and it is what makes an air-gapped `--trusted-root`
+# verification possible (that flag requires the new format) — see SECURITY.md.
 #
 # Needs `id-token: write` in the release workflow (the OIDC token is what
 # Fulcio signs) plus cosign on PATH — both wired in release.yml.
@@ -161,13 +171,12 @@ signs:
   - id: cosign-checksums
     cmd: cosign
     artifacts: checksum
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.bundle"
     output: true
     args:
       - sign-blob
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - "--new-bundle-format"
+      - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"
 

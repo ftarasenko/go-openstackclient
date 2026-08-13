@@ -75,8 +75,7 @@ checksums chain from it to each artifact.
 Verify the signature, then the artifact:
 
 ```sh
-cosign verify-blob checksums.txt \
-  --certificate checksums.txt.pem --signature checksums.txt.sig \
+cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
   --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
@@ -87,6 +86,16 @@ No key distribution is involved: the signing identity is the release workflow
 itself, asserted by the certificate. The `--certificate-identity-regexp` and
 `--certificate-oidc-issuer` flags are the check that matters — without them you
 have verified only that *somebody* signed the file.
+
+`checksums.txt.bundle` is a Sigstore bundle carrying the signature, the signing
+certificate and the transparency-log inclusion proof together, so it is the only
+file to fetch beside `checksums.txt` itself. Reading it needs **cosign v3+**,
+where that format is the default, or cosign v2.6+ with an explicit
+`--new-bundle-format`. Releases up to and including **v0.22.0** shipped a
+detached `checksums.txt.sig` + `checksums.txt.pem` pair instead; substitute
+`--certificate checksums.txt.pem --signature checksums.txt.sig` for `--bundle`
+and a v3 client verifies those too — it detects the legacy layout and falls back
+on its own.
 
 Provenance — what built the artifact, from which commit and workflow:
 
@@ -112,24 +121,36 @@ re-derive from a rebuild.
 ### Verifying without internet access
 
 The commands above are the reason the air-gap matters here: by default
-`cosign verify-blob` consults the public Rekor transparency log and
+`cosign verify-blob` fetches Sigstore's trust roots over TUF and
 `gh attestation verify` calls the GitHub API, so both fail on an isolated
 network.
 
-For an air-gapped check, do the verification once on a connected host and carry
-the result across, or verify offline with the transparency-log bundle:
+The bundle already contains the signature, the certificate and the
+transparency-log inclusion proof, so the only thing still missing inside the
+enclave is the trust anchor those are checked against. Capture it once on a
+connected host as a **trusted root** file, carry it across with the release
+artifacts, and the verification runs with no network at all:
 
 ```sh
-# On a connected host, capture the bundle alongside the artifacts:
-cosign verify-blob checksums.txt \
-  --certificate checksums.txt.pem --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --bundle checksums.txt.bundle
+# On a connected host, once per trust-root rotation (not per release):
+cosign trusted-root create --with-default-services --out trusted_root.json
 
-# Inside the enclave, verify from the bundle without contacting Rekor:
-cosign verify-blob checksums.txt --bundle checksums.txt.bundle --offline
+# Inside the enclave — no Rekor call, no TUF fetch:
+cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
+  --trusted-root trusted_root.json \
+  --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+Keep the identity flags on the enclave-side command. They are what bind the
+signature to *this* repository's release workflow; a `--trusted-root` on its own
+only proves the certificate came from Sigstore, which any GitHub workflow can
+obtain.
+
+`--trusted-root` requires the new bundle format, which is why it works from
+v0.23.0 onward. For an older release, the equivalent is to run the full
+verification on the connected host and carry the *result* across, since the
+detached `.sig`/`.pem` pair has no inclusion proof to check offline against.
 
 `gh attestation verify` accepts `--bundle` for the same purpose; download the
 attestation bundle on the connected side and pass it in.

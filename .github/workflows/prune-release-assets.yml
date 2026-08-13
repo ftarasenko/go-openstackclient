@@ -8,7 +8,8 @@ name: prune-release-assets
 # Every release publishes ~6 archives at ~15.8 MB of binary each plus 4
 # .rpm/.deb packages; that is the entire storage cost. Alongside them it
 # publishes a handful of kilobyte-sized files: checksums.txt, its keyless cosign
-# signature (checksums.txt.sig) and certificate (checksums.txt.pem), and one
+# signature (checksums.txt.bundle — and, on releases up to v0.22.0, the earlier
+# detached checksums.txt.sig / checksums.txt.pem pair), and one
 # SPDX SBOM per archive/package. Those small files are the integrity and
 # supply-chain record an air-gapped / FSTEC-regulated consumer may have to
 # produce years after the binaries are gone — and because builds in this repo
@@ -20,12 +21,15 @@ name: prune-release-assets
 # were kilobytes.
 #
 # So this workflow deletes ONLY *.tar.gz, *.zip, *.rpm, *.deb, and it keeps
-# checksums.txt, *.sig, *.pem, the *_sboms.tar.gz bundle and any legacy
-# *.spdx.json unconditionally (belt-and-braces:
-# there is both a delete-list and an explicit always-keep list below). Do NOT
+# checksums.txt, its signature (*.bundle, plus the legacy *.sig / *.pem pair),
+# the *_sboms.tar.gz bundle and any legacy *.spdx.json unconditionally
+# (belt-and-braces: there is both a delete-list and an explicit always-keep list
+# below). Both signature spellings are on the keep-list because the two eras of
+# releases carry different ones and this workflow runs across all of them. Do NOT
 # "simplify" this later into deleting every asset — that trades the entire audit
 # trail for zero additional bytes and is the one thing the design exists to
-# prevent.
+# prevent. Whenever the `signs:` block in .goreleaser.yaml changes the name it
+# writes, the keep-list below has to learn the new suffix in the same commit.
 #
 # It never deletes a release and never touches a tag: tags and release notes are
 # the project's history, v* tags are immutable (a tag ruleset enforces it), and
@@ -171,7 +175,7 @@ jobs:
             def always_keep:
               . == "checksums.txt" or endswith(".spdx.json")
               or endswith("_sboms.tar.gz")
-              or endswith(".sig") or endswith(".pem");
+              or endswith(".bundle") or endswith(".sig") or endswith(".pem");
             ($protected[0]) as $keepTags
             | .[]
             | select(.draft | not)                                # never touch drafts
@@ -196,8 +200,8 @@ jobs:
               echo
               echo "> Pruned versions can no longer be installed via \`brew install ftarasenko/tap/koc\`,"
               echo "> and any mirror that downloads koc binaries from GitHub on demand will 404 for them."
-              echo "> Tags, release notes, \`checksums.txt\`(+\`.sig\`/\`.pem\`) and the SPDX SBOMs are retained,"
-              echo "> and builds are byte-reproducible from the tag."
+              echo "> Tags, release notes, \`checksums.txt\`(+ its \`.bundle\`, or \`.sig\`/\`.pem\` on older"
+              echo "> releases) and the SPDX SBOMs are retained, and builds are byte-reproducible from the tag."
             fi
             echo
             echo "Keep window: **$KEEP** most recent non-draft, non-prerelease releases; latest (\`${LATEST_TAG:-none}\`) always kept."
@@ -295,7 +299,8 @@ jobs:
                 printf '> **Build artifacts pruned to save storage.** The archives and packages\n'
                 printf '> (`.tar.gz`, `.zip`, `.rpm`, `.deb`) for this release have been deleted. The tag,\n'
                 printf '> these release notes, `checksums.txt` with its cosign signature\n'
-                printf '> (`checksums.txt.sig`/`.pem`) and the SPDX SBOMs are retained. Builds are\n'
+                printf '> (`checksums.txt.bundle`, or `.sig`/`.pem` on releases up to v0.22.0) and the\n'
+                printf '> SPDX SBOMs are retained. Builds are\n'
                 printf '> byte-reproducible from tag `%s`, so the binaries can be rebuilt and verified\n' "$tag"
                 printf '> against the retained `checksums.txt`. Consequence: `brew install` and any\n'
                 printf '> on-demand mirror will no longer find binaries for this version — use a newer\n'
