@@ -77,14 +77,13 @@ darwin/amd64, darwin/arm64, windows/amd64, windows/arm64** with a
 Alongside them: **`.rpm` and `.deb` packages** for the two linux architectures
 (for a local yum/apt mirror on an air-gapped node — these do install the shell
 completions), an **SPDX SBOM bundle** (`koc_<ver>_sboms.tar.gz`, one
-`*.spdx.json` per artifact inside), a keyless **cosign
-signature** over `checksums.txt` (`checksums.txt.sig` + `.pem`), and a GitHub
+`*.spdx.json` per artifact inside), a keyless **cosign signature** over
+`checksums.txt` (`checksums.txt.bundle`), and a GitHub
 **build-provenance attestation**. Builds are byte-reproducible, so the checksums
 can be re-derived independently from the tag.
 
 ```sh
-cosign verify-blob checksums.txt \
-  --certificate checksums.txt.pem --signature checksums.txt.sig \
+cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
   --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum -c checksums.txt
@@ -98,12 +97,23 @@ The two identity flags are the part that matters — without them you have check
 only that *somebody* signed the file. Verify the signature first, then let
 `sha256sum -c` carry that trust to each artifact.
 
+`checksums.txt.bundle` is a [Sigstore bundle][sigstore-bundle]: it carries the
+signature, the signing certificate and the transparency-log inclusion proof in
+one file, so nothing else has to be downloaded alongside it. Reading it needs
+**cosign v3 or newer** (where the format is the default), or cosign v2.6+ with an
+explicit `--new-bundle-format`. Releases up to and including **v0.22.0** instead
+carry a detached `checksums.txt.sig` + `.pem` pair; a v3 client still verifies
+those — pass `--certificate`/`--signature` in place of `--bundle` and it falls
+back to the legacy path automatically.
+
 Both commands reach the network by default (`cosign` consults the public Rekor
-log, `gh` calls the GitHub API), so on an isolated network capture a
-`--bundle` on a connected host and verify from it with `cosign verify-blob
---bundle … --offline`. `sha256sum -c checksums.txt` is fully offline and is what
-you gate the install on. See [SECURITY.md](SECURITY.md) for the air-gapped
-procedure, the supported-version policy, and how to report a vulnerability.
+log, `gh` calls the GitHub API). On an isolated network, verify the bundle
+against a `--trusted-root` file captured on a connected host — no Rekor call, no
+`--offline` flag. `sha256sum -c checksums.txt` is fully offline and is what you
+gate the install on. See [SECURITY.md](SECURITY.md) for that procedure, the
+supported-version policy, and how to report a vulnerability.
+
+[sigstore-bundle]: https://blog.sigstore.dev/cosign-3-0-available/
 
 ## Build
 

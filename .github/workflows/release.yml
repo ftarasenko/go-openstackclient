@@ -91,11 +91,16 @@ jobs:
 
       # cosign and syft are required by the `signs:` and `sboms:` blocks in
       # .goreleaser.yaml. Both are official installers from the projects
-      # themselves.
-      # Pinned to full commit SHAs per repo convention. Both are still on their
-      # original major here; Dependabot's github-actions ecosystem proposes major
-      # bumps as reviewable PRs (cosign-installer v4 and sbom-action have both
-      # moved on), which is the right place to verify changed inputs.
+      # themselves, pinned to full commit SHAs per repo convention.
+      #
+      # cosign-installer v4 installs cosign v3 by default, and v3 turns the
+      # standardized Sigstore bundle on by default — which is why the `signs:`
+      # block writes checksums.txt.bundle rather than a detached .sig/.pem pair.
+      # The version is deliberately NOT pinned via `cosign-release`: the two
+      # move together, and letting the installer choose keeps the tool current
+      # with Dependabot's reviewable bumps. If that default ever has to be
+      # pinned, the floor is v3 — the v2 flags this repo used before are ignored
+      # under the new bundle format (see the note in .goreleaser.yaml).
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 

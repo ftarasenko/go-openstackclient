@@ -373,18 +373,35 @@ weakened by a check that happens to need a proxy.
 - `.github/workflows/prune-release-assets.yml` — dispatch (`dry_run` defaults to
   true) to reclaim storage by deleting `.tar.gz`/`.zip`/`.rpm`/`.deb` from
   releases outside a keep window, while **retaining** `checksums.txt`, its
-  signature/certificate and the SBOM bundle — note the bundle ends in `.tar.gz`,
-  so its always-keep guard, not the suffix filter, is what protects it. Because
-  builds are byte-reproducible from
+  cosign bundle (plus the older detached signature/certificate) and the SBOM
+  bundle — note the SBOM bundle ends in `.tar.gz`, so its always-keep guard, not
+  the suffix filter, is what protects it. Because builds are byte-reproducible from
   the tag, a pruned release stays verifiable and re-derivable; deleting the
   checksums would end that, which is why the retain list is redundant with the
   delete list on purpose. Pruned versions stop installing via the Homebrew cask.
+  Its keep-list is keyed on asset **suffix**, so changing what `signs:` writes
+  means editing that jq filter in the same commit.
 
 `checksums.txt` on its own is not an integrity story: whoever can swap an artifact
 in a release can swap the checksums with it. The cosign signature is what roots
 the trust, and the checksums then chain to every artifact. The verification
 command (no key distribution needed) is in `.goreleaser.yaml` next to the `signs:`
 block and in README "Prebuilt binaries".
+
+**The signature is a Sigstore bundle (`checksums.txt.bundle`), not a detached
+`.sig`/`.pem` pair.** cosign v3 made the standardized bundle the default, and the
+migration was not optional: under that default the `--output-signature` /
+`--output-certificate` flags the old config passed are *silently ignored* rather
+than rejected, so the release would have published no signature at all — and
+since `release.yml` only runs on a `v*` tag, no PR check could have caught it.
+The bundle also carries the transparency-log inclusion proof, which is what makes
+the air-gapped `--trusted-root` verification in SECURITY.md possible; cosign v3
+deprecated `--offline` in favour of exactly that. Three consequences to keep in
+mind when touching this: verifying needs cosign v3+ (or v2.6+ with an explicit
+`--new-bundle-format`); releases up to v0.22.0 still carry the old pair and a v3
+client falls back to it automatically; and `.goreleaser.yaml` names
+`--new-bundle-format` explicitly so a future default flip cannot repeat the
+failure silently.
 
 **GoReleaser has no `before:` hooks, on purpose.** Hooks run inside the same
 workflow step as GoReleaser, and that step carries `HOMEBREW_TAP_TOKEN` — a PAT
