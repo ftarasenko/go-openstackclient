@@ -312,10 +312,15 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"Vault AppRole secret_id (env VAULT_SECRET_ID)")
 	fs.StringVar(&o.VaultApprolePath, "vault-approle-path", envOr("VAULT_APPROLE_PATH", "approle"),
 		"Vault AppRole auth mount path (env VAULT_APPROLE_PATH)")
-	fs.StringVar(&o.VaultKVMount, "vault-kv-mount", envOr("VAULT_KV_MOUNT", "secret_v2"),
-		"Vault KV v2 mount (env VAULT_KV_MOUNT)")
-	fs.StringVar(&o.VaultKVPrefix, "vault-kv-prefix", os.Getenv("VAULT_KV_PREFIX"),
-		"default path prefix prepended to a relative Vault KV path (env VAULT_KV_PREFIX)")
+	// VAULT_ENGINE / VAULT_PREFIX are accepted as fallbacks: they are the
+	// destination-side counterparts of the VAULT_SRC_ENGINE / VAULT_SRC_PREFIX
+	// names the KeyStack e2e pipeline exports for "vault kv copy", so both sides
+	// of a copy can be configured with symmetric variable names. The koc-native
+	// VAULT_KV_* names win when both are set.
+	fs.StringVar(&o.VaultKVMount, "vault-kv-mount", envOr("VAULT_KV_MOUNT", envOr("VAULT_ENGINE", "secret_v2")),
+		"Vault KV v2 mount (env VAULT_KV_MOUNT, or VAULT_ENGINE)")
+	fs.StringVar(&o.VaultKVPrefix, "vault-kv-prefix", envOr("VAULT_KV_PREFIX", os.Getenv("VAULT_PREFIX")),
+		"default path prefix prepended to a relative Vault KV path (env VAULT_KV_PREFIX, or VAULT_PREFIX)")
 	fs.StringVar(&o.VaultCACert, "vault-cacert", os.Getenv("VAULT_CACERT"),
 		"path to a CA bundle for the Vault TLS endpoint (env VAULT_CACERT)")
 	// --insecure-vault skips TLS verification for the Vault endpoint used by

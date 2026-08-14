@@ -433,12 +433,16 @@ between two paths of a single Vault needs no extra flags:
 Any explicit source credential replaces the destination's credentials as a group,
 so an inherited token can never silently win over a source AppRole. The env names
 match the variables the KeyStack e2e pipeline already exports for its
-`vault-helper.py`, so a cross-Vault copy needs no flags at all there:
+`vault-helper.py`, so a cross-Vault copy needs no flags at all there. The
+destination side accepts the symmetric names too: `VAULT_ENGINE` and
+`VAULT_PREFIX` are fallback aliases of `VAULT_KV_MOUNT` / `VAULT_KV_PREFIX`
+(the `VAULT_KV_*` names win when both are set):
 
 ```sh
 export VAULT_ADDR=… VAULT_TOKEN=…                  # destination
+export VAULT_ENGINE=secret_v2 VAULT_PREFIX=deployments/example
 export VAULT_SRC_ADDR=… VAULT_SRC_TOKEN=…          # source
-export VAULT_SRC_ENGINE=secret_v2 VAULT_SRC_PREFIX=deployments/example
+export VAULT_SRC_ENGINE=secret_v2 VAULT_SRC_PREFIX=deployments/old
 koc vault kv copy -r dev dev
 ```
 

@@ -490,11 +490,11 @@ func (o *Options) discoverVaultFromCluster(ctx context.Context) error {
 		return fmt.Errorf("parsing %s/%s: %w", lcmConfigNamespace, lcmConfigName, err)
 	}
 
-	o.fillVaultOption("vault-addr", "VAULT_ADDR", &o.VaultAddr, lc.Addr)
-	o.fillVaultOption("vault-namespace", "VAULT_NAMESPACE", &o.VaultNamespace, lc.Namespace)
-	o.fillVaultOption("vault-role-id", "VAULT_ROLE_ID", &o.VaultRoleID, lc.RoleID)
-	o.fillVaultOption("vault-kv-mount", "VAULT_KV_MOUNT", &o.VaultKVMount, lc.KVEngine)
-	o.fillVaultOption("vault-kv-prefix", "VAULT_KV_PREFIX", &o.VaultKVPrefix, lc.KVPrefix)
+	o.fillVaultOption("vault-addr", &o.VaultAddr, lc.Addr, "VAULT_ADDR")
+	o.fillVaultOption("vault-namespace", &o.VaultNamespace, lc.Namespace, "VAULT_NAMESPACE")
+	o.fillVaultOption("vault-role-id", &o.VaultRoleID, lc.RoleID, "VAULT_ROLE_ID")
+	o.fillVaultOption("vault-kv-mount", &o.VaultKVMount, lc.KVEngine, "VAULT_KV_MOUNT", "VAULT_ENGINE")
+	o.fillVaultOption("vault-kv-prefix", &o.VaultKVPrefix, lc.KVPrefix, "VAULT_KV_PREFIX", "VAULT_PREFIX")
 
 	if o.VaultSecretID == "" && !o.vaultOptionExplicit("vault-secret-id", "VAULT_SECRET_ID") {
 		sec, err := kc.GetSecret(ctx, vaultApproleSecretNS, vaultApproleSecret)
@@ -506,22 +506,29 @@ func (o *Options) discoverVaultFromCluster(ctx context.Context) error {
 	return nil
 }
 
-// fillVaultOption sets *dst to val unless the flag was explicitly set, its env
-// var is present, or val is empty.
-func (o *Options) fillVaultOption(flag, env string, dst *string, val string) {
-	if val == "" || o.vaultOptionExplicit(flag, env) {
+// fillVaultOption sets *dst to val unless the flag was explicitly set, one of
+// its env vars is present, or val is empty.
+func (o *Options) fillVaultOption(flag string, dst *string, val string, envs ...string) {
+	if val == "" || o.vaultOptionExplicit(flag, envs...) {
 		return
 	}
 	*dst = val
 }
 
 // vaultOptionExplicit reports whether a Vault option was set on the command line
-// or via its environment variable (either of which must win over discovery).
-func (o *Options) vaultOptionExplicit(flag, env string) bool {
+// or via one of its environment variables (either of which must win over
+// discovery). Options with a fallback env name (VAULT_ENGINE, VAULT_PREFIX)
+// list it after the canonical one.
+func (o *Options) vaultOptionExplicit(flag string, envs ...string) bool {
 	if o.fs != nil && o.fs.Changed(flag) {
 		return true
 	}
-	return os.Getenv(env) != ""
+	for _, env := range envs {
+		if os.Getenv(env) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // openrcFromKV extracts an openrc script from a KV v2 data map. It prefers the

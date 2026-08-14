@@ -128,14 +128,33 @@ func TestFillVaultOption_Precedence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	o.fillVaultOption("vault-addr", "VAULT_ADDR", &o.VaultAddr, "https://vault.example")
-	o.fillVaultOption("vault-role-id", "VAULT_ROLE_ID", &o.VaultRoleID, "cluster-role")
+	o.fillVaultOption("vault-addr", &o.VaultAddr, "https://vault.example", "VAULT_ADDR")
+	o.fillVaultOption("vault-role-id", &o.VaultRoleID, "cluster-role", "VAULT_ROLE_ID")
 
 	if o.VaultAddr != "https://vault.example" {
 		t.Errorf("addr should come from discovery, got %q", o.VaultAddr)
 	}
 	if o.VaultRoleID != "cli-role" {
 		t.Errorf("explicit --vault-role-id should win over discovery, got %q", o.VaultRoleID)
+	}
+}
+
+// A fallback env name (VAULT_PREFIX for --vault-kv-prefix) must count as
+// explicit, so cluster discovery does not clobber it.
+func TestFillVaultOption_FallbackEnvBlocksDiscovery(t *testing.T) {
+	t.Setenv("VAULT_KV_PREFIX", "")
+	t.Setenv("VAULT_PREFIX", "deployments/example")
+
+	o := &Options{}
+	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+	o.AddFlags(fs)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	o.fillVaultOption("vault-kv-prefix", &o.VaultKVPrefix, "cluster/prefix", "VAULT_KV_PREFIX", "VAULT_PREFIX")
+	if o.VaultKVPrefix != "deployments/example" {
+		t.Errorf("VAULT_PREFIX should win over discovery, got %q", o.VaultKVPrefix)
 	}
 }
 

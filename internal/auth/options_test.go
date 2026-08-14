@@ -82,6 +82,60 @@ func TestInsecureFlagDefault_OSInsecureNo(t *testing.T) {
 	}
 }
 
+// VAULT_ENGINE / VAULT_PREFIX are the destination-side counterparts of the
+// VAULT_SRC_ENGINE / VAULT_SRC_PREFIX names "vault kv copy" reads for the
+// source, so both sides of a copy can be configured symmetrically. The
+// koc-native VAULT_KV_* names win when both are set.
+func TestVaultKVEnvFallbacks(t *testing.T) {
+	cases := []struct {
+		name       string
+		env        map[string]string
+		wantMount  string
+		wantPrefix string
+	}{
+		{
+			name:       "fallbacks alone",
+			env:        map[string]string{"VAULT_ENGINE": "kv_v2", "VAULT_PREFIX": "deployments/example"},
+			wantMount:  "kv_v2",
+			wantPrefix: "deployments/example",
+		},
+		{
+			name: "canonical names win",
+			env: map[string]string{
+				"VAULT_KV_MOUNT": "secret_v2", "VAULT_ENGINE": "kv_v2",
+				"VAULT_KV_PREFIX": "canonical/prefix", "VAULT_PREFIX": "fallback/prefix",
+			},
+			wantMount:  "secret_v2",
+			wantPrefix: "canonical/prefix",
+		},
+		{
+			name:       "nothing set",
+			env:        map[string]string{},
+			wantMount:  "secret_v2",
+			wantPrefix: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range []string{"VAULT_KV_MOUNT", "VAULT_ENGINE", "VAULT_KV_PREFIX", "VAULT_PREFIX"} {
+				t.Setenv(k, tc.env[k])
+			}
+			o := &Options{}
+			fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
+			o.AddFlags(fs)
+			if err := fs.Parse(nil); err != nil {
+				t.Fatal(err)
+			}
+			if o.VaultKVMount != tc.wantMount {
+				t.Errorf("VaultKVMount = %q, want %q", o.VaultKVMount, tc.wantMount)
+			}
+			if o.VaultKVPrefix != tc.wantPrefix {
+				t.Errorf("VaultKVPrefix = %q, want %q", o.VaultKVPrefix, tc.wantPrefix)
+			}
+		})
+	}
+}
+
 // An unparseable security toggle is not silently ignored: the command that would
 // use the credential fails.
 func TestAuthenticate_RejectsUnusableEnvBool(t *testing.T) {

@@ -27,7 +27,8 @@ global flags:
   --vault-token                             (env VAULT_TOKEN, or ~/.vault-token)
   --vault-role-id, --vault-secret-id        (env VAULT_ROLE_ID, VAULT_SECRET_ID)
   --vault-approle-path                      (env VAULT_APPROLE_PATH)
-  --vault-kv-mount, --vault-kv-prefix       (env VAULT_KV_MOUNT, VAULT_KV_PREFIX)
+  --vault-kv-mount, --vault-kv-prefix       (env VAULT_KV_MOUNT or VAULT_ENGINE,
+                                             VAULT_KV_PREFIX or VAULT_PREFIX)
   --vault-cacert, --insecure-vault          (env VAULT_CACERT, VAULT_SKIP_VERIFY)
 
 On an LCM cluster node these are auto-discovered from the k0s-system/lcm-config
