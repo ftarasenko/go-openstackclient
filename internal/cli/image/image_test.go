@@ -13,6 +13,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
+	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -805,5 +806,99 @@ func TestRunImageSave_ToWriter(t *testing.T) {
 	}
 	if buf.String() != payload {
 		t.Errorf("saved data = %q, want %q", buf.String(), payload)
+	}
+}
+
+// --name is glance's exact-match filter and --name-contains is koc's local
+// substring sift, so the two must stay clearly apart: --name goes on the wire and
+// --name-contains does not, or an operator sees an empty table and concludes the
+// images are gone.
+func TestRunImageList_NameContainsFiltersLocally(t *testing.T) {
+	const body = `{"images": [
+      {"id": "i1", "name": "distro-9.7-x86_64", "status": "active"},
+      {"id": "i2", "name": "DISTRO-9.6-x86_64", "status": "active"},
+      {"id": "i3", "name": "other-image", "status": "active"}
+    ]}`
+
+	tests := []struct {
+		name        string
+		flags       imageListFlags
+		wantQuery   bool
+		wantNames   []string
+		absentNames []string
+	}{
+		{
+			name:        "substring matches several",
+			flags:       imageListFlags{nameContains: "distro"},
+			wantNames:   []string{"distro-9.7-x86_64", "DISTRO-9.6-x86_64"},
+			absentNames: []string{"other-image"},
+		},
+		{
+			// The whole point of the flag: glance would return nothing for this.
+			name:        "case is ignored",
+			flags:       imageListFlags{nameContains: "DiStRo-9.6"},
+			wantNames:   []string{"DISTRO-9.6-x86_64"},
+			absentNames: []string{"distro-9.7-x86_64", "other-image"},
+		},
+		{
+			name:        "no match yields an empty list, not an error",
+			flags:       imageListFlags{nameContains: "absent"},
+			absentNames: []string{"distro-9.7-x86_64", "DISTRO-9.6-x86_64", "other-image"},
+		},
+		{
+			name:      "unset changes nothing",
+			flags:     imageListFlags{},
+			wantNames: []string{"distro-9.7-x86_64", "DISTRO-9.6-x86_64", "other-image"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			fakeServer.Mux.HandleFunc("/images", func(w http.ResponseWriter, r *http.Request) {
+				// --name-contains must never reach glance: it is not a filter the
+				// API has, and sending it as ?name= would match nothing at all.
+				if r.URL.Query().Has("name") {
+					t.Errorf("--name-contains must not be sent as a query param: %s", r.URL.RawQuery)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(body))
+			})
+
+			o := &output.Options{Format: output.FormatValue}
+			var buf bytes.Buffer
+			if err := runImageList(context.Background(), imageClient(fakeServer), o, &tc.flags, &buf); err != nil {
+				t.Fatalf("runImageList returned error: %v", err)
+			}
+			out := buf.String()
+			for _, want := range tc.wantNames {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q\n---\n%s", want, out)
+				}
+			}
+			for _, absent := range tc.absentNames {
+				if strings.Contains(out, absent) {
+					t.Errorf("output should not contain %q\n---\n%s", absent, out)
+				}
+			}
+		})
+	}
+}
+
+// --name and --name-contains are two spellings of the same field; together they
+// could only ever narrow to the exact match, so cobra rejects the pair.
+func TestImageList_NameAndNameContainsAreExclusive(t *testing.T) {
+	cmd := newImageListCommand(&auth.Options{}, &output.Options{})
+	cmd.SetArgs([]string{"--name", "exact", "--name-contains", "part"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("--name with --name-contains should be rejected")
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("error %q should name the conflicting flags", err.Error())
 	}
 }

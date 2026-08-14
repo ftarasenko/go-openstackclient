@@ -85,7 +85,10 @@ command that omits one is a regression rather than a known gap:
   python-designateclient and python-octaviaclient name a new resource with
   `--name` and take no positional for it, where koc grew the positional first;
   the affected create verbs accept either (`internal/cli/nameflag`), so the
-  positional is optional in their usage strings.
+  positional is optional in their usage strings. Note that `--name` is an
+  **exact** match wherever the API makes it one, upstream and here alike — see
+  `image list --name-contains` under "Naming deviations" for the one flag added
+  because of it.
 
 `internal/cli/dns/dns_test.go`, `internal/cli/server/flagparity_test.go` and
 `internal/cli/loadbalancer/lb_test.go` assert the three lists by walking the
@@ -286,6 +289,20 @@ is a breaking change for anyone who relied on the old flagless `unset`.
 One flag deviates rather than a command: `koc dns service list --service-name`,
 where upstream spells the same filter `--service_name` — the only underscored flag
 in designate's CLI. Both work; the underscored form is registered hidden.
+
+One flag is **koc-native**: `koc image list --name-contains`, a case-insensitive
+substring filter applied client-side. Glance's query builder accepts only `in:`
+and `eq:` on `name` and rejects every other operator
+(`glance/db/sqlalchemy/api.py _make_conditions_from_filters`), so `--name sber`
+is not a narrow search but a lookup for an image called literally "sber" — it
+returns an empty table, which reads as "no such images". `--name` therefore keeps
+upstream's exact semantics (`koc image list --name X` must return what `openstack
+image list --name X` returns) and the substring search gets its own flag. The
+`-contains` suffix follows ironic's `baremetal node list --description-contains`
+rather than manila's `--name~`, since manila is not a service `koc` targets. The
+same trap exists on other nouns whose API cannot do substring matching — `volume
+list`, `network list`, `port list`, `subnet list` — and they have no equivalent
+flag yet; nova is the exception, as `server list --name` is a server-side regex.
 
 `--timing` deviates in **where it writes**, deliberately.
 `osc_lib/command/timing.py` is a cliff Lister: it prints a "URL | Seconds"

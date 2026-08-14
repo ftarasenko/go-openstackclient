@@ -329,6 +329,29 @@ apply. Where the command has exactly one `--all…` flag it expands to that one
 does with `--all-properties` and `--all-tags`, a bare `--all` is ambiguous and
 rejected, which is what `openstack` does too.
 
+### `--name` is an exact match
+
+Most OpenStack APIs filter on `name` by **equality**, so a partial name matches
+nothing and you get an empty table rather than an error. Glance is the strictest:
+its query builder accepts only `in:` and `eq:` on `name` and rejects every other
+operator, so there is no wildcard to reach for.
+
+```sh
+koc image list --name distro-9.7-x86_64             # exact — the only thing glance filters on
+koc image list --name in:distro-9.7,distro-9.6      # several exact names (glance's in: operator)
+koc image list --name-contains distro               # substring, case-insensitive (koc-native)
+koc image list -f value -c ID -c Name | grep distro # same idea, when you want a real regex
+```
+
+`--name-contains` is filtered client-side, because glance cannot do it; `--name`
+deliberately keeps upstream's exact semantics so `koc` and `openstack` return the
+same rows for the same command. The two are mutually exclusive.
+
+Nova is the exception worth knowing: `server list --name` is a server-side
+**regular expression**, so `koc server list --name '^web-'` works as written.
+`volume list`, `network list`, `port list` and `subnet list` are exact-match with
+no `--name-contains` yet — pipe through `grep` there.
+
 ### Microversions
 
 Each service client sets its own microversion; defaults negotiate the latest the

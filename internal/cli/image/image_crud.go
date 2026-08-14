@@ -43,13 +43,14 @@ func imageShowFields(img *images.Image) ([]string, []any) {
 // time (HTTP 403), so these are UNVERIFIED against KeyStack and fall back to
 // upstream OSC semantics.
 type imageListFlags struct {
-	long      bool
-	name      string
-	public    bool
-	private   bool
-	shared    bool
-	community bool
-	all       bool
+	long         bool
+	name         string
+	nameContains string
+	public       bool
+	private      bool
+	shared       bool
+	community    bool
+	all          bool
 }
 
 // imageVisibilityAll is glance's fifth visibility *filter* value: it disables the
@@ -98,13 +99,19 @@ func newImageListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
-	fl.StringVar(&f.name, "name", "", "filter images by name")
+	fl.StringVar(&f.name, "name", "", "filter images by exact name (glance matches nothing on a partial name; see --name-contains)")
+	fl.StringVar(&f.nameContains, "name-contains", "",
+		"filter images whose name contains this substring, ignoring case (koc-native; filtered client-side)")
 	fl.BoolVar(&f.public, "public", false, "list only public images")
 	fl.BoolVar(&f.private, "private", false, "list only private images")
 	fl.BoolVar(&f.shared, "shared", false, "list only shared images")
 	fl.BoolVar(&f.community, "community", false, "list only community images")
 	fl.BoolVar(&f.all, "all", false, "list images of every visibility")
 	cmd.MarkFlagsMutuallyExclusive("public", "private", "shared", "community", "all")
+	// Two ways of naming the same field: --name asks glance for one exact name,
+	// --name-contains sifts the answer locally. Together they can only ever narrow
+	// to the exact match, so accepting both would just invite a wrong mental model.
+	cmd.MarkFlagsMutuallyExclusive("name", "name-contains")
 	return cmd
 }
 
@@ -123,7 +130,38 @@ func runImageList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return fmt.Errorf("parsing image list: %w", err)
 	}
-	return o.WriteList(w, imageListTable(all, f.long))
+	return o.WriteList(w, imageListTable(filterImagesByNameSubstring(all, f.nameContains), f.long))
+}
+
+// filterImagesByNameSubstring narrows a listing to the images whose name contains
+// sub, case-insensitively. An empty sub returns the list untouched.
+//
+// This is done here, client-side, because glance cannot do it. Its query builder
+// accepts exactly two operators on `name` — `in:` for a list of exact names and
+// `eq:` (the default) for one — and rejects anything else outright
+// (`glance/db/sqlalchemy/api.py _make_conditions_from_filters`). So there is no
+// wildcard, no LIKE, and `--name sber` is not a narrow search but a lookup for an
+// image called literally "sber": it returns an empty table, which reads as "no
+// such images" rather than "wrong operator". Hence the separate flag, and hence
+// --name keeping upstream's exact semantics: `koc image list --name X` must return
+// what `openstack image list --name X` returns.
+//
+// Case-insensitive because the flag exists to replace an interactive `| grep`, and
+// a "contains" search that misses on capitalisation would send the operator
+// straight back to the pipe. `--name` (or a real grep) remains available when case
+// has to matter.
+func filterImagesByNameSubstring(list []images.Image, sub string) []images.Image {
+	if sub == "" {
+		return list
+	}
+	needle := strings.ToLower(sub)
+	kept := make([]images.Image, 0, len(list))
+	for _, img := range list {
+		if strings.Contains(strings.ToLower(img.Name), needle) {
+			kept = append(kept, img)
+		}
+	}
+	return kept
 }
 
 // imageListTable builds the output table. The default column set matches
