@@ -29,6 +29,22 @@ type copyOptions struct {
 	srcDisplay string // the path as typed, for error messages
 }
 
+// copyPaths resolves the SRC and DST arguments into paths within their mounts.
+// Each side has its own prefix, and both default to the global
+// --vault-kv-prefix: the source's is --src-vault-kv-prefix, the destination's is
+// --dst-vault-kv-prefix. Neither override touches the other side, so a copy
+// between two prefixes of one Vault can name just the one that moves — which
+// matters when the global prefix is auto-discovered from the cluster rather than
+// typed.
+//
+// The mounts come from the built clients, not the flags, because auto-discovery
+// may have filled them in.
+func copyPaths(s *srcFlags, d *dstFlags, globalPrefix, srcMount, dstMount, srcArg, dstArg string) (srcPath, dstPath string) {
+	srcPrefix := s.str("src-vault-kv-prefix", "VAULT_SRC_PREFIX", s.kvPrefix, globalPrefix)
+	return vault.ResolvePath(srcPrefix, srcMount, srcArg),
+		vault.ResolvePath(d.prefix(globalPrefix), dstMount, dstArg)
+}
+
 // copy statuses reported in the result table.
 const (
 	statusCopied  = "copied"

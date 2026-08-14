@@ -72,6 +72,11 @@ The source defaults to the same Vault as the destination, so copying between two
 paths of one Vault needs no extra flags. Point it elsewhere with the
 --src-vault-* overrides; each one not given is inherited from the destination.
 
+A relative SRC/DST is resolved against the global --vault-kv-prefix. Each side
+can be moved off it on its own with --src-vault-kv-prefix / --dst-vault-kv-prefix,
+which is what a copy between two prefixes of one Vault needs when the prefix is
+auto-discovered from the cluster.
+
 Only secret data is copied — KV v2 custom_metadata, version history and
 delete_version_after are not, so the result is a copy of the current values, not
 a replica. Secret values are never printed (use "vault kv get" for that).`
@@ -79,6 +84,7 @@ a replica. Secret values are never printed (use "vault kv get" for that).`
 func newKVCopyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &copyFlags{}
 	src := &srcFlags{}
+	dst := &dstFlags{}
 	cmd := &cobra.Command{
 		Use:     "copy <src-path> <dst-path>",
 		Short:   "Copy KV v2 secrets between Vaults or paths",
@@ -96,14 +102,9 @@ func newKVCopyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			// Paths are resolved after the clients are built: cluster
 			// auto-discovery may have filled in the mount and prefix.
-			opts := copyOptions{
-				srcPath: vault.ResolvePath(
-					src.str("src-vault-kv-prefix", "VAULT_SRC_PREFIX", src.kvPrefix, a.VaultKVPrefix),
-					srcClient.KVMount(), args[0]),
-				dstPath:    vault.ResolvePath(a.VaultKVPrefix, dstClient.KVMount(), args[1]),
-				copyFlags:  *f,
-				srcDisplay: args[0],
-			}
+			opts := copyOptions{copyFlags: *f, srcDisplay: args[0]}
+			opts.srcPath, opts.dstPath = copyPaths(src, dst, a.VaultKVPrefix,
+				srcClient.KVMount(), dstClient.KVMount(), args[0], args[1])
 			return runKVCopy(ctx, srcClient, dstClient, o, opts, cmd.OutOrStdout())
 		},
 	}
@@ -113,6 +114,7 @@ func newKVCopyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.skipExisting, "skip-existing", false, "leave destination secrets that already exist untouched")
 	fl.IntVar(&f.srcVersion, "src-version", 0, "copy this source secret version instead of the latest (single secret only)")
 	src.addTo(fl)
+	dst.addTo(fl)
 	return cmd
 }
 
@@ -121,6 +123,10 @@ func newKVCopyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // belongs in VAULT_SRC_TOKEN (or an AppRole) instead.
 const kvCopyExample = `  # Within one Vault: copy a deployment's secrets to another prefix
   koc vault kv copy -r deployments/example/dev deployments/example/e2e
+
+  # Same paths under a different destination prefix, leaving the source on the
+  # global (or cluster-discovered) one
+  koc vault kv copy -r --dst-vault-kv-prefix deployments/example-e2e dev dev
 
   # From another Vault, previewing first (credentials via VAULT_SRC_TOKEN,
   # or --src-vault-role-id/--src-vault-secret-id)

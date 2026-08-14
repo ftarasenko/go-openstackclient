@@ -426,9 +426,21 @@ between two paths of a single Vault needs no extra flags:
 | `--src-vault-token` | `VAULT_SRC_TOKEN` | the destination's credentials |
 | `--src-vault-role-id` / `--src-vault-secret-id` | `VAULT_SRC_ROLE_ID` / `VAULT_SRC_SECRET_ID` | the destination's credentials |
 | `--src-vault-kv-mount` | `VAULT_SRC_ENGINE` | the destination's |
-| `--src-vault-kv-prefix` | `VAULT_SRC_PREFIX` | the destination's |
+| `--src-vault-kv-prefix` | `VAULT_SRC_PREFIX` | `--vault-kv-prefix` |
 | `--src-vault-cacert` | `VAULT_SRC_CACERT` | the destination's |
 | `--insecure-src-vault` | `VAULT_SRC_SKIP_VERIFY` | the destination's |
+
+A **relative** path on either side is resolved against the global
+`--vault-kv-prefix`, and each side can be moved off it on its own — the source
+with `--src-vault-kv-prefix`, the destination with `--dst-vault-kv-prefix`
+(env `VAULT_DST_PREFIX`). Neither override disturbs the other side, so a copy
+between two prefixes of one Vault names only the prefix that moves, which matters
+when the global one is auto-discovered from the cluster rather than typed:
+
+```sh
+# regions/a/dev → regions/b/dev, with regions/a discovered from the node
+koc vault kv copy -r --dst-vault-kv-prefix regions/b dev dev
+```
 
 Any explicit source credential replaces the destination's credentials as a group,
 so an inherited token can never silently win over a source AppRole. The env names
@@ -436,11 +448,15 @@ match the variables the KeyStack e2e pipeline already exports for its
 `vault-helper.py`, so a cross-Vault copy needs no flags at all there:
 
 ```sh
-export VAULT_ADDR=… VAULT_TOKEN=…                  # destination
-export VAULT_SRC_ADDR=… VAULT_SRC_TOKEN=…          # source
+export VAULT_ADDR=… VAULT_TOKEN=… VAULT_KV_PREFIX=deployments/example-e2e  # destination
+export VAULT_SRC_ADDR=… VAULT_SRC_TOKEN=…                                  # source
 export VAULT_SRC_ENGINE=secret_v2 VAULT_SRC_PREFIX=deployments/example
 koc vault kv copy -r dev dev
 ```
+
+Both prefixes are worth exporting: an unset `VAULT_KV_PREFIX` leaves a relative
+destination path at the mount root, which for a `copy` is a silent write to the
+wrong place rather than a read that visibly 404s.
 
 Only secret **data** is copied. KV v2 `custom_metadata`, version history and
 `delete_version_after` are not, so the result is a copy of the current values,

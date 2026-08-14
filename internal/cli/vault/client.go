@@ -8,7 +8,10 @@
 // which already support VAULT_* env defaults, the ~/.vault-token cache and LCM
 // cluster auto-discovery (see internal/auth/credsfrom.go). "kv copy" adds
 // --src-vault-* overrides for the source side; each unset override inherits the
-// destination's value, so a copy within one Vault needs no extra flags.
+// destination's value, so a copy within one Vault needs no extra flags. The one
+// destination-side override is --dst-vault-kv-prefix: the global
+// --vault-kv-prefix is *both* the destination's prefix and the source's default,
+// so without it the two sides cannot be given different prefixes by name.
 package vaultcli
 
 import (
@@ -55,7 +58,7 @@ func (s *srcFlags) addTo(fs *pflag.FlagSet) {
 	fs.StringVar(&s.kvMount, "src-vault-kv-mount", os.Getenv("VAULT_SRC_ENGINE"),
 		"source Vault KV v2 mount (env VAULT_SRC_ENGINE; default: the destination's)")
 	fs.StringVar(&s.kvPrefix, "src-vault-kv-prefix", os.Getenv("VAULT_SRC_PREFIX"),
-		"path prefix for a relative source path (env VAULT_SRC_PREFIX; default: the destination's)")
+		"path prefix for a relative source path (env VAULT_SRC_PREFIX; default: --vault-kv-prefix)")
 	fs.StringVar(&s.cacert, "src-vault-cacert", os.Getenv("VAULT_SRC_CACERT"),
 		"CA bundle for the source Vault endpoint (env VAULT_SRC_CACERT; default: the destination's)")
 	fs.BoolVar(&s.insecure, "insecure-src-vault", auth.EnvBool("VAULT_SRC_SKIP_VERIFY"),
@@ -66,10 +69,7 @@ func (s *srcFlags) addTo(fs *pflag.FlagSet) {
 // its environment variable — the two ways a user asks for a value, including an
 // intentionally empty one (e.g. clearing an inherited namespace).
 func (s *srcFlags) explicit(flag, env string) bool {
-	if s.fs != nil && s.fs.Changed(flag) {
-		return true
-	}
-	return os.Getenv(env) != ""
+	return flagOrEnvSet(s.fs, flag, env)
 }
 
 func (s *srcFlags) str(flag, env, val, dst string) string {
@@ -77,6 +77,43 @@ func (s *srcFlags) str(flag, env, val, dst string) string {
 		return val
 	}
 	return dst
+}
+
+// flagOrEnvSet reports whether an override was asked for, either on the command
+// line or through its environment variable. It is what lets an explicitly empty
+// value (clearing an inherited prefix or namespace) differ from an unset one.
+func flagOrEnvSet(fs *pflag.FlagSet, flag, env string) bool {
+	if fs != nil && fs.Changed(flag) {
+		return true
+	}
+	return os.Getenv(env) != ""
+}
+
+// dstFlags holds the destination-side overrides of "kv copy". The destination
+// Vault itself is the global --vault-* one, so only the KV path prefix needs an
+// override here: the global --vault-kv-prefix is simultaneously the destination's
+// prefix and the source's inherited default, so raising it to name a destination
+// prefix silently moves the source too (and on an LCM node it is auto-discovered,
+// which a copy to another prefix would otherwise have to restate).
+type dstFlags struct {
+	kvPrefix string
+
+	fs *pflag.FlagSet // to tell "unset" from "explicitly empty"
+}
+
+func (d *dstFlags) addTo(fs *pflag.FlagSet) {
+	d.fs = fs
+	fs.StringVar(&d.kvPrefix, "dst-vault-kv-prefix", os.Getenv("VAULT_DST_PREFIX"),
+		"path prefix for a relative destination path (env VAULT_DST_PREFIX; default: --vault-kv-prefix)")
+}
+
+// prefix returns the prefix to resolve a relative destination path against:
+// --dst-vault-kv-prefix when given, otherwise the global --vault-kv-prefix.
+func (d *dstFlags) prefix(global string) string {
+	if flagOrEnvSet(d.fs, "dst-vault-kv-prefix", "VAULT_DST_PREFIX") {
+		return d.kvPrefix
+	}
+	return global
 }
 
 // config derives the source Vault config from the destination's, applying the

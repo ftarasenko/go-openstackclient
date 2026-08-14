@@ -31,7 +31,7 @@ group were missing.
 |---|---|
 | `--copy-from <env>` (`copy_kv_secrets`) | `koc vault kv copy -r <src> <dst>` |
 | `VAULT_SRC_ADDR` / `_TOKEN` / `_ENGINE` / `_PREFIX` | same env names, via `--src-vault-addr` / `-token` / `-kv-mount` / `-kv-prefix` |
-| `vault_addr` / `VAULT_TOKEN` / `vault_engine` / `vault_prefix` (target) | the global `--vault-addr` / `--vault-token` / `--vault-kv-mount` / `--vault-kv-prefix` |
+| `vault_addr` / `VAULT_TOKEN` / `vault_engine` / `vault_prefix` (target) | the global `--vault-addr` / `--vault-token` / `--vault-kv-mount` / `--vault-kv-prefix` (or `--dst-vault-kv-prefix` for the prefix alone) |
 | `hashicorp_vault_client()` token-xor-AppRole validation | `vault.New` (same rule) |
 | `client.secrets.kv.v2.list_secrets` | `vault.Client.ListKV` (+ recursive `WalkKV`) |
 | `client.secrets.kv.v2.read_secret_version` | `vault.Client.ReadKVDataAt` |
@@ -64,6 +64,14 @@ descends instead, and tolerates a 404 on an empty subfolder mid-walk.
   field by field, so a same-Vault copy needs no extra flags. Any explicit source
   credential replaces the destination's credentials as a group — otherwise an
   inherited token would silently win over an explicit source AppRole.
+- **The KV prefix is the one destination field that also needs its own override.**
+  The global `--vault-kv-prefix` is simultaneously the destination's prefix and the
+  source's default, so setting it to name a destination prefix moves the source
+  with it; and since it is usually auto-discovered, a copy to a *different* prefix
+  had to restate the discovered value as `--src-vault-kv-prefix` (or spell the
+  destination absolutely) to stand still. Hence `--dst-vault-kv-prefix`
+  (`VAULT_DST_PREFIX`): both sides default to the global prefix, and each override
+  moves only its own side. `copyPaths` is the seam that resolves the pair.
 - **`-r` is opt-in**, like `cp`: a folder without `-r` is an error naming the fix,
   and `-r` on a leaf still copies that one secret.
 - **Plan, then write.** The walk, the self-copy guard and the `--skip-existing`

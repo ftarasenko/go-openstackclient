@@ -319,6 +319,102 @@ func TestInsecureSrcVault_EnvBoolFailsClosed(t *testing.T) {
 	}
 }
 
+// TestCopyPaths covers the prefix rule of "kv copy": a relative path on either
+// side is resolved against the global --vault-kv-prefix, and each side can be
+// moved off it independently. The destination override is what makes a copy
+// between two prefixes of one Vault expressible without restating the global (or
+// cluster-discovered) prefix as the source's.
+func TestCopyPaths(t *testing.T) {
+	clearSrcEnv(t)
+	t.Setenv("VAULT_DST_PREFIX", "")
+
+	for _, tc := range []struct {
+		name             string
+		global           string
+		flags            []string
+		srcArg, dstArg   string
+		wantSrc, wantDst string
+	}{
+		{
+			name: "no prefix anywhere", srcArg: "dev/openrc", dstArg: "e2e/openrc",
+			wantSrc: "dev/openrc", wantDst: "e2e/openrc",
+		},
+		{
+			name:   "global prefix applies to both sides",
+			global: "deployments/example", srcArg: "dev", dstArg: "e2e",
+			wantSrc: "deployments/example/dev", wantDst: "deployments/example/e2e",
+		},
+		{
+			name:   "destination override moves only the destination",
+			global: "regions/a", flags: []string{"--dst-vault-kv-prefix", "regions/b"},
+			srcArg: "dev", dstArg: "dev",
+			wantSrc: "regions/a/dev", wantDst: "regions/b/dev",
+		},
+		{
+			name:   "source override moves only the source",
+			global: "regions/b", flags: []string{"--src-vault-kv-prefix", "regions/a"},
+			srcArg: "dev", dstArg: "dev",
+			wantSrc: "regions/a/dev", wantDst: "regions/b/dev",
+		},
+		{
+			name:   "both sides overridden",
+			global: "unused",
+			flags: []string{
+				"--src-vault-kv-prefix", "regions/a",
+				"--dst-vault-kv-prefix", "regions/b",
+			},
+			srcArg: "dev", dstArg: "dev",
+			wantSrc: "regions/a/dev", wantDst: "regions/b/dev",
+		},
+		{
+			// An explicitly empty override clears the inherited prefix, the same way
+			// --src-vault-namespace does for a namespace.
+			name:   "explicitly empty destination prefix clears the global one",
+			global: "regions/a", flags: []string{"--dst-vault-kv-prefix", ""},
+			srcArg: "dev", dstArg: "dev",
+			wantSrc: "regions/a/dev", wantDst: "dev",
+		},
+		{
+			name:   "an absolute destination ignores every prefix",
+			global: "regions/a", flags: []string{"--dst-vault-kv-prefix", "regions/b"},
+			srcArg: "dev", dstArg: "/regions/c/dev",
+			wantSrc: "regions/a/dev", wantDst: "regions/c/dev",
+		},
+		{
+			// The Vault CLI "<mount>/<path>" form is absolute too, and each side is
+			// stripped with its own mount.
+			name:   "mount-qualified paths are stripped per side",
+			global: "regions/a", srcArg: "src_kv/dev", dstArg: "dst_kv/e2e",
+			wantSrc: "dev", wantDst: "e2e",
+		},
+		{
+			// Already-prefixed input must not be prefixed twice — the pipeline form
+			// "$prefix/$ENV" stays correct with the prefix also configured.
+			name:   "an already-prefixed destination is not prefixed twice",
+			global: "deployments/example", srcArg: "dev",
+			dstArg:  "deployments/example/e2e",
+			wantSrc: "deployments/example/dev", wantDst: "deployments/example/e2e",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, d := &srcFlags{}, &dstFlags{}
+			fs := pflag.NewFlagSet("copy", pflag.ContinueOnError)
+			s.addTo(fs)
+			d.addTo(fs)
+			if err := fs.Parse(tc.flags); err != nil {
+				t.Fatal(err)
+			}
+			gotSrc, gotDst := copyPaths(s, d, tc.global, "src_kv", "dst_kv", tc.srcArg, tc.dstArg)
+			if gotSrc != tc.wantSrc {
+				t.Errorf("src path = %q, want %q", gotSrc, tc.wantSrc)
+			}
+			if gotDst != tc.wantDst {
+				t.Errorf("dst path = %q, want %q", gotDst, tc.wantDst)
+			}
+		})
+	}
+}
+
 // TestSrcFlagsConfig covers the inheritance rule: unset --src-vault-* fields
 // come from the destination, and any explicit source credential replaces the
 // destination's whole credential set.
