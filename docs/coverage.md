@@ -247,7 +247,9 @@ Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
-`false` would be dropped), `network qos rule create/set/show/delete` (one raw
+`false` would be dropped), `flavor set --description` (same cause: `omitempty` on
+`flavors.UpdateOpts.Description` cannot send the explicit null nova wants to
+clear it), `network qos rule create/set/show/delete` (one raw
 path per rule type, since `qos/rules` has no `minimum_packet_rate`), `dns quota reset` (gophercloud's `dns/v2/quotas` is
 Get/Update only — no `DELETE /v2/quotas/<project>`), and **30 of the 60 designate
 commands** — `zone export/import`, `zone blacklist`, `tld`, `zone
