@@ -435,43 +435,81 @@ func updateFlavorDescription(ctx context.Context, client *gophercloud.ServiceCli
 	return nil
 }
 
+// flavorUnsetFlags holds the flags of "flavor unset", the inverse of
+// "flavor set": --property removes extra specs by key, --project revokes a
+// project's access to a private flavor.
+type flavorUnsetFlags struct {
+	properties    []string
+	project       string
+	projectDomain string
+}
+
 func newFlavorUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var props []string
+	f := &flavorUnsetFlags{}
 	cmd := &cobra.Command{
 		Use:   "unset <flavor>",
-		Short: "Unset flavor properties (extra specs)",
+		Short: "Unset flavor properties and project access",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			client, session, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runFlavorUnset(ctx, client, args[0], props, cmd.OutOrStdout())
+			// Resolved here rather than inside the seam, for the reason given in
+			// newFlavorSetCommand.
+			projectID := ""
+			if f.project != "" {
+				identity, ierr := session.Identity()
+				if ierr != nil {
+					return ierr
+				}
+				projectID, ierr = resolve.ProjectIDInDomain(ctx, identity, f.project, f.projectDomain)
+				if ierr != nil {
+					return ierr
+				}
+			}
+			return runFlavorUnset(ctx, client, args[0], f, projectID, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringArrayVar(&props, "property", nil, "property to remove, as key (repeatable)")
+	fl := cmd.Flags()
+	fl.StringArrayVar(&f.properties, "property", nil, "property to remove, as key (repeatable)")
+	fl.StringVar(&f.project, "project", "", "revoke this project's access to the flavor (name or ID; private flavors only, admin)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
 	return cmd
 }
 
-func runFlavorUnset(ctx context.Context, client *gophercloud.ServiceClient, ref string, keys []string, _ io.Writer) error {
-	if len(keys) == 0 {
+func runFlavorUnset(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *flavorUnsetFlags, projectID string, _ io.Writer) error {
+	keys := make([]string, 0, len(f.properties))
+	for _, key := range f.properties {
+		if key = strings.TrimSpace(key); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 && projectID == "" {
 		return nil
 	}
-	id, err := resolveFlavorID(ctx, client, ref)
+	fl, err := resolveFlavor(ctx, client, ref)
 	if err != nil {
 		return err
 	}
+	// A public flavor has no access list to remove an entry from; reject it
+	// before the first DELETE, as "flavor set --project" does.
+	if projectID != "" && fl.IsPublic {
+		return fmt.Errorf("cannot revoke project access to flavor %q: it is public, and access lists apply to private flavors only", ref)
+	}
+
 	for _, key := range keys {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		if err := flavors.DeleteExtraSpec(ctx, client, id, key).ExtractErr(); err != nil {
+		if err := flavors.DeleteExtraSpec(ctx, client, fl.ID, key).ExtractErr(); err != nil {
 			return fmt.Errorf("unsetting property %q on flavor %q: %w", key, ref, err)
+		}
+	}
+	if projectID != "" {
+		if _, rerr := flavors.RemoveAccess(ctx, client, fl.ID, flavors.RemoveAccessOpts{Tenant: projectID}).Extract(); rerr != nil {
+			return fmt.Errorf("revoking project %q access to flavor %q: %w", projectID, ref, rerr)
 		}
 	}
 	return nil
