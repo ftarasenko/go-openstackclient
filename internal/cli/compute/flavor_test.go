@@ -409,7 +409,8 @@ func TestRunFlavorUnset_RequestMethod(t *testing.T) {
 	client := computeClient(fakeServer, "2.1")
 
 	var buf bytes.Buffer
-	if err := runFlavorUnset(context.Background(), client, "1", []string{"hw:cpu_policy"}, &buf); err != nil {
+	f := &flavorUnsetFlags{properties: []string{"hw:cpu_policy"}}
+	if err := runFlavorUnset(context.Background(), client, "1", f, "", &buf); err != nil {
 		t.Fatalf("runFlavorUnset returned error: %v", err)
 	}
 
@@ -430,7 +431,7 @@ func TestRunFlavorUnset_NoKeysSkipsRequest(t *testing.T) {
 
 	client := computeClient(fakeServer, "2.1")
 	var buf bytes.Buffer
-	if err := runFlavorUnset(context.Background(), client, "1", nil, &buf); err != nil {
+	if err := runFlavorUnset(context.Background(), client, "1", &flavorUnsetFlags{}, "", &buf); err != nil {
 		t.Fatalf("runFlavorUnset with no keys returned error: %v", err)
 	}
 }
@@ -811,5 +812,133 @@ func TestResolveFlavor_UnknownRefReportsMiss(t *testing.T) {
 	}
 	if len(listQueries) != 2 || listQueries[0] != "" || listQueries[1] != "None" {
 		t.Errorf("is_public queries = %v, want the default view then [None]", listQueries)
+	}
+}
+
+// TestRunFlavorUnset_ProjectAccess asserts --project posts removeTenantAccess for
+// a private flavor, resolved through the all-access listing retry.
+func TestRunFlavorUnset_ProjectAccess(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if r.URL.Query().Get("is_public") == "None" {
+			_, _ = w.Write([]byte(flavorListBody))
+			return
+		}
+		_, _ = w.Write([]byte(flavorPublicOnlyListBody))
+	})
+
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors/2/action", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavor_access": []}`))
+	})
+
+	client := computeClient(fakeServer, "2.1")
+
+	f := &flavorUnsetFlags{project: "engineering"}
+	var buf bytes.Buffer
+	if err := runFlavorUnset(context.Background(), client, "m1.small", f, "0f1e2d3c4b5a69788796a5b4c3d2e1f0", &buf); err != nil {
+		t.Fatalf("runFlavorUnset returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("request method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/flavors/2/action" {
+		t.Errorf("request path = %q, want /flavors/2/action", gotPath)
+	}
+	access, ok := gotBody["removeTenantAccess"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body missing 'removeTenantAccess' object: %#v", gotBody)
+	}
+	if access["tenant"] != "0f1e2d3c4b5a69788796a5b4c3d2e1f0" {
+		t.Errorf("removeTenantAccess.tenant = %v, want the resolved project ID", access["tenant"])
+	}
+}
+
+// TestRunFlavorUnset_ProjectAccessRejectsPublicFlavor asserts the public-flavor
+// guard fires before the property DELETEs, so a mixed "flavor unset" cannot
+// half-apply.
+func TestRunFlavorUnset_ProjectAccessRejectsPublicFlavor(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+	// No os-extra_specs or action handler: either request would 404 and fail.
+
+	client := computeClient(fakeServer, "2.1")
+
+	f := &flavorUnsetFlags{project: "engineering", properties: []string{"hw:cpu_policy"}}
+	var buf bytes.Buffer
+	err := runFlavorUnset(context.Background(), client, "m1.tiny", f, "0f1e2d3c4b5a69788796a5b4c3d2e1f0", &buf)
+	if err == nil {
+		t.Fatal("runFlavorUnset returned nil error; want a rejection for a public flavor")
+	}
+	if !strings.Contains(err.Error(), "public") {
+		t.Errorf("error = %v, want it to name the flavor's public visibility", err)
+	}
+}
+
+// TestRunFlavorUnset_PropertiesAndProject asserts both halves of one command run:
+// the extra specs are deleted and the access entry removed.
+func TestRunFlavorUnset_PropertiesAndProject(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if r.URL.Query().Get("is_public") == "None" {
+			_, _ = w.Write([]byte(flavorListBody))
+			return
+		}
+		_, _ = w.Write([]byte(flavorPublicOnlyListBody))
+	})
+
+	var calls []string
+	fakeServer.Mux.HandleFunc("/flavors/2/os-extra_specs/hw:numa_nodes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method on %s = %q, want DELETE", r.URL.Path, r.Method)
+		}
+		calls = append(calls, "delete hw:numa_nodes")
+		w.WriteHeader(http.StatusOK)
+	})
+	fakeServer.Mux.HandleFunc("/flavors/2/action", func(w http.ResponseWriter, _ *http.Request) {
+		calls = append(calls, "remove access")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavor_access": []}`))
+	})
+
+	client := computeClient(fakeServer, "2.1")
+
+	// The empty key is skipped rather than turned into a DELETE on the collection
+	// URL, which would remove every spec.
+	f := &flavorUnsetFlags{properties: []string{"hw:numa_nodes", "  "}, project: "engineering"}
+	var buf bytes.Buffer
+	if err := runFlavorUnset(context.Background(), client, "m1.small", f, "0f1e2d3c4b5a69788796a5b4c3d2e1f0", &buf); err != nil {
+		t.Fatalf("runFlavorUnset returned error: %v", err)
+	}
+
+	want := []string{"delete hw:numa_nodes", "remove access"}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Errorf("calls = %v, want %v", calls, want)
 	}
 }
