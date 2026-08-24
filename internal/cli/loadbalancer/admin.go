@@ -1002,9 +1002,15 @@ func runFlavorShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		[]any{fl.ID, fl.Name, fl.Description, fl.Enabled, fl.FlavorProfileId})
 }
 
+type octaviaFlavorCreateFlags struct {
+	name          string
+	description   string
+	flavorProfile string
+	disable       bool
+}
+
 func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var flagName, description, flavorProfile string
-	var disable bool
+	f := &octaviaFlavorCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create [<name>]",
 		Short: "Create a load balancer flavor",
@@ -1013,11 +1019,11 @@ func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			name, err := nameflag.Resolve(args, flagName, true)
+			name, err := nameflag.Resolve(args, f.name, true)
 			if err != nil {
 				return err
 			}
-			if flavorProfile == "" {
+			if f.flavorProfile == "" {
 				return fmt.Errorf("--flavor-profile is required")
 			}
 			ctx := cmd.Context()
@@ -1025,31 +1031,31 @@ func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runFlavorCreate(ctx, client, o, name, description, flavorProfile, !disable, cmd.OutOrStdout())
+			return runFlavorCreate(ctx, client, o, name, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	// Upstream octavia requires --name here and takes no positional; koc grew the
 	// positional first. Both work — see internal/cli/nameflag.
-	fl.StringVar(&flagName, "name", "", "name of the flavor (upstream spelling; the positional form also works)")
-	fl.StringVar(&description, "description", "", "flavor description")
-	fl.StringVar(&flavorProfile, "flavor-profile", "", "flavor profile to base the flavor on (name or ID, required)")
-	fl.BoolVar(&disable, "disable", false, "create the flavor disabled, so it cannot be selected yet")
+	fl.StringVar(&f.name, "name", "", "name of the flavor (upstream spelling; the positional form also works)")
+	fl.StringVar(&f.description, "description", "", "flavor description")
+	fl.StringVar(&f.flavorProfile, "flavor-profile", "", "flavor profile to base the flavor on (name or ID, required)")
+	fl.BoolVar(&f.disable, "disable", false, "create the flavor disabled, so it cannot be selected yet")
 	return cmd
 }
 
 func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name, description, flavorProfile string, enabled bool, w io.Writer,
+	name string, f *octaviaFlavorCreateFlags, w io.Writer,
 ) error {
-	profileID, err := resolveFlavorProfileID(ctx, client, flavorProfile)
+	profileID, err := resolveFlavorProfileID(ctx, client, f.flavorProfile)
 	if err != nil {
 		return err
 	}
 	fl, err := flavors.Create(ctx, client, flavors.CreateOpts{
 		Name:            name,
-		Description:     description,
+		Description:     f.description,
 		FlavorProfileId: profileID,
-		Enabled:         enabled,
+		Enabled:         !f.disable,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating load balancer flavor %q: %w", name, err)
@@ -1059,9 +1065,18 @@ func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		[]any{fl.ID, fl.Name, fl.Description, fl.Enabled, fl.FlavorProfileId})
 }
 
+type octaviaFlavorSetFlags struct {
+	name        string
+	description string
+	enable      bool
+	disable     bool
+
+	// changed is the set of attribute flags actually given, captured in RunE.
+	changed changedSet
+}
+
 func newFlavorSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, description string
-	var enable, disable bool
+	f := &octaviaFlavorSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <flavor>",
 		Short: "Update a load balancer flavor",
@@ -1079,14 +1094,15 @@ func newFlavorSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runFlavorSet(ctx, client, o, args[0], name, description, enable, changedFlags(fl), cmd.OutOrStdout())
+			f.changed = changedFlags(fl)
+			return runFlavorSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new flavor name")
-	fl.StringVar(&description, "description", "", "new flavor description")
-	fl.BoolVar(&enable, "enable", false, "allow the flavor to be selected")
-	fl.BoolVar(&disable, "disable", false, "stop the flavor from being selected")
+	fl.StringVar(&f.name, "name", "", "new flavor name")
+	fl.StringVar(&f.description, "description", "", "new flavor description")
+	fl.BoolVar(&f.enable, "enable", false, "allow the flavor to be selected")
+	fl.BoolVar(&f.disable, "disable", false, "stop the flavor from being selected")
 	return cmd
 }
 
@@ -1094,8 +1110,9 @@ func newFlavorSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // a plain bool with omitempty, so "disabled" cannot be expressed by that field —
 // --disable therefore goes through a raw PUT that sends enabled:false explicitly.
 func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, name, description string, enable bool, changed changedSet, w io.Writer,
+	ref string, f *octaviaFlavorSetFlags, w io.Writer,
 ) error {
+	changed := f.changed
 	if !changed["name"] && !changed["description"] && !changed["enable"] && !changed["disable"] {
 		return fmt.Errorf("nothing to set: pass at least one attribute flag")
 	}
@@ -1112,14 +1129,14 @@ func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	opts := flavors.UpdateOpts{}
 	touched := false
 	if changed["name"] {
-		opts.Name = name
+		opts.Name = f.name
 		touched = true
 	}
 	if changed["description"] {
-		opts.Description = description
+		opts.Description = f.description
 		touched = true
 	}
-	if changed["enable"] && enable {
+	if changed["enable"] && f.enable {
 		opts.Enabled = true
 		touched = true
 	}
@@ -1351,8 +1368,14 @@ func runFlavorProfileCreate(ctx context.Context, client *gophercloud.ServiceClie
 		[]any{p.ID, p.Name, p.ProviderName, p.FlavorData})
 }
 
+type flavorProfileSetFlags struct {
+	name         string
+	providerName string
+	flavorData   string
+}
+
 func newFlavorProfileSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, providerName, flavorData string
+	f := &flavorProfileSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <flavorprofile>",
 		Short: "Update a flavor profile",
@@ -1370,18 +1393,18 @@ func newFlavorProfileSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			return runFlavorProfileSet(ctx, client, o, args[0], name, providerName, flavorData, cmd.OutOrStdout())
+			return runFlavorProfileSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new profile name")
-	fl.StringVar(&providerName, "provider", "", "new provider driver")
-	fl.StringVar(&flavorData, flagFlavorData, "", "new driver-specific JSON")
+	fl.StringVar(&f.name, "name", "", "new profile name")
+	fl.StringVar(&f.providerName, "provider", "", "new provider driver")
+	fl.StringVar(&f.flavorData, flagFlavorData, "", "new driver-specific JSON")
 	return cmd
 }
 
 func runFlavorProfileSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, name, providerName, flavorData string, w io.Writer,
+	ref string, f *flavorProfileSetFlags, w io.Writer,
 ) error {
 	id, err := resolveFlavorProfileID(ctx, client, ref)
 	if err != nil {
@@ -1389,9 +1412,9 @@ func runFlavorProfileSet(ctx context.Context, client *gophercloud.ServiceClient,
 	}
 	// Every UpdateOpts field is omitempty, so the empty ones are simply not sent.
 	p, err := flavorprofiles.Update(ctx, client, id, flavorprofiles.UpdateOpts{
-		Name:         name,
-		ProviderName: providerName,
-		FlavorData:   flavorData,
+		Name:         f.name,
+		ProviderName: f.providerName,
+		FlavorData:   f.flavorData,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("updating flavor profile %q: %w", ref, err)

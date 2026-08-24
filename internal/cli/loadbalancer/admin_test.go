@@ -388,8 +388,8 @@ func TestRunFlavorSet_DisableSendsEnabledFalse(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runFlavorSet(context.Background(), lbClient(fakeServer), o, "fl1", "", "", false,
-		changedSet{"disable": true}, &buf)
+	err := runFlavorSet(context.Background(), lbClient(fakeServer), o, "fl1",
+		&octaviaFlavorSetFlags{changed: changedSet{"disable": true}}, &buf)
 	if err != nil {
 		t.Fatalf("runFlavorSet error: %v", err)
 	}
@@ -407,7 +407,8 @@ func TestRunFlavorSet_RejectsEmptyUpdate(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runFlavorSet(context.Background(), lbClient(fakeServer), o, "fl1", "", "", false, changedSet{}, &buf)
+	err := runFlavorSet(context.Background(), lbClient(fakeServer), o, "fl1",
+		&octaviaFlavorSetFlags{changed: changedSet{}}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "nothing to set") {
 		t.Fatalf("expected a 'nothing to set' error, got %v", err)
 	}

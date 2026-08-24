@@ -218,6 +218,11 @@ type memberWriteFlags struct {
 	enable         bool
 	disable        bool
 
+	// Resolved in RunE so the run seams take settled data: changed is the set of
+	// flags actually given, refs the project/subnet IDs looked up by name.
+	changed changedSet
+	refs    resolvedLBRefs
+
 	adminStateUp *bool
 }
 
@@ -276,7 +281,8 @@ func newMemberCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runMemberCreate(ctx, client, o, args[0], name, f, refs, changedFlags(fl), cmd.OutOrStdout())
+			f.refs, f.changed = refs, changedFlags(fl)
+			return runMemberCreate(ctx, client, o, args[0], name, f, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, true)
@@ -284,8 +290,9 @@ func newMemberCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runMemberCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	poolRef, name string, f *memberWriteFlags, refs resolvedLBRefs, changed changedSet, w io.Writer,
+	poolRef, name string, f *memberWriteFlags, w io.Writer,
 ) error {
+	changed := f.changed
 	poolID, err := resolvePoolID(ctx, client, poolRef)
 	if err != nil {
 		return err
@@ -294,8 +301,8 @@ func runMemberCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		Name:           name,
 		Address:        f.address,
 		ProtocolPort:   f.protocolPort,
-		SubnetID:       refs.vipSubnetID,
-		ProjectID:      refs.projectID,
+		SubnetID:       f.refs.vipSubnetID,
+		ProjectID:      f.refs.projectID,
 		MonitorAddress: f.monitorAddress,
 		AdminStateUp:   f.adminStateUp,
 		Tags:           f.tag,
@@ -349,7 +356,8 @@ func newMemberSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runMemberSet(ctx, client, o, args[0], args[1], f, changedFlags(fl), cmd.OutOrStdout())
+			f.changed = changedFlags(fl)
+			return runMemberSet(ctx, client, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, false)
@@ -357,8 +365,9 @@ func newMemberSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runMemberSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	poolRef, memberRef string, f *memberWriteFlags, changed changedSet, w io.Writer,
+	poolRef, memberRef string, f *memberWriteFlags, w io.Writer,
 ) error {
+	changed := f.changed
 	opts := pools.UpdateMemberOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 

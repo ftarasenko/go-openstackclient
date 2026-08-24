@@ -225,11 +225,11 @@ func TestRunMemberCreate_ExplicitZeroWeightIsSent(t *testing.T) {
 		_, _ = w.Write([]byte(`{"member": {"id": "me1", "name": "web-1", "address": "10.0.0.21", "protocol_port": 80, "weight": 0}}`))
 	})
 
-	f := &memberWriteFlags{address: "10.0.0.21", protocolPort: 80, weight: 0}
+	f := &memberWriteFlags{address: "10.0.0.21", protocolPort: 80, weight: 0,
+		changed: changedSet{"weight": true}}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runMemberCreate(context.Background(), lbClient(fakeServer), o, "po1", "web-1", f,
-		resolvedLBRefs{}, changedSet{"weight": true}, &buf)
+	err := runMemberCreate(context.Background(), lbClient(fakeServer), o, "po1", "web-1", f, &buf)
 	if err != nil {
 		t.Fatalf("runMemberCreate error: %v", err)
 	}
@@ -256,11 +256,10 @@ func TestRunMemberCreate_UnsetWeightIsOmitted(t *testing.T) {
 		_, _ = w.Write([]byte(`{"member": {"id": "me1", "name": "web-1"}}`))
 	})
 
-	f := &memberWriteFlags{address: "10.0.0.21", protocolPort: 80}
+	f := &memberWriteFlags{address: "10.0.0.21", protocolPort: 80, changed: changedSet{}}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runMemberCreate(context.Background(), lbClient(fakeServer), o, "po1", "web-1", f,
-		resolvedLBRefs{}, changedSet{}, &buf)
+	err := runMemberCreate(context.Background(), lbClient(fakeServer), o, "po1", "web-1", f, &buf)
 	if err != nil {
 		t.Fatalf("runMemberCreate error: %v", err)
 	}
@@ -331,7 +330,7 @@ func TestRunHealthMonitorCreate_RequestBody(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runHealthMonitorCreate(context.Background(), lbClient(fakeServer), o, "po1", "http-check", f, "", &buf)
+	err := runHealthMonitorCreate(context.Background(), lbClient(fakeServer), o, "po1", "http-check", f, &buf)
 	if err != nil {
 		t.Fatalf("runHealthMonitorCreate error: %v", err)
 	}

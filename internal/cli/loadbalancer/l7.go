@@ -592,6 +592,9 @@ type l7RuleWriteFlags struct {
 	enable      bool
 	disable     bool
 
+	// changed is the set of flags actually given, captured in RunE.
+	changed changedSet
+
 	adminStateUp *bool
 }
 
@@ -704,7 +707,8 @@ func newL7RuleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runL7RuleSet(ctx, client, o, args[0], args[1], f, changedFlags(fl), cmd.OutOrStdout())
+			f.changed = changedFlags(fl)
+			return runL7RuleSet(ctx, client, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, false)
@@ -712,8 +716,9 @@ func newL7RuleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runL7RuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	policyRef, ruleID string, f *l7RuleWriteFlags, changed changedSet, w io.Writer,
+	policyRef, ruleID string, f *l7RuleWriteFlags, w io.Writer,
 ) error {
+	changed := f.changed
 	opts := l7policies.UpdateRuleOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 

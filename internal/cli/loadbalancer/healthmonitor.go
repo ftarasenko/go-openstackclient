@@ -213,6 +213,9 @@ type healthMonitorWriteFlags struct {
 	enable         bool
 	disable        bool
 
+	// projectID is --project resolved to an ID in RunE.
+	projectID string
+
 	adminStateUp *bool
 }
 
@@ -288,7 +291,8 @@ func newHealthMonitorCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 			if err != nil {
 				return err
 			}
-			return runHealthMonitorCreate(ctx, client, o, args[0], name, f, refs.projectID, cmd.OutOrStdout())
+			f.projectID = refs.projectID
+			return runHealthMonitorCreate(ctx, client, o, args[0], name, f, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd, true)
@@ -296,7 +300,7 @@ func newHealthMonitorCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runHealthMonitorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	poolRef, name string, f *healthMonitorWriteFlags, projectID string, w io.Writer,
+	poolRef, name string, f *healthMonitorWriteFlags, w io.Writer,
 ) error {
 	poolID, err := resolvePoolID(ctx, client, poolRef)
 	if err != nil {
@@ -315,7 +319,7 @@ func runHealthMonitorCreate(ctx context.Context, client *gophercloud.ServiceClie
 		HTTPVersion:    f.httpVersion,
 		ExpectedCodes:  f.expectedCodes,
 		DomainName:     f.domainName,
-		ProjectID:      projectID,
+		ProjectID:      f.projectID,
 		Tags:           f.tag,
 		AdminStateUp:   f.adminStateUp,
 	}
