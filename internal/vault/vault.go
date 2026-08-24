@@ -226,30 +226,18 @@ func (c *Client) WalkKV(ctx context.Context, mount, root string) ([]string, erro
 	var out []string
 	var walk func(rel string) error
 	walk = func(rel string) error {
-		keys, err := c.ListKV(ctx, mount, joinKV(root, rel))
+		children, err := c.listKVChildren(ctx, mount, joinKV(root, rel))
 		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return nil
-			}
 			return err
 		}
-		for _, k := range keys {
-			if k == "" {
-				continue
-			}
-			// The listing is data from the server, and callers join it onto a
-			// destination path, so a key that could escape the subtree fails the walk
-			// rather than being silently carried along.
-			if err := ValidateRelPath(strings.TrimSuffix(k, "/")); err != nil {
-				return fmt.Errorf("vault listing of %q returned an unusable key %q: %w", joinKV(root, rel), k, err)
-			}
-			if strings.HasSuffix(k, "/") {
-				if err := walk(joinKV(rel, strings.TrimSuffix(k, "/"))); err != nil {
+		for _, ch := range children {
+			if ch.folder {
+				if err := walk(joinKV(rel, ch.name)); err != nil {
 					return err
 				}
 				continue
 			}
-			out = append(out, joinKV(rel, k))
+			out = append(out, joinKV(rel, ch.name))
 		}
 		return nil
 	}
@@ -258,6 +246,45 @@ func (c *Client) WalkKV(ctx context.Context, mount, root string) ([]string, erro
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// kvChild is one validated entry of a KV v2 listing: a leaf secret, or a folder
+// the walk descends into. name never carries the trailing "/" vault appends to
+// folders.
+type kvChild struct {
+	name   string
+	folder bool
+}
+
+// listKVChildren lists the entries directly under path and validates each one.
+// It is the half of WalkKV that talks to vault, kept separate from the recursion
+// so both can be exercised on their own.
+//
+// An absent or empty folder yields no children rather than an error, which is
+// what lets a walk skip a subfolder that disappeared mid-traversal. Empty keys
+// are dropped. Every other key is validated before it is returned: the listing
+// is data from the server and callers join it onto a destination path, so a key
+// that could escape the subtree fails the walk rather than being carried along.
+func (c *Client) listKVChildren(ctx context.Context, mount, path string) ([]kvChild, error) {
+	keys, err := c.ListKV(ctx, mount, path)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	children := make([]kvChild, 0, len(keys))
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		name := strings.TrimSuffix(k, "/")
+		if err := ValidateRelPath(name); err != nil {
+			return nil, fmt.Errorf("vault listing of %q returned an unusable key %q: %w", path, k, err)
+		}
+		children = append(children, kvChild{name: name, folder: strings.HasSuffix(k, "/")})
+	}
+	return children, nil
 }
 
 // kvPath builds "/v1/<mount>/<api>/<path>" for the KV v2 data/metadata APIs.
