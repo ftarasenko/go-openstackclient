@@ -53,6 +53,12 @@ type quotaSetFlags struct {
 	securityGroupRules int
 	rbacPolicies       int
 	trunks             int
+
+	// Resolved in RunE: fl is the command's flag set (a quota of zero is a real
+	// value, so "given" cannot be read off the field), and given names the
+	// services whose flags were used.
+	fl    *pflag.FlagSet
+	given serviceSelection
 }
 
 // quotaFlag binds one CLI flag name to the int it populates.
@@ -110,9 +116,9 @@ func newQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			fl := cmd.Flags()
-			given := f.givenBy(fl)
-			if !given.compute && !given.volume && !given.network {
+			f.fl = cmd.Flags()
+			f.given = f.givenBy(f.fl)
+			if !f.given.compute && !f.given.volume && !f.given.network {
 				return fmt.Errorf("nothing to set: pass at least one quota flag (see \"koc quota set --help\")")
 			}
 			ctx := cmd.Context()
@@ -124,7 +130,7 @@ func newQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runQuotaSet(ctx, s, o, project, f, fl, given, cmd.OutOrStdout())
+			return runQuotaSet(ctx, s, o, project, f, cmd.OutOrStdout())
 		},
 	}
 
@@ -188,8 +194,9 @@ func (f *quotaSetFlags) givenBy(fl *pflag.FlagSet) serviceSelection {
 // partial success: the three APIs have no shared transaction, so an error after
 // the first update is reported with the services already changed named in it.
 func runQuotaSet(ctx context.Context, s *session, o *output.Options, project string,
-	f *quotaSetFlags, fl *pflag.FlagSet, given serviceSelection, w io.Writer,
+	f *quotaSetFlags, w io.Writer,
 ) error {
+	fl, given := f.fl, f.given
 	// ptr yields a pointer to the flag's value only when it was actually given,
 	// which is how every quota UpdateOpts distinguishes "set to N" from
 	// "leave alone" (all fields are *int with omitempty).

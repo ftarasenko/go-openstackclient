@@ -206,14 +206,15 @@ func TestRunQuotaSet_OnlySendsGivenQuotas(t *testing.T) {
 	})
 
 	f, fl := setFlagSet(t, []string{"--cores=64", "--ram=131072"})
-	given := f.givenBy(fl)
+	f.fl, f.given = fl, f.givenBy(fl)
+	given := f.given
 	if !given.compute || given.volume || given.network {
 		t.Fatalf("givenBy() = %+v, want compute only", given)
 	}
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runQuotaSet(context.Background(), oneServerSession(fakeServer), o, "p1", f, fl, given, &buf)
+	err := runQuotaSet(context.Background(), oneServerSession(fakeServer), o, "p1", f, &buf)
 	if err != nil {
 		t.Fatalf("runQuotaSet error: %v", err)
 	}
@@ -238,14 +239,15 @@ func TestRunQuotaSet_ExplicitZeroIsSent(t *testing.T) {
 	})
 
 	f, fl := setFlagSet(t, []string{"--instances=0"})
-	given := f.givenBy(fl)
+	f.fl, f.given = fl, f.givenBy(fl)
+	given := f.given
 	if !given.compute {
 		t.Fatalf("givenBy() = %+v, want compute selected for an explicit zero", given)
 	}
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runQuotaSet(context.Background(), oneServerSession(fakeServer), o, "p1", f, fl, given, &buf); err != nil {
+	if err := runQuotaSet(context.Background(), oneServerSession(fakeServer), o, "p1", f, &buf); err != nil {
 		t.Fatalf("runQuotaSet error: %v", err)
 	}
 }
@@ -284,7 +286,8 @@ func TestRunQuotaSet_FansOutAcrossServices(t *testing.T) {
 	})
 
 	f, fl := setFlagSet(t, []string{"--cores=64", "--gigabytes=4000", "--ports=500"})
-	given := f.givenBy(fl)
+	f.fl, f.given = fl, f.givenBy(fl)
+	given := f.given
 	if !given.compute || !given.volume || !given.network {
 		t.Fatalf("givenBy() = %+v, want all three services", given)
 	}
@@ -292,7 +295,7 @@ func TestRunQuotaSet_FansOutAcrossServices(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	s := quotaSession(fakeServer, volumeServer, networkServer)
-	if err := runQuotaSet(context.Background(), s, o, "p1", f, fl, given, &buf); err != nil {
+	if err := runQuotaSet(context.Background(), s, o, "p1", f, &buf); err != nil {
 		t.Fatalf("runQuotaSet error: %v", err)
 	}
 	if !computeCalled || !volumeCalled || !networkCalled {
@@ -335,12 +338,12 @@ func TestRunQuotaSet_PartialFailureNamesAppliedServices(t *testing.T) {
 	})
 
 	f, fl := setFlagSet(t, []string{"--cores=64", "--ports=500"})
-	given := f.givenBy(fl)
+	f.fl, f.given = fl, f.givenBy(fl)
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	s := quotaSession(fakeServer, fakeServer, networkServer)
-	err := runQuotaSet(context.Background(), s, o, "p1", f, fl, given, &buf)
+	err := runQuotaSet(context.Background(), s, o, "p1", f, &buf)
 	if err == nil {
 		t.Fatal("runQuotaSet returned nil on a failing network update")
 	}
