@@ -41,7 +41,7 @@ func TestRunNodeClean_InlineJSONSteps(t *testing.T) {
 	f := &stepsFlags{steps: `[{"interface": "deploy", "step": "erase_devices", "args": {"tags": ["fast"]}}]`}
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeClean(context.Background(), client, id, f, false, 0, strings.NewReader(""), &out); err != nil {
+	if err := runNodeClean(context.Background(), client, id, f, &waitFlags{}, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("runNodeClean returned error: %v", err)
 	}
 
@@ -86,7 +86,7 @@ func TestRunNodeClean_YAMLStepsFromFileWithExtras(t *testing.T) {
 	f := &stepsFlags{steps: path, disableRamdisk: true}
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeClean(context.Background(), client, id, f, false, 0, strings.NewReader(""), &out); err != nil {
+	if err := runNodeClean(context.Background(), client, id, f, &waitFlags{}, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("runNodeClean returned error: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestRunNodeClean_StepsFromStdin(t *testing.T) {
 	stdin := strings.NewReader(`[{"interface": "deploy", "step": "erase_devices_metadata"}]`)
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeClean(context.Background(), client, id, f, false, 0, stdin, &out); err != nil {
+	if err := runNodeClean(context.Background(), client, id, f, &waitFlags{}, stdin, &out); err != nil {
 		t.Fatalf("runNodeClean returned error: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestRunNodeClean_RunbookInsteadOfSteps(t *testing.T) {
 	f := &stepsFlags{runbook: "CUSTOM_AGGRESSIVE_CLEANING"}
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeClean(context.Background(), client, id, f, false, 0, strings.NewReader(""), &out); err != nil {
+	if err := runNodeClean(context.Background(), client, id, f, &waitFlags{}, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("runNodeClean returned error: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestRunNodeRescue_SendsPassword(t *testing.T) {
 
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeRescue(context.Background(), client, id, "s3cret", false, 0, &out); err != nil {
+	if err := runNodeRescue(context.Background(), client, id, "s3cret", &waitFlags{}, &out); err != nil {
 		t.Fatalf("runNodeRescue returned error: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func TestRunNodeRescue_WaitReachesRescue(t *testing.T) {
 
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeRescue(context.Background(), client, id, "s3cret", true, time.Minute, &out); err != nil {
+	if err := runNodeRescue(context.Background(), client, id, "s3cret", &waitFlags{wait: true, timeout: time.Minute}, &out); err != nil {
 		t.Fatalf("runNodeRescue returned error: %v", err)
 	}
 	th.AssertEquals(t, "Node "+id+" reached provision state \"rescue\"\n", out.String())
@@ -204,7 +204,7 @@ func TestRunNodeService_ExplainsMicroversionOnOldCloud(t *testing.T) {
 	f := &stepsFlags{steps: `[{"interface": "deploy", "step": "reset"}]`}
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	err := runNodeService(context.Background(), client, id, f, false, 0, strings.NewReader(""), &out)
+	err := runNodeService(context.Background(), client, id, f, &waitFlags{}, strings.NewReader(""), &out)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -231,7 +231,7 @@ func TestRunNodeService_KeepsErrorOnNewCloud(t *testing.T) {
 	f := &stepsFlags{steps: `[{"interface": "deploy", "step": "reset"}]`}
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	err := runNodeService(context.Background(), client, id, f, false, 0, strings.NewReader(""), &out)
+	err := runNodeService(context.Background(), client, id, f, &waitFlags{}, strings.NewReader(""), &out)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -256,7 +256,7 @@ func TestRunNodeUnhold_SettlesAndReportsState(t *testing.T) {
 
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
-	if err := runNodeUnhold(context.Background(), client, id, true, time.Minute, &out); err != nil {
+	if err := runNodeUnhold(context.Background(), client, id, &waitFlags{wait: true, timeout: time.Minute}, &out); err != nil {
 		t.Fatalf("runNodeUnhold returned error: %v", err)
 	}
 	th.AssertEquals(t, "unhold", (*body)["target"])

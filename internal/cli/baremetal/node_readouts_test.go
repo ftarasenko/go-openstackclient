@@ -92,8 +92,9 @@ func TestRunNodeVIFAttach_BodyIncludesPortAndInfo(t *testing.T) {
 	var out bytes.Buffer
 	client := baremetalClient(fakeServer, "latest")
 	err := runNodeVIFAttach(context.Background(), client, readoutNodeID,
-		"22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333", "",
-		[]string{"tenant_vif_port_id=44444444-4444-4444-4444-444444444444"}, &out)
+		"22222222-2222-2222-2222-222222222222",
+		&vifAttachFlags{portUUID: "33333333-3333-3333-3333-333333333333",
+			info: []string{"tenant_vif_port_id=44444444-4444-4444-4444-444444444444"}}, &out)
 	if err != nil {
 		t.Fatalf("runNodeVIFAttach returned error: %v", err)
 	}

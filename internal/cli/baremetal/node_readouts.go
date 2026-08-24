@@ -141,9 +141,14 @@ func (o vifAttachOpts) ToVirtualInterfaceMap() (map[string]any, error) {
 	return body, nil
 }
 
+type vifAttachFlags struct {
+	portUUID      string
+	portgroupUUID string
+	info          []string
+}
+
 func newNodeVIFAttachCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var portUUID, portgroupUUID string
-	var info []string
+	f := &vifAttachFlags{}
 	cmd := &cobra.Command{
 		Use:   "attach <node> <vif-id>",
 		Short: "Attach a virtual interface to a node",
@@ -157,29 +162,29 @@ func newNodeVIFAttachCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			return runNodeVIFAttach(ctx, client, args[0], args[1], portUUID, portgroupUUID, info, cmd.OutOrStdout())
+			return runNodeVIFAttach(ctx, client, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&portUUID, "port-uuid", "", "UUID of the baremetal port to attach the VIF to")
-	fl.StringVar(&portgroupUUID, "portgroup-uuid", "", "UUID of the baremetal port group to attach the VIF to")
-	fl.StringArrayVar(&info, "vif-info", nil, "extra key=value metadata to record with the VIF (repeatable)")
+	fl.StringVar(&f.portUUID, "port-uuid", "", "UUID of the baremetal port to attach the VIF to")
+	fl.StringVar(&f.portgroupUUID, "portgroup-uuid", "", "UUID of the baremetal port group to attach the VIF to")
+	fl.StringArrayVar(&f.info, "vif-info", nil, "extra key=value metadata to record with the VIF (repeatable)")
 	cmd.MarkFlagsMutuallyExclusive("port-uuid", "portgroup-uuid")
 	return cmd
 }
 
-func runNodeVIFAttach(ctx context.Context, client *gophercloud.ServiceClient, id, vifID,
-	portUUID, portgroupUUID string, info []string, w io.Writer,
+func runNodeVIFAttach(ctx context.Context, client *gophercloud.ServiceClient, id, vifID string,
+	f *vifAttachFlags, w io.Writer,
 ) error {
-	extra, err := parseKeyValMap(info)
+	extra, err := parseKeyValMap(f.info)
 	if err != nil {
 		return fmt.Errorf("parsing --vif-info: %w", err)
 	}
 	opts := vifAttachOpts{
 		VirtualInterfaceOpts: nodes.VirtualInterfaceOpts{
 			ID:            vifID,
-			PortUUID:      portUUID,
-			PortgroupUUID: portgroupUUID,
+			PortUUID:      f.portUUID,
+			PortgroupUUID: f.portgroupUUID,
 		},
 		Info: extra,
 	}

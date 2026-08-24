@@ -170,8 +170,7 @@ func remarshal(from any, to any) error {
 
 func newNodeCleanCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &stepsFlags{}
-	var wait bool
-	var waitTimeout time.Duration
+	wf := &waitFlags{}
 	cmd := &cobra.Command{
 		Use:   "clean <node>",
 		Short: "Run manual cleaning steps on a node",
@@ -185,16 +184,16 @@ func newNodeCleanCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNodeClean(ctx, client, args[0], f, wait, waitTimeout, cmd.InOrStdin(), cmd.OutOrStdout())
+			return runNodeClean(ctx, client, args[0], f, wf, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
 	addStepsFlags(cmd, f, "clean-steps", "clean")
-	addWaitFlags(cmd, &wait, &waitTimeout, "cleaning")
+	addWaitFlags(cmd, wf, "cleaning")
 	return cmd
 }
 
 func runNodeClean(ctx context.Context, client *gophercloud.ServiceClient, id string,
-	f *stepsFlags, wait bool, waitTimeout time.Duration, stdin io.Reader, w io.Writer,
+	f *stepsFlags, wf *waitFlags, stdin io.Reader, w io.Writer,
 ) error {
 	parsed, err := f.resolve(stdin)
 	if err != nil {
@@ -210,15 +209,15 @@ func runNodeClean(ctx context.Context, client *gophercloud.ServiceClient, id str
 			return err
 		}
 	}
-	return applyProvisionState(ctx, client, id, "clean", opts, nodes.Manageable, wait, waitTimeout, w)
+	return applyProvisionState(ctx, client, id,
+		provisionRequest{verb: "clean", opts: opts, want: nodes.Manageable, wait: wf}, w)
 }
 
 // --- service ----------------------------------------------------------------
 
 func newNodeServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &stepsFlags{}
-	var wait bool
-	var waitTimeout time.Duration
+	wf := &waitFlags{}
 	cmd := &cobra.Command{
 		Use:   "service <node>",
 		Short: "Run service steps on an active node (requires ironic API 1.87)",
@@ -232,16 +231,16 @@ func newNodeServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNodeService(ctx, client, args[0], f, wait, waitTimeout, cmd.InOrStdin(), cmd.OutOrStdout())
+			return runNodeService(ctx, client, args[0], f, wf, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
 	addStepsFlags(cmd, f, "service-steps", "service")
-	addWaitFlags(cmd, &wait, &waitTimeout, "servicing")
+	addWaitFlags(cmd, wf, "servicing")
 	return cmd
 }
 
 func runNodeService(ctx context.Context, client *gophercloud.ServiceClient, id string,
-	f *stepsFlags, wait bool, waitTimeout time.Duration, stdin io.Reader, w io.Writer,
+	f *stepsFlags, wf *waitFlags, stdin io.Reader, w io.Writer,
 ) error {
 	parsed, err := f.resolve(stdin)
 	if err != nil {
@@ -259,7 +258,8 @@ func runNodeService(ctx context.Context, client *gophercloud.ServiceClient, id s
 	}
 	// The `service` target arrived at 1.87, above the Zed cap of 1.82, so an old
 	// cloud rejects the value rather than the version — see microversion.go.
-	err = applyProvisionState(ctx, client, id, "service", opts, nodes.Active, wait, waitTimeout, w)
+	err = applyProvisionState(ctx, client, id,
+		provisionRequest{verb: "service", opts: opts, want: nodes.Active, wait: wf}, w)
 	return explainMicroversion(ctx, client, featureNodeService, err)
 }
 
@@ -267,8 +267,7 @@ func runNodeService(ctx context.Context, client *gophercloud.ServiceClient, id s
 
 func newNodeRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var password string
-	var wait bool
-	var waitTimeout time.Duration
+	wf := &waitFlags{}
 	cmd := &cobra.Command{
 		Use:   "rescue <node>",
 		Short: "Boot a node into the rescue ramdisk",
@@ -282,20 +281,21 @@ func newNodeRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNodeRescue(ctx, client, args[0], password, wait, waitTimeout, cmd.OutOrStdout())
+			return runNodeRescue(ctx, client, args[0], password, wf, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&password, "rescue-password", "", "password for logging in to the rescue ramdisk")
 	_ = cmd.MarkFlagRequired("rescue-password")
-	addWaitFlags(cmd, &wait, &waitTimeout, "the rescue")
+	addWaitFlags(cmd, wf, "the rescue")
 	return cmd
 }
 
 func runNodeRescue(ctx context.Context, client *gophercloud.ServiceClient, id, password string,
-	wait bool, waitTimeout time.Duration, w io.Writer,
+	wf *waitFlags, w io.Writer,
 ) error {
 	opts := nodes.ProvisionStateOpts{Target: nodes.TargetRescue, RescuePassword: password}
-	return applyProvisionState(ctx, client, id, "rescue", opts, nodes.Rescue, wait, waitTimeout, w)
+	return applyProvisionState(ctx, client, id,
+		provisionRequest{verb: "rescue", opts: opts, want: nodes.Rescue, wait: wf}, w)
 }
 
 // newNodeUnholdCommand builds "baremetal node unhold". Like abort it has no
@@ -303,8 +303,7 @@ func runNodeRescue(ctx context.Context, client *gophercloud.ServiceClient, id, p
 // manageable, releasing a "deploy hold" resumes deploying and ends at active. So
 // --wait waits for the transition to settle and reports where it landed.
 func newNodeUnholdCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var wait bool
-	var waitTimeout time.Duration
+	wf := &waitFlags{}
 	cmd := &cobra.Command{
 		Use:   "unhold <node>",
 		Short: "Release a node from a clean or deploy hold (requires ironic API 1.85)",
@@ -318,26 +317,26 @@ func newNodeUnholdCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNodeUnhold(ctx, client, args[0], wait, waitTimeout, cmd.OutOrStdout())
+			return runNodeUnhold(ctx, client, args[0], wf, cmd.OutOrStdout())
 		},
 	}
-	addWaitFlags(cmd, &wait, &waitTimeout, "the hold to be released")
+	addWaitFlags(cmd, wf, "the hold to be released")
 	return cmd
 }
 
 func runNodeUnhold(ctx context.Context, client *gophercloud.ServiceClient, id string,
-	wait bool, waitTimeout time.Duration, w io.Writer,
+	wf *waitFlags, w io.Writer,
 ) error {
 	opts := nodes.ProvisionStateOpts{Target: nodes.TargetUnhold}
 	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
 		return explainMicroversion(ctx, client, featureNodeUnhold,
 			fmt.Errorf("requesting unhold on node %s: %w", id, err))
 	}
-	if !wait {
+	if !wf.wait {
 		_, err := fmt.Fprintf(w, "Requested unhold for node %s\n", id)
 		return err
 	}
-	state, lastError, err := waitForProvisionSettled(ctx, client, id, waitTimeout)
+	state, lastError, err := waitForProvisionSettled(ctx, client, id, wf.timeout)
 	if err != nil {
 		return err
 	}
@@ -354,30 +353,44 @@ func runNodeUnhold(ctx context.Context, client *gophercloud.ServiceClient, id st
 
 // --- shared -----------------------------------------------------------------
 
+// provisionRequest is one provision-state transition: the payload to send, the
+// verb naming it in messages, and the state --wait polls for.
+type provisionRequest struct {
+	verb string
+	opts nodes.ProvisionStateOptsBuilder
+	want nodes.ProvisionState
+	wait *waitFlags
+}
+
 // applyProvisionState requests a transition and, with --wait, polls until the
-// node reaches want. It is runNodeProvision generalised over an opts builder, so
-// the verbs with a payload get identical --wait behaviour.
-func applyProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id, verb string,
-	opts nodes.ProvisionStateOptsBuilder, want nodes.ProvisionState,
-	wait bool, waitTimeout time.Duration, w io.Writer,
+// node reaches r.want. It is runNodeProvision generalised over an opts builder,
+// so the verbs with a payload get identical --wait behaviour.
+func applyProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id string,
+	r provisionRequest, w io.Writer,
 ) error {
-	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("requesting %s on node %s: %w", verb, id, err)
+	if err := nodes.ChangeProvisionState(ctx, client, id, r.opts).ExtractErr(); err != nil {
+		return fmt.Errorf("requesting %s on node %s: %w", r.verb, id, err)
 	}
-	if !wait {
-		_, err := fmt.Fprintf(w, "Requested %s for node %s\n", verb, id)
+	if !r.wait.wait {
+		_, err := fmt.Fprintf(w, "Requested %s for node %s\n", r.verb, id)
 		return err
 	}
-	if err := waitForProvisionState(ctx, client, id, want, waitTimeout); err != nil {
+	if err := waitForProvisionState(ctx, client, id, r.want, r.wait.timeout); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "Node %s reached provision state %q\n", id, want)
+	_, err := fmt.Fprintf(w, "Node %s reached provision state %q\n", id, r.want)
 	return err
 }
 
-// addWaitFlags registers the --wait/--wait-timeout pair shared by every
-// provision-state verb.
-func addWaitFlags(cmd *cobra.Command, wait *bool, timeout *time.Duration, what string) {
-	cmd.Flags().BoolVar(wait, "wait", false, "wait until "+what+" completes")
-	cmd.Flags().DurationVar(timeout, "wait-timeout", provisionPollTimeout, "maximum time to wait for --wait to complete")
+// waitFlags is the --wait/--wait-timeout pair shared by every provision-state
+// verb.
+type waitFlags struct {
+	wait    bool
+	timeout time.Duration
+}
+
+// addWaitFlags registers the pair on cmd.
+func addWaitFlags(cmd *cobra.Command, f *waitFlags, what string) {
+	cmd.Flags().BoolVar(&f.wait, "wait", false, "wait until "+what+" completes")
+	cmd.Flags().DurationVar(&f.timeout, "wait-timeout", provisionPollTimeout, "maximum time to wait for --wait to complete")
 }
