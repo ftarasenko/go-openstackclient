@@ -229,19 +229,32 @@ func formatNetworks(addresses map[string]any) string {
 	sort.Strings(nets)
 	parts := make([]string, 0, len(nets))
 	for _, name := range nets {
-		var ips []string
-		if list, ok := addresses[name].([]any); ok {
-			for _, entry := range list {
-				if m, ok := entry.(map[string]any); ok {
-					if addr, ok := m["addr"].(string); ok {
-						ips = append(ips, addr)
-					}
-				}
-			}
-		}
-		parts = append(parts, fmt.Sprintf("%s=%s", name, strings.Join(ips, ", ")))
+		parts = append(parts, fmt.Sprintf("%s=%s", name, strings.Join(addrStrings(addresses[name]), ", ")))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// addrStrings pulls the "addr" values out of one network's entry in a server's
+// address map. The map is decoded as map[string]any rather than a typed struct,
+// so every level has to be checked: nova's per-network value is a list of
+// objects, and anything that is not one is skipped instead of panicking on a
+// response shape koc did not expect.
+func addrStrings(v any) []string {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var ips []string
+	for _, entry := range list {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if addr, ok := m["addr"].(string); ok {
+			ips = append(ips, addr)
+		}
+	}
+	return ips
 }
 
 // flavorName extracts a human-readable flavor name from the server's embedded
