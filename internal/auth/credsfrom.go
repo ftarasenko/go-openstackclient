@@ -252,18 +252,8 @@ func (o *Options) VaultConfig(ctx context.Context) (vault.Config, error) {
 		}
 	}
 
-	// When Vault connection details are not fully supplied, discover them from
-	// the LCM cluster (ConfigMap + AppRole secret) using the same kubeconfig as
-	// --creds-from-ns, so a node operator needs no --vault-* flags.
-	if o.vaultNeedsDiscovery() {
-		if err := o.discoverVaultFromCluster(ctx); err != nil {
-			if o.VaultAddr == "" {
-				return vault.Config{}, fmt.Errorf("vault not configured and cluster auto-discovery failed: %w (set --vault-addr and an AppRole/token, or provide a reachable --kubeconfig)", err)
-			}
-			if o.Debug {
-				fmt.Fprintf(os.Stderr, "vault: cluster auto-discovery: %v\n", err)
-			}
-		}
+	if err := o.autoDiscoverVault(ctx); err != nil {
+		return vault.Config{}, err
 	}
 
 	var caPEM []byte
@@ -288,6 +278,31 @@ func (o *Options) VaultConfig(ctx context.Context) (vault.Config, error) {
 		Timeout:     o.Timeout,
 		Debug:       o.Debug,
 	}, nil
+}
+
+// autoDiscoverVault fills in the Vault connection details the operator did not
+// supply, from the LCM cluster (ConfigMap + AppRole secret) over the same
+// kubeconfig --creds-from-ns uses, so a node operator needs no --vault-* flags.
+//
+// Whether a failed discovery is fatal depends on what is already known. With no
+// address there is nothing left to try, so the command ends with the remedies
+// spelled out. With an address in hand the rest may still be enough — a token in
+// the environment, the default KV mount — so the failure must not end a run that
+// would otherwise work, and is only worth a note under --debug.
+func (o *Options) autoDiscoverVault(ctx context.Context) error {
+	if !o.vaultNeedsDiscovery() {
+		return nil
+	}
+	err := o.discoverVaultFromCluster(ctx)
+	switch {
+	case err == nil:
+		return nil
+	case o.VaultAddr == "":
+		return fmt.Errorf("vault not configured and cluster auto-discovery failed: %w (set --vault-addr and an AppRole/token, or provide a reachable --kubeconfig)", err)
+	case o.Debug:
+		fmt.Fprintf(os.Stderr, "vault: cluster auto-discovery: %v\n", err)
+	}
+	return nil
 }
 
 // VaultClient resolves the Vault settings and returns an authenticated client.
