@@ -276,34 +276,9 @@ func runTrunkCreate(ctx context.Context, client *gophercloud.ServiceClient, o *o
 func parseSubports(ctx context.Context, client *gophercloud.ServiceClient, specs []string) ([]trunks.Subport, error) {
 	out := make([]trunks.Subport, 0, len(specs))
 	for _, spec := range specs {
-		var sp trunks.Subport
-		var portRef string
-		for _, part := range strings.Split(spec, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			k, v, err := splitKV(part)
-			if err != nil {
-				return nil, fmt.Errorf("parsing --subport %q: %w", spec, err)
-			}
-			switch k {
-			case "port":
-				portRef = v
-			case "segmentation-type", "segmentation_type":
-				sp.SegmentationType = v
-			case "segmentation-id", "segmentation_id":
-				id, cerr := strconv.Atoi(strings.TrimSpace(v))
-				if cerr != nil {
-					return nil, fmt.Errorf("parsing --subport %q: segmentation-id %q is not a number", spec, v)
-				}
-				sp.SegmentationID = id
-			default:
-				return nil, fmt.Errorf("parsing --subport %q: unknown key %q", spec, k)
-			}
-		}
-		if portRef == "" || sp.SegmentationType == "" || sp.SegmentationID == 0 {
-			return nil, fmt.Errorf("--subport %q requires port, segmentation-type and a non-zero segmentation-id", spec)
+		sp, portRef, err := parseSubportSpec(spec)
+		if err != nil {
+			return nil, err
 		}
 		portID, err := resolvePortID(ctx, client, portRef)
 		if err != nil {
@@ -313,6 +288,44 @@ func parseSubports(ctx context.Context, client *gophercloud.ServiceClient, specs
 		out = append(out, sp)
 	}
 	return out, nil
+}
+
+// parseSubportSpec parses one --subport spec and validates that it carries the
+// three fields neutron requires. It returns the sub-port with everything but
+// PortID filled in, plus the port reference the caller resolves to an ID — name
+// resolution needs a client, and keeping it out here leaves the key table pure
+// and directly testable, aliases (segmentation-id vs segmentation_id) included.
+func parseSubportSpec(spec string) (trunks.Subport, string, error) {
+	var sp trunks.Subport
+	var portRef string
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, err := splitKV(part)
+		if err != nil {
+			return sp, "", fmt.Errorf("parsing --subport %q: %w", spec, err)
+		}
+		switch k {
+		case "port":
+			portRef = v
+		case "segmentation-type", "segmentation_type":
+			sp.SegmentationType = v
+		case "segmentation-id", "segmentation_id":
+			id, cerr := strconv.Atoi(strings.TrimSpace(v))
+			if cerr != nil {
+				return sp, "", fmt.Errorf("parsing --subport %q: segmentation-id %q is not a number", spec, v)
+			}
+			sp.SegmentationID = id
+		default:
+			return sp, "", fmt.Errorf("parsing --subport %q: unknown key %q", spec, k)
+		}
+	}
+	if portRef == "" || sp.SegmentationType == "" || sp.SegmentationID == 0 {
+		return sp, "", fmt.Errorf("--subport %q requires port, segmentation-type and a non-zero segmentation-id", spec)
+	}
+	return sp, portRef, nil
 }
 
 // --- set -------------------------------------------------------------------

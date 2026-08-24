@@ -377,31 +377,43 @@ func parseRoutes(specs []string) ([]routers.Route, error) {
 	}
 	out := make([]routers.Route, 0, len(specs))
 	for _, spec := range specs {
-		var route routers.Route
-		for _, part := range strings.Split(spec, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			k, v, err := splitKV(part)
-			if err != nil {
-				return nil, fmt.Errorf("parsing --route %q: %w", spec, err)
-			}
-			switch k {
-			case "destination":
-				route.DestinationCIDR = v
-			case "gateway", "nexthop":
-				route.NextHop = v
-			default:
-				return nil, fmt.Errorf("parsing --route %q: unknown key %q", spec, k)
-			}
-		}
-		if route.DestinationCIDR == "" || route.NextHop == "" {
-			return nil, fmt.Errorf("--route %q requires both destination and gateway", spec)
+		route, err := parseRouteSpec(spec)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, route)
 	}
 	return out, nil
+}
+
+// parseRouteSpec parses one --route spec and validates that both halves of a
+// static route are present. Neutron takes destination/nexthop; OSC spells the
+// second one "gateway", so both are accepted and the alias is worth a test row
+// of its own.
+func parseRouteSpec(spec string) (routers.Route, error) {
+	var route routers.Route
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, err := splitKV(part)
+		if err != nil {
+			return route, fmt.Errorf("parsing --route %q: %w", spec, err)
+		}
+		switch k {
+		case "destination":
+			route.DestinationCIDR = v
+		case "gateway", "nexthop":
+			route.NextHop = v
+		default:
+			return route, fmt.Errorf("parsing --route %q: unknown key %q", spec, k)
+		}
+	}
+	if route.DestinationCIDR == "" || route.NextHop == "" {
+		return route, fmt.Errorf("--route %q requires both destination and gateway", spec)
+	}
+	return route, nil
 }
 
 func newRouterUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {

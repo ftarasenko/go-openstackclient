@@ -126,28 +126,17 @@ func parseExternalFixedIPs(ctx context.Context, client *gophercloud.ServiceClien
 	}
 	out := make([]routers.ExternalFixedIP, 0, len(specs))
 	for _, spec := range specs {
-		var fixed routers.ExternalFixedIP
-		for _, part := range strings.Split(spec, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
+		parsed, err := parseFixedIPSpec(spec)
+		if err != nil {
+			return nil, err
+		}
+		fixed := routers.ExternalFixedIP{IPAddress: parsed.ipAddress}
+		if parsed.subnetSet {
+			id, rerr := resolveSubnetID(ctx, client, parsed.subnetRef)
+			if rerr != nil {
+				return nil, rerr
 			}
-			k, v, err := splitKV(part)
-			if err != nil {
-				return nil, fmt.Errorf("parsing --fixed-ip %q: %w", spec, err)
-			}
-			switch k {
-			case "subnet", "subnet-id", "subnet_id":
-				id, rerr := resolveSubnetID(ctx, client, v)
-				if rerr != nil {
-					return nil, rerr
-				}
-				fixed.SubnetID = id
-			case "ip-address", "ip_address":
-				fixed.IPAddress = v
-			default:
-				return nil, fmt.Errorf("parsing --fixed-ip %q: unknown key %q", spec, k)
-			}
+			fixed.SubnetID = id
 		}
 		if fixed.SubnetID == "" {
 			return nil, fmt.Errorf("--fixed-ip %q requires subnet=", spec)
@@ -155,4 +144,41 @@ func parseExternalFixedIPs(ctx context.Context, client *gophercloud.ServiceClien
 		out = append(out, fixed)
 	}
 	return out, nil
+}
+
+// fixedIPSpec is one parsed --fixed-ip spec, before the subnet reference is
+// resolved to an ID. subnetSet records that the key was present even when its
+// value was empty, so an explicit "subnet=" still goes through resolution and
+// fails the way it always has rather than being short-circuited here.
+type fixedIPSpec struct {
+	subnetRef string
+	subnetSet bool
+	ipAddress string
+}
+
+// parseFixedIPSpec parses one --fixed-ip spec. Resolving the subnet name to an
+// ID needs a neutron client, so it stays with the caller and this half is pure:
+// the key table, its aliases (subnet / subnet-id / subnet_id) and the rejection
+// of unknown keys are all exercisable without a mock endpoint.
+func parseFixedIPSpec(spec string) (fixedIPSpec, error) {
+	var parsed fixedIPSpec
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, err := splitKV(part)
+		if err != nil {
+			return parsed, fmt.Errorf("parsing --fixed-ip %q: %w", spec, err)
+		}
+		switch k {
+		case "subnet", "subnet-id", "subnet_id":
+			parsed.subnetRef, parsed.subnetSet = v, true
+		case "ip-address", "ip_address":
+			parsed.ipAddress = v
+		default:
+			return parsed, fmt.Errorf("parsing --fixed-ip %q: unknown key %q", spec, k)
+		}
+	}
+	return parsed, nil
 }
