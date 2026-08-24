@@ -68,8 +68,18 @@ func runProviderCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 	return writeProvider(o, w, rp)
 }
 
+type providerSetFlags struct {
+	name   string
+	parent string
+
+	// Which were given: an explicitly empty --parent-provider re-roots the
+	// provider, so it is not the same as omitting the flag.
+	nameSet   bool
+	parentSet bool
+}
+
 func newProviderSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, parent string
+	f := &providerSetFlags{}
 	cmd := &cobra.Command{
 		Use:   useSetUUID,
 		Short: "Set resource provider properties",
@@ -87,29 +97,28 @@ func newProviderSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runProviderSet(ctx, client, o, args[0], name, parent,
-				fl.Changed("name"), fl.Changed(flagParentProvider), cmd.OutOrStdout())
+			f.nameSet, f.parentSet = fl.Changed("name"), fl.Changed(flagParentProvider)
+			return runProviderSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new provider name")
-	fl.StringVar(&parent, flagParentProvider, "",
+	fl.StringVar(&f.name, "name", "", "new provider name")
+	fl.StringVar(&f.parent, flagParentProvider, "",
 		"UUID of the new parent provider; empty makes it a root provider (placement 1.37 or later)")
 	return cmd
 }
 
 func runProviderSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id, name, parent string, nameSet, parentSet bool, w io.Writer,
+	id string, f *providerSetFlags, w io.Writer,
 ) error {
 	opts := resourceproviders.UpdateOpts{}
-	if nameSet {
-		opts.Name = &name
+	if f.nameSet {
+		opts.Name = &f.name
 	}
-	// An explicitly empty --parent-provider re-roots the provider, which is not
-	// the same as omitting the flag; both fields are pointers so the two stay
-	// distinguishable on the wire.
-	if parentSet {
-		opts.ParentProviderUUID = &parent
+	// Both fields are pointers so an explicit empty value stays distinguishable
+	// from an omitted flag on the wire.
+	if f.parentSet {
+		opts.ParentProviderUUID = &f.parent
 	}
 	rp, err := resourceproviders.Update(ctx, client, id, opts).Extract()
 	if err != nil {
@@ -563,9 +572,15 @@ func runProviderAllocationShow(ctx context.Context, client *gophercloud.ServiceC
 	return o.WriteList(w, t)
 }
 
+type allocationSetFlags struct {
+	specs        []string
+	projectID    string
+	userID       string
+	consumerType string
+}
+
 func newProviderAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var allocationSpecs []string
-	var projectID, userID, consumerType string
+	f := &allocationSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <consumer-uuid>",
 		Short: "Replace a consumer's allocations",
@@ -579,16 +594,15 @@ func newProviderAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.
 			if err != nil {
 				return err
 			}
-			return runProviderAllocationSet(ctx, client, o, args[0], allocationSpecs,
-				projectID, userID, consumerType, cmd.OutOrStdout())
+			return runProviderAllocationSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringArrayVar(&allocationSpecs, "allocation", nil,
+	fl.StringArrayVar(&f.specs, "allocation", nil,
 		"allocation as rp=<provider-uuid>,<CLASS>=<amount> (repeatable)")
-	fl.StringVar(&projectID, "project-id", "", "project the consumer belongs to")
-	fl.StringVar(&userID, "user-id", "", "user the consumer belongs to")
-	fl.StringVar(&consumerType, "consumer-type", "",
+	fl.StringVar(&f.projectID, "project-id", "", "project the consumer belongs to")
+	fl.StringVar(&f.userID, "user-id", "", "user the consumer belongs to")
+	fl.StringVar(&f.consumerType, "consumer-type", "",
 		"consumer type, e.g. INSTANCE or MIGRATION (required by placement 1.38+)")
 	_ = cmd.MarkFlagRequired("allocation")
 	return cmd
@@ -612,17 +626,17 @@ func requiresConsumerType(microversion string) bool {
 // runProviderAllocationSet replaces the consumer's allocations wholesale, which
 // is what placement's PUT does — there is no incremental form.
 func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	consumer string, specs []string, projectID, userID, consumerType string, w io.Writer,
+	consumer string, f *allocationSetFlags, w io.Writer,
 ) error {
 	// Placement 1.38 made consumer_type required, and it is not a value koc can
 	// invent on the operator's behalf — it describes what the consumer *is*. Say
 	// so here rather than letting placement answer with a schema dump.
-	if consumerType == "" && requiresConsumerType(client.Microversion) {
+	if f.consumerType == "" && requiresConsumerType(client.Microversion) {
 		return fmt.Errorf("placement %s and later require a consumer type: pass --consumer-type "+
 			"(e.g. INSTANCE or MIGRATION)", consumerTypeMicroversion)
 	}
 	byProvider := map[string]allocations.ProviderAllocationsOpts{}
-	for _, spec := range specs {
+	for _, spec := range f.specs {
 		provider, resources, err := parseAllocationSpec(spec)
 		if err != nil {
 			return fmt.Errorf("parsing --allocation: %w", err)
@@ -638,9 +652,9 @@ func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceCl
 	}
 	opts := allocations.UpdateOpts{
 		Allocations:  byProvider,
-		ProjectID:    projectID,
-		UserID:       userID,
-		ConsumerType: consumerType,
+		ProjectID:    f.projectID,
+		UserID:       f.userID,
+		ConsumerType: f.consumerType,
 	}
 	if err := allocations.Update(ctx, client, consumer, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("setting the allocations of consumer %s: %w", consumer, err)
@@ -793,9 +807,15 @@ func resourceQuery(resources []string) (string, error) {
 	return strings.Join(parts, ","), nil
 }
 
+type candidateListFlags struct {
+	resources []string
+	required  []string
+	memberOf  []string
+	limit     int
+}
+
 func newAllocationCandidateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var resources, required, memberOf []string
-	var limit int
+	f := &candidateListFlags{}
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List providers that can satisfy a resource request",
@@ -809,14 +829,14 @@ func newAllocationCandidateCommand(a *auth.Options, o *output.Options) *cobra.Co
 			if err != nil {
 				return err
 			}
-			return runAllocationCandidateList(ctx, client, o, resources, required, memberOf, limit, cmd.OutOrStdout())
+			return runAllocationCandidateList(ctx, client, o, f, cmd.OutOrStdout())
 		},
 	}
 	fl := list.Flags()
-	fl.StringArrayVar(&resources, "resource", nil, "required amount as CLASS=amount, e.g. VCPU=2 (repeatable)")
-	fl.StringArrayVar(&required, "required", nil, "trait the provider must have; prefix ! to forbid (repeatable)")
-	fl.StringArrayVar(&memberOf, "member-of", nil, "aggregate UUID the provider must belong to (repeatable)")
-	fl.IntVar(&limit, "limit", 0, "maximum number of candidates to return")
+	fl.StringArrayVar(&f.resources, "resource", nil, "required amount as CLASS=amount, e.g. VCPU=2 (repeatable)")
+	fl.StringArrayVar(&f.required, "required", nil, "trait the provider must have; prefix ! to forbid (repeatable)")
+	fl.StringArrayVar(&f.memberOf, "member-of", nil, "aggregate UUID the provider must belong to (repeatable)")
+	fl.IntVar(&f.limit, "limit", 0, "maximum number of candidates to return")
 	_ = list.MarkFlagRequired("resource")
 
 	cmd := &cobra.Command{Use: "candidate", Short: "Inspect placement allocation candidates"}
@@ -825,19 +845,19 @@ func newAllocationCandidateCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runAllocationCandidateList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	resources, required, memberOf []string, limit int, w io.Writer,
+	f *candidateListFlags, w io.Writer,
 ) error {
 	// Placement takes the amounts as one comma-separated `resources` parameter,
 	// not as repeated ones, and separates class from amount with a colon.
-	query, err := resourceQuery(resources)
+	query, err := resourceQuery(f.resources)
 	if err != nil {
 		return fmt.Errorf("parsing --resource: %w", err)
 	}
 	opts := allocationcandidates.ListOpts{
 		Resources: query,
-		Required:  required,
-		MemberOf:  memberOf,
-		Limit:     limit,
+		Required:  f.required,
+		MemberOf:  f.memberOf,
+		Limit:     f.limit,
 	}
 	pages, err := allocationcandidates.List(client, opts).AllPages(ctx)
 	if err != nil {

@@ -79,7 +79,8 @@ func TestRunProviderSet_EmptyParentReRootsTheProvider(t *testing.T) {
 	client := placementClient(fakeServer, "latest")
 	// An explicitly empty --parent-provider makes it a root provider, which is
 	// not the same as omitting the flag.
-	err := runProviderSet(context.Background(), client, o, providerUUID, "", "", false, true, &out)
+	err := runProviderSet(context.Background(), client, o, providerUUID,
+		&providerSetFlags{parentSet: true}, &out)
 	if err != nil {
 		t.Fatalf("runProviderSet returned error: %v", err)
 	}
@@ -222,7 +223,8 @@ func TestRunProviderAllocationSet_SendsConsumerType(t *testing.T) {
 	o := &output.Options{Format: "value"}
 	client := placementClient(fakeServer, "latest")
 	err := runProviderAllocationSet(context.Background(), client, o, "consumer-1",
-		[]string{"rp=" + providerUUID + ",VCPU=2"}, "proj", "user", "INSTANCE", &out)
+		&allocationSetFlags{specs: []string{"rp=" + providerUUID + ",VCPU=2"},
+			projectID: "proj", userID: "user", consumerType: "INSTANCE"}, &out)
 	if err != nil {
 		t.Fatalf("runProviderAllocationSet returned error: %v", err)
 	}
@@ -231,7 +233,8 @@ func TestRunProviderAllocationSet_SendsConsumerType(t *testing.T) {
 	// Omitting it on a 1.38+ cloud is refused before the request, rather than
 	// letting placement answer with a schema dump.
 	err = runProviderAllocationSet(context.Background(), client, o, "consumer-1",
-		[]string{"rp=" + providerUUID + ",VCPU=2"}, "proj", "user", "", &out)
+		&allocationSetFlags{specs: []string{"rp=" + providerUUID + ",VCPU=2"},
+			projectID: "proj", userID: "user"}, &out)
 	if err == nil || !strings.Contains(err.Error(), "--consumer-type") {
 		t.Errorf("expected a --consumer-type error, got %v", err)
 	}
@@ -361,7 +364,7 @@ func TestRunAllocationCandidateList_JoinsResourcesIntoOneParameter(t *testing.T)
 	o := &output.Options{Format: "value"}
 	client := placementClient(fakeServer, "latest")
 	err := runAllocationCandidateList(context.Background(), client, o,
-		[]string{"VCPU=2", "MEMORY_MB=1024"}, nil, nil, 0, &out)
+		&candidateListFlags{resources: []string{"VCPU=2", "MEMORY_MB=1024"}}, &out)
 	if err != nil {
 		t.Fatalf("runAllocationCandidateList returned error: %v", err)
 	}
