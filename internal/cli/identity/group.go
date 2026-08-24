@@ -79,6 +79,54 @@ func newGroupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // ?user_id= on /v3/groups, the membership view lives at
 // /v3/users/<user>/groups. That endpoint takes no filters of its own, so
 // --domain is applied client-side when both are given.
+// groupsOfUser lists the groups a user belongs to. users.ListGroups takes no
+// domain filter, so --domain is applied to the result rather than the request.
+func groupsOfUser(ctx context.Context, client *gophercloud.ServiceClient,
+	f *groupListFlags, domainID string,
+) ([]groups.Group, error) {
+	userDomainID, err := resolveDomainID(ctx, client, f.userDomain)
+	if err != nil {
+		return nil, err
+	}
+	userID, err := resolveUserID(ctx, client, f.user, userDomainID)
+	if err != nil {
+		return nil, err
+	}
+	pages, err := users.ListGroups(client, userID).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing groups of user %q: %w", f.user, err)
+	}
+	all, err := groups.ExtractGroups(pages)
+	if err != nil {
+		return nil, fmt.Errorf("parsing group list: %w", err)
+	}
+	if domainID == "" {
+		return all, nil
+	}
+	filtered := make([]groups.Group, 0, len(all))
+	for _, g := range all {
+		if g.DomainID == domainID {
+			filtered = append(filtered, g)
+		}
+	}
+	return filtered, nil
+}
+
+// groupsInDomain lists every group, narrowed to one domain when domainID is set.
+func groupsInDomain(ctx context.Context, client *gophercloud.ServiceClient,
+	domainID string,
+) ([]groups.Group, error) {
+	pages, err := groups.List(client, groups.ListOpts{DomainID: domainID}).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing groups: %w", err)
+	}
+	all, err := groups.ExtractGroups(pages)
+	if err != nil {
+		return nil, fmt.Errorf("parsing group list: %w", err)
+	}
+	return all, nil
+}
+
 func runGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *groupListFlags, w io.Writer) error {
 	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
@@ -87,40 +135,12 @@ func runGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 
 	var all []groups.Group
 	if f.user != "" {
-		userDomainID, derr := resolveDomainID(ctx, client, f.userDomain)
-		if derr != nil {
-			return derr
-		}
-		userID, uerr := resolveUserID(ctx, client, f.user, userDomainID)
-		if uerr != nil {
-			return uerr
-		}
-		pages, perr := users.ListGroups(client, userID).AllPages(ctx)
-		if perr != nil {
-			return fmt.Errorf("listing groups of user %q: %w", f.user, perr)
-		}
-		all, err = groups.ExtractGroups(pages)
-		if err != nil {
-			return fmt.Errorf("parsing group list: %w", err)
-		}
-		if domainID != "" {
-			filtered := make([]groups.Group, 0, len(all))
-			for _, g := range all {
-				if g.DomainID == domainID {
-					filtered = append(filtered, g)
-				}
-			}
-			all = filtered
-		}
+		all, err = groupsOfUser(ctx, client, f, domainID)
 	} else {
-		pages, perr := groups.List(client, groups.ListOpts{DomainID: domainID}).AllPages(ctx)
-		if perr != nil {
-			return fmt.Errorf("listing groups: %w", perr)
-		}
-		all, err = groups.ExtractGroups(pages)
-		if err != nil {
-			return fmt.Errorf("parsing group list: %w", err)
-		}
+		all, err = groupsInDomain(ctx, client, domainID)
+	}
+	if err != nil {
+		return err
 	}
 
 	t := output.Table{Columns: []string{"ID", "Name", colDomainID, "Description"}, Rows: make([][]any, 0, len(all))}
