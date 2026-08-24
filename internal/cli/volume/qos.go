@@ -266,20 +266,8 @@ func runQoSSet(ctx context.Context, client *gophercloud.ServiceClient, o *output
 		return fmt.Errorf("parsing --property: %w", err)
 	}
 	if noProperty {
-		current, gerr := qos.Get(ctx, client, id).Extract()
-		if gerr != nil {
-			return fmt.Errorf("reading QoS specification %q before clearing it: %w", ref, gerr)
-		}
-		var keys []string
-		for k := range current.Specs {
-			if _, keep := add[k]; !keep {
-				keys = append(keys, k)
-			}
-		}
-		if len(keys) > 0 {
-			if derr := qos.DeleteKeys(ctx, client, id, qos.DeleteKeysOpts(keys)).ExtractErr(); derr != nil {
-				return fmt.Errorf("clearing properties of QoS specification %q: %w", ref, derr)
-			}
+		if err := clearOtherProperties(ctx, client, id, ref, add); err != nil {
+			return err
 		}
 	}
 	if len(add) > 0 {
@@ -288,6 +276,44 @@ func runQoSSet(ctx context.Context, client *gophercloud.ServiceClient, o *output
 		}
 	}
 	return runQoSShow(ctx, client, o, id, w)
+}
+
+// clearOtherProperties implements --no-property: it reads the specification's
+// current properties and deletes the ones --property is not about to set.
+//
+// Cinder's PUT merges keys rather than replacing the map, so the existing keys
+// have to be deleted explicitly or --no-property would be a no-op. The keys that
+// are about to be re-set are excluded from the delete so they are never briefly
+// absent, and so a delete-then-set of the same key cannot leave the
+// specification empty if the second call fails.
+func clearOtherProperties(ctx context.Context, client *gophercloud.ServiceClient,
+	id, ref string, keep map[string]string,
+) error {
+	current, err := qos.Get(ctx, client, id).Extract()
+	if err != nil {
+		return fmt.Errorf("reading QoS specification %q before clearing it: %w", ref, err)
+	}
+	keys := staleProperties(current.Specs, keep)
+	if len(keys) == 0 {
+		return nil
+	}
+	if err := qos.DeleteKeys(ctx, client, id, qos.DeleteKeysOpts(keys)).ExtractErr(); err != nil {
+		return fmt.Errorf("clearing properties of QoS specification %q: %w", ref, err)
+	}
+	return nil
+}
+
+// staleProperties returns the keys of current that keep does not re-set — the
+// survivors of a --no-property clear, inverted into the delete list cinder
+// takes.
+func staleProperties(current, keep map[string]string) []string {
+	var keys []string
+	for k := range current {
+		if _, kept := keep[k]; !kept {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 func newQoSUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
