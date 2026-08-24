@@ -59,45 +59,11 @@ func newHypervisorShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 // supported by every nova, which also avoids the UUID-vs-integer hypervisor ID
 // split introduced at 2.53.
 func runHypervisorShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	hvClient := *client
-	hvClient.Microversion = ""
-
-	pages, err := hypervisors.List(&hvClient, nil).AllPages(ctx)
+	h, err := findHypervisor(ctx, client, ref)
 	if err != nil {
-		return fmt.Errorf("listing hypervisors: %w", err)
+		return err
 	}
-	all, err := hypervisors.ExtractHypervisors(pages)
-	if err != nil {
-		return fmt.Errorf("parsing hypervisor list: %w", err)
-	}
-
-	var matches []hypervisors.Hypervisor
-	for _, h := range all {
-		if h.ID == ref || h.HypervisorHostname == ref {
-			matches = append(matches, h)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return fmt.Errorf("hypervisor %q not found", ref)
-	case 1:
-	default:
-		return fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, len(matches))
-	}
-	h := matches[0]
-
-	// Aggregates are looked up best-effort; a cloud that hides os-aggregates or a
-	// non-admin token simply yields no aggregate column.
-	var aggrs []string
-	if apages, aerr := aggregates.List(client).AllPages(ctx); aerr == nil {
-		if aggs, xerr := aggregates.ExtractAggregates(apages); xerr == nil {
-			for _, ag := range aggs {
-				if contains(ag.Hosts, h.HypervisorHostname) {
-					aggrs = append(aggrs, ag.Name)
-				}
-			}
-		}
-	}
+	aggrs := hostAggregates(ctx, client)[h.HypervisorHostname]
 
 	fields := []string{
 		"id", "hypervisor_hostname", "hypervisor_type", "hypervisor_version",
@@ -118,6 +84,69 @@ func runHypervisorShow(ctx context.Context, client *gophercloud.ServiceClient, o
 		h.Service.Host, h.Service.ID, h.Service.DisabledReason,
 	}
 	return o.WriteSingle(w, fields, values)
+}
+
+// findHypervisor resolves a hypervisor by ID or hostname.
+//
+// The list is fetched with the default microversion (2.1) rather than the
+// negotiated "latest": nova removed the usage fields at 2.88 (they moved to
+// placement), so a negotiated-latest request would report them as 0, and 2.1
+// also avoids the UUID-vs-integer hypervisor ID split introduced at 2.53.
+//
+// A ref matching more than one hypervisor is an error rather than a silent pick:
+// hostnames are not unique across cells, and showing the wrong host's usage is
+// worse than saying so.
+func findHypervisor(ctx context.Context, client *gophercloud.ServiceClient, ref string) (hypervisors.Hypervisor, error) {
+	hvClient := *client
+	hvClient.Microversion = ""
+
+	pages, err := hypervisors.List(&hvClient, nil).AllPages(ctx)
+	if err != nil {
+		return hypervisors.Hypervisor{}, fmt.Errorf("listing hypervisors: %w", err)
+	}
+	all, err := hypervisors.ExtractHypervisors(pages)
+	if err != nil {
+		return hypervisors.Hypervisor{}, fmt.Errorf("parsing hypervisor list: %w", err)
+	}
+
+	var matches []hypervisors.Hypervisor
+	for _, h := range all {
+		if h.ID == ref || h.HypervisorHostname == ref {
+			matches = append(matches, h)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return hypervisors.Hypervisor{}, fmt.Errorf("hypervisor %q not found", ref)
+	case 1:
+		return matches[0], nil
+	default:
+		return hypervisors.Hypervisor{}, fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, len(matches))
+	}
+}
+
+// hostAggregates maps each compute host to the names of the aggregates holding
+// it, in the order nova lists them.
+//
+// The lookup is best-effort: a cloud that hides os-aggregates, or a non-admin
+// token, yields an empty map rather than failing the command, because the
+// aggregate is a column on a hypervisor view and never the point of it.
+func hostAggregates(ctx context.Context, client *gophercloud.ServiceClient) map[string][]string {
+	hostAggr := map[string][]string{}
+	apages, err := aggregates.List(client).AllPages(ctx)
+	if err != nil {
+		return hostAggr
+	}
+	aggs, err := aggregates.ExtractAggregates(apages)
+	if err != nil {
+		return hostAggr
+	}
+	for _, ag := range aggs {
+		for _, h := range ag.Hosts {
+			hostAggr[h] = append(hostAggr[h], ag.Name)
+		}
+	}
+	return hostAggr
 }
 
 func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -246,16 +275,7 @@ func gatherHypervisorRows(ctx context.Context, client *gophercloud.ServiceClient
 		return nil, fmt.Errorf("parsing hypervisor list: %w", err)
 	}
 
-	hostAggr := map[string][]string{}
-	if apages, aerr := aggregates.List(client).AllPages(ctx); aerr == nil {
-		if aggs, xerr := aggregates.ExtractAggregates(apages); xerr == nil {
-			for _, ag := range aggs {
-				for _, h := range ag.Hosts {
-					hostAggr[h] = append(hostAggr[h], ag.Name)
-				}
-			}
-		}
-	}
+	hostAggr := hostAggregates(ctx, client)
 
 	rows := make([]hostRow, 0, len(all))
 	for _, h := range all {
