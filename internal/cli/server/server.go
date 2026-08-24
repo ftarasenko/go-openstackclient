@@ -198,16 +198,16 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, session, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			projectID, userID, err := resolveServerOwner(ctx, session, f)
+			projectID, userID, err := resolveServerOwner(ctx, s.auth, f)
 			if err != nil {
 				return err
 			}
 			f.pinMicroversion = a.ComputeAPIVersionPinnable()
-			return runServerList(ctx, client, o, f, projectID, userID, cmd.OutOrStdout())
+			return runServerList(ctx, s.client, o, f, projectID, userID, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -483,16 +483,16 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				f.nicSpecs = append(f.nicSpecs, spec)
 			}
 			ctx := cmd.Context()
-			client, session, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
 			// Resolve cross-service references (image → glance, network →
 			// neutron) to IDs before building the create request.
-			if err := resolveServerCreateRefs(ctx, session, f); err != nil {
+			if err := resolveServerCreateRefs(ctx, s.auth, f); err != nil {
 				return err
 			}
-			return runServerCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
+			return runServerCreate(ctx, s.client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()

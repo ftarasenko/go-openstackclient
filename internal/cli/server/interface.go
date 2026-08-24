@@ -64,33 +64,33 @@ func newServerAddPortCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerAddPort(ctx, client, ac, o, args[0], args[1], tag, cmd.OutOrStdout())
+			return runServerAddPort(ctx, s, o, args[0], args[1], tag, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&tag, "tag", "", helpInterfaceTag)
 	return cmd
 }
 
-func runServerAddPort(ctx context.Context, client *gophercloud.ServiceClient, ac *auth.Client,
-	o *output.Options, serverRef, portRef, tag string, w io.Writer,
+func runServerAddPort(ctx context.Context, s *computeSession, o *output.Options,
+	serverRef, portRef, tag string, w io.Writer,
 ) error {
-	id, err := resolveServerID(ctx, client, serverRef)
+	id, err := resolveServerID(ctx, s.client, serverRef)
 	if err != nil {
 		return err
 	}
-	portID, err := resolveNetworkResource(ctx, ac, portRef, resolve.PortID)
+	portID, err := resolveNetworkResource(ctx, s.auth, portRef, resolve.PortID)
 	if err != nil {
 		return err
 	}
-	opts, err := newAttachOpts(client, attachinterfaces.CreateOpts{PortID: portID}, tag)
+	opts, err := newAttachOpts(s.client, attachinterfaces.CreateOpts{PortID: portID}, tag)
 	if err != nil {
 		return err
 	}
-	iface, err := attachinterfaces.Create(ctx, client, id, opts).Extract()
+	iface, err := attachinterfaces.Create(ctx, s.client, id, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("attaching port %q to server %q: %w", portRef, serverRef, err)
 	}
@@ -110,11 +110,11 @@ func newServerAddNetworkCommand(a *auth.Options, o *output.Options) *cobra.Comma
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerAddNetwork(ctx, client, ac, o, args[0], args[1], "", tag, cmd.OutOrStdout())
+			return runServerAddNetwork(ctx, s, o, args[0], args[1], &attachFlags{tag: tag}, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&tag, "tag", "", helpInterfaceTag)
@@ -124,7 +124,7 @@ func newServerAddNetworkCommand(a *auth.Options, o *output.Options) *cobra.Comma
 // --- add fixed ip -----------------------------------------------------------
 
 func newServerAddFixedIPCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var address, tag string
+	f := &attachFlags{}
 	ip := &cobra.Command{
 		Use:   "ip <server> <network>",
 		Short: "Allocate a fixed IP on a network and attach it to a server",
@@ -134,16 +134,16 @@ func newServerAddFixedIPCommand(a *auth.Options, o *output.Options) *cobra.Comma
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerAddNetwork(ctx, client, ac, o, args[0], args[1], address, tag, cmd.OutOrStdout())
+			return runServerAddNetwork(ctx, s, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	fl := ip.Flags()
-	fl.StringVar(&address, "fixed-ip-address", "", "specific fixed IP address to request")
-	fl.StringVar(&tag, "tag", "", helpInterfaceTag)
+	fl.StringVar(&f.address, "fixed-ip-address", "", "specific fixed IP address to request")
+	fl.StringVar(&f.tag, "tag", "", helpInterfaceTag)
 
 	cmd := &cobra.Command{Use: "fixed", Short: "Attach a fixed IP to a server"}
 	cmd.AddCommand(ip)
@@ -154,18 +154,24 @@ func newServerAddFixedIPCommand(a *auth.Options, o *output.Options) *cobra.Comma
 // endpoint for them, and the only difference is whether a specific address is
 // requested. Nova rejects a fixed IP without a network (400), which is why the
 // address rides along with net_id rather than being its own call.
-func runServerAddNetwork(ctx context.Context, client *gophercloud.ServiceClient, ac *auth.Client,
-	o *output.Options, serverRef, networkRef, address, tag string, w io.Writer,
+// attachFlags are the options common to "add network" and "add fixed ip".
+type attachFlags struct {
+	address string
+	tag     string
+}
+
+func runServerAddNetwork(ctx context.Context, s *computeSession, o *output.Options,
+	serverRef, networkRef string, f *attachFlags, w io.Writer,
 ) error {
-	id, err := resolveServerID(ctx, client, serverRef)
+	id, err := resolveServerID(ctx, s.client, serverRef)
 	if err != nil {
 		return err
 	}
-	networkID, err := resolveNetworkResource(ctx, ac, networkRef, resolve.NetworkID)
+	networkID, err := resolveNetworkResource(ctx, s.auth, networkRef, resolve.NetworkID)
 	if err != nil {
 		return err
 	}
-	if err := runServerAddNetworkForID(ctx, client, o, id, networkID, address, tag, w); err != nil {
+	if err := runServerAddNetworkForID(ctx, s.client, o, id, networkID, f, w); err != nil {
 		return fmt.Errorf("attaching network %q to server %q: %w", networkRef, serverRef, err)
 	}
 	return nil
@@ -174,14 +180,14 @@ func runServerAddNetwork(ctx context.Context, client *gophercloud.ServiceClient,
 // runServerAddNetworkForID is the seam: it takes resolved IDs, so tests drive
 // it against a mock endpoint without an auth session.
 func runServerAddNetworkForID(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	serverID, networkID, address, tag string, w io.Writer,
+	serverID, networkID string, f *attachFlags, w io.Writer,
 ) error {
 	create := attachinterfaces.CreateOpts{NetworkID: networkID}
-	if address != "" {
+	if f.address != "" {
 		// nova's schema caps fixed_ips at one item and requires ip_address.
-		create.FixedIPs = []attachinterfaces.FixedIP{{IPAddress: address}}
+		create.FixedIPs = []attachinterfaces.FixedIP{{IPAddress: f.address}}
 	}
-	opts, err := newAttachOpts(client, create, tag)
+	opts, err := newAttachOpts(client, create, f.tag)
 	if err != nil {
 		return err
 	}
@@ -204,11 +210,11 @@ func newServerRemovePortCommand(a *auth.Options, o *output.Options) *cobra.Comma
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRemovePort(ctx, client, ac, args[0], args[1], cmd.OutOrStdout())
+			return runServerRemovePort(ctx, s.client, s.auth, args[0], args[1], cmd.OutOrStdout())
 		},
 	}
 }
@@ -241,11 +247,11 @@ func newServerRemoveNetworkCommand(a *auth.Options, o *output.Options) *cobra.Co
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRemoveNetwork(ctx, client, ac, args[0], args[1], cmd.OutOrStdout())
+			return runServerRemoveNetwork(ctx, s.client, s.auth, args[0], args[1], cmd.OutOrStdout())
 		},
 	}
 }

@@ -41,11 +41,11 @@ func newHypervisorShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 				return err
 			}
 			ctx := cmd.Context()
-			compute, _, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runHypervisorShow(ctx, compute, o, args[0], cmd.OutOrStdout())
+			return runHypervisorShow(ctx, s.client, o, args[0], cmd.OutOrStdout())
 		},
 	}
 	return cmd
@@ -147,14 +147,14 @@ func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command
 				g.color = &f
 			}
 			ctx := cmd.Context()
-			compute, session, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
 			if !gauge {
-				return runHypervisorList(ctx, compute, o, cmd.OutOrStdout())
+				return runHypervisorList(ctx, s.client, o, cmd.OutOrStdout())
 			}
-			return runHypervisorGauge(ctx, compute, session, o, g, cmd.OutOrStdout())
+			return runHypervisorGauge(ctx, s.client, s.auth, o, g, cmd.OutOrStdout())
 		},
 	}
 

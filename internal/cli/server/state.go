@@ -131,10 +131,15 @@ func (o unshelveOpts) ToUnshelveMap() (map[string]any, error) {
 	return body, nil
 }
 
+type unshelveFlags struct {
+	az          string
+	host        string
+	wait        bool
+	waitTimeout time.Duration
+}
+
 func newServerUnshelveCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var az, host string
-	var wait bool
-	var waitTimeout time.Duration
+	f := &unshelveFlags{}
 	cmd := &cobra.Command{
 		Use:   "unshelve <server> [<server> ...]",
 		Short: "Unshelve server(s)",
@@ -148,23 +153,23 @@ func newServerUnshelveCommand(a *auth.Options, o *output.Options) *cobra.Command
 			if err != nil {
 				return err
 			}
-			return runServerUnshelve(ctx, client, args, az, host, wait, waitTimeout, cmd.OutOrStdout())
+			return runServerUnshelve(ctx, client, args, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&az, "availability-zone", "", "availability zone to unshelve into (nova 2.77 or later)")
-	fl.StringVar(&host, "host", "", "host to unshelve onto (nova 2.91 or later)")
-	fl.BoolVar(&wait, "wait", false, "wait for the unshelve to complete")
-	fl.DurationVar(&waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
+	fl.StringVar(&f.az, "availability-zone", "", "availability zone to unshelve into (nova 2.77 or later)")
+	fl.StringVar(&f.host, "host", "", "host to unshelve onto (nova 2.91 or later)")
+	fl.BoolVar(&f.wait, "wait", false, "wait for the unshelve to complete")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
 func runServerUnshelve(ctx context.Context, client *gophercloud.ServiceClient, refs []string,
-	az, host string, wait bool, waitTimeout time.Duration, w io.Writer,
+	f *unshelveFlags, w io.Writer,
 ) error {
 	opts := unshelveOpts{
-		UnshelveOpts: servers.UnshelveOpts{AvailabilityZone: az},
-		Host:         host,
+		UnshelveOpts: servers.UnshelveOpts{AvailabilityZone: f.az},
+		Host:         f.host,
 	}
 	for _, ref := range refs {
 		id, err := resolveServerID(ctx, client, ref)
@@ -174,8 +179,8 @@ func runServerUnshelve(ctx context.Context, client *gophercloud.ServiceClient, r
 		if err := servers.Unshelve(ctx, client, id, opts).ExtractErr(); err != nil {
 			return fmt.Errorf("unshelving server %q: %w", ref, err)
 		}
-		if wait {
-			if err := waitForServerStatus(ctx, client, id, "ACTIVE", waitTimeout); err != nil {
+		if f.wait {
+			if err := waitForServerStatus(ctx, client, id, "ACTIVE", f.waitTimeout); err != nil {
 				return fmt.Errorf("waiting for server %q to unshelve: %w", ref, err)
 			}
 		}
@@ -188,8 +193,13 @@ func runServerUnshelve(ctx context.Context, client *gophercloud.ServiceClient, r
 
 // --- rescue / unrescue ------------------------------------------------------
 
+type rescueFlags struct {
+	image    string
+	password string
+}
+
 func newServerRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var image, password string
+	f := &rescueFlags{}
 	cmd := &cobra.Command{
 		Use:   "rescue <server>",
 		Short: "Boot a server into its rescue image",
@@ -199,16 +209,16 @@ func newServerRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRescue(ctx, client, ac, o, args[0], image, password, cmd.OutOrStdout())
+			return runServerRescue(ctx, s.client, s.auth, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&image, "image", "", "image to rescue with (name or ID; default: the server's own image)")
-	fl.StringVar(&password, flagPassword, "", "administrative password for the rescued server (default: generated)")
+	fl.StringVar(&f.image, "image", "", "image to rescue with (name or ID; default: the server's own image)")
+	fl.StringVar(&f.password, flagPassword, "", "administrative password for the rescued server (default: generated)")
 	return cmd
 }
 
@@ -217,18 +227,18 @@ func newServerRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // is the only place it ever appears, so it goes to the output layer as a
 // single-field result rather than a log line.
 func runServerRescue(ctx context.Context, client *gophercloud.ServiceClient, ac *auth.Client,
-	o *output.Options, ref, image, password string, w io.Writer,
+	o *output.Options, ref string, f *rescueFlags, w io.Writer,
 ) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	imageID, err := resolveRescueImageID(ctx, ac, image)
+	imageID, err := resolveRescueImageID(ctx, ac, f.image)
 	if err != nil {
 		return err
 	}
 	adminPass, err := servers.Rescue(ctx, client, id, servers.RescueOpts{
-		AdminPass:      password,
+		AdminPass:      f.password,
 		RescueImageRef: imageID,
 	}).Extract()
 	if err != nil {
@@ -262,11 +272,15 @@ func newServerUnrescueCommand(a *auth.Options, o *output.Options) *cobra.Command
 
 // newServerImageCommand builds "server image create". Upstream spells it as
 // three words, so "image" is a nested parent under "server".
+type serverImageCreateFlags struct {
+	name        string
+	properties  []string
+	wait        bool
+	waitTimeout time.Duration
+}
+
 func newServerImageCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name string
-	var properties []string
-	var wait bool
-	var waitTimeout time.Duration
+	f := &serverImageCreateFlags{}
 	create := &cobra.Command{
 		Use:   "create <server>",
 		Short: "Create a new disk image from a running server",
@@ -276,18 +290,18 @@ func newServerImageCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, ac, err := newComputeSession(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerImageCreate(ctx, client, ac, o, args[0], name, properties, wait, waitTimeout, cmd.OutOrStdout())
+			return runServerImageCreate(ctx, s.client, s.auth, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := create.Flags()
-	fl.StringVar(&name, "name", "", "name of the new image (default: the server's name)")
-	fl.StringArrayVar(&properties, "property", nil, "key=value property to set on the image (repeatable)")
-	fl.BoolVar(&wait, "wait", false, "wait until the image becomes active")
-	fl.DurationVar(&waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
+	fl.StringVar(&f.name, "name", "", "name of the new image (default: the server's name)")
+	fl.StringArrayVar(&f.properties, "property", nil, "key=value property to set on the image (repeatable)")
+	fl.BoolVar(&f.wait, "wait", false, "wait until the image becomes active")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 
 	cmd := &cobra.Command{Use: "image", Short: "Manage images created from a server"}
 	cmd.AddCommand(create)
@@ -295,12 +309,13 @@ func newServerImageCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient, ac *auth.Client,
-	o *output.Options, ref, name string, properties []string, wait bool, waitTimeout time.Duration, w io.Writer,
+	o *output.Options, ref string, f *serverImageCreateFlags, w io.Writer,
 ) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
+	name := f.name
 	if name == "" {
 		// Upstream defaults the image name to the server's name; that needs the
 		// server, so it is only fetched when the flag was omitted.
@@ -310,7 +325,7 @@ func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient
 		}
 		name = s.Name
 	}
-	metadata, err := parseStringMap(properties)
+	metadata, err := parseStringMap(f.properties)
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)
 	}
@@ -321,8 +336,8 @@ func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return fmt.Errorf("creating an image from server %q: %w", ref, err)
 	}
-	if wait {
-		if err := waitForImageActive(ctx, ac, imageID, waitTimeout); err != nil {
+	if f.wait {
+		if err := waitForImageActive(ctx, ac, imageID, f.waitTimeout); err != nil {
 			return err
 		}
 	}

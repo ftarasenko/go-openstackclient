@@ -216,7 +216,8 @@ func TestRunServerAddNetwork_SendsNetIDAndFixedIP(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	client := computeClient(fakeServer, "latest")
-	err := runServerAddNetworkForID(context.Background(), client, o, ifServerID, ifNetworkID, "192.0.2.10", "", &out)
+	err := runServerAddNetworkForID(context.Background(), client, o, ifServerID, ifNetworkID,
+		&attachFlags{address: "192.0.2.10"}, &out)
 	if err != nil {
 		t.Fatalf("runServerAddNetwork returned error: %v", err)
 	}

@@ -148,7 +148,8 @@ func TestRunServerUnshelve_AvailabilityZoneAndHost(t *testing.T) {
 
 	var out bytes.Buffer
 	client := computeClient(fakeServer, "latest")
-	err := runServerUnshelve(context.Background(), client, []string{stateServerID}, "az-1", "compute-3", false, 0, &out)
+	err := runServerUnshelve(context.Background(), client, []string{stateServerID},
+		&unshelveFlags{az: "az-1", host: "compute-3"}, &out)
 	if err != nil {
 		t.Fatalf("runServerUnshelve returned error: %v", err)
 	}
@@ -173,7 +174,8 @@ func TestRunServerUnshelve_HostAloneStillBuildsAnObject(t *testing.T) {
 	client := computeClient(fakeServer, "latest")
 	// With no availability zone gophercloud renders {"unshelve": null}, so the
 	// inner object has to be created before host can be added.
-	err := runServerUnshelve(context.Background(), client, []string{stateServerID}, "", "compute-3", false, 0, &out)
+	err := runServerUnshelve(context.Background(), client, []string{stateServerID},
+		&unshelveFlags{host: "compute-3"}, &out)
 	if err != nil {
 		t.Fatalf("runServerUnshelve returned error: %v", err)
 	}
@@ -192,7 +194,8 @@ func TestRunServerUnshelve_NoFlagsSendsNullBody(t *testing.T) {
 
 	var out bytes.Buffer
 	client := computeClient(fakeServer, "latest")
-	if err := runServerUnshelve(context.Background(), client, []string{stateServerID}, "", "", false, 0, &out); err != nil {
+	if err := runServerUnshelve(context.Background(), client, []string{stateServerID},
+		&unshelveFlags{}, &out); err != nil {
 		t.Fatalf("runServerUnshelve returned error: %v", err)
 	}
 	// Nova below 2.77 rejects an unshelve body that is anything but null, so an
@@ -261,8 +264,8 @@ func TestRunServerImageCreate_DefaultsNameToServerName(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	client := computeClient(fakeServer, "latest")
-	err := runServerImageCreate(context.Background(), client, nil, o, stateServerID, "",
-		[]string{"os_type=linux"}, false, 0, &out)
+	err := runServerImageCreate(context.Background(), client, nil, o, stateServerID,
+		&serverImageCreateFlags{properties: []string{"os_type=linux"}}, &out)
 	if err != nil {
 		t.Fatalf("runServerImageCreate returned error: %v", err)
 	}
@@ -298,7 +301,8 @@ func TestRunServerImageCreate_ExplicitNameSkipsTheServerFetch(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	client := computeClient(fakeServer, "latest")
-	err := runServerImageCreate(context.Background(), client, nil, o, stateServerID, "nightly", nil, false, 0, &out)
+	err := runServerImageCreate(context.Background(), client, nil, o, stateServerID,
+		&serverImageCreateFlags{name: "nightly"}, &out)
 	if err != nil {
 		t.Fatalf("runServerImageCreate returned error: %v", err)
 	}
