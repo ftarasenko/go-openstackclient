@@ -57,13 +57,23 @@ offline build breaks. Do not hand-edit `vendor/`.
 
 `.golangci.yml` enables a substantially larger linter set than golangci-lint's
 `standard` default — notably `bodyclose`, `contextcheck`, `errorlint`,
-`forcetypeassert`, `gosec`, `nilerr`, `noctx`, `nolintlint`, `revive` (with
-`exported`, `package-comments`, `unused-parameter`, `deep-exit` named explicitly)
-and `usestdlibvars` — plus `max-issues-per-linter: 0` / `max-same-issues: 0` so a
-run reports every occurrence rather than the first three. New code is expected to
-pass all of it; a `//nolint` must name the linter and carry a rationale
-(`nolintlint` enforces both). The narrow per-file exclusions in that file are
-scoped on purpose — do not widen one to a linter or a package.
+`forcetypeassert`, `gocognit`, `gosec`, `nilerr`, `noctx`, `nolintlint`, `revive`
+(with `exported`, `package-comments`, `unused-parameter`, `deep-exit` named
+explicitly) and `usestdlibvars` — plus `max-issues-per-linter: 0` /
+`max-same-issues: 0` so a run reports every occurrence rather than the first
+three. New code is expected to pass all of it; a `//nolint` must name the linter
+and carry a rationale (`nolintlint` enforces both). The narrow per-file
+exclusions in that file are scoped on purpose — do not widen one to a linter or
+a package.
+
+`gocognit` runs at `min-complexity: 25`, above golangci-lint's own default of
+30 in strictness but well above SonarSource's 15. A command's `RunE`/opts
+builder is a chain of `if flags.Changed("x") { opts.X = &x }` — one branch per
+CLI flag, linear and one level deep — so the metric there tracks how many flags
+a verb has, not how hard it is to read; the tallest such function is 22. Above
+25 the functions were genuinely doing several jobs at once and have been split.
+The threshold lives here rather than only in SonarQube because the offline gate
+is the one every commit passes through (see "Releases & CI").
 
 `nilnil` is deliberately **not** enabled. All of its hits in this tree are the
 idiomatic "optional value is absent" pattern rather than ambiguous not-found

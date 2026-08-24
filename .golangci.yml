@@ -15,6 +15,7 @@ linters:
     - errname
     - errorlint
     - forcetypeassert
+    - gocognit
     - gosec
     - govet
     - ineffassign
@@ -40,6 +41,15 @@ linters:
     - usestdlibvars
     - wastedassign
   settings:
+    # gocognit at 25 — not its own default of 30, nor sonar's 15. The command
+    # layer is long chains of `if flags.Changed("x") { opts.X = &x }`: one
+    # branch per CLI flag, linear and a single level deep, where the metric
+    # tracks how many flags a verb has rather than how hard it is to read. The
+    # tallest of those is 22. Everything that was above 25 did several jobs in
+    # one body and was split; 25 is the line between the two, and enforcing it
+    # here keeps it in the offline gate, which sonarqube cannot be.
+    gocognit:
+      min-complexity: 25
     # revive without a settings block runs only its minimal default rule set,
     # so the rules the codebase actually holds itself to were enforced by
     # discipline alone. Name them explicitly to lock the standard in.
@@ -77,6 +87,13 @@ linters:
       - path: _test\.go
         linters:
           - forcetypeassert
+      # gocognit on test files is noise, for the reason the sonar rule is
+      # scoped out of them in sonar-project.properties: the tests are
+      # table-driven with an inline httptest handler per case (AGENTS.md
+      # "Testing"), and the metric reads that shape as nesting.
+      - path: _test\.go
+        linters:
+          - gocognit
       # False positive in output.go selectColumns: `idx` is a NAMED RETURN that
       # is `make([]int, len(all))` only on the early-return branch, so on the
       # branch that appends it is still nil. makezero cannot see the branches are
