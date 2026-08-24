@@ -24,6 +24,7 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -154,6 +155,12 @@ type Options struct {
 	// clouds.yaml even though pflag never saw them on the command line —
 	// currently only the --creds-from-vault openrc.
 	forced map[string]bool
+
+	// authenticate overrides Authenticate in tests so a command's RunE can be
+	// executed end-to-end against a mock endpoint. Nil in every non-test build;
+	// see testhooks.go for why the hook is here rather than in an
+	// export_test.go.
+	authenticate func(context.Context) (*Client, error)
 }
 
 // markForced records that flag's value was supplied by a source pflag cannot

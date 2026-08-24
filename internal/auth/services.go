@@ -9,6 +9,16 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack"
 )
 
+// authenticated is Authenticate, or the test hook when one is installed. It is
+// the single place both client factories below obtain a *Client, which is what
+// lets a test execute a command's RunE without a Keystone.
+func (o *Options) authenticated(ctx context.Context) (*Client, error) {
+	if o.authenticate != nil {
+		return o.authenticate(ctx)
+	}
+	return o.Authenticate(ctx)
+}
+
 // NewServiceClient authenticates once (clouds.yaml / OS_* / --creds-from-*) and
 // derives a single service client via derive — one of the Client factory
 // methods below, passed as a method value, e.g.
@@ -17,7 +27,7 @@ import (
 func (o *Options) NewServiceClient(ctx context.Context,
 	derive func(*Client) (*gophercloud.ServiceClient, error),
 ) (*gophercloud.ServiceClient, error) {
-	client, err := o.Authenticate(ctx)
+	client, err := o.authenticated(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +40,7 @@ func (o *Options) NewServiceClient(ctx context.Context,
 func (o *Options) NewServiceSession(ctx context.Context,
 	derive func(*Client) (*gophercloud.ServiceClient, error),
 ) (*gophercloud.ServiceClient, *Client, error) {
-	client, err := o.Authenticate(ctx)
+	client, err := o.authenticated(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
