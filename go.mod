@@ -3,7 +3,7 @@ module github.com/ftarasenko/go-openstackclient
 go 1.25.0
 
 require (
-	github.com/gophercloud/gophercloud/v2 v2.13.0
+	github.com/gophercloud/gophercloud/v2 v2.14.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/crypto v0.55.0
