@@ -56,3 +56,7 @@ kubeconfig
 *.spdx.json
 *.sig
 
+
+# SonarQube scanner working directory (sonar-project.properties is committed)
+.scannerwork/
+.sonar_lock
