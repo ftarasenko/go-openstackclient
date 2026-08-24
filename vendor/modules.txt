@@ -1,4 +1,4 @@
-# github.com/gophercloud/gophercloud/v2 v2.13.0
+# github.com/gophercloud/gophercloud/v2 v2.14.0
 ## explicit; go 1.25.0
 github.com/gophercloud/gophercloud/v2
 github.com/gophercloud/gophercloud/v2/openstack
