@@ -332,14 +332,13 @@ func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, re
 			}
 		} else {
 			getErrors = 0
-			switch {
-			case strings.EqualFold(s.Status, "ERROR"):
-				return fmt.Errorf("server %q entered ERROR status during migration", ref)
-			case s.TaskState == "" && (strings.EqualFold(s.Status, "ACTIVE") || strings.EqualFold(s.Status, "VERIFY_RESIZE")):
-				if _, err := fmt.Fprintf(w, "Server %s migration complete (status %s)\n", ref, s.Status); err != nil {
-					return err
-				}
-				return nil
+			done, cerr := classifyMigrationState(ref, s.Status, s.TaskState)
+			if cerr != nil {
+				return cerr
+			}
+			if done {
+				_, err := fmt.Fprintf(w, "Server %s migration complete (status %s)\n", ref, s.Status)
+				return err
 			}
 		}
 		select {
@@ -348,6 +347,24 @@ func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, re
 		case <-ticker.C:
 		}
 	}
+}
+
+// classifyMigrationState decides, from one server read, whether a migration
+// --wait is over. It is pure, so every terminal combination of status and
+// task_state is reachable from a table test rather than only from a live nova
+// transition.
+//
+// task_state gates the ACTIVE check: nova leaves status ACTIVE while
+// task_state is "migrating", so a live migration would otherwise be reported
+// done before it started.
+func classifyMigrationState(ref, status, taskState string) (bool, error) {
+	switch {
+	case strings.EqualFold(status, "ERROR"):
+		return false, fmt.Errorf("server %q entered ERROR status during migration", ref)
+	case taskState == "" && (strings.EqualFold(status, "ACTIVE") || strings.EqualFold(status, "VERIFY_RESIZE")):
+		return true, nil
+	}
+	return false, nil
 }
 
 // maxConsecutiveGetErrors bounds how many consecutive servers.Get failures the
