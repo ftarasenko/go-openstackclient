@@ -130,71 +130,91 @@ func soleChildWithPrefix(cmd *cobra.Command, word string) (string, bool) {
 // like "net" into the command "network". Resolving the same prefix here, before
 // any rewriting happens, keeps the two expansion passes looking at the same
 // flag.
-func commandWordIndex(cmd *cobra.Command, args []string, from int) int {
-	// Walk the ancestor chain rather than trusting cmd.InheritedFlags(): this
-	// runs before Execute, and a command's own Flags() does not yet carry the
-	// persistent flags declared on it (the root's --os-cloud, -f, --debug …).
-	find := func(pick func(*pflag.FlagSet) *pflag.Flag) *pflag.Flag {
-		for c := cmd; c != nil; c = c.Parent() {
-			if f := pick(c.Flags()); f != nil {
-				return f
-			}
-			if f := pick(c.PersistentFlags()); f != nil {
-				return f
-			}
+// flagFinder resolves flag names against a command and its ancestors. It walks
+// the ancestor chain rather than trusting cmd.InheritedFlags(): this runs before
+// Execute, and a command's own Flags() does not yet carry the persistent flags
+// declared on it (the root's --os-cloud, -f, --debug …).
+type flagFinder struct {
+	cmd *cobra.Command
+
+	// names is every long flag name reachable from cmd, filled in at most once
+	// and only if an exact lookup ever misses — most invocations use full flag
+	// names and never need it.
+	names map[string]bool
+}
+
+func (ff *flagFinder) find(pick func(*pflag.FlagSet) *pflag.Flag) *pflag.Flag {
+	for c := ff.cmd; c != nil; c = c.Parent() {
+		if f := pick(c.Flags()); f != nil {
+			return f
 		}
+		if f := pick(c.PersistentFlags()); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+func (ff *flagFinder) lookup(name string) *pflag.Flag {
+	return ff.find(func(fs *pflag.FlagSet) *pflag.Flag { return fs.Lookup(name) })
+}
+
+func (ff *flagFinder) shorthand(sh string) *pflag.Flag {
+	return ff.find(func(fs *pflag.FlagSet) *pflag.Flag { return fs.ShorthandLookup(sh) })
+}
+
+// prefixed resolves an abbreviated long name the way ExpandFlagPrefixes would.
+func (ff *flagFinder) prefixed(name string) *pflag.Flag {
+	if ff.names == nil {
+		ff.names = make(map[string]bool)
+		for c := ff.cmd; c != nil; c = c.Parent() {
+			c.Flags().VisitAll(func(f *pflag.Flag) { ff.names[f.Name] = true })
+			c.PersistentFlags().VisitAll(func(f *pflag.Flag) { ff.names[f.Name] = true })
+		}
+	}
+	full, ok := soleFlagWithPrefix(ff.names, name)
+	if !ok {
 		return nil
 	}
-	lookup := func(name string) *pflag.Flag {
-		return find(func(fs *pflag.FlagSet) *pflag.Flag { return fs.Lookup(name) })
-	}
-	lookupShorthand := func(sh string) *pflag.Flag {
-		return find(func(fs *pflag.FlagSet) *pflag.Flag { return fs.ShorthandLookup(sh) })
-	}
+	return ff.lookup(full)
+}
 
-	// allFlagNames is every long flag name reachable from cmd (its own plus
-	// every ancestor's), computed at most once and only if an exact lookup
-	// ever misses — most invocations use full flag names and never need it.
-	var allFlagNames map[string]bool
-	lookupPrefixed := func(name string) *pflag.Flag {
-		if allFlagNames == nil {
-			allFlagNames = make(map[string]bool)
-			for c := cmd; c != nil; c = c.Parent() {
-				c.Flags().VisitAll(func(f *pflag.Flag) { allFlagNames[f.Name] = true })
-				c.PersistentFlags().VisitAll(func(f *pflag.Flag) { allFlagNames[f.Name] = true })
-			}
+// consumesValue reports how many extra tokens the flag token tok takes: 1 when
+// its value is the next argument, 0 when the value is inline ("--x=1") or the
+// flag needs none.
+func (ff *flagFinder) consumesValue(tok string) int {
+	if strings.HasPrefix(tok, "--") {
+		name, _, hasValue := strings.Cut(tok[2:], "=")
+		if hasValue {
+			return 0
 		}
-		full, ok := soleFlagWithPrefix(allFlagNames, name)
-		if !ok {
-			return nil
+		f := ff.lookup(name)
+		if f == nil {
+			f = ff.prefixed(name)
 		}
-		return lookup(full)
+		if f != nil && f.NoOptDefVal == "" {
+			return 1
+		}
+		return 0
 	}
+	// A shorthand cluster ("-cf"): only its last flag can take a separate
+	// value, and only when nothing follows it inline.
+	cluster := tok[1:]
+	if f := ff.shorthand(cluster[len(cluster)-1:]); f != nil && f.NoOptDefVal == "" {
+		return 1
+	}
+	return 0
+}
 
+func commandWordIndex(cmd *cobra.Command, args []string, from int) int {
+	ff := &flagFinder{cmd: cmd}
 	for i := from; i < len(args); i++ {
 		tok := args[i]
 		switch {
 		case tok == "--":
 			return -1 // the rest is positional
-		case strings.HasPrefix(tok, "--"):
-			name, _, hasValue := strings.Cut(tok[2:], "=")
-			if hasValue {
-				continue
-			}
-			f := lookup(name)
-			if f == nil {
-				f = lookupPrefixed(name)
-			}
-			if f != nil && f.NoOptDefVal == "" {
-				i++ // the value is the next token
-			}
 		case strings.HasPrefix(tok, "-") && len(tok) > 1:
-			// A shorthand cluster ("-cf"): only its last flag can take a
-			// separate value, and only when nothing follows it inline.
-			cluster := tok[1:]
-			if f := lookupShorthand(cluster[len(cluster)-1:]); f != nil && f.NoOptDefVal == "" {
-				i++
-			}
+			i += ff.consumesValue(tok)
 		default:
 			return i
 		}

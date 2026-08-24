@@ -81,44 +81,31 @@ func runPortUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	opts.RevisionNumber = &revision
 
 	if len(f.fixedIP) > 0 {
-		remove, perr := buildFixedIPs(ctx, client, f.fixedIP)
-		if perr != nil {
-			return perr
+		remove, err := buildFixedIPs(ctx, client, f.fixedIP)
+		if err != nil {
+			return err
 		}
-		kept := make([]ports.IP, 0, len(current.FixedIPs))
-		for _, have := range current.FixedIPs {
-			if !matchesAnyFixedIP(have, remove) {
-				kept = append(kept, have)
-			}
-		}
-		opts.FixedIPs = kept
+		opts.FixedIPs = keepUnmatched(current.FixedIPs,
+			func(have ports.IP) bool { return matchesAnyFixedIP(have, remove) })
 	}
 
 	if len(f.securityGroup) > 0 {
-		removeIDs, rerr := resolveSecGroupIDs(ctx, client, f.securityGroup)
-		if rerr != nil {
-			return rerr
+		removeIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
+		if err != nil {
+			return err
 		}
-		kept := make([]string, 0, len(current.SecurityGroups))
-		for _, have := range current.SecurityGroups {
-			if !slices.Contains(removeIDs, have) {
-				kept = append(kept, have)
-			}
-		}
+		kept := keepUnmatched(current.SecurityGroups,
+			func(have string) bool { return slices.Contains(removeIDs, have) })
 		opts.SecurityGroups = &kept
 	}
 
 	if len(f.allowedAddress) > 0 {
-		remove, perr := parseAddressPairs(f.allowedAddress)
-		if perr != nil {
-			return perr
+		remove, err := parseAddressPairs(f.allowedAddress)
+		if err != nil {
+			return err
 		}
-		kept := make([]ports.AddressPair, 0, len(current.AllowedAddressPairs))
-		for _, have := range current.AllowedAddressPairs {
-			if !matchesAnyAddressPair(have, remove) {
-				kept = append(kept, have)
-			}
-		}
+		kept := keepUnmatched(current.AllowedAddressPairs,
+			func(have ports.AddressPair) bool { return matchesAnyAddressPair(have, remove) })
 		opts.AllowedAddressPairs = &kept
 	}
 

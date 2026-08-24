@@ -63,6 +63,19 @@ func resolveProjectRef(ctx context.Context, session *auth.Client, ref, domainRef
 // mutuallyExclusive returns an error when both named boolean flags were set on
 // the same invocation. It backs the contradictory-flag guards for pairs such as
 // --enable/--disable and --ingress/--egress.
+// keepUnmatched returns the elements of have that no removal spec matches,
+// preserving order. Every "unset" verb needs it: neutron's update replaces the
+// whole list, so the survivors are computed client-side from what was just read.
+func keepUnmatched[T any](have []T, matches func(T) bool) []T {
+	kept := make([]T, 0, len(have))
+	for _, v := range have {
+		if !matches(v) {
+			kept = append(kept, v)
+		}
+	}
+	return kept
+}
+
 func mutuallyExclusive(flags interface{ Changed(string) bool }, a, b string) error {
 	if flags.Changed(a) && flags.Changed(b) {
 		return fmt.Errorf("--%s and --%s are mutually exclusive", a, b)

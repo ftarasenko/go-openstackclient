@@ -82,50 +82,33 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	opts := subnets.UpdateOpts{RevisionNumber: &revision}
 
 	if len(f.allocationPool) > 0 {
-		remove, perr := parseAllocationPools(f.allocationPool)
-		if perr != nil {
-			return perr
+		remove, err := parseAllocationPools(f.allocationPool)
+		if err != nil {
+			return err
 		}
-		kept := make([]subnets.AllocationPool, 0, len(current.AllocationPools))
-		for _, have := range current.AllocationPools {
-			if !slices.Contains(remove, have) {
-				kept = append(kept, have)
-			}
-		}
-		opts.AllocationPools = kept
+		opts.AllocationPools = keepUnmatched(current.AllocationPools,
+			func(have subnets.AllocationPool) bool { return slices.Contains(remove, have) })
 	}
 
 	if len(f.dnsNameserver) > 0 {
-		kept := make([]string, 0, len(current.DNSNameservers))
-		for _, have := range current.DNSNameservers {
-			if !slices.Contains(f.dnsNameserver, have) {
-				kept = append(kept, have)
-			}
-		}
+		kept := keepUnmatched(current.DNSNameservers,
+			func(have string) bool { return slices.Contains(f.dnsNameserver, have) })
 		opts.DNSNameservers = &kept
 	}
 
 	if len(f.hostRoute) > 0 {
-		remove, perr := parseHostRoutes(f.hostRoute)
-		if perr != nil {
-			return perr
+		remove, err := parseHostRoutes(f.hostRoute)
+		if err != nil {
+			return err
 		}
-		kept := make([]subnets.HostRoute, 0, len(current.HostRoutes))
-		for _, have := range current.HostRoutes {
-			if !slices.Contains(remove, have) {
-				kept = append(kept, have)
-			}
-		}
+		kept := keepUnmatched(current.HostRoutes,
+			func(have subnets.HostRoute) bool { return slices.Contains(remove, have) })
 		opts.HostRoutes = &kept
 	}
 
 	if len(f.serviceType) > 0 {
-		kept := make([]string, 0, len(current.ServiceTypes))
-		for _, have := range current.ServiceTypes {
-			if !slices.Contains(f.serviceType, have) {
-				kept = append(kept, have)
-			}
-		}
+		kept := keepUnmatched(current.ServiceTypes,
+			func(have string) bool { return slices.Contains(f.serviceType, have) })
 		opts.ServiceTypes = &kept
 	}
 

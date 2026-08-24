@@ -222,25 +222,12 @@ type trunkSubPort struct {
 	MACAddress       string `json:"mac_address"`
 }
 
-func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portListFlags, deps portListDeps, w io.Writer) error {
-	status, err := normalizePortStatus(f.status)
-	if err != nil {
-		return err
-	}
-	opts := portListOpts{
-		ListOpts: ports.ListOpts{
-			Name:        f.name,
-			DeviceID:    f.deviceID,
-			DeviceOwner: f.deviceOwner,
-			MACAddress:  f.macAddress,
-			Status:      status,
-			Tags:        strings.Join(f.tags, ","),
-			TagsAny:     strings.Join(f.anyTags, ","),
-			NotTags:     strings.Join(f.notTags, ","),
-			NotTagsAny:  strings.Join(f.notAnyTags, ","),
-		},
-		hostID: f.host,
-	}
+// resolvePortDeviceFilters settles the filters that select by attached device.
+// --router and --server both narrow neutron's device_id, so they share a field
+// and are resolved together.
+func resolvePortDeviceFilters(ctx context.Context, client *gophercloud.ServiceClient,
+	f *portListFlags, deps portListDeps, opts *portListOpts,
+) error {
 	if f.router != "" {
 		routerID, err := resolveRouterID(ctx, client, f.router)
 		if err != nil {
@@ -264,6 +251,14 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		}
 		opts.DeviceID = serverID
 	}
+	return nil
+}
+
+// resolvePortOwnerFilters settles the filters that select by owning network or
+// project, each reaching into its own service only when the value is a name.
+func resolvePortOwnerFilters(ctx context.Context, client *gophercloud.ServiceClient,
+	f *portListFlags, deps portListDeps, opts *portListOpts,
+) error {
 	if f.network != "" {
 		networkID, err := resolveNetworkID(ctx, client, f.network)
 		if err != nil {
@@ -285,6 +280,14 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		}
 		opts.ProjectID = projectID
 	}
+	return nil
+}
+
+// resolvePortAddressFilters settles the repeatable filters that name security
+// groups and fixed IPs.
+func resolvePortAddressFilters(ctx context.Context, client *gophercloud.ServiceClient,
+	f *portListFlags, opts *portListOpts,
+) error {
 	if len(f.securityGroup) > 0 {
 		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
 		if err != nil {
@@ -298,6 +301,37 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			return err
 		}
 		opts.FixedIPs = append(opts.FixedIPs, fip)
+	}
+	return nil
+}
+
+func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portListFlags, deps portListDeps, w io.Writer) error {
+	status, err := normalizePortStatus(f.status)
+	if err != nil {
+		return err
+	}
+	opts := portListOpts{
+		ListOpts: ports.ListOpts{
+			Name:        f.name,
+			DeviceID:    f.deviceID,
+			DeviceOwner: f.deviceOwner,
+			MACAddress:  f.macAddress,
+			Status:      status,
+			Tags:        strings.Join(f.tags, ","),
+			TagsAny:     strings.Join(f.anyTags, ","),
+			NotTags:     strings.Join(f.notTags, ","),
+			NotTagsAny:  strings.Join(f.notAnyTags, ","),
+		},
+		hostID: f.host,
+	}
+	if err := resolvePortDeviceFilters(ctx, client, f, deps, &opts); err != nil {
+		return err
+	}
+	if err := resolvePortOwnerFilters(ctx, client, f, deps, &opts); err != nil {
+		return err
+	}
+	if err := resolvePortAddressFilters(ctx, client, f, &opts); err != nil {
+		return err
 	}
 	pages, err := ports.List(client, opts).AllPages(ctx)
 	if err != nil {
