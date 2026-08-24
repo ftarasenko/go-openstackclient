@@ -83,27 +83,8 @@ func pollProvisioning(ctx context.Context, client *gophercloud.ServiceClient, id
 	var getErrors int
 	var last string
 	for {
-		lb, err := loadbalancers.Get(ctx, client, id).Extract()
-		switch {
-		case err == nil:
-			getErrors = 0
-			last = lb.ProvisioningStatus
-			stop, derr := done(lb.ProvisioningStatus, false)
-			if derr != nil {
-				return last, derr
-			}
-			if stop {
-				return last, nil
-			}
-		case isNotFound(err):
-			stop, derr := done("", true)
-			if derr != nil {
-				return last, derr
-			}
-			if stop {
-				return last, nil
-			}
-		default:
+		status, gone, err := getStatus(loadbalancers.Get(ctx, client, id).Extract())
+		if err != nil {
 			// Tolerate a few consecutive transient failures, but stop promptly if
 			// the context itself is done.
 			if ctx.Err() != nil {
@@ -113,6 +94,18 @@ func pollProvisioning(ctx context.Context, client *gophercloud.ServiceClient, id
 			if getErrors > maxConsecutiveGetErrors {
 				return last, fmt.Errorf("polling load balancer %s%s: %w", id, lastStatus(last), err)
 			}
+		} else {
+			if !gone {
+				getErrors = 0
+				last = status
+			}
+			stop, derr := done(status, gone)
+			if derr != nil {
+				return last, derr
+			}
+			if stop {
+				return last, nil
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -120,6 +113,23 @@ func pollProvisioning(ctx context.Context, client *gophercloud.ServiceClient, id
 		case <-ticker.C:
 		}
 	}
+}
+
+// getStatus maps one loadbalancers.Get result onto the (status, gone) pair the
+// done callback reads. Octavia's 404 is not a failure: during a delete wait it
+// is the success signal, so it becomes gone=true rather than an error, and only
+// a genuinely unexpected response comes back as one.
+//
+// It takes the Get result rather than performing the Get so it stays pure and
+// gets a table test over the three outcomes.
+func getStatus(lb *loadbalancers.LoadBalancer, err error) (status string, gone bool, _ error) {
+	switch {
+	case err == nil:
+		return lb.ProvisioningStatus, false, nil
+	case isNotFound(err):
+		return "", true, nil
+	}
+	return "", false, err
 }
 
 // lastStatus renders the last provisioning_status seen, for the error message on
