@@ -119,7 +119,8 @@ func TestRunEndpointCreate_ResolvesServiceAndBody(t *testing.T) {
 	o := &output.Options{Format: output.FormatValue}
 	f := &endpointWriteFlags{}
 	var buf bytes.Buffer
-	if err := runEndpointCreate(context.Background(), client, o, "nova", "public", "https://nova", f, &buf); err != nil {
+	if err := runEndpointCreate(context.Background(), client, o,
+		endpointRef{service: "nova", iface: "public", url: "https://nova"}, f, &buf); err != nil {
 		t.Fatalf("runEndpointCreate error: %v", err)
 	}
 	if gotMethod != http.MethodPost {

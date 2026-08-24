@@ -22,9 +22,14 @@ import (
 
 // --- role create ------------------------------------------------------------
 
+type roleCreateFlags struct {
+	description string
+	domain      string
+	orShow      bool
+}
+
 func newRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var description, domain string
-	var orShow bool
+	f := &roleCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new role",
@@ -38,13 +43,13 @@ func newRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runRoleCreate(ctx, client, o, args[0], description, domain, orShow, cmd.OutOrStdout())
+			return runRoleCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&description, "description", "", "description of the role")
-	fl.StringVar(&domain, "domain", "", helpDomainRole)
-	fl.BoolVar(&orShow, "or-show", false, "return the existing role if it already exists")
+	fl.StringVar(&f.description, "description", "", "description of the role")
+	fl.StringVar(&f.domain, "domain", "", helpDomainRole)
+	fl.BoolVar(&f.orShow, "or-show", false, "return the existing role if it already exists")
 	return cmd
 }
 
@@ -53,19 +58,19 @@ func newRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // so a provisioning script stays idempotent, and the lookup is only attempted on
 // that specific outcome.
 func runRoleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name, description, domainNameOrID string, orShow bool, w io.Writer,
+	name string, f *roleCreateFlags, w io.Writer,
 ) error {
-	domainID, err := resolveDomainID(ctx, client, domainNameOrID)
+	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
 		return err
 	}
 	r, err := roles.Create(ctx, client, roles.CreateOpts{
 		Name:        name,
-		Description: description,
+		Description: f.description,
 		DomainID:    domainID,
 	}).Extract()
 	if err != nil {
-		if orShow && gophercloud.ResponseCodeIs(err, 409) {
+		if f.orShow && gophercloud.ResponseCodeIs(err, 409) {
 			return runRoleShow(ctx, client, o, name, w)
 		}
 		return fmt.Errorf("creating role %q: %w", name, err)

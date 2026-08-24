@@ -196,7 +196,8 @@ func newEndpointCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 			if err != nil {
 				return err
 			}
-			return runEndpointCreate(ctx, client, o, args[0], args[1], args[2], f, cmd.OutOrStdout())
+			return runEndpointCreate(ctx, client, o,
+				endpointRef{service: args[0], iface: args[1], url: args[2]}, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -207,18 +208,28 @@ func newEndpointCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 	return cmd
 }
 
-func runEndpointCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, service, iface, url string, f *endpointWriteFlags, w io.Writer) error {
-	avail, err := availability(iface)
+// endpointRef is the "<service> <interface> <url>" triple "endpoint create"
+// takes as positional arguments.
+type endpointRef struct {
+	service string
+	iface   string
+	url     string
+}
+
+func runEndpointCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	ref endpointRef, f *endpointWriteFlags, w io.Writer,
+) error {
+	avail, err := availability(ref.iface)
 	if err != nil {
 		return err
 	}
-	serviceID, err := resolveServiceID(ctx, client, service)
+	serviceID, err := resolveServiceID(ctx, client, ref.service)
 	if err != nil {
 		return err
 	}
 	opts := endpoints.CreateOpts{
 		Availability: avail,
-		URL:          url,
+		URL:          ref.url,
 		ServiceID:    serviceID,
 		Region:       f.region,
 		Description:  f.description,

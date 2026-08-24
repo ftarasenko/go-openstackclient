@@ -31,7 +31,8 @@ func TestRunRoleCreate_PostsNameAndDescription(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	if err := runRoleCreate(context.Background(), identityClient(fakeServer), o, "reader", "read-only", "", false, &out); err != nil {
+	if err := runRoleCreate(context.Background(), identityClient(fakeServer), o, "reader",
+		&roleCreateFlags{description: "read-only"}, &out); err != nil {
 		t.Fatalf("runRoleCreate returned error: %v", err)
 	}
 
@@ -65,7 +66,8 @@ func TestRunRoleCreate_OrShowFallsBackOnConflict(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	if err := runRoleCreate(context.Background(), identityClient(fakeServer), o, "reader", "", "", true, &out); err != nil {
+	if err := runRoleCreate(context.Background(), identityClient(fakeServer), o, "reader",
+		&roleCreateFlags{orShow: true}, &out); err != nil {
 		t.Fatalf("runRoleCreate --or-show returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), "existing-id") {
@@ -83,7 +85,8 @@ func TestRunRoleCreate_ConflictWithoutOrShowFails(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	err := runRoleCreate(context.Background(), identityClient(fakeServer), o, "reader", "", "", false, &out)
+	err := runRoleCreate(context.Background(), identityClient(fakeServer), o, "reader",
+		&roleCreateFlags{}, &out)
 	if err == nil {
 		t.Fatal("expected a conflict to fail without --or-show")
 	}
