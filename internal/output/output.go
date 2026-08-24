@@ -871,7 +871,7 @@ func cellRaw(v any) string {
 		// case — it has a concrete type, so the interface itself is non-nil —
 		// and calling String() on it panics whenever the method dereferences
 		// its receiver. Render it the same as a genuinely absent value instead.
-		if rv := reflect.ValueOf(t); rv.Kind() == reflect.Ptr && rv.IsNil() {
+		if rv := reflect.ValueOf(t); rv.Kind() == reflect.Pointer && rv.IsNil() {
 			return ""
 		}
 		return t.String()
