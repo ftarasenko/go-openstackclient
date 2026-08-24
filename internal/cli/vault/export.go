@@ -87,38 +87,13 @@ func runKVExport(ctx context.Context, c *vault.Client, pub *rsa.PublicKey, base 
 		if err := vault.ValidateRelPath(rel); err != nil {
 			return fmt.Errorf("listing %q returned an unsafe secret path %q: %w", base, rel, err)
 		}
-		path := joinPath(base, rel)
-
-		data, err := c.ReadKVDataAt(ctx, mount, path, 0)
-		if err != nil {
-			// Vault errors carry no secret material, so they are safe to embed.
-			msg := err.Error()
-			if errors.Is(err, vault.ErrNotFound) {
-				msg = "secret not found or has no readable version"
-			}
-			suite.Cases = append(suite.Cases, junitCase{
-				Classname: classKV, Name: path, Time: caseTime,
-				Failure: &junitMessage{Message: msg, Text: msg},
-			})
-			continue
-		}
-
-		cases, err := exportCases(pub, path, data)
+		cases, err := exportSecret(ctx, c, pub, mount, joinPath(base, rel))
 		if err != nil {
 			return err
 		}
 		suite.Cases = append(suite.Cases, cases...)
 	}
-
-	for _, tc := range suite.Cases {
-		switch {
-		case tc.Failure != nil:
-			suite.Failures++
-		case tc.Skipped != nil:
-			suite.Skipped++
-		}
-	}
-	suite.Tests = len(suite.Cases)
+	suite.tally()
 
 	if _, err := io.WriteString(w, xml.Header); err != nil {
 		return err
@@ -135,6 +110,42 @@ func runKVExport(ctx context.Context, c *vault.Client, pub *rsa.PublicKey, base 
 	fmt.Fprintf(os.Stderr, "%s: exported %d test case(s) under %s (%d unreadable, %d empty), encrypted to the recipient\n",
 		c.Addr(), suite.Tests, base, suite.Failures, suite.Skipped)
 	return nil
+}
+
+// exportSecret reads the secret at path and renders it as JUnit test cases.
+//
+// An unreadable secret is a failed test case rather than a failed export: the
+// report's whole job is to say which paths could and could not be read, so one
+// missing secret must not cost the operator the other several hundred. Only an
+// encryption failure — which would mean the recipient key is unusable — aborts.
+func exportSecret(ctx context.Context, c *vault.Client, pub *rsa.PublicKey, mount, path string) ([]junitCase, error) {
+	data, err := c.ReadKVDataAt(ctx, mount, path, 0)
+	if err != nil {
+		// Vault errors carry no secret material, so they are safe to embed.
+		msg := err.Error()
+		if errors.Is(err, vault.ErrNotFound) {
+			msg = "secret not found or has no readable version"
+		}
+		return []junitCase{{
+			Classname: classKV, Name: path, Time: caseTime,
+			Failure: &junitMessage{Message: msg, Text: msg},
+		}}, nil
+	}
+	return exportCases(pub, path, data)
+}
+
+// tally recounts the suite-level attributes GitLab reads from the cases now in
+// the suite.
+func (s *junitSuite) tally() {
+	s.Tests, s.Failures, s.Skipped = len(s.Cases), 0, 0
+	for _, tc := range s.Cases {
+		switch {
+		case tc.Failure != nil:
+			s.Failures++
+		case tc.Skipped != nil:
+			s.Skipped++
+		}
+	}
 }
 
 // exportCases renders one secret as test cases: normally a single case holding
