@@ -156,17 +156,11 @@ func clusterTLS(kc *kubeconfig, name string) (string, *tls.Config, error) {
 			cfg.InsecureSkipVerify = true
 			warnInsecure(fmt.Sprintf("the Kubernetes cluster %q (insecure-skip-tls-verify)", name))
 		} else {
-			ca, err := pemFromDataOrFile(c.Cluster.CAData, c.Cluster.CAFile)
+			pool, err := clusterRoots(name, c.Cluster.CAData, c.Cluster.CAFile)
 			if err != nil {
-				return "", nil, fmt.Errorf("cluster %q CA: %w", name, err)
+				return "", nil, err
 			}
-			if len(ca) > 0 {
-				pool := x509.NewCertPool()
-				if !pool.AppendCertsFromPEM(ca) {
-					return "", nil, fmt.Errorf("cluster %q: no certificates parsed from CA", name)
-				}
-				cfg.RootCAs = pool
-			}
+			cfg.RootCAs = pool
 		}
 		if c.Cluster.Server == "" {
 			return "", nil, fmt.Errorf("cluster %q has no server URL", name)
@@ -174,6 +168,27 @@ func clusterTLS(kc *kubeconfig, name string) (string, *tls.Config, error) {
 		return c.Cluster.Server, cfg, nil
 	}
 	return "", nil, fmt.Errorf("cluster %q not found in kubeconfig", name)
+}
+
+// clusterRoots builds the pool of roots to trust for a cluster, from a CA given
+// inline as base64 or as a file path.
+//
+// A cluster that names no CA at all yields a nil pool, which leaves the system
+// roots in place — that is a valid setup for a publicly-trusted apiserver, not a
+// missing setting, so it is not an error.
+func clusterRoots(name, caData, caFile string) (*x509.CertPool, error) {
+	ca, err := pemFromDataOrFile(caData, caFile)
+	if err != nil {
+		return nil, fmt.Errorf("cluster %q CA: %w", name, err)
+	}
+	if len(ca) == 0 {
+		return nil, nil
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("cluster %q: no certificates parsed from CA", name)
+	}
+	return pool, nil
 }
 
 // userAuth wires the named user's credentials: a client certificate is added to
@@ -186,17 +201,11 @@ func userAuth(kc *kubeconfig, name string, tlsCfg *tls.Config) (string, error) {
 		}
 		switch {
 		case u.User.ClientCertData != "" || u.User.ClientCertFile != "":
-			certPEM, err := pemFromDataOrFile(u.User.ClientCertData, u.User.ClientCertFile)
+			cert, err := clientCertificate(name,
+				u.User.ClientCertData, u.User.ClientCertFile,
+				u.User.ClientKeyData, u.User.ClientKeyFile)
 			if err != nil {
-				return "", fmt.Errorf("user %q client certificate: %w", name, err)
-			}
-			keyPEM, err := pemFromDataOrFile(u.User.ClientKeyData, u.User.ClientKeyFile)
-			if err != nil {
-				return "", fmt.Errorf("user %q client key: %w", name, err)
-			}
-			cert, err := tls.X509KeyPair(certPEM, keyPEM)
-			if err != nil {
-				return "", fmt.Errorf("user %q client certificate/key: %w", name, err)
+				return "", err
 			}
 			tlsCfg.Certificates = []tls.Certificate{cert}
 			return "", nil
@@ -212,6 +221,29 @@ func userAuth(kc *kubeconfig, name string, tlsCfg *tls.Config) (string, error) {
 		return "", fmt.Errorf("user %q has no usable credentials (client cert or token)", name)
 	}
 	return "", fmt.Errorf("user %q not found in kubeconfig", name)
+}
+
+// clientCertificate assembles a user's mutual-TLS certificate. The certificate
+// and the key are independent: each may be inline base64 or a file path, and a
+// kubeconfig may well mix the two.
+//
+// The three failures are reported separately on purpose — a bad certificate, a
+// bad key and a pair that do not match need different fixes, and the operator
+// only sees the message.
+func clientCertificate(name, certData, certFile, keyData, keyFile string) (tls.Certificate, error) {
+	certPEM, err := pemFromDataOrFile(certData, certFile)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("user %q client certificate: %w", name, err)
+	}
+	keyPEM, err := pemFromDataOrFile(keyData, keyFile)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("user %q client key: %w", name, err)
+	}
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("user %q client certificate/key: %w", name, err)
+	}
+	return cert, nil
 }
 
 // pemFromDataOrFile returns PEM bytes from an inline base64 "-data" field or,
