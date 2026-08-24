@@ -33,7 +33,8 @@ func TestRunImageImport_WebDownloadRequestBody(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runImageImport(context.Background(), imageClient(fakeServer), "cirros", testImageUUID,
-		imageimport.WebDownloadMethod, "https://example.invalid/cirros.qcow2", nil, false, &buf)
+		&imageImportFlags{resolved: imageimport.WebDownloadMethod,
+			uri: "https://example.invalid/cirros.qcow2"}, &buf)
 	if err != nil {
 		t.Fatalf("runImageImport error: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestRunImageImport_GlanceDirectOmitsURI(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runImageImport(context.Background(), imageClient(fakeServer), testImageUUID, testImageUUID,
-		imageimport.GlanceDirectMethod, "", nil, false, &buf)
+		&imageImportFlags{resolved: imageimport.GlanceDirectMethod}, &buf)
 	if err != nil {
 		t.Fatalf("runImageImport error: %v", err)
 	}
@@ -99,7 +100,8 @@ func TestRunImageImport_StoreOptionsSitBesideMethod(t *testing.T) {
 
 			var buf bytes.Buffer
 			err := runImageImport(context.Background(), imageClient(fakeServer), "img", testImageUUID,
-				imageimport.WebDownloadMethod, "https://example.invalid/i.qcow2", tc.stores, tc.allStores, &buf)
+				&imageImportFlags{resolved: imageimport.WebDownloadMethod,
+					uri: "https://example.invalid/i.qcow2", stores: tc.stores, allStores: tc.allStores}, &buf)
 			if err != nil {
 				t.Fatalf("runImageImport error: %v", err)
 			}
@@ -179,7 +181,7 @@ func TestImageImportFlags_ResolveMethod(t *testing.T) {
 				t.Fatalf("parsing %v: %v", tc.args, err)
 			}
 
-			got, err := f.resolveMethod(cmd)
+			err := f.resolveMethod(cmd)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("resolveMethod() error = %v, want one containing %q", err, tc.wantErr)
@@ -189,8 +191,8 @@ func TestImageImportFlags_ResolveMethod(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveMethod() error = %v, want nil", err)
 			}
-			if got != tc.wantMethod {
-				t.Errorf("resolveMethod() = %q, want %q", got, tc.wantMethod)
+			if f.resolved != tc.wantMethod {
+				t.Errorf("resolveMethod() = %q, want %q", f.resolved, tc.wantMethod)
 			}
 		})
 	}

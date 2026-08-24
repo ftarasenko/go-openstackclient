@@ -35,8 +35,7 @@ func newImageImportCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			method, err := f.resolveMethod(cmd)
-			if err != nil {
+			if err := f.resolveMethod(cmd); err != nil {
 				return err
 			}
 			ctx := cmd.Context()
@@ -48,7 +47,7 @@ func newImageImportCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runImageImport(ctx, client, args[0], id, method, f.uri, f.stores, f.allStores, cmd.OutOrStdout())
+			return runImageImport(ctx, client, args[0], id, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -73,6 +72,10 @@ type imageImportFlags struct {
 	uri          string
 	stores       []string
 	allStores    bool
+
+	// resolved is --method/--import-method reconciled and defaulted by
+	// resolveMethod, so the run seam takes a settled method.
+	resolved imageimport.ImportMethod
 }
 
 // importMethods are the methods glance's Import API defines. The endpoint
@@ -85,12 +88,12 @@ var importMethods = []string{
 // resolveMethod reconciles --method / --import-method and applies the
 // web-download default, which is the only method that works without first
 // staging data (koc has no `image stage`).
-func (f *imageImportFlags) resolveMethod(cmd *cobra.Command) (imageimport.ImportMethod, error) {
+func (f *imageImportFlags) resolveMethod(cmd *cobra.Command) error {
 	fl := cmd.Flags()
 	switch {
 	case fl.Changed(flagMethod) && fl.Changed(flagImportMethod):
 		if f.method != f.importMethod {
-			return "", fmt.Errorf("--method and --import-method are aliases but were given different values (%q and %q)", f.method, f.importMethod)
+			return fmt.Errorf("--method and --import-method are aliases but were given different values (%q and %q)", f.method, f.importMethod)
 		}
 	case fl.Changed(flagImportMethod):
 		f.method = f.importMethod
@@ -98,20 +101,21 @@ func (f *imageImportFlags) resolveMethod(cmd *cobra.Command) (imageimport.Import
 
 	if f.method == "" {
 		if f.uri == "" {
-			return "", fmt.Errorf("no import method given: pass --method (%s), or --uri to default to web-download", strings.Join(importMethods, " or "))
+			return fmt.Errorf("no import method given: pass --method (%s), or --uri to default to web-download", strings.Join(importMethods, " or "))
 		}
 		f.method = string(imageimport.WebDownloadMethod)
 	}
 	if !slices.Contains(importMethods, f.method) {
-		return "", fmt.Errorf("unsupported import method %q: expected one of %s", f.method, strings.Join(importMethods, ", "))
+		return fmt.Errorf("unsupported import method %q: expected one of %s", f.method, strings.Join(importMethods, ", "))
 	}
 	if f.method == string(imageimport.WebDownloadMethod) && f.uri == "" {
-		return "", fmt.Errorf("--uri is required for the web-download import method")
+		return fmt.Errorf("--uri is required for the web-download import method")
 	}
 	if f.method == string(imageimport.GlanceDirectMethod) && f.uri != "" {
-		return "", fmt.Errorf("--uri applies to the web-download method only; glance-direct imports data staged beforehand")
+		return fmt.Errorf("--uri applies to the web-download method only; glance-direct imports data staged beforehand")
 	}
-	return imageimport.ImportMethod(f.method), nil
+	f.resolved = imageimport.ImportMethod(f.method)
+	return nil
 }
 
 // importStoreOpts adds glance's multi-store keys to an import request.
@@ -148,19 +152,19 @@ func (o importStoreOpts) ToImportCreateMap() (map[string]any, error) {
 // import runs asynchronously, so progress is observed with `image show`
 // (status goes importing → active) rather than reported here.
 func runImageImport(ctx context.Context, client *gophercloud.ServiceClient, ref, id string,
-	method imageimport.ImportMethod, uri string, stores []string, allStores bool, w io.Writer,
+	f *imageImportFlags, w io.Writer,
 ) error {
 	opts := importStoreOpts{
-		CreateOpts: imageimport.CreateOpts{Name: method, URI: uri},
-		Stores:     stores,
-		AllStores:  allStores,
+		CreateOpts: imageimport.CreateOpts{Name: f.resolved, URI: f.uri},
+		Stores:     f.stores,
+		AllStores:  f.allStores,
 	}
 	if err := imageimport.Create(ctx, client, id, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("importing image %q: %w", ref, err)
 	}
 	if _, err := fmt.Fprintf(w,
 		"Started %s import of image %s; poll \"koc image show %s\" until status is active\n",
-		method, ref, ref); err != nil {
+		f.resolved, ref, ref); err != nil {
 		return err
 	}
 	return nil
