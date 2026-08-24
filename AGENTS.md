@@ -88,6 +88,75 @@ issues**, `go test ./...` green, the offline static build succeeds, and — if t
 commit changes the command surface — `docs/coverage.md` is updated (see "Coverage
 tracking").
 
+## SonarQube (out-of-band static analysis)
+
+SonarQube analysis is **not** part of the per-commit gate above and not part of
+CI — it needs network and a server token, so it lives outside the air-gap
+invariant on purpose (see "Releases & CI" for why that boundary is load-bearing).
+It is run manually, typically after a merge to `master` has already gone green
+offline. `sonar-project.properties` is committed; the server address and the
+token are not.
+
+Point the scanner at the internal SonarQube server through the environment — the
+host name and token are private data and must never be committed (see "Private
+data never leaves the org"):
+
+```sh
+export SONAR_HOST_URL=https://<internal-sonarqube-host>   # ask a maintainer / LCM
+export SONAR_TOKEN=<project analysis token>               # sqp_… ; never commit
+```
+
+Generate the coverage profile first — `sonar.go.coverage.reportPaths` expects
+`coverage.out` at the repo root, and without it every line reports as uncovered:
+
+```sh
+GOFLAGS=-mod=vendor GOPROXY=off go test -coverprofile=coverage.out ./...
+```
+
+`/coverage.*` is gitignored (root-anchored, so `docs/coverage.md` survives), and
+`coverage.out` is in `sonar.exclusions` so the profile is not analysed as source.
+
+Then run the scanner from the repo root. There is no scanner binary to install —
+use the container image, which is also what keeps the Go plugin version matched
+to the server:
+
+```sh
+podman run --rm \
+    -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+    -e SONAR_TOKEN="$SONAR_TOKEN" \
+    -v "$PWD:/usr/src" \
+    docker.io/sonarsource/sonar-scanner-cli:latest \
+    -Dsonar.projectVersion="$(git describe --tags --abbrev=0)"
+```
+
+Prefer `--env-file <path outside the repo>` over `-e` if you would rather the
+token stay out of your shell history and the process list. The image is
+`linux/amd64`; on Apple silicon podman emulates it and prints a platform warning
+that is expected and harmless.
+
+**Always pass `sonar.projectVersion`.** The project's new-code period is
+`PREVIOUS_VERSION`, so the version string is what makes "new code" mean *since
+the last release* instead of *since the previous scan* — otherwise a mechanical
+refactor re-attributes long-standing untested lines to new code and the gate
+fails on work nobody just wrote. The same note sits next to the setting in
+`sonar-project.properties`.
+
+Two known, accepted divergences — neither is a regression to chase:
+
+- **Cognitive complexity.** Sonar's `go:S3776` fires at 15; this repo's
+  `gocognit` gate is 25 for the reasons in "Build / test / lint" above. Functions
+  between the two thresholds (e.g. `runFlavorSet`) are reported by Sonar and
+  clean locally. `golangci-lint` is the gate that every commit passes through, so
+  it wins; do not split a function only to satisfy S3776.
+- **First scan of a fresh server.** With no prior analysis there is no previous
+  version to diff against, so the whole tree lands in "new code" and the gate can
+  fail on pre-existing findings. Re-check against the second scan before treating
+  anything as new.
+
+Coverage numbers will not match `go tool cover`: Sonar reports *line* coverage
+and honours `sonar.coverage.exclusions` (which drops `cmd/koc/main.go`), while
+`go tool cover -func` reports *statement* coverage over everything.
+
 ## Layout
 
 ```
