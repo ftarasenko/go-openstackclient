@@ -121,9 +121,9 @@ func TestRunPTRRecordSet_RequestBody(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	f := &ptrRecordSetFlags{ttl: 300}
+	f := &ptrRecordSetFlags{ttl: 300, common: &commonOptions{}}
 	if err := runPTRRecordSet(context.Background(), dnsShareClient(fakeServer), o,
-		"RegionOne:f1", "host.example.com.", f, &commonOptions{}, &buf); err != nil {
+		"RegionOne:f1", "host.example.com.", f, &buf); err != nil {
 		t.Fatalf("runPTRRecordSet error: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
@@ -147,9 +147,9 @@ func TestRunPTRRecordSet_NoTTLSendsNull(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	f := &ptrRecordSetFlags{noTTL: true}
+	f := &ptrRecordSetFlags{noTTL: true, common: &commonOptions{}}
 	if err := runPTRRecordSet(context.Background(), dnsShareClient(fakeServer), o,
-		"RegionOne:f1", "host.example.com.", f, &commonOptions{}, &buf); err != nil {
+		"RegionOne:f1", "host.example.com.", f, &buf); err != nil {
 		t.Fatalf("runPTRRecordSet error: %v", err)
 	}
 }

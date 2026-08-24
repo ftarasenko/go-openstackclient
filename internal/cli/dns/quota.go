@@ -201,6 +201,11 @@ type dnsQuotaSetFlags struct {
 	zoneRecords      int
 	zoneRecordsets   int
 	zones            int
+
+	// changed is the set of quota flags actually given, captured in RunE: a
+	// quota of zero is a real value, so it cannot be inferred from the field.
+	changed map[string]bool
+	common  *commonOptions
 }
 
 func (f *dnsQuotaSetFlags) bindings(opts *quotas.UpdateOpts) map[string]func() {
@@ -214,9 +219,9 @@ func (f *dnsQuotaSetFlags) bindings(opts *quotas.UpdateOpts) map[string]func() {
 }
 
 func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	f := &dnsQuotaSetFlags{}
-	target := &dnsQuotaTarget{}
 	common := &commonOptions{}
+	f := &dnsQuotaSetFlags{common: common}
+	target := &dnsQuotaTarget{}
 	cmd := &cobra.Command{
 		Use:   "set [<project>]",
 		Short: "Set a project's DNS quotas",
@@ -225,7 +230,7 @@ func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			changed := changedFlagNames(cmd.Flags())
+			f.changed = changedFlagNames(cmd.Flags())
 			ctx := cmd.Context()
 			client, session, err := newDNSSession(ctx, a)
 			if err != nil {
@@ -235,7 +240,7 @@ func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runDNSQuotaSet(ctx, client, o, project, f, changed, common, cmd.OutOrStdout())
+			return runDNSQuotaSet(ctx, client, o, project, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -252,7 +257,7 @@ func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // runDNSQuotaSet sends only the quotas whose flags were given, so a set of one
 // does not reset the rest to zero.
 func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	project string, f *dnsQuotaSetFlags, changed map[string]bool, common *commonOptions, w io.Writer,
+	project string, f *dnsQuotaSetFlags, w io.Writer,
 ) error {
 	var opts quotas.UpdateOpts
 	bindings := f.bindings(&opts)
@@ -264,7 +269,7 @@ func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	sort.Strings(names)
 	touched := false
 	for _, name := range names {
-		if changed[name] {
+		if f.changed[name] {
 			bindings[name]()
 			touched = true
 		}
@@ -272,7 +277,7 @@ func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if !touched {
 		return fmt.Errorf("nothing to set: pass at least one quota flag")
 	}
-	q, err := quotas.Update(ctx, withCommonHeaders(client, common), project, opts).Extract()
+	q, err := quotas.Update(ctx, withCommonHeaders(client, f.common), project, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("setting DNS quotas for project %q: %w", project, err)
 	}

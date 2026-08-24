@@ -149,11 +149,11 @@ func TestRunDNSQuotaSet_OnlySendsGivenQuotas(t *testing.T) {
 	})
 
 	// recordsetRecords is populated but its flag was not given.
-	f := &dnsQuotaSetFlags{zones: 20, zoneRecords: 1000, recordsetRecords: 999}
+	f := &dnsQuotaSetFlags{zones: 20, zoneRecords: 1000, recordsetRecords: 999,
+		changed: map[string]bool{"zones": true, "zone-records": true}, common: &commonOptions{}}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p1", f,
-		map[string]bool{"zones": true, "zone-records": true}, &commonOptions{}, &buf)
+	err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p1", f, &buf)
 	if err != nil {
 		t.Fatalf("runDNSQuotaSet error: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRunDNSQuotaSet_RejectsEmptyUpdate(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p1",
-		&dnsQuotaSetFlags{}, map[string]bool{}, &commonOptions{}, &buf)
+		&dnsQuotaSetFlags{changed: map[string]bool{}, common: &commonOptions{}}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "nothing to set") {
 		t.Fatalf("expected a 'nothing to set' error, got %v", err)
 	}
@@ -399,8 +399,8 @@ func TestRunDNSQuotaSetAndReset_CarryCrossProjectHeaders(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	if err := runDNSQuotaSet(context.Background(), dnsShareClient(fakeServer), o, "p2",
-		&dnsQuotaSetFlags{zones: 20}, map[string]bool{"zones": true},
-		&commonOptions{allProjects: true}, &buf); err != nil {
+		&dnsQuotaSetFlags{zones: 20, changed: map[string]bool{"zones": true},
+			common: &commonOptions{allProjects: true}}, &buf); err != nil {
 		t.Fatalf("runDNSQuotaSet error: %v", err)
 	}
 	if patchAll != "true" {

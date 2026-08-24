@@ -317,6 +317,12 @@ type recordSetSetFlags struct {
 	records     []string
 	ttl         int
 	description string
+
+	// Which of the three were given: a TTL of zero and an empty description are
+	// both real updates, so neither can be inferred from the value.
+	recordsSet bool
+	ttlSet     bool
+	descSet    bool
 }
 
 func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -337,10 +343,9 @@ func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			recordsSet := cmd.Flags().Changed("record")
-			ttlSet := cmd.Flags().Changed("ttl")
-			descSet := cmd.Flags().Changed(flagDescription)
-			return runRecordSetSet(ctx, client, o, args[0], args[1], f, recordsSet, ttlSet, descSet, cmd.OutOrStdout())
+			fl := cmd.Flags()
+			f.recordsSet, f.ttlSet, f.descSet = fl.Changed("record"), fl.Changed("ttl"), fl.Changed(flagDescription)
+			return runRecordSetSet(ctx, client, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -351,8 +356,10 @@ func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func runRecordSetSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, zoneRef, rsRef string, f *recordSetSetFlags, recordsSet, ttlSet, descSet bool, w io.Writer) error {
-	if !recordsSet && !ttlSet && !descSet {
+func runRecordSetSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	zoneRef, rsRef string, f *recordSetSetFlags, w io.Writer,
+) error {
+	if !f.recordsSet && !f.ttlSet && !f.descSet {
 		return fmt.Errorf("recordset set requires at least one of --record, --ttl or --description")
 	}
 	zoneID, err := resolveZoneID(ctx, client, zoneRef)
@@ -364,14 +371,14 @@ func runRecordSetSet(ctx context.Context, client *gophercloud.ServiceClient, o *
 		return err
 	}
 	var opts recordsets.UpdateOpts
-	if recordsSet {
+	if f.recordsSet {
 		opts.Records = f.records
 	}
-	if ttlSet {
+	if f.ttlSet {
 		ttl := f.ttl
 		opts.TTL = &ttl
 	}
-	if descSet {
+	if f.descSet {
 		d := f.description
 		opts.Description = &d
 	}

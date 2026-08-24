@@ -167,8 +167,8 @@ func newZoneAbandonCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runZoneTask(ctx, client, args[0], "abandon", nil, common,
-				"Abandoned zone", cmd.OutOrStdout())
+			return runZoneTask(ctx, client, args[0],
+				zoneTask{task: "abandon", message: "Abandoned zone", common: common}, cmd.OutOrStdout())
 		},
 	}
 	common.bind(cmd)
@@ -193,8 +193,8 @@ func newZoneAXFRCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			// The endpoint is spelled "xfr" even though the command is "axfr".
-			return runZoneTask(ctx, client, args[0], "xfr", nil, common,
-				"Scheduled AXFR for zone", cmd.OutOrStdout())
+			return runZoneTask(ctx, client, args[0],
+				zoneTask{task: "xfr", message: "Scheduled AXFR for zone", common: common}, cmd.OutOrStdout())
 		},
 	}
 	common.bind(cmd)
@@ -221,8 +221,9 @@ func newZoneMoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if poolID != "" {
 				body = map[string]any{"pool_id": poolID}
 			}
-			return runZoneTask(ctx, client, args[0], "pool_move", body, common,
-				"Scheduled move for zone", cmd.OutOrStdout())
+			return runZoneTask(ctx, client, args[0],
+				zoneTask{task: "pool_move", message: "Scheduled move for zone", body: body, common: common},
+				cmd.OutOrStdout())
 		},
 	}
 	// Optional: with no pool designate picks the target itself by scheduler.
@@ -231,26 +232,35 @@ func newZoneMoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// zoneTask names one of the /zones/{zone}/tasks/<task> endpoints and the line
+// printed once it is scheduled.
+type zoneTask struct {
+	task    string
+	message string
+	body    map[string]any
+	common  *commonOptions
+}
+
 // runZoneTask posts to one of /zones/{zone}/tasks/<task>. All three tasks are
 // fire-and-forget: designate answers 202 with no useful body, so the seam confirms
 // what was scheduled rather than rendering a resource.
 func runZoneTask(ctx context.Context, client *gophercloud.ServiceClient,
-	zoneRef, task string, body map[string]any, common *commonOptions, message string, w io.Writer,
+	zoneRef string, t zoneTask, w io.Writer,
 ) error {
-	headers := common.headers()
-	zoneID, err := resolveZoneID(ctx, withCommonHeaders(client, common), zoneRef)
+	headers := t.common.headers()
+	zoneID, err := resolveZoneID(ctx, withCommonHeaders(client, t.common), zoneRef)
 	if err != nil {
 		return err
 	}
-	url := client.ServiceURL("zones", zoneID, "tasks", task)
+	url := client.ServiceURL("zones", zoneID, "tasks", t.task)
 	var jsonBody any
-	if body != nil {
-		jsonBody = body
+	if t.body != nil {
+		jsonBody = t.body
 	}
 	if err := dnsPostNoContent(ctx, client, url, jsonBody, headers); err != nil {
-		return fmt.Errorf("%s %q: %w", task, zoneRef, err)
+		return fmt.Errorf("%s %q: %w", t.task, zoneRef, err)
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n", message, zoneRef); err != nil {
+	if _, err := fmt.Fprintf(w, "%s %s\n", t.message, zoneRef); err != nil {
 		return err
 	}
 	return nil

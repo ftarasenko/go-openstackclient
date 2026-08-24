@@ -368,11 +368,11 @@ type ptrRecordSetFlags struct {
 	noDescription bool
 	ttl           int
 	noTTL         bool
+	common        *commonOptions
 }
 
 func newPTRRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	f := &ptrRecordSetFlags{}
-	common := &commonOptions{}
+	f := &ptrRecordSetFlags{common: &commonOptions{}}
 	cmd := &cobra.Command{
 		Use:   "set <region>:<floating-ip-id> <ptrdname>",
 		Short: "Set a floating IP's PTR record",
@@ -389,7 +389,7 @@ func newPTRRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPTRRecordSet(ctx, client, o, args[0], args[1], f, common, cmd.OutOrStdout())
+			return runPTRRecordSet(ctx, client, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -399,7 +399,7 @@ func newPTRRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.noTTL, "no-ttl", false, "clear the TTL, falling back to the pool default")
 	cmd.MarkFlagsMutuallyExclusive(flagDescription, flagNoDescription)
 	cmd.MarkFlagsMutuallyExclusive("ttl", "no-ttl")
-	common.bind(cmd)
+	f.common.bind(cmd)
 	return cmd
 }
 
@@ -407,7 +407,7 @@ func newPTRRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // treats the PATCH as "this is the record now", and a nil ptrdname is how the
 // record is *removed* (see runPTRRecordUnset), so it is never omitted here.
 func runPTRRecordSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id, ptrdname string, f *ptrRecordSetFlags, common *commonOptions, w io.Writer,
+	id, ptrdname string, f *ptrRecordSetFlags, w io.Writer,
 ) error {
 	body := map[string]any{"ptrdname": ptrdname}
 	switch {
@@ -424,7 +424,7 @@ func runPTRRecordSet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	}
 	var r ptrRecord
 	url := client.ServiceURL("reverse", "floatingips", id)
-	if err := dnsPatchJSON(ctx, client, url, body, &r, common.headers()); err != nil {
+	if err := dnsPatchJSON(ctx, client, url, body, &r, f.common.headers()); err != nil {
 		return fmt.Errorf("setting PTR record for floating IP %s: %w", id, err)
 	}
 	fields, values := ptrRecordFields(&r)

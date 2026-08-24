@@ -229,10 +229,15 @@ func runZoneBlacklistCreate(ctx context.Context, client *gophercloud.ServiceClie
 	return o.WriteSingle(w, fields, values)
 }
 
+type blacklistSetFlags struct {
+	pattern       string
+	description   string
+	noDescription bool
+	common        *commonOptions
+}
+
 func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var pattern, description string
-	var noDescription bool
-	common := &commonOptions{}
+	f := &blacklistSetFlags{common: &commonOptions{}}
 	cmd := &cobra.Command{
 		Use:   "set <blacklist>",
 		Short: "Update a blacklist",
@@ -242,7 +247,7 @@ func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 				return err
 			}
 			fl := cmd.Flags()
-			if !fl.Changed("pattern") && !fl.Changed(flagDescription) && !noDescription {
+			if !fl.Changed("pattern") && !fl.Changed(flagDescription) && !f.noDescription {
 				return fmt.Errorf("nothing to set: pass --pattern, --description or --no-description")
 			}
 			ctx := cmd.Context()
@@ -250,16 +255,15 @@ func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			return runZoneBlacklistSet(ctx, client, o, args[0], pattern, description, noDescription,
-				common, cmd.OutOrStdout())
+			return runZoneBlacklistSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&pattern, "pattern", "", "new pattern")
-	fl.StringVar(&description, flagDescription, "", "new description")
-	fl.BoolVar(&noDescription, flagNoDescription, false, "clear the description")
+	fl.StringVar(&f.pattern, "pattern", "", "new pattern")
+	fl.StringVar(&f.description, flagDescription, "", "new description")
+	fl.BoolVar(&f.noDescription, flagNoDescription, false, "clear the description")
 	cmd.MarkFlagsMutuallyExclusive(flagDescription, flagNoDescription)
-	common.bind(cmd)
+	f.common.bind(cmd)
 	return cmd
 }
 
@@ -267,22 +271,22 @@ func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 // explicit JSON null, which is the only way to clear the field; an omitted key
 // leaves it alone.
 func runZoneBlacklistSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, pattern, description string, noDescription bool, common *commonOptions, w io.Writer,
+	ref string, f *blacklistSetFlags, w io.Writer,
 ) error {
-	headers := common.headers()
+	headers := f.common.headers()
 	id, err := resolveBlacklistID(ctx, client, ref, headers)
 	if err != nil {
 		return err
 	}
 	body := make(map[string]any, 2)
-	if pattern != "" {
-		body["pattern"] = pattern
+	if f.pattern != "" {
+		body["pattern"] = f.pattern
 	}
 	switch {
-	case noDescription:
+	case f.noDescription:
 		body["description"] = nil
-	case description != "":
-		body["description"] = description
+	case f.description != "":
+		body["description"] = f.description
 	}
 	var b blacklist
 	if err := dnsPatchJSON(ctx, client, client.ServiceURL("blacklists", id), body, &b, headers); err != nil {
@@ -535,10 +539,15 @@ func runTLDCreate(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	return o.WriteSingle(w, fields, values)
 }
 
+type tldSetFlags struct {
+	name          string
+	description   string
+	noDescription bool
+	common        *commonOptions
+}
+
 func newTLDSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, description string
-	var noDescription bool
-	common := &commonOptions{}
+	f := &tldSetFlags{common: &commonOptions{}}
 	cmd := &cobra.Command{
 		Use:   "set <tld>",
 		Short: "Update a TLD",
@@ -548,7 +557,7 @@ func newTLDSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			fl := cmd.Flags()
-			if !fl.Changed("name") && !fl.Changed(flagDescription) && !noDescription {
+			if !fl.Changed("name") && !fl.Changed(flagDescription) && !f.noDescription {
 				return fmt.Errorf("nothing to set: pass --name, --description or --no-description")
 			}
 			ctx := cmd.Context()
@@ -556,36 +565,35 @@ func newTLDSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTLDSet(ctx, client, o, args[0], name, description, noDescription,
-				common, cmd.OutOrStdout())
+			return runTLDSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new TLD name")
-	fl.StringVar(&description, flagDescription, "", "new description")
-	fl.BoolVar(&noDescription, flagNoDescription, false, "clear the description")
+	fl.StringVar(&f.name, "name", "", "new TLD name")
+	fl.StringVar(&f.description, flagDescription, "", "new description")
+	fl.BoolVar(&f.noDescription, flagNoDescription, false, "clear the description")
 	cmd.MarkFlagsMutuallyExclusive(flagDescription, flagNoDescription)
-	common.bind(cmd)
+	f.common.bind(cmd)
 	return cmd
 }
 
 func runTLDSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, name, description string, noDescription bool, common *commonOptions, w io.Writer,
+	ref string, f *tldSetFlags, w io.Writer,
 ) error {
-	headers := common.headers()
+	headers := f.common.headers()
 	id, err := resolveTLDID(ctx, client, ref, headers)
 	if err != nil {
 		return err
 	}
 	body := make(map[string]any, 2)
-	if name != "" {
-		body["name"] = name
+	if f.name != "" {
+		body["name"] = f.name
 	}
 	switch {
-	case noDescription:
+	case f.noDescription:
 		body["description"] = nil
-	case description != "":
-		body["description"] = description
+	case f.description != "":
+		body["description"] = f.description
 	}
 	var item tld
 	if err := dnsPatchJSON(ctx, client, client.ServiceURL("tlds", id), body, &item, headers); err != nil {

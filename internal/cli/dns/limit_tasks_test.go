@@ -109,8 +109,8 @@ func TestRunZoneTask(t *testing.T) {
 			})
 
 			var buf bytes.Buffer
-			err := runZoneTask(context.Background(), dnsShareClient(fakeServer),
-				"example.com", tc.task, tc.body, &commonOptions{}, tc.message, &buf)
+			err := runZoneTask(context.Background(), dnsShareClient(fakeServer), "example.com",
+				zoneTask{task: tc.task, message: tc.message, body: tc.body, common: &commonOptions{}}, &buf)
 			if err != nil {
 				t.Fatalf("runZoneTask error: %v", err)
 			}
@@ -138,8 +138,9 @@ func TestZoneMove_NoPoolIDSendsNoBody(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := runZoneTask(context.Background(), dnsShareClient(fakeServer),
-		"example.com", "pool_move", nil, &commonOptions{}, "Scheduled move for zone", &buf); err != nil {
+	if err := runZoneTask(context.Background(), dnsShareClient(fakeServer), "example.com",
+		zoneTask{task: "pool_move", message: "Scheduled move for zone", common: &commonOptions{}},
+		&buf); err != nil {
 		t.Fatalf("runZoneTask error: %v", err)
 	}
 	if gotLength > 0 {
@@ -166,8 +167,8 @@ func TestRunZoneTask_ResolvesWithCommonHeaders(t *testing.T) {
 
 	var buf bytes.Buffer
 	common := &commonOptions{allProjects: true}
-	if err := runZoneTask(context.Background(), dnsShareClient(fakeServer),
-		"example.com", "abandon", nil, common, "Abandoned zone", &buf); err != nil {
+	if err := runZoneTask(context.Background(), dnsShareClient(fakeServer), "example.com",
+		zoneTask{task: "abandon", message: "Abandoned zone", common: common}, &buf); err != nil {
 		t.Fatalf("runZoneTask error: %v", err)
 	}
 	if listHeader != "true" {

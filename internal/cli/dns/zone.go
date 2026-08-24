@@ -326,6 +326,12 @@ type zoneSetFlags struct {
 	email       string
 	ttl         int
 	description string
+
+	// Which of the three were given: --ttl 0 is a real update (see
+	// zoneUpdateBody), so it cannot be inferred from the value.
+	emailSet bool
+	ttlSet   bool
+	descSet  bool
 }
 
 func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -344,10 +350,9 @@ func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			emailSet := cmd.Flags().Changed("email")
-			ttlSet := cmd.Flags().Changed("ttl")
-			descSet := cmd.Flags().Changed(flagDescription)
-			return runZoneSet(ctx, client, o, args[0], f, emailSet, ttlSet, descSet, cmd.OutOrStdout())
+			fl := cmd.Flags()
+			f.emailSet, f.ttlSet, f.descSet = fl.Changed("email"), fl.Changed("ttl"), fl.Changed(flagDescription)
+			return runZoneSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -366,8 +371,10 @@ type zoneUpdateBody map[string]any
 
 func (b zoneUpdateBody) ToZoneUpdateMap() (map[string]any, error) { return b, nil }
 
-func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *zoneSetFlags, emailSet, ttlSet, descSet bool, w io.Writer) error {
-	if !emailSet && !ttlSet && !descSet {
+func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	ref string, f *zoneSetFlags, w io.Writer,
+) error {
+	if !f.emailSet && !f.ttlSet && !f.descSet {
 		return fmt.Errorf("zone set requires at least one of --email, --ttl or --description")
 	}
 	id, err := resolveZoneID(ctx, client, ref)
@@ -375,13 +382,13 @@ func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		return err
 	}
 	body := zoneUpdateBody{}
-	if emailSet {
+	if f.emailSet {
 		body["email"] = f.email
 	}
-	if ttlSet {
+	if f.ttlSet {
 		body["ttl"] = f.ttl
 	}
-	if descSet {
+	if f.descSet {
 		body["description"] = f.description
 	}
 	z, err := zones.Update(ctx, client, id, body).Extract()

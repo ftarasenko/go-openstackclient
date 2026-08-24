@@ -259,11 +259,11 @@ func TestRunZoneSet_TTLZeroIsSent(t *testing.T) {
 
 	client := dnsClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
-	f := &zoneSetFlags{ttl: 0}
+	// --ttl 0 only: the zero value must still reach designate.
+	f := &zoneSetFlags{ttl: 0, ttlSet: true}
 
 	var buf bytes.Buffer
-	// emailSet=false, ttlSet=true, descSet=false
-	if err := runZoneSet(context.Background(), client, o, "11111111-1111-1111-1111-111111111111", f, false, true, false, &buf); err != nil {
+	if err := runZoneSet(context.Background(), client, o, "11111111-1111-1111-1111-111111111111", f, &buf); err != nil {
 		t.Fatalf("runZoneSet returned error: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
@@ -494,10 +494,11 @@ func TestRunZoneSet_PatchesBody(t *testing.T) {
 
 	client := dnsClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
-	f := &zoneSetFlags{email: "new@example.com", ttl: 7200, description: "updated"}
+	f := &zoneSetFlags{email: "new@example.com", ttl: 7200, description: "updated",
+		emailSet: true, ttlSet: true, descSet: true}
 
 	var buf bytes.Buffer
-	if err := runZoneSet(context.Background(), client, o, "example.com", f, true, true, true, &buf); err != nil {
+	if err := runZoneSet(context.Background(), client, o, "example.com", f, &buf); err != nil {
 		t.Fatalf("runZoneSet returned error: %v", err)
 	}
 
@@ -528,7 +529,7 @@ func TestRunZoneSet_NoFieldsErrors(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	err := runZoneSet(context.Background(), client, o, "example.com", &zoneSetFlags{}, false, false, false, &buf)
+	err := runZoneSet(context.Background(), client, o, "example.com", &zoneSetFlags{}, &buf)
 	if err == nil {
 		t.Fatal("runZoneSet with no fields should error")
 	}
@@ -799,10 +800,11 @@ func TestRunRecordSetSet_PutBody(t *testing.T) {
 
 	client := dnsClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
-	f := &recordSetSetFlags{records: []string{"198.51.100.5"}, ttl: 600, description: "moved"}
+	f := &recordSetSetFlags{records: []string{"198.51.100.5"}, ttl: 600, description: "moved",
+		recordsSet: true, ttlSet: true, descSet: true}
 
 	var buf bytes.Buffer
-	if err := runRecordSetSet(context.Background(), client, o, "example.com", "www.example.com", f, true, true, true, &buf); err != nil {
+	if err := runRecordSetSet(context.Background(), client, o, "example.com", "www.example.com", f, &buf); err != nil {
 		t.Fatalf("runRecordSetSet returned error: %v", err)
 	}
 
@@ -832,7 +834,7 @@ func TestRunRecordSetSet_NoFieldsErrors(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	err := runRecordSetSet(context.Background(), client, o, "example.com", "www.example.com", &recordSetSetFlags{}, false, false, false, &buf)
+	err := runRecordSetSet(context.Background(), client, o, "example.com", "www.example.com", &recordSetSetFlags{}, &buf)
 	if err == nil {
 		t.Fatal("runRecordSetSet with no fields should error")
 	}

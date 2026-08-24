@@ -98,8 +98,8 @@ func TestRunZoneBlacklistSet_NoDescriptionSendsNull(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runZoneBlacklistSet(context.Background(), dnsShareClient(fakeServer), o,
-		id, "", "", true, &commonOptions{}, &buf); err != nil {
+	if err := runZoneBlacklistSet(context.Background(), dnsShareClient(fakeServer), o, id,
+		&blacklistSetFlags{noDescription: true, common: &commonOptions{}}, &buf); err != nil {
 		t.Fatalf("runZoneBlacklistSet error: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
@@ -230,8 +230,8 @@ func TestRunTLDSet_PatchesNameOnly(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runTLDSet(context.Background(), dnsShareClient(fakeServer), o,
-		id, "su", "", false, &commonOptions{}, &buf); err != nil {
+	if err := runTLDSet(context.Background(), dnsShareClient(fakeServer), o, id,
+		&tldSetFlags{name: "su", common: &commonOptions{}}, &buf); err != nil {
 		t.Fatalf("runTLDSet error: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
