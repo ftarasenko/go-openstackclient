@@ -200,21 +200,12 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 		} else {
 			getErrors = 0
 			last = n.ProvisionState
-			settled := n.TargetProvisionState == ""
-			switch {
-			case settled && n.ProvisionState == string(want):
+			done, cerr := classifyProvisionState(n, id, want)
+			if cerr != nil {
+				return cerr
+			}
+			if done {
 				return nil
-			case isProvisionFailure(n.ProvisionState):
-				return fmt.Errorf("node %s entered failure state %q: %s", id, n.ProvisionState, n.LastError)
-			case settled && n.ProvisionState != string(want):
-				// The transition has settled (target_provision_state cleared) into
-				// a state that isn't the one we wanted. This is terminal — waiting
-				// longer will not change it — so fail immediately instead of
-				// hanging the full timeout. Include last_error when present.
-				if n.LastError != "" {
-					return fmt.Errorf("node %s settled in unexpected state %q instead of %q: %s", id, n.ProvisionState, want, n.LastError)
-				}
-				return fmt.Errorf("node %s settled in unexpected state %q instead of %q", id, n.ProvisionState, want)
 			}
 		}
 		select {
@@ -223,6 +214,36 @@ func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClien
 		case <-ticker.C:
 		}
 	}
+}
+
+// classifyProvisionState decides, from a single node read, whether the wait for
+// want is over. Splitting it out of waitForProvisionState's loop makes every
+// terminal outcome reachable from a table test instead of only through a live
+// ironic transition.
+//
+// It returns (true, nil) when the node has settled in want, a non-nil error for
+// a terminal wrong outcome, and (false, nil) while the transition is still in
+// flight. "Settled" is target_provision_state being cleared — see
+// waitForProvisionState for why that, and not provision_state alone, is the
+// signal.
+func classifyProvisionState(n *nodes.Node, id string, want nodes.ProvisionState) (bool, error) {
+	settled := n.TargetProvisionState == ""
+	switch {
+	case settled && n.ProvisionState == string(want):
+		return true, nil
+	case isProvisionFailure(n.ProvisionState):
+		return false, fmt.Errorf("node %s entered failure state %q: %s", id, n.ProvisionState, n.LastError)
+	case settled && n.ProvisionState != string(want):
+		// The transition has settled (target_provision_state cleared) into a state
+		// that isn't the one we wanted. This is terminal — waiting longer will not
+		// change it — so fail immediately instead of hanging the full timeout.
+		// Include last_error when present.
+		if n.LastError != "" {
+			return false, fmt.Errorf("node %s settled in unexpected state %q instead of %q: %s", id, n.ProvisionState, want, n.LastError)
+		}
+		return false, fmt.Errorf("node %s settled in unexpected state %q instead of %q", id, n.ProvisionState, want)
+	}
+	return false, nil
 }
 
 // lastProvisionState renders the provision state last seen, for the error
