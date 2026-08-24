@@ -229,9 +229,15 @@ func writeRBAC(o *output.Options, w io.Writer, p *rbacpolicies.RBACPolicy) error
 // (openstackclient/network/v2/network_rbac.py).
 const rbacAllProjects = "*"
 
+type rbacCreateFlags struct {
+	action            string
+	objectType        string
+	targetProject     string
+	targetAllProjects bool
+}
+
 func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var action, objectType, targetProject string
-	var targetAllProjects bool
+	f := &rbacCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <object-id>",
 		Short: "Create a network RBAC policy",
@@ -240,24 +246,24 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			if targetProject == "" && !targetAllProjects {
+			if f.targetProject == "" && !f.targetAllProjects {
 				return fmt.Errorf("one of --target-project or --target-all-projects is required")
 			}
-			if targetAllProjects {
-				targetProject = rbacAllProjects
+			if f.targetAllProjects {
+				f.targetProject = rbacAllProjects
 			}
 			c, err := newNetworkClient(cmd.Context(), a)
 			if err != nil {
 				return err
 			}
-			return runRBACCreate(cmd.Context(), c, o, args[0], action, objectType, targetProject, cmd.OutOrStdout())
+			return runRBACCreate(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&action, "action", "", "access_as_external or access_as_shared")
-	fl.StringVar(&objectType, "type", "", "object type, e.g. network or qos_policy")
-	fl.StringVar(&targetProject, flagTargetProject, "", "project to grant access to")
-	fl.BoolVar(&targetAllProjects, flagTargetAllProjects, false, "grant access to every project")
+	fl.StringVar(&f.action, "action", "", "access_as_external or access_as_shared")
+	fl.StringVar(&f.objectType, "type", "", "object type, e.g. network or qos_policy")
+	fl.StringVar(&f.targetProject, flagTargetProject, "", "project to grant access to")
+	fl.BoolVar(&f.targetAllProjects, flagTargetAllProjects, false, "grant access to every project")
 	_ = cmd.MarkFlagRequired("action")
 	_ = cmd.MarkFlagRequired("type")
 	// --target-project is no longer cobra-required because --target-all-projects
@@ -267,13 +273,13 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRBACCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	objectID, action, objectType, targetProject string, w io.Writer,
+	objectID string, f *rbacCreateFlags, w io.Writer,
 ) error {
 	p, err := rbacpolicies.Create(ctx, client, rbacpolicies.CreateOpts{
-		Action:       rbacpolicies.PolicyAction(action),
-		ObjectType:   objectType,
+		Action:       rbacpolicies.PolicyAction(f.action),
+		ObjectType:   f.objectType,
 		ObjectID:     objectID,
-		TargetTenant: targetProject,
+		TargetTenant: f.targetProject,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating a network RBAC policy for %s: %w", objectID, err)
@@ -441,9 +447,16 @@ func writeSegment(o *output.Options, w io.Writer, seg *segments.Segment) error {
 		[]any{seg.ID, seg.Name, seg.Description, seg.NetworkID, seg.NetworkType, seg.PhysicalNetwork, seg.SegmentationID})
 }
 
+type segmentCreateFlags struct {
+	network         string
+	networkType     string
+	physicalNetwork string
+	description     string
+	segmentationID  int
+}
+
 func newSegmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var network, networkType, physicalNetwork, description string
-	var segmentationID int
+	f := &segmentCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a network segment",
@@ -456,35 +469,34 @@ func newSegmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			return runSegmentCreate(cmd.Context(), c, o, args[0], network, networkType,
-				physicalNetwork, description, segmentationID, cmd.OutOrStdout())
+			return runSegmentCreate(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&network, "network", "", "network the segment belongs to (name or ID)")
-	fl.StringVar(&networkType, flagNetworkType, "", "network type, e.g. flat, vlan, vxlan or geneve")
-	fl.StringVar(&physicalNetwork, "physical-network", "", "physical network name")
-	fl.StringVar(&description, "description", "", "description of the segment")
-	fl.IntVar(&segmentationID, "segment", 0, "segmentation ID, e.g. the VLAN tag")
+	fl.StringVar(&f.network, "network", "", "network the segment belongs to (name or ID)")
+	fl.StringVar(&f.networkType, flagNetworkType, "", "network type, e.g. flat, vlan, vxlan or geneve")
+	fl.StringVar(&f.physicalNetwork, "physical-network", "", "physical network name")
+	fl.StringVar(&f.description, "description", "", "description of the segment")
+	fl.IntVar(&f.segmentationID, "segment", 0, "segmentation ID, e.g. the VLAN tag")
 	_ = cmd.MarkFlagRequired("network")
 	_ = cmd.MarkFlagRequired(flagNetworkType)
 	return cmd
 }
 
 func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name, network, networkType, physicalNetwork, description string, segmentationID int, w io.Writer,
+	name string, f *segmentCreateFlags, w io.Writer,
 ) error {
-	networkID, err := resolveNetworkID(ctx, client, network)
+	networkID, err := resolveNetworkID(ctx, client, f.network)
 	if err != nil {
 		return err
 	}
 	seg, err := segments.Create(ctx, client, segments.CreateOpts{
 		Name:            name,
-		Description:     description,
+		Description:     f.description,
 		NetworkID:       networkID,
-		NetworkType:     networkType,
-		PhysicalNetwork: physicalNetwork,
-		SegmentationID:  segmentationID,
+		NetworkType:     f.networkType,
+		PhysicalNetwork: f.physicalNetwork,
+		SegmentationID:  f.segmentationID,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating network segment %q: %w", name, err)
@@ -492,9 +504,20 @@ func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	return writeSegment(o, w, seg)
 }
 
+type segmentSetFlags struct {
+	name           string
+	description    string
+	segmentationID int
+
+	// Which of the three were given: each field is a pointer in UpdateOpts, so
+	// an empty name or a zero segmentation ID is still a real update.
+	nameSet bool
+	descSet bool
+	segSet  bool
+}
+
 func newSegmentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, description string
-	var segmentationID int
+	f := &segmentSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <segment>",
 		Short: "Set network segment properties",
@@ -508,29 +531,29 @@ func newSegmentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runSegmentSet(cmd.Context(), c, o, args[0], name, description, segmentationID,
-				fl.Changed("name"), fl.Changed("description"), fl.Changed("segment"), cmd.OutOrStdout())
+			f.nameSet, f.descSet, f.segSet = fl.Changed("name"), fl.Changed("description"), fl.Changed("segment")
+			return runSegmentSet(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new name")
-	fl.StringVar(&description, "description", "", "new description")
-	fl.IntVar(&segmentationID, "segment", 0, "new segmentation ID")
+	fl.StringVar(&f.name, "name", "", "new name")
+	fl.StringVar(&f.description, "description", "", "new description")
+	fl.IntVar(&f.segmentationID, "segment", 0, "new segmentation ID")
 	return cmd
 }
 
 func runSegmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id, name, description string, segmentationID int, nameSet, descSet, segSet bool, w io.Writer,
+	id string, f *segmentSetFlags, w io.Writer,
 ) error {
 	opts := segments.UpdateOpts{}
-	if nameSet {
-		opts.Name = &name
+	if f.nameSet {
+		opts.Name = &f.name
 	}
-	if descSet {
-		opts.Description = &description
+	if f.descSet {
+		opts.Description = &f.description
 	}
-	if segSet {
-		opts.SegmentationID = &segmentationID
+	if f.segSet {
+		opts.SegmentationID = &f.segmentationID
 	}
 	seg, err := segments.Update(ctx, client, id, opts).Extract()
 	if err != nil {
@@ -667,6 +690,10 @@ type portForwardingFlags struct {
 	externalPortRange string
 	protocol          string
 	description       string
+
+	// descSet records whether --description was given: clearing a description
+	// is a real update, so an empty value cannot stand in for "not given".
+	descSet bool
 }
 
 // register wires the shared flags. defaultProtocol is "tcp" on create (neutron
@@ -748,8 +775,8 @@ func newPortForwardingSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			return runPortForwardingSet(cmd.Context(), c, o, args[0], args[1], f,
-				cmd.Flags().Changed("description"), cmd.OutOrStdout())
+			f.descSet = cmd.Flags().Changed("description")
+			return runPortForwardingSet(cmd.Context(), c, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	// Unlike create, nothing is required: neutron patches only what is sent.
@@ -758,7 +785,7 @@ func newPortForwardingSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	fipID, id string, f *portForwardingFlags, descSet bool, w io.Writer,
+	fipID, id string, f *portForwardingFlags, w io.Writer,
 ) error {
 	opts := portforwarding.UpdateOpts{
 		InternalIPAddress: f.internalIP,
@@ -775,7 +802,7 @@ func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient
 		}
 		opts.InternalPortID = portID
 	}
-	if descSet {
+	if f.descSet {
 		opts.Description = &f.description
 	}
 	pf, err := portforwarding.Update(ctx, client, fipID, id, opts).Extract()

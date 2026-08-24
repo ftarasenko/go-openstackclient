@@ -63,7 +63,7 @@ func TestRunQoSPolicySet_ShareAndDefaultReachNeutronExplicitly(t *testing.T) {
 	o := &output.Options{Format: "value"}
 	// --no-share plus --no-default: both are false, and both must still be sent.
 	err := runQoSPolicySet(context.Background(), networkClient(fakeServer), o, "gold",
-		"", "", false, true, false, true, false, &out)
+		&qosPolicySetFlags{noShare: true, noDefault: true}, &out)
 	if err != nil {
 		t.Fatalf("runQoSPolicySet returned error: %v", err)
 	}
@@ -116,12 +116,13 @@ func TestRunQoSRuleCreate_PostsToTheTypeSpecificCollection(t *testing.T) {
 			  "min_kbps": 500, "direction": "egress"}}`))
 		})
 
-	f := &qosRuleFlags{minKBps: 500, direction: "egress"}
+	f := &qosRuleFlags{minKBps: 500, direction: "egress",
+		changed: changedFlags{"min-kbps": true, "direction": true}}
 	k, err := qosRuleKindByCLIType("minimum-bandwidth")
 	if err != nil {
 		t.Fatalf("qosRuleKindByCLIType returned error: %v", err)
 	}
-	attrs := f.body(k, changedFlags{"min-kbps": true, "direction": true})
+	attrs := f.body(k)
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
@@ -155,9 +156,9 @@ func TestRunQoSRuleSet_DiscoversTheRuleTypeFromThePolicy(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	f := &qosRuleFlags{maxKBps: 2000}
+	f := &qosRuleFlags{maxKBps: 2000, changed: changedFlags{"max-kbps": true}}
 	err := runQoSRuleSet(context.Background(), networkClient(fakeServer), o, "gold", qosRuleID,
-		f, changedFlags{"max-kbps": true}, &out)
+		f, &out)
 	if err != nil {
 		t.Fatalf("runQoSRuleSet returned error: %v", err)
 	}
@@ -179,7 +180,7 @@ func TestRunQoSRuleSet_RejectsAnEmptyUpdate(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runQoSRuleSet(context.Background(), networkClient(fakeServer), o, "gold", qosRuleID,
-		&qosRuleFlags{}, changedFlags{}, &out)
+		&qosRuleFlags{changed: changedFlags{}}, &out)
 	if err == nil {
 		t.Fatalf("a set with no property flags was accepted")
 	}
@@ -190,10 +191,11 @@ func TestQoSRuleFlagsBody_IgnoresFlagsFromOtherRuleTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qosRuleKindByCLIType returned error: %v", err)
 	}
-	f := &qosRuleFlags{dscpMark: 26, maxKBps: 1000, direction: "egress"}
+	f := &qosRuleFlags{dscpMark: 26, maxKBps: 1000, direction: "egress",
+		changed: changedFlags{"dscp-mark": true, "max-kbps": true, "direction": true}}
 	// A dscp-marking rule has no bandwidth or direction attribute; sending one
 	// would be a 400 from neutron.
-	attrs := f.body(k, changedFlags{"dscp-mark": true, "max-kbps": true, "direction": true})
+	attrs := f.body(k)
 	th.AssertDeepEquals(t, map[string]any{"dscp_mark": 26}, attrs)
 }
 

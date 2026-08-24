@@ -81,7 +81,8 @@ func TestRunRBACCreate_SendsTheFullTriple(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runRBACCreate(context.Background(), networkClient(fakeServer), o, extNetworkID,
-		"access_as_shared", "network", "99999999-9999-9999-9999-999999999999", &out)
+		&rbacCreateFlags{action: "access_as_shared", objectType: "network",
+			targetProject: "99999999-9999-9999-9999-999999999999"}, &out)
 	if err != nil {
 		t.Fatalf("runRBACCreate returned error: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestRunSegmentSet_OnlySendsChangedFields(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runSegmentSet(context.Background(), networkClient(fakeServer), o, extSegmentID,
-		"renamed", "", 0, true, false, false, &out)
+		&segmentSetFlags{name: "renamed", nameSet: true}, &out)
 	if err != nil {
 		t.Fatalf("runSegmentSet returned error: %v", err)
 	}

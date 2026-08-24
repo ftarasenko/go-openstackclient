@@ -39,7 +39,8 @@ func TestRunAddressScopeList_SharedFilterSendsBothSides(t *testing.T) {
 
 		var out bytes.Buffer
 		o := &output.Options{Format: "value"}
-		err := runAddressScopeList(context.Background(), networkClient(fakeServer), o, "", 0, tc.shared, tc.noShared, &out)
+		err := runAddressScopeList(context.Background(), networkClient(fakeServer), o,
+			&addressScopeListFlags{shared: tc.shared, noShared: tc.noShared}, &out)
 		if err != nil {
 			t.Fatalf("runAddressScopeList returned error: %v", err)
 		}
@@ -75,7 +76,7 @@ func TestRunAddressScopeSet_NoShareSendsExplicitFalse(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runAddressScopeSet(context.Background(), networkClient(fakeServer), o, addressScopeID,
-		"", false, true, false, &out)
+		&addressScopeSetFlags{noShare: true}, &out)
 	if err != nil {
 		t.Fatalf("runAddressScopeSet returned error: %v", err)
 	}
@@ -103,7 +104,8 @@ func TestRunAddressGroupCreate_EmptyAddressesStillSent(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	err := runAddressGroupCreate(context.Background(), networkClient(fakeServer), o, "trusted", "", "", nil, &out)
+	err := runAddressGroupCreate(context.Background(), networkClient(fakeServer), o, "trusted",
+		&addressGroupCreateFlags{}, &out)
 	if err != nil {
 		t.Fatalf("runAddressGroupCreate returned error: %v", err)
 	}
@@ -141,7 +143,7 @@ func TestRunAddressGroupSet_AddressesUseTheDedicatedAction(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runAddressGroupSet(context.Background(), networkClient(fakeServer), o, addressGroupID,
-		"", "", []string{"192.0.2.0/24"}, false, false, &out)
+		&addressGroupSetFlags{addresses: []string{"192.0.2.0/24"}}, &out)
 	if err != nil {
 		t.Fatalf("runAddressGroupSet returned error: %v", err)
 	}

@@ -200,12 +200,11 @@ func runTrunkShow(ctx context.Context, client *gophercloud.ServiceClient, o *out
 // --- create ----------------------------------------------------------------
 
 type trunkCreateFlags struct {
-	parentPort  string
-	description string
-	subports    []string
-	enable      bool
-	disable     bool
-
+	parentPort   string
+	description  string
+	subports     []string
+	enable       bool
+	disable      bool
 	adminStateUp *bool
 }
 
@@ -324,6 +323,11 @@ type trunkSetFlags struct {
 	enable      bool
 	disable     bool
 
+	// nameSet/descSet record which were given: Name and Description are
+	// *string in UpdateOpts, so an empty value is a deliberate clear.
+	nameSet bool
+	descSet bool
+
 	adminStateUp *bool
 }
 
@@ -342,7 +346,8 @@ func newTrunkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			f.adminStateUp = enableDisable(fl, f.enable, f.disable)
-			if !fl.Changed("name") && !fl.Changed("description") && f.adminStateUp == nil {
+			f.nameSet, f.descSet = fl.Changed("name"), fl.Changed("description")
+			if !f.nameSet && !f.descSet && f.adminStateUp == nil {
 				return fmt.Errorf("nothing to set: pass --name, --description, --enable or --disable")
 			}
 			ctx := cmd.Context()
@@ -350,7 +355,7 @@ func newTrunkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTrunkSet(ctx, client, o, args[0], f, fl.Changed("name"), fl.Changed("description"), cmd.OutOrStdout())
+			return runTrunkSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -361,22 +366,20 @@ func newTrunkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// runTrunkSet sends only the attributes that were actually given. Name and
-// Description are *string in UpdateOpts, so an empty value can be sent
-// deliberately (clearing a description) without an omitted flag doing the same.
+// runTrunkSet sends only the attributes that were actually given.
 func runTrunkSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref string, f *trunkSetFlags, nameSet, descriptionSet bool, w io.Writer,
+	ref string, f *trunkSetFlags, w io.Writer,
 ) error {
 	id, err := resolveTrunkID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
 	opts := trunks.UpdateOpts{AdminStateUp: f.adminStateUp}
-	if nameSet {
+	if f.nameSet {
 		name := f.name
 		opts.Name = &name
 	}
-	if descriptionSet {
+	if f.descSet {
 		desc := f.description
 		opts.Description = &desc
 	}

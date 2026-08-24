@@ -48,10 +48,15 @@ func newAddressCommands(a *auth.Options, o *output.Options) []*cobra.Command {
 
 // --- address scope ----------------------------------------------------------
 
+type addressScopeListFlags struct {
+	name      string
+	ipVersion int
+	shared    bool
+	noShared  bool
+}
+
 func newAddressScopeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name string
-	var ipVersion int
-	var shared, noShared bool
+	f := &addressScopeListFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List address scopes",
@@ -65,31 +70,31 @@ func newAddressScopeListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			return runAddressScopeList(ctx, client, o, name, ipVersion, shared, noShared, cmd.OutOrStdout())
+			return runAddressScopeList(ctx, client, o, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "filter by name")
-	fl.IntVar(&ipVersion, "ip-version", 0, "filter by IP version: 4 or 6")
-	fl.BoolVar(&shared, flagShare, false, "list only shared address scopes")
-	fl.BoolVar(&noShared, flagNoShare, false, "list only unshared address scopes")
+	fl.StringVar(&f.name, "name", "", "filter by name")
+	fl.IntVar(&f.ipVersion, "ip-version", 0, "filter by IP version: 4 or 6")
+	fl.BoolVar(&f.shared, flagShare, false, "list only shared address scopes")
+	fl.BoolVar(&f.noShared, flagNoShare, false, "list only unshared address scopes")
 	cmd.MarkFlagsMutuallyExclusive(flagShare, flagNoShare)
 	return cmd
 }
 
 func runAddressScopeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name string, ipVersion int, shared, noShared bool, w io.Writer,
+	f *addressScopeListFlags, w io.Writer,
 ) error {
-	opts := addressscopes.ListOpts{Name: name, IPVersion: ipVersion}
+	opts := addressscopes.ListOpts{Name: f.name, IPVersion: f.ipVersion}
 	// ListOpts.Shared is a *bool, so both sides of the filter reach neutron —
 	// unlike the plain-bool filters elsewhere, where a false is dropped.
 	switch {
-	case shared:
+	case f.shared:
 		t := true
 		opts.Shared = &t
-	case noShared:
-		f := false
-		opts.Shared = &f
+	case f.noShared:
+		no := false
+		opts.Shared = &no
 	}
 	pages, err := addressscopes.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -143,10 +148,14 @@ func writeAddressScope(o *output.Options, w io.Writer, sc *addressscopes.Address
 		[]any{sc.ID, sc.Name, sc.IPVersion, sc.Shared, sc.ProjectID})
 }
 
+type addressScopeCreateFlags struct {
+	ipVersion int
+	share     bool
+	project   string
+}
+
 func newAddressScopeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var ipVersion int
-	var share bool
-	var project string
+	f := &addressScopeCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an address scope",
@@ -160,24 +169,24 @@ func newAddressScopeCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			return runAddressScopeCreate(ctx, client, o, args[0], ipVersion, share, project, cmd.OutOrStdout())
+			return runAddressScopeCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.IntVar(&ipVersion, "ip-version", 4, "IP version: 4 or 6")
-	fl.BoolVar(&share, flagShare, false, "share the address scope with every project")
-	fl.StringVar(&project, "project", "", "owning project ID")
+	fl.IntVar(&f.ipVersion, "ip-version", 4, "IP version: 4 or 6")
+	fl.BoolVar(&f.share, flagShare, false, "share the address scope with every project")
+	fl.StringVar(&f.project, "project", "", "owning project ID")
 	return cmd
 }
 
 func runAddressScopeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name string, ipVersion int, share bool, project string, w io.Writer,
+	name string, f *addressScopeCreateFlags, w io.Writer,
 ) error {
 	sc, err := addressscopes.Create(ctx, client, addressscopes.CreateOpts{
 		Name:      name,
-		IPVersion: ipVersion,
-		Shared:    share,
-		ProjectID: project,
+		IPVersion: f.ipVersion,
+		Shared:    f.share,
+		ProjectID: f.project,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating address scope %q: %w", name, err)
@@ -185,9 +194,18 @@ func runAddressScopeCreate(ctx context.Context, client *gophercloud.ServiceClien
 	return writeAddressScope(o, w, sc)
 }
 
+type addressScopeSetFlags struct {
+	name    string
+	share   bool
+	noShare bool
+
+	// nameSet records whether --name was given, so an empty new name is still
+	// distinguishable from "leave the name alone".
+	nameSet bool
+}
+
 func newAddressScopeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name string
-	var share, noShare bool
+	f := &addressScopeSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <address-scope>",
 		Short: "Set address scope properties",
@@ -201,38 +219,38 @@ func newAddressScopeSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return runAddressScopeSet(ctx, client, o, args[0], name, share, noShare,
-				cmd.Flags().Changed("name"), cmd.OutOrStdout())
+			f.nameSet = cmd.Flags().Changed("name")
+			return runAddressScopeSet(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new name")
-	fl.BoolVar(&share, flagShare, false, "share the address scope with every project")
-	fl.BoolVar(&noShare, flagNoShare, false, "stop sharing the address scope")
+	fl.StringVar(&f.name, "name", "", "new name")
+	fl.BoolVar(&f.share, flagShare, false, "share the address scope with every project")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "stop sharing the address scope")
 	cmd.MarkFlagsMutuallyExclusive(flagShare, flagNoShare)
 	return cmd
 }
 
 func runAddressScopeSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id, name string, share, noShare, nameSet bool, w io.Writer,
+	id string, f *addressScopeSetFlags, w io.Writer,
 ) error {
 	id, err := resolveAddressScopeID(ctx, client, id)
 	if err != nil {
 		return err
 	}
 	opts := addressscopes.UpdateOpts{}
-	if nameSet {
-		opts.Name = &name
+	if f.nameSet {
+		opts.Name = &f.name
 	}
 	// Shared is a *bool so --no-share sends an explicit false rather than being
 	// dropped as a zero value.
 	switch {
-	case share:
+	case f.share:
 		t := true
 		opts.Shared = &t
-	case noShare:
-		f := false
-		opts.Shared = &f
+	case f.noShare:
+		no := false
+		opts.Shared = &no
 	}
 	sc, err2 := addressscopes.Update(ctx, client, id, opts).Extract()
 	if err2 != nil {
@@ -354,9 +372,14 @@ func writeAddressGroup(o *output.Options, w io.Writer, g *addressgroups.AddressG
 		[]any{g.ID, g.Name, g.Description, g.Addresses, g.ProjectID})
 }
 
+type addressGroupCreateFlags struct {
+	description string
+	project     string
+	addresses   []string
+}
+
 func newAddressGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var description, project string
-	var addresses []string
+	f := &addressGroupCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an address group",
@@ -370,29 +393,30 @@ func newAddressGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			return runAddressGroupCreate(ctx, client, o, args[0], description, project, addresses, cmd.OutOrStdout())
+			return runAddressGroupCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&description, "description", "", "description of the address group")
-	fl.StringVar(&project, "project", "", "owning project ID")
-	fl.StringArrayVar(&addresses, "address", nil,
+	fl.StringVar(&f.description, "description", "", "description of the address group")
+	fl.StringVar(&f.project, "project", "", "owning project ID")
+	fl.StringArrayVar(&f.addresses, "address", nil,
 		"CIDR or IP range to include, e.g. 192.0.2.0/24 (repeatable)")
 	return cmd
 }
 
 func runAddressGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name, description, project string, addresses []string, w io.Writer,
+	name string, f *addressGroupCreateFlags, w io.Writer,
 ) error {
 	// Neutron requires the addresses key even when empty, and gophercloud tags
 	// it `required` — so a nil slice has to become an empty one.
+	addresses := f.addresses
 	if addresses == nil {
 		addresses = []string{}
 	}
 	g, err := addressgroups.Create(ctx, client, addressgroups.CreateOpts{
 		Name:        name,
-		Description: description,
-		ProjectID:   project,
+		Description: f.description,
+		ProjectID:   f.project,
 		Addresses:   addresses,
 	}).Extract()
 	if err != nil {
@@ -401,9 +425,19 @@ func runAddressGroupCreate(ctx context.Context, client *gophercloud.ServiceClien
 	return writeAddressGroup(o, w, g)
 }
 
+type addressGroupSetFlags struct {
+	name        string
+	description string
+	addresses   []string
+
+	// nameSet/descSet record which of the two were given: an empty value is a
+	// meaningful update, so neither can be inferred from the value alone.
+	nameSet bool
+	descSet bool
+}
+
 func newAddressGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, description string
-	var addresses []string
+	f := &addressGroupSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <address-group>",
 		Short: "Set address group properties or add addresses",
@@ -417,14 +451,14 @@ func newAddressGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return runAddressGroupSet(cmd.Context(), c, o, args[0], name, description, addresses,
-				fl.Changed("name"), fl.Changed("description"), cmd.OutOrStdout())
+			f.nameSet, f.descSet = fl.Changed("name"), fl.Changed("description")
+			return runAddressGroupSet(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new name")
-	fl.StringVar(&description, "description", "", "new description")
-	fl.StringArrayVar(&addresses, "address", nil, "address to add to the group (repeatable)")
+	fl.StringVar(&f.name, "name", "", "new name")
+	fl.StringVar(&f.description, "description", "", "new description")
+	fl.StringArrayVar(&f.addresses, "address", nil, "address to add to the group (repeatable)")
 	return cmd
 }
 
@@ -487,27 +521,27 @@ func runAddressGroupDelete(ctx context.Context, client *gophercloud.ServiceClien
 // adds addresses through neutron's dedicated add_addresses action — the plain
 // update has no addresses field at all.
 func runAddressGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id, name, description string, addresses []string, nameSet, descSet bool, w io.Writer,
+	id string, f *addressGroupSetFlags, w io.Writer,
 ) error {
 	id, err := resolveAddressGroupID(ctx, client, id)
 	if err != nil {
 		return err
 	}
-	if nameSet || descSet {
+	if f.nameSet || f.descSet {
 		opts := addressgroups.UpdateOpts{}
-		if nameSet {
-			opts.Name = &name
+		if f.nameSet {
+			opts.Name = &f.name
 		}
-		if descSet {
-			opts.Description = &description
+		if f.descSet {
+			opts.Description = &f.description
 		}
 		if _, err := addressgroups.Update(ctx, client, id, opts).Extract(); err != nil {
 			return fmt.Errorf("updating address group %s: %w", id, err)
 		}
 	}
-	if len(addresses) > 0 {
+	if len(f.addresses) > 0 {
 		if _, err := addressgroups.AddAddresses(ctx, client, id,
-			addressgroups.UpdateAddressesOpts{Addresses: addresses}).Extract(); err != nil {
+			addressgroups.UpdateAddressesOpts{Addresses: f.addresses}).Extract(); err != nil {
 			return fmt.Errorf("adding addresses to address group %s: %w", id, err)
 		}
 	}

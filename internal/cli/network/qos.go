@@ -149,9 +149,17 @@ func runQoSPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	return o.WriteSingle(w, fields, values)
 }
 
+type qosPolicyCreateFlags struct {
+	description string
+	project     string
+	share       bool
+	noShare     bool
+	isDefault   bool
+	noDefault   bool
+}
+
 func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var description, project string
-	var share, noShare, isDefault, noDefault bool
+	f := &qosPolicyCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a network QoS policy",
@@ -172,29 +180,28 @@ func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			}
 			// --no-share / --no-default exist for OSC parity; they select the
 			// neutron defaults, so there is nothing extra to send.
-			return runQoSPolicyCreate(cmd.Context(), c, o, args[0], description, project,
-				share, isDefault, cmd.OutOrStdout())
+			return runQoSPolicyCreate(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&description, "description", "", "description of the policy")
-	fl.StringVar(&project, "project", "", "owning project ID")
-	fl.BoolVar(&share, flagShare, false, "make the policy usable by every project")
-	fl.BoolVar(&noShare, flagNoShare, false, "keep the policy private to its project (default)")
-	fl.BoolVar(&isDefault, flagDefault, false, "make this the project's default policy")
-	fl.BoolVar(&noDefault, flagNoDefault, false, "do not make this the default policy (default)")
+	fl.StringVar(&f.description, "description", "", "description of the policy")
+	fl.StringVar(&f.project, "project", "", "owning project ID")
+	fl.BoolVar(&f.share, flagShare, false, "make the policy usable by every project")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "keep the policy private to its project (default)")
+	fl.BoolVar(&f.isDefault, flagDefault, false, "make this the project's default policy")
+	fl.BoolVar(&f.noDefault, flagNoDefault, false, "do not make this the default policy (default)")
 	return cmd
 }
 
 func runQoSPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	name, description, project string, share, isDefault bool, w io.Writer,
+	name string, f *qosPolicyCreateFlags, w io.Writer,
 ) error {
 	p, err := policies.Create(ctx, client, policies.CreateOpts{
 		Name:        name,
-		Description: description,
-		ProjectID:   project,
-		Shared:      share,
-		IsDefault:   isDefault,
+		Description: f.description,
+		ProjectID:   f.project,
+		Shared:      f.share,
+		IsDefault:   f.isDefault,
 	}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating network QoS policy %q: %w", name, err)
@@ -203,9 +210,21 @@ func runQoSPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	return o.WriteSingle(w, fields, values)
 }
 
+type qosPolicySetFlags struct {
+	name        string
+	description string
+	share       bool
+	noShare     bool
+	isDefault   bool
+	noDefault   bool
+
+	// descSet records whether --description was given: an empty value is a
+	// meaningful update, so it cannot be inferred from description alone.
+	descSet bool
+}
+
 func newQoSPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name, description string
-	var share, noShare, isDefault, noDefault bool
+	f := &qosPolicySetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <qos-policy>",
 		Short: "Set network QoS policy properties",
@@ -225,36 +244,36 @@ func newQoSPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runQoSPolicySet(cmd.Context(), c, o, args[0], name, description,
-				share, noShare, isDefault, noDefault, fl.Changed("description"), cmd.OutOrStdout())
+			f.descSet = fl.Changed("description")
+			return runQoSPolicySet(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "new name")
-	fl.StringVar(&description, "description", "", "new description")
-	fl.BoolVar(&share, flagShare, false, "make the policy usable by every project")
-	fl.BoolVar(&noShare, flagNoShare, false, "make the policy private to its project")
-	fl.BoolVar(&isDefault, flagDefault, false, "make this the project's default policy")
-	fl.BoolVar(&noDefault, flagNoDefault, false, "stop this being the default policy")
+	fl.StringVar(&f.name, "name", "", "new name")
+	fl.StringVar(&f.description, "description", "", "new description")
+	fl.BoolVar(&f.share, flagShare, false, "make the policy usable by every project")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "make the policy private to its project")
+	fl.BoolVar(&f.isDefault, flagDefault, false, "make this the project's default policy")
+	fl.BoolVar(&f.noDefault, flagNoDefault, false, "stop this being the default policy")
 	return cmd
 }
 
 func runQoSPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, name, description string, share, noShare, isDefault, noDefault, descSet bool, w io.Writer,
+	ref string, f *qosPolicySetFlags, w io.Writer,
 ) error {
 	id, err := resolveQoSPolicyID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	opts := policies.UpdateOpts{Name: name}
-	if descSet {
-		opts.Description = &description
+	opts := policies.UpdateOpts{Name: f.name}
+	if f.descSet {
+		opts.Description = &f.description
 	}
-	if share || noShare {
-		opts.Shared = &share
+	if f.share || f.noShare {
+		opts.Shared = &f.share
 	}
-	if isDefault || noDefault {
-		opts.IsDefault = &isDefault
+	if f.isDefault || f.noDefault {
+		opts.IsDefault = &f.isDefault
 	}
 	p, err := policies.Update(ctx, client, id, opts).Extract()
 	if err != nil {
@@ -551,6 +570,10 @@ type qosRuleFlags struct {
 	minKpps       int
 	dscpMark      int
 	direction     string
+
+	// changed is the command's flag set, captured at construction so the run
+	// seams take resolved flags instead of a second parameter.
+	changed interface{ Changed(string) bool }
 }
 
 func (f *qosRuleFlags) register(cmd *cobra.Command) {
@@ -565,10 +588,10 @@ func (f *qosRuleFlags) register(cmd *cobra.Command) {
 
 // body builds the rule attributes for kind k. Only the fields the operator
 // actually set are included, so an update patches nothing it was not asked to.
-func (f *qosRuleFlags) body(k qosRuleKind, fl interface{ Changed(string) bool }) map[string]any {
+func (f *qosRuleFlags) body(k qosRuleKind) map[string]any {
 	attrs := map[string]any{}
 	set := func(flag, key string, v any) {
-		if fl.Changed(flag) {
+		if f.changed.Changed(flag) {
 			attrs[key] = v
 		}
 	}
@@ -608,12 +631,13 @@ func newQoSRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			return runQoSRuleCreate(cmd.Context(), c, o, args[0], k, f.body(k, cmd.Flags()), cmd.OutOrStdout())
+			return runQoSRuleCreate(cmd.Context(), c, o, args[0], k, f.body(k), cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&ruleType, "type", "",
 		"rule type: bandwidth-limit, dscp-marking, minimum-bandwidth or minimum-packet-rate")
 	f.register(cmd)
+	f.changed = cmd.Flags()
 	_ = cmd.MarkFlagRequired("type")
 	return cmd
 }
@@ -646,21 +670,22 @@ func newQoSRuleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runQoSRuleSet(cmd.Context(), c, o, args[0], args[1], f, cmd.Flags(), cmd.OutOrStdout())
+			return runQoSRuleSet(cmd.Context(), c, o, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd)
+	f.changed = cmd.Flags()
 	return cmd
 }
 
 func runQoSRuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, ruleID string, f *qosRuleFlags, fl interface{ Changed(string) bool }, w io.Writer,
+	ref, ruleID string, f *qosRuleFlags, w io.Writer,
 ) error {
 	policyID, k, err := resolveQoSRule(ctx, client, ref, ruleID)
 	if err != nil {
 		return err
 	}
-	attrs := f.body(k, fl)
+	attrs := f.body(k)
 	if len(attrs) == 0 {
 		return fmt.Errorf("nothing to set on QoS rule %s: give at least one property flag", ruleID)
 	}

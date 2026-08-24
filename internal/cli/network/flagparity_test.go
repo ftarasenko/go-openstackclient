@@ -410,8 +410,8 @@ func TestRunRBACCreate_TargetAllProjectsSendsWildcard(t *testing.T) {
 
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runRBACCreate(context.Background(), networkClient(fakeServer), o,
-		"net-1", "access_as_shared", "network", rbacAllProjects, &buf)
+	err := runRBACCreate(context.Background(), networkClient(fakeServer), o, "net-1",
+		&rbacCreateFlags{action: "access_as_shared", objectType: "network", targetProject: rbacAllProjects}, &buf)
 	if err != nil {
 		t.Fatalf("runRBACCreate error: %v", err)
 	}
