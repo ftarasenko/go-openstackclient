@@ -54,44 +54,18 @@ func runKVCopy(ctx context.Context, src, dst *vault.Client, o *output.Options, o
 		return fmt.Errorf("--src-version applies to a single secret, but %d were selected under %q", len(rels), opts.srcDisplay)
 	}
 
+	session := copySession{src: src, dst: dst, srcMount: srcMount, dstMount: dstMount, opts: opts}
 	rows := make([][]any, 0, len(rels))
 	var skipped int
 	for _, rel := range rels {
-		// rel comes from the SOURCE Vault's listing, and it is about to be joined
-		// onto the destination path: a key like "../../../prod/openrc" would put the
-		// WRITE outside the subtree the operator named, which guardSelfCopy cannot
-		// catch because it only sees the paths before the join.
-		if err := vault.ValidateRelPath(rel); err != nil {
-			return fmt.Errorf("source %q returned an unsafe secret path %q: %w", opts.srcDisplay, rel, err)
-		}
-		from, to := joinPath(opts.srcPath, rel), joinPath(opts.dstPath, rel)
-
-		if opts.skipExisting {
-			exists, err := dst.HasKV(ctx, dstMount, to)
-			if err != nil {
-				return fmt.Errorf("checking destination %q: %w", to, err)
-			}
-			if exists {
-				skipped++
-				rows = append(rows, []any{from, to, 0, statusSkipped})
-				continue
-			}
-		}
-
-		// The source is read even for --dry-run: it makes the reported key count
-		// real and proves read access before anybody trusts the preview.
-		data, err := src.ReadKVDataAt(ctx, srcMount, from, opts.srcVersion)
+		row, wasSkipped, err := session.copyOne(ctx, rel)
 		if err != nil {
-			return fmt.Errorf("reading source %q: %w", from, err)
+			return err
 		}
-		if opts.dryRun {
-			rows = append(rows, []any{from, to, len(data), statusWould})
-			continue
+		if wasSkipped {
+			skipped++
 		}
-		if err := dst.WriteKVData(ctx, dstMount, to, data); err != nil {
-			return fmt.Errorf("writing destination %q: %w", to, err)
-		}
-		rows = append(rows, []any{from, to, len(data), statusCopied})
+		rows = append(rows, row)
 	}
 
 	// The summary goes to stderr so it never pollutes piped/structured output.
@@ -102,6 +76,57 @@ func runKVCopy(ctx context.Context, src, dst *vault.Client, o *output.Options, o
 		Columns: []string{"Source", "Destination", "Keys", "Status"},
 		Rows:    rows,
 	})
+}
+
+// copySession is the per-run state copying one secret needs: both clients, the
+// KV mount each of them resolved, and the flags. It exists so copyOne is a
+// method with one argument rather than a seven-parameter function.
+type copySession struct {
+	src, dst           *vault.Client
+	srcMount, dstMount string
+	opts               copyOptions
+}
+
+// copyOne copies the single secret at rel — a path relative to the source path,
+// empty for a non-recursive copy — and returns its result-table row together
+// with whether --skip-existing skipped it.
+//
+// Splitting it out of runKVCopy's loop leaves that loop with iteration and
+// tallying, and puts every per-secret decision (the path guard, the
+// skip-existing probe, --dry-run reading but not writing) behind one name.
+func (s copySession) copyOne(ctx context.Context, rel string) ([]any, bool, error) {
+	// rel comes from the SOURCE Vault's listing, and it is about to be joined
+	// onto the destination path: a key like "../../../prod/openrc" would put the
+	// WRITE outside the subtree the operator named, which guardSelfCopy cannot
+	// catch because it only sees the paths before the join.
+	if err := vault.ValidateRelPath(rel); err != nil {
+		return nil, false, fmt.Errorf("source %q returned an unsafe secret path %q: %w", s.opts.srcDisplay, rel, err)
+	}
+	from, to := joinPath(s.opts.srcPath, rel), joinPath(s.opts.dstPath, rel)
+
+	if s.opts.skipExisting {
+		exists, err := s.dst.HasKV(ctx, s.dstMount, to)
+		if err != nil {
+			return nil, false, fmt.Errorf("checking destination %q: %w", to, err)
+		}
+		if exists {
+			return []any{from, to, 0, statusSkipped}, true, nil
+		}
+	}
+
+	// The source is read even for --dry-run: it makes the reported key count
+	// real and proves read access before anybody trusts the preview.
+	data, err := s.src.ReadKVDataAt(ctx, s.srcMount, from, s.opts.srcVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading source %q: %w", from, err)
+	}
+	if s.opts.dryRun {
+		return []any{from, to, len(data), statusWould}, false, nil
+	}
+	if err := s.dst.WriteKVData(ctx, s.dstMount, to, data); err != nil {
+		return nil, false, fmt.Errorf("writing destination %q: %w", to, err)
+	}
+	return []any{from, to, len(data), statusCopied}, false, nil
 }
 
 // copyPlan returns the secret paths to copy, relative to the source path: a
