@@ -110,8 +110,16 @@ Generate the coverage profile first — `sonar.go.coverage.reportPaths` expects
 `coverage.out` at the repo root, and without it every line reports as uncovered:
 
 ```sh
-GOFLAGS=-mod=vendor GOPROXY=off go test -coverprofile=coverage.out ./...
+make cover
 ```
+
+**Use `make cover`, not a bare `go test -coverprofile`.** The target passes
+`-coverpkg=./...`, and that flag is load-bearing here: by default a test binary
+instruments only its own package, but `internal/cli`'s root tests build the
+*entire* command tree via `NewRootCommand`, so every service's flag registration
+already executes and would otherwise not be attributed to it. Measuring without
+`-coverpkg` under-reports the project by roughly 11 points (54% vs 65%) — the
+tests are the same either way.
 
 `/coverage.*` is gitignored (root-anchored, so `docs/coverage.md` survives), and
 `coverage.out` is in `sonar.exclusions` so the profile is not analysed as source.

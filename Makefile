@@ -11,7 +11,7 @@ export GOFLAGS     := -mod=vendor
 # CI cross-compile matrix stay in sync with the release matrix.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
-.PHONY: all build static test race crossbuild vet lint fmt tidy vendor completions size clean
+.PHONY: all build static test race cover crossbuild vet lint fmt tidy vendor completions size clean
 
 all: build
 
@@ -30,6 +30,14 @@ test:
 ## stay CGO_ENABLED=0). Still offline — vendor/ only, no module proxy.
 race:
 	CGO_ENABLED=1 GOPROXY=off go test -race ./...
+
+## cover: write coverage.out for SonarQube (see AGENTS.md "SonarQube").
+## -coverpkg=./... is load-bearing: without it each test binary only instruments
+## its own package, so the whole command tree that internal/cli's root tests
+## build is executed but never attributed. It is worth ~11 points.
+cover:
+	GOPROXY=off go test -coverpkg=./... -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out | tail -1
 
 ## crossbuild: compile every release target (build-only, offline) so a build-tag
 ## or syscall mistake is caught here instead of at release time.
