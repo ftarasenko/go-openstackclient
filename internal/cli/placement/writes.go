@@ -736,8 +736,33 @@ func runProviderAllocationUnset(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return fmt.Errorf("reading the allocations of consumer %s: %w", consumer, err)
 	}
+	kept := keepAllocations(current.Allocations, providers, classes)
+	if len(kept) == 0 {
+		// Placement rejects a PUT with an empty allocations object; clearing the
+		// last one is a DELETE.
+		if err := allocations.Delete(ctx, client, consumer).ExtractErr(); err != nil {
+			return fmt.Errorf("deleting the allocations of consumer %s: %w", consumer, err)
+		}
+		return nil
+	}
+	if err := allocations.Update(ctx, client, consumer, allocations.UpdateOpts{Allocations: kept}).ExtractErr(); err != nil {
+		return fmt.Errorf("updating the allocations of consumer %s: %w", consumer, err)
+	}
+	return runProviderAllocationShow(ctx, client, o, consumer, w)
+}
+
+// keepAllocations computes the allocations that survive an unset: every
+// provider the operator did not name, minus every resource class they did.
+//
+// Placement has no partial-delete endpoint — an update replaces the consumer's
+// whole allocation set — so the survivors are derived client-side from what was
+// just read. A provider left with no classes is dropped entirely rather than
+// written back as an empty resources object, which placement rejects.
+func keepAllocations(current map[string]allocations.ProviderAllocations,
+	providers, classes []string,
+) map[string]allocations.ProviderAllocationsOpts {
 	kept := map[string]allocations.ProviderAllocationsOpts{}
-	for providerID, alloc := range current.Allocations {
+	for providerID, alloc := range current {
 		if contains(providers, providerID) {
 			continue
 		}
@@ -752,18 +777,7 @@ func runProviderAllocationUnset(ctx context.Context, client *gophercloud.Service
 			kept[providerID] = allocations.ProviderAllocationsOpts{Resources: resources}
 		}
 	}
-	if len(kept) == 0 {
-		// Placement rejects a PUT with an empty allocations object; clearing the
-		// last one is a DELETE.
-		if err := allocations.Delete(ctx, client, consumer).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting the allocations of consumer %s: %w", consumer, err)
-		}
-		return nil
-	}
-	if err := allocations.Update(ctx, client, consumer, allocations.UpdateOpts{Allocations: kept}).ExtractErr(); err != nil {
-		return fmt.Errorf("updating the allocations of consumer %s: %w", consumer, err)
-	}
-	return runProviderAllocationShow(ctx, client, o, consumer, w)
+	return kept
 }
 
 func contains(haystack []string, needle string) bool {
