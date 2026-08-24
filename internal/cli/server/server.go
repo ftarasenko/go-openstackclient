@@ -734,17 +734,11 @@ func (opts serverUpdateOpts) ToServerUpdateMap() (map[string]any, error) {
 	return gophercloud.BuildRequestBody(opts, "server")
 }
 
-func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *serverSetFlags, _ io.Writer) error {
-	if err := validateServerSetFlags(client, f); err != nil {
-		return err
-	}
-	id, err := resolveServerID(ctx, client, ref)
-	if err != nil {
-		return err
-	}
-	// One PUT for every standard updatable attribute, as OSC does; the KeyStack
-	// availability_zone extension stays a separate call so its error can be
-	// annotated without implicating a plain rename.
+// serverSetAttributes issues the one PUT carrying every standard updatable
+// attribute, as OSC does.
+func serverSetAttributes(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, f *serverSetFlags,
+) error {
 	opts := serverUpdateOpts{Name: f.name}
 	if f.description != "" {
 		opts.Description = &f.description
@@ -752,37 +746,57 @@ func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	if f.hostname != "" {
 		opts.Hostname = &f.hostname
 	}
-	if opts != (serverUpdateOpts{}) {
-		if _, err := servers.Update(ctx, client, id, opts).Extract(); err != nil {
-			return fmt.Errorf("updating server %q: %w", ref, err)
-		}
+	if opts == (serverUpdateOpts{}) {
+		return nil
 	}
-	if f.availabilityZone != "" {
-		// gophercloud's servers.UpdateOpts has no availability_zone field, so
-		// issue the raw PUT /servers/{id} the KeyStack extension expects.
-		body := map[string]any{"server": map[string]any{"availability_zone": f.availabilityZone}}
-		resp, err := client.Put(ctx, client.ServiceURL("servers", id), body, nil, &gophercloud.RequestOpts{OkCodes: []int{200}})
-		if resp != nil {
-			defer func() { _ = resp.Body.Close() }()
-		}
-		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-			return keystackExtErr(fmt.Errorf("updating availability zone on server %q: %w", ref, err), "per-instance availability_zone update")
-		}
+	if _, err := servers.Update(ctx, client, id, opts).Extract(); err != nil {
+		return fmt.Errorf("updating server %q: %w", ref, err)
 	}
-	if len(f.properties) > 0 {
-		meta, err := parseKeyValStrings(f.properties)
-		if err != nil {
-			return err
-		}
-		if _, err := servers.UpdateMetadata(ctx, client, id, servers.MetadataOpts(meta)).Extract(); err != nil {
-			return fmt.Errorf("updating metadata on server %q: %w", ref, err)
-		}
+	return nil
+}
+
+// serverSetAvailabilityZone issues the raw PUT the KeyStack per-instance
+// availability_zone extension expects: gophercloud's servers.UpdateOpts has no
+// such field. It stays a separate call from serverSetAttributes so its error can
+// be annotated without implicating a plain rename.
+func serverSetAvailabilityZone(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id, az string,
+) error {
+	if az == "" {
+		return nil
 	}
-	if f.state != "" {
-		if err := servers.ResetState(ctx, client, id, servers.ServerState(f.state)).ExtractErr(); err != nil {
-			return fmt.Errorf("resetting state of server %q to %q: %w", ref, f.state, err)
-		}
+	body := map[string]any{"server": map[string]any{"availability_zone": az}}
+	resp, err := client.Put(ctx, client.ServiceURL("servers", id), body, nil, &gophercloud.RequestOpts{OkCodes: []int{200}})
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
 	}
+	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+		return keystackExtErr(fmt.Errorf("updating availability zone on server %q: %w", ref, err), "per-instance availability_zone update")
+	}
+	return nil
+}
+
+// serverSetMetadata applies --property.
+func serverSetMetadata(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, properties []string,
+) error {
+	if len(properties) == 0 {
+		return nil
+	}
+	meta, err := parseKeyValStrings(properties)
+	if err != nil {
+		return err
+	}
+	if _, err := servers.UpdateMetadata(ctx, client, id, servers.MetadataOpts(meta)).Extract(); err != nil {
+		return fmt.Errorf("updating metadata on server %q: %w", ref, err)
+	}
+	return nil
+}
+
+// serverSetPassword applies --password / --no-password.
+func serverSetPassword(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, f *serverSetFlags,
+) error {
 	switch {
 	case f.password != "":
 		if err := servers.ChangeAdminPassword(ctx, client, id, f.password).ExtractErr(); err != nil {
@@ -792,6 +806,37 @@ func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 		if err := clearServerPassword(ctx, client, id); err != nil {
 			return fmt.Errorf("clearing admin password on server %q: %w", ref, err)
 		}
+	}
+	return nil
+}
+
+// runServerSet applies "server set" as a sequence of independent nova calls; it
+// deliberately does not roll back, so validateServerSetFlags rejects what it can
+// before the first request.
+func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *serverSetFlags, _ io.Writer) error {
+	if err := validateServerSetFlags(client, f); err != nil {
+		return err
+	}
+	id, err := resolveServerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	if err := serverSetAttributes(ctx, client, ref, id, f); err != nil {
+		return err
+	}
+	if err := serverSetAvailabilityZone(ctx, client, ref, id, f.availabilityZone); err != nil {
+		return err
+	}
+	if err := serverSetMetadata(ctx, client, ref, id, f.properties); err != nil {
+		return err
+	}
+	if f.state != "" {
+		if err := servers.ResetState(ctx, client, id, servers.ServerState(f.state)).ExtractErr(); err != nil {
+			return fmt.Errorf("resetting state of server %q to %q: %w", ref, f.state, err)
+		}
+	}
+	if err := serverSetPassword(ctx, client, ref, id, f); err != nil {
+		return err
 	}
 	for _, tag := range f.tags {
 		if err := addServerTag(ctx, client, id, tag); err != nil {

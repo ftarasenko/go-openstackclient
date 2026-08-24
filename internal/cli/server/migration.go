@@ -113,7 +113,11 @@ func newServerMigrationListCommand(a *auth.Options, o *output.Options) *cobra.Co
 	return cmd
 }
 
-func runServerMigrationList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *migrationListFlags, w io.Writer) error {
+// migrationListQuery turns the filters into the os-migrations query string,
+// resolving --server to the instance UUID nova filters on.
+func migrationListQuery(ctx context.Context, client *gophercloud.ServiceClient,
+	f *migrationListFlags,
+) (url.Values, error) {
 	vals := url.Values{}
 	for key, val := range map[string]string{
 		"host":           f.host,
@@ -131,52 +135,78 @@ func runServerMigrationList(ctx context.Context, client *gophercloud.ServiceClie
 			vals.Set(key, val)
 		}
 	}
-	if f.server != "" {
-		id, err := resolveServerID(ctx, client, f.server)
-		if err != nil {
-			return err
+	if f.server == "" {
+		return vals, nil
+	}
+	id, err := resolveServerID(ctx, client, f.server)
+	if err != nil {
+		return nil, err
+	}
+	vals.Set("instance_uuid", id)
+	return vals, nil
+}
+
+// migrationPage is one os-migrations response page.
+type migrationPage struct {
+	Migrations []migration `json:"migrations"`
+	Links      []struct {
+		Href string `json:"href"`
+		Rel  string `json:"rel"`
+	} `json:"migrations_links"`
+}
+
+// nextLink returns the URL of the following page, or "" at the end of the list.
+func (p migrationPage) nextLink() string {
+	for _, l := range p.Links {
+		if l.Rel == "next" {
+			return l.Href
 		}
-		vals.Set("instance_uuid", id)
 	}
+	return ""
+}
 
-	next := client.ServiceURL("os-migrations")
-	if q := vals.Encode(); q != "" {
-		next += "?" + q
-	}
-
+// fetchMigrations follows nova's pagination links from next. Nova treats limit
+// only as a page size, so --limit is enforced here as a hard cap on the walk.
+func fetchMigrations(ctx context.Context, client *gophercloud.ServiceClient,
+	next string, f *migrationListFlags,
+) ([]migration, error) {
 	var all []migration
 	for next != "" {
-		var page struct {
-			Migrations []migration `json:"migrations"`
-			Links      []struct {
-				Href string `json:"href"`
-				Rel  string `json:"rel"`
-			} `json:"migrations_links"`
-		}
+		var page migrationPage
 		resp, err := client.Get(ctx, next, &page, &gophercloud.RequestOpts{OkCodes: []int{200}})
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
 		if err != nil {
 			if f.createdSince != "" || f.createdBefore != "" {
-				return keystackExtErr(fmt.Errorf("listing migrations: %w", err), "created migration-list filters")
+				return nil, keystackExtErr(fmt.Errorf("listing migrations: %w", err), "created migration-list filters")
 			}
-			return fmt.Errorf("listing migrations: %w", err)
+			return nil, fmt.Errorf("listing migrations: %w", err)
 		}
 		all = append(all, page.Migrations...)
-		next = ""
-		for _, l := range page.Links {
-			if l.Rel == "next" {
-				next = l.Href
-				break
-			}
-		}
-		// Nova treats limit only as a page size; enforce --limit as a hard cap
-		// and stop paging once it is reached.
+		next = page.nextLink()
 		if f.limit > 0 && len(all) >= f.limit {
 			break
 		}
 	}
+	return all, nil
+}
+
+func runServerMigrationList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *migrationListFlags, w io.Writer) error {
+	vals, err := migrationListQuery(ctx, client, f)
+	if err != nil {
+		return err
+	}
+	next := client.ServiceURL("os-migrations")
+	if q := vals.Encode(); q != "" {
+		next += "?" + q
+	}
+	all, err := fetchMigrations(ctx, client, next, f)
+	if err != nil {
+		return err
+	}
+	// The walk stops at the cap but a page can overshoot it; trim to exactly
+	// --limit.
 	if f.limit > 0 && len(all) > f.limit {
 		all = all[:f.limit]
 	}
