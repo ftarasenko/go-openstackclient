@@ -77,9 +77,9 @@ func TestRunVolumeSet_RetypeWaitPollsUntilSettled(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
+	volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
 	var buf bytes.Buffer
-	if err := runVolumeSet(context.Background(), client, waitVolID, f, cmd, &buf); err != nil {
+	if err := runVolumeSet(context.Background(), client, waitVolID, f, &buf); err != nil {
 		t.Fatalf("runVolumeSet with --wait: %v", err)
 	}
 	if *gets < 3 {
@@ -106,9 +106,9 @@ func TestRunVolumeSet_RetypeWaitDetectsRollback(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
+	volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
 	var buf bytes.Buffer
-	err := runVolumeSet(context.Background(), client, waitVolID, f, cmd, &buf)
+	err := runVolumeSet(context.Background(), client, waitVolID, f, &buf)
 	if err == nil {
 		t.Fatal("expected an error when the retype is rolled back, got nil")
 	}
@@ -139,8 +139,8 @@ func TestRunVolumeSet_RetypeWaitDetectsFailure(t *testing.T) {
 
 			client := volumeClient(fakeServer, "3.59")
 			f := &volumeSetFlags{}
-			cmd := volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
-			err := runVolumeSet(context.Background(), client, waitVolID, f, cmd, io.Discard)
+			volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
+			err := runVolumeSet(context.Background(), client, waitVolID, f, io.Discard)
 			if err == nil {
 				t.Fatal("expected an error, got nil")
 			}
@@ -168,9 +168,9 @@ func TestRunVolumeSet_RetypeWaitMatchesTypeByID(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
+	volumeSetCmd(t, f, map[string]string{"type": waitTypeID, "wait": "true"})
 	var buf bytes.Buffer
-	if err := runVolumeSet(context.Background(), client, waitVolID, f, cmd, &buf); err != nil {
+	if err := runVolumeSet(context.Background(), client, waitVolID, f, &buf); err != nil {
 		t.Fatalf("runVolumeSet with --wait matching by volume_type_id: %v", err)
 	}
 }

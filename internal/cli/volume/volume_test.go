@@ -731,7 +731,9 @@ func TestRunVolumeDelete_ByID(t *testing.T) {
 
 // volumeSetCmd builds a cobra command carrying the "volume set" flags, marking
 // the requested flags as Changed via Set so runVolumeSet's Changed() checks fire.
-func volumeSetCmd(t *testing.T, f *volumeSetFlags, set map[string]string) *cobra.Command {
+// volumeSetCmd builds the "volume set" flag set and records it on f, the way
+// the real RunE does.
+func volumeSetCmd(t *testing.T, f *volumeSetFlags, set map[string]string) {
 	t.Helper()
 	cmd := &cobra.Command{Use: "set"}
 	fl := cmd.Flags()
@@ -751,7 +753,7 @@ func volumeSetCmd(t *testing.T, f *volumeSetFlags, set map[string]string) *cobra
 			t.Fatalf("setting flag %q: %v", k, err)
 		}
 	}
-	return cmd
+	f.changed = fl
 }
 
 func TestRunVolumeSet_RenameAndExtend(t *testing.T) {
@@ -786,8 +788,8 @@ func TestRunVolumeSet_RenameAndExtend(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"name": "renamed", "size": "20"})
-	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+	volumeSetCmd(t, f, map[string]string{"name": "renamed", "size": "20"})
+	if err := runVolumeSet(context.Background(), client, id, f, io.Discard); err != nil {
 		t.Fatalf("runVolumeSet returned error: %v", err)
 	}
 
@@ -833,8 +835,8 @@ func TestRunVolumeSet_PropertyMergesMetadata(t *testing.T) {
 
 	client := volumeClient(fakeServer, "latest")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"property": "new=1"})
-	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+	volumeSetCmd(t, f, map[string]string{"property": "new=1"})
+	if err := runVolumeSet(context.Background(), client, id, f, io.Discard); err != nil {
 		t.Fatalf("runVolumeSet returned error: %v", err)
 	}
 	vol, ok := gotUpdate["volume"].(map[string]any)
@@ -879,8 +881,8 @@ func TestRunVolumeSet_ResetStateAndAttachStatus(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"state": "in-use", "attached": "true", "size": "20"})
-	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+	volumeSetCmd(t, f, map[string]string{"state": "in-use", "attached": "true", "size": "20"})
+	if err := runVolumeSet(context.Background(), client, id, f, io.Discard); err != nil {
 		t.Fatalf("runVolumeSet returned error: %v", err)
 	}
 
@@ -921,8 +923,8 @@ func TestRunVolumeSet_DetachedOmitsStatus(t *testing.T) {
 
 	client := volumeClient(fakeServer, "latest")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"detached": "true"})
-	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+	volumeSetCmd(t, f, map[string]string{"detached": "true"})
+	if err := runVolumeSet(context.Background(), client, id, f, io.Discard); err != nil {
 		t.Fatalf("runVolumeSet returned error: %v", err)
 	}
 	reset, ok := got["os-reset_status"].(map[string]any)
@@ -946,8 +948,8 @@ func TestRunVolumeSet_StateValidation(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &volumeSetFlags{}
-			cmd := volumeSetCmd(t, f, set)
-			if err := runVolumeSet(context.Background(), nil, "x", f, cmd, io.Discard); err == nil {
+			volumeSetCmd(t, f, set)
+			if err := runVolumeSet(context.Background(), nil, "x", f, io.Discard); err == nil {
 				t.Fatalf("expected an error for %v, got nil", set)
 			}
 		})
@@ -957,8 +959,8 @@ func TestRunVolumeSet_StateValidation(t *testing.T) {
 func TestRunVolumeSet_NothingToSet(t *testing.T) {
 	// Validation happens before any network use, so a nil client is fine.
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, nil)
-	err := runVolumeSet(context.Background(), nil, "x", f, cmd, io.Discard)
+	volumeSetCmd(t, f, nil)
+	err := runVolumeSet(context.Background(), nil, "x", f, io.Discard)
 	if err == nil {
 		t.Fatal("expected error when no set flags are provided, got nil")
 	}
@@ -1005,8 +1007,8 @@ func TestRunVolumeSet_RetypeResolvesTypeName(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"type": "ssd", "migration-policy": "on-demand"})
-	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+	volumeSetCmd(t, f, map[string]string{"type": "ssd", "migration-policy": "on-demand"})
+	if err := runVolumeSet(context.Background(), client, id, f, io.Discard); err != nil {
 		t.Fatalf("runVolumeSet returned error: %v", err)
 	}
 
@@ -1056,8 +1058,8 @@ func TestRunVolumeSet_RetypeOmitsDefaultPolicy(t *testing.T) {
 
 	client := volumeClient(fakeServer, "3.59")
 	f := &volumeSetFlags{}
-	cmd := volumeSetCmd(t, f, map[string]string{"type": typeID})
-	if err := runVolumeSet(context.Background(), client, id, f, cmd, io.Discard); err != nil {
+	volumeSetCmd(t, f, map[string]string{"type": typeID})
+	if err := runVolumeSet(context.Background(), client, id, f, io.Discard); err != nil {
 		t.Fatalf("runVolumeSet returned error: %v", err)
 	}
 	retype, ok := gotAction["os-retype"].(map[string]any)
@@ -1085,8 +1087,8 @@ func TestRunVolumeSet_MigrationPolicyValidation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &volumeSetFlags{}
-			cmd := volumeSetCmd(t, f, tc.set)
-			if err := runVolumeSet(context.Background(), nil, "x", f, cmd, io.Discard); err == nil {
+			volumeSetCmd(t, f, tc.set)
+			if err := runVolumeSet(context.Background(), nil, "x", f, io.Discard); err == nil {
 				t.Fatal("expected a validation error, got nil")
 			}
 		})

@@ -302,33 +302,8 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Resolve a --image name to an ID via glance before creating.
-			if f.image != "" && !resolve.IsUUID(f.image) {
-				img, err := session.Image()
-				if err != nil {
-					return err
-				}
-				id, err := resolve.ImageID(ctx, img, f.image)
-				if err != nil {
-					return err
-				}
-				f.image = id
-			}
-			// Resolve a --snapshot name to an ID via cinder before creating.
-			if f.snapshot != "" && !resolve.IsUUID(f.snapshot) {
-				id, err := resolveSnapshotID(ctx, client, f.snapshot)
-				if err != nil {
-					return err
-				}
-				f.snapshot = id
-			}
-			// Resolve a --backup name to an ID via cinder before creating.
-			if f.backup != "" && !resolve.IsUUID(f.backup) {
-				id, err := resolveBackupID(ctx, client, f.backup)
-				if err != nil {
-					return err
-				}
-				f.backup = id
+			if err := resolveVolumeSources(ctx, client, session, f); err != nil {
+				return err
 			}
 			return runVolumeCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
@@ -346,6 +321,39 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.bootable, "bootable", false, "mark the created volume as bootable")
 	fl.BoolVar(&f.nonBootable, "non-bootable", false, "mark the created volume as non-bootable")
 	return cmd
+}
+
+// resolveVolumeSources turns the --image/--snapshot/--backup names into IDs
+// before the create request. Each is left untouched when it is empty or already
+// a UUID; --image resolves through glance, the other two through cinder.
+func resolveVolumeSources(ctx context.Context, client *gophercloud.ServiceClient,
+	session *auth.Client, f *volumeCreateFlags,
+) error {
+	sources := []struct {
+		ref  *string
+		find func(string) (string, error)
+	}{
+		{&f.image, func(ref string) (string, error) {
+			img, err := session.Image()
+			if err != nil {
+				return "", err
+			}
+			return resolve.ImageID(ctx, img, ref)
+		}},
+		{&f.snapshot, func(ref string) (string, error) { return resolveSnapshotID(ctx, client, ref) }},
+		{&f.backup, func(ref string) (string, error) { return resolveBackupID(ctx, client, ref) }},
+	}
+	for _, src := range sources {
+		if *src.ref == "" || resolve.IsUUID(*src.ref) {
+			continue
+		}
+		id, err := src.find(*src.ref)
+		if err != nil {
+			return err
+		}
+		*src.ref = id
+	}
+	return nil
 }
 
 func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *volumeCreateFlags, w io.Writer) error {
@@ -459,6 +467,11 @@ type volumeSetFlags struct {
 	detached        bool
 	wait            bool
 	waitTimeout     time.Duration
+
+	// changed is the command's flag set, captured in RunE. "volume set" has to
+	// know which flags were given rather than which values are non-zero: --size 0
+	// and an empty --description are both meaningful.
+	changed interface{ Changed(string) bool }
 }
 
 // volumeStates are the values "volume set --state" accepts, mirroring upstream
@@ -489,7 +502,8 @@ func newVolumeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runVolumeSet(ctx, client, args[0], f, cmd, cmd.OutOrStdout())
+			f.changed = cmd.Flags()
+			return runVolumeSet(ctx, client, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -575,120 +589,167 @@ func (o resetStatusOpts) ToResetStatusMap() (map[string]any, error) {
 	return map[string]any{"os-reset_status": action}, nil
 }
 
-func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string, f *volumeSetFlags, cmd *cobra.Command, w io.Writer) error {
-	policy, err := parseMigrationPolicy(f.migrationPolicy)
-	if err != nil {
-		return err
-	}
+// validate rejects the flag combinations cinder cannot act on, before any
+// request is made.
+func (f *volumeSetFlags) validate(policy volumes.MigrationPolicy, attachStatus string) error {
 	// The policy only means anything as part of a retype, and is checked before the
 	// nothing-to-set guard below so passing it alone gets the precise diagnosis.
 	// Upstream OSC merely logs a warning and drops it; erroring is clearer for an
 	// admin-intent flag.
-	if policy != "" && !cmd.Flags().Changed("type") {
+	if policy != "" && !f.changed.Changed("type") {
 		return fmt.Errorf("--migration-policy requires --type")
 	}
 	// Retype is the only asynchronous part of "volume set", so --wait has nothing
 	// to watch without it.
-	if f.wait && !cmd.Flags().Changed("type") {
+	if f.wait && !f.changed.Changed("type") {
 		return fmt.Errorf("--wait requires --type")
+	}
+	if err := validateVolumeState(f.state); err != nil {
+		return err
+	}
+	if !f.changed.Changed("name") && !f.changed.Changed("description") &&
+		!f.changed.Changed("size") && !f.changed.Changed("type") &&
+		f.state == "" && attachStatus == "" && len(f.property) == 0 {
+		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --type, " +
+			"--property, --state, --attached, --detached")
+	}
+	return nil
+}
+
+// volumeSetResetStatus repairs the recorded status. It runs before the extend
+// and retype below so one invocation can unstick a volume left in a transient
+// state and then act on it.
+func volumeSetResetStatus(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id, state, attachStatus string,
+) error {
+	if state == "" && attachStatus == "" {
+		return nil
+	}
+	opts := resetStatusOpts{status: state, attachStatus: attachStatus}
+	if err := volumes.ResetStatus(ctx, client, id, opts).ExtractErr(); err != nil {
+		return fmt.Errorf("resetting status of volume %q: %w", ref, err)
+	}
+	return nil
+}
+
+// volumeSetRetype retypes the volume, matching OSC's ordering by running before
+// the name/description update. An in-use volume only retypes in place when the
+// new type lives on the same backend; crossing backends needs
+// --migration-policy on-demand, which makes cinder migrate the volume (via
+// nova's swap_volume while it is attached).
+func volumeSetRetype(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, f *volumeSetFlags, policy volumes.MigrationPolicy, w io.Writer,
+) error {
+	if !f.changed.Changed("type") {
+		return nil
+	}
+	typeID, err := resolveVolumeTypeID(ctx, client, f.volumeType)
+	if err != nil {
+		return err
+	}
+	opts := volumes.ChangeTypeOpts{NewType: typeID, MigrationPolicy: policy}
+	if err := volumes.ChangeType(ctx, client, id, opts).ExtractErr(); err != nil {
+		return fmt.Errorf("retyping volume %q: %w", ref, err)
+	}
+	// The action only returns 202: cinder can still roll the retype back, and
+	// without --wait that failure is invisible.
+	if !f.wait {
+		return nil
+	}
+	target := newRetypeTarget(ctx, client, typeID)
+	return waitForRetype(ctx, client, ref, id, target, f.waitTimeout, w)
+}
+
+// mergeVolumeMetadata merges --property onto the volume's existing metadata:
+// cinder's volume update replaces metadata wholesale, so unrelated keys have to
+// be carried over or they are dropped.
+func mergeVolumeMetadata(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, property []string,
+) (map[string]string, error) {
+	props, err := parseKeyValMap(property)
+	if err != nil {
+		return nil, fmt.Errorf("parsing --property: %w", err)
+	}
+	cur, err := volumes.Get(ctx, client, id).Extract()
+	if err != nil {
+		return nil, fmt.Errorf("getting volume %q: %w", ref, err)
+	}
+	merged := map[string]string{}
+	for k, v := range cur.Metadata {
+		merged[k] = v
+	}
+	for k, v := range props {
+		merged[k] = v
+	}
+	return merged, nil
+}
+
+// volumeSetUpdate applies the plain attribute update, which is skipped entirely
+// when none of its flags were given.
+func volumeSetUpdate(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, f *volumeSetFlags,
+) error {
+	update := volumes.UpdateOpts{}
+	changed := false
+	if f.changed.Changed("name") {
+		update.Name = &f.name
+		changed = true
+	}
+	if f.changed.Changed("description") {
+		update.Description = &f.description
+		changed = true
+	}
+	if len(f.property) > 0 {
+		merged, err := mergeVolumeMetadata(ctx, client, ref, id, f.property)
+		if err != nil {
+			return err
+		}
+		update.Metadata = merged
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if _, err := volumes.Update(ctx, client, id, update).Extract(); err != nil {
+		return fmt.Errorf("updating volume %q: %w", ref, err)
+	}
+	return nil
+}
+
+// runVolumeSet applies "volume set" as an ordered sequence of independent cinder
+// actions: reset status, extend, retype, then the plain attribute update.
+func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref string,
+	f *volumeSetFlags, w io.Writer,
+) error {
+	policy, err := parseMigrationPolicy(f.migrationPolicy)
+	if err != nil {
+		return err
 	}
 	attachStatus, err := parseAttachStatus(f)
 	if err != nil {
 		return err
 	}
-	if err := validateVolumeState(f.state); err != nil {
+	if err := f.validate(policy, attachStatus); err != nil {
 		return err
-	}
-	if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("description") &&
-		!cmd.Flags().Changed("size") && !cmd.Flags().Changed("type") &&
-		f.state == "" && attachStatus == "" && len(f.property) == 0 {
-		return fmt.Errorf("nothing to set: specify at least one of --name, --description, --size, --type, " +
-			"--property, --state, --attached, --detached")
 	}
 	id, err := resolveVolumeID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-
-	// Reset the recorded status first: it is the repair action that unsticks a
-	// volume left in a transient state, so doing it before the extend/retype below
-	// lets one invocation fix the record and then act on the volume.
-	if f.state != "" || attachStatus != "" {
-		opts := resetStatusOpts{status: f.state, attachStatus: attachStatus}
-		if err := volumes.ResetStatus(ctx, client, id, opts).ExtractErr(); err != nil {
-			return fmt.Errorf("resetting status of volume %q: %w", ref, err)
-		}
+	if err := volumeSetResetStatus(ctx, client, ref, id, f.state, attachStatus); err != nil {
+		return err
 	}
-
 	// Extend next, if requested: it is a separate action from the metadata/name
 	// update below.
-	if cmd.Flags().Changed("size") {
+	if f.changed.Changed("size") {
 		if err := volumes.ExtendSize(ctx, client, id, volumes.ExtendSizeOpts{NewSize: f.size}).ExtractErr(); err != nil {
 			return fmt.Errorf("extending volume %q: %w", ref, err)
 		}
 	}
-
-	// Retype before the name/description update, matching OSC's ordering. An
-	// in-use volume only retypes in place when the new type lives on the same
-	// backend; crossing backends needs --migration-policy on-demand, which makes
-	// cinder migrate the volume (via nova's swap_volume while it is attached).
-	if cmd.Flags().Changed("type") {
-		typeID, err := resolveVolumeTypeID(ctx, client, f.volumeType)
-		if err != nil {
-			return err
-		}
-		opts := volumes.ChangeTypeOpts{NewType: typeID, MigrationPolicy: policy}
-		if err := volumes.ChangeType(ctx, client, id, opts).ExtractErr(); err != nil {
-			return fmt.Errorf("retyping volume %q: %w", ref, err)
-		}
-		// The action only returns 202: cinder can still roll the retype back, and
-		// without --wait that failure is invisible.
-		if f.wait {
-			target := newRetypeTarget(ctx, client, typeID)
-			if err := waitForRetype(ctx, client, ref, id, target, f.waitTimeout, w); err != nil {
-				return err
-			}
-		}
+	if err := volumeSetRetype(ctx, client, ref, id, f, policy, w); err != nil {
+		return err
 	}
-
-	update := volumes.UpdateOpts{}
-	changed := false
-	if cmd.Flags().Changed("name") {
-		update.Name = &f.name
-		changed = true
-	}
-	if cmd.Flags().Changed("description") {
-		update.Description = &f.description
-		changed = true
-	}
-	if len(f.property) > 0 {
-		props, err := parseKeyValMap(f.property)
-		if err != nil {
-			return fmt.Errorf("parsing --property: %w", err)
-		}
-		// Cinder's volume update replaces metadata wholesale, so merge the new
-		// properties onto the existing set to preserve unrelated keys.
-		cur, err := volumes.Get(ctx, client, id).Extract()
-		if err != nil {
-			return fmt.Errorf("getting volume %q: %w", ref, err)
-		}
-		merged := map[string]string{}
-		for k, v := range cur.Metadata {
-			merged[k] = v
-		}
-		for k, v := range props {
-			merged[k] = v
-		}
-		update.Metadata = merged
-		changed = true
-	}
-
-	if changed {
-		if _, err := volumes.Update(ctx, client, id, update).Extract(); err != nil {
-			return fmt.Errorf("updating volume %q: %w", ref, err)
-		}
-	}
-	return nil
+	return volumeSetUpdate(ctx, client, ref, id, f)
 }
 
 // volumeUnsetFlags holds the removals accepted by "volume unset".
