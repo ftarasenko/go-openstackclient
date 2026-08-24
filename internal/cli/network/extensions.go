@@ -161,7 +161,7 @@ func newRBACListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&action, "action", "", "filter by action: access_as_external or access_as_shared")
 	fl.StringVar(&objectType, "type", "", "filter by object type, e.g. network or qos_policy")
-	fl.StringVar(&targetProject, "target-project", "", "filter by the project the policy grants access to")
+	fl.StringVar(&targetProject, flagTargetProject, "", "filter by the project the policy grants access to")
 	return cmd
 }
 
@@ -256,13 +256,13 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&action, "action", "", "access_as_external or access_as_shared")
 	fl.StringVar(&objectType, "type", "", "object type, e.g. network or qos_policy")
-	fl.StringVar(&targetProject, "target-project", "", "project to grant access to")
-	fl.BoolVar(&targetAllProjects, "target-all-projects", false, "grant access to every project")
+	fl.StringVar(&targetProject, flagTargetProject, "", "project to grant access to")
+	fl.BoolVar(&targetAllProjects, flagTargetAllProjects, false, "grant access to every project")
 	_ = cmd.MarkFlagRequired("action")
 	_ = cmd.MarkFlagRequired("type")
 	// --target-project is no longer cobra-required because --target-all-projects
 	// satisfies the same requirement; exactly one of the two is enforced in RunE.
-	cmd.MarkFlagsMutuallyExclusive("target-project", "target-all-projects")
+	cmd.MarkFlagsMutuallyExclusive(flagTargetProject, flagTargetAllProjects)
 	return cmd
 }
 
@@ -300,8 +300,8 @@ func newRBACSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	// The target project is the only mutable field: neutron's update schema has
 	// nothing else in it.
-	cmd.Flags().StringVar(&targetProject, "target-project", "", "project to grant access to")
-	_ = cmd.MarkFlagRequired("target-project")
+	cmd.Flags().StringVar(&targetProject, flagTargetProject, "", "project to grant access to")
+	_ = cmd.MarkFlagRequired(flagTargetProject)
 	return cmd
 }
 
@@ -375,7 +375,7 @@ func newSegmentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&network, "network", "", "filter by network (name or ID)")
-	fl.StringVar(&networkType, "network-type", "", "filter by network type, e.g. vlan or vxlan")
+	fl.StringVar(&networkType, flagNetworkType, "", "filter by network type, e.g. vlan or vxlan")
 	fl.StringVar(&physicalNetwork, "physical-network", "", "filter by physical network")
 	return cmd
 }
@@ -462,12 +462,12 @@ func newSegmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&network, "network", "", "network the segment belongs to (name or ID)")
-	fl.StringVar(&networkType, "network-type", "", "network type, e.g. flat, vlan, vxlan or geneve")
+	fl.StringVar(&networkType, flagNetworkType, "", "network type, e.g. flat, vlan, vxlan or geneve")
 	fl.StringVar(&physicalNetwork, "physical-network", "", "physical network name")
 	fl.StringVar(&description, "description", "", "description of the segment")
 	fl.IntVar(&segmentationID, "segment", 0, "segmentation ID, e.g. the VLAN tag")
 	_ = cmd.MarkFlagRequired("network")
-	_ = cmd.MarkFlagRequired("network-type")
+	_ = cmd.MarkFlagRequired(flagNetworkType)
 	return cmd
 }
 

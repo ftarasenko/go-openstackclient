@@ -197,7 +197,7 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			f.pxeEnabledSet = cmd.Flags().Changed("pxe-enabled")
+			f.pxeEnabledSet = cmd.Flags().Changed(flagPXEEnabled)
 			f.address = args[0]
 			ctx := cmd.Context()
 			client, err := newBaremetalClient(ctx, a)
@@ -212,7 +212,7 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "name for the port (requires ironic API 1.88, OpenStack 2024.1)")
 	fl.StringVar(&f.portGroup, "port-group", "", "UUID of the portgroup this port belongs to")
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "name of the physical network")
-	fl.BoolVar(&f.pxeEnabled, "pxe-enabled", false, "whether PXE is enabled on the port")
+	fl.BoolVar(&f.pxeEnabled, flagPXEEnabled, false, "whether PXE is enabled on the port")
 	fl.StringArrayVar(&f.extra, "extra", nil, "arbitrary metadata key=value (repeatable)")
 	_ = cmd.MarkFlagRequired("node")
 	return cmd
@@ -305,7 +305,7 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			f.pxeEnabledSet = cmd.Flags().Changed("pxe-enabled")
+			f.pxeEnabledSet = cmd.Flags().Changed(flagPXEEnabled)
 			ctx := cmd.Context()
 			client, err := newBaremetalClient(ctx, a)
 			if err != nil {
@@ -319,7 +319,7 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.address, "address", "", "set the MAC address")
 	fl.StringVar(&f.name, "name", "", "set the port name (requires ironic API 1.88, OpenStack 2024.1)")
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "set the physical network name")
-	fl.BoolVar(&f.pxeEnabled, "pxe-enabled", false, "set whether PXE is enabled")
+	fl.BoolVar(&f.pxeEnabled, flagPXEEnabled, false, "set whether PXE is enabled")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
 	return cmd
 }

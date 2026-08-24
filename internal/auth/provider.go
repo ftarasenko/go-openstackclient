@@ -139,8 +139,8 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf(&ao.Username, o.override("os-username", o.Username))
 	setIf(&ao.UserID, o.override("os-user-id", o.UserID))
 	setIf(&ao.Password, o.override("os-password", o.Password))
-	setIf(&ao.TenantName, o.override("os-project-name", o.ProjectName))
-	setIf(&ao.TenantID, o.override("os-project-id", o.ProjectID))
+	setIf(&ao.TenantName, o.override(flagOSProjectName, o.ProjectName))
+	setIf(&ao.TenantID, o.override(flagOSProjectID, o.ProjectID))
 	setIf(&ao.ApplicationCredentialID, o.override("os-application-credential-id", o.AppCredID))
 	setIf(&ao.ApplicationCredentialName, o.override("os-application-credential-name", o.AppCredName))
 	setIf(&ao.ApplicationCredentialSecret, o.override("os-application-credential-secret", o.AppCredSecret))
@@ -172,7 +172,7 @@ func (o *Options) validateSystemScope() error {
 	if o.fs == nil || !o.fs.Changed("os-system-scope") {
 		return nil
 	}
-	for _, name := range []string{"os-project-name", "os-project-id", "os-domain-name"} {
+	for _, name := range []string{flagOSProjectName, flagOSProjectID, "os-domain-name"} {
 		if o.fs.Changed(name) {
 			return fmt.Errorf("--os-system-scope and --%s are mutually exclusive: a token is scoped to the system, a domain or a project, not several", name)
 		}
@@ -220,8 +220,8 @@ func (o *Options) applyDomainScope(ao *gophercloud.AuthOptions) {
 		ao.DomainID = ""
 	}
 
-	projectName := firstNonEmpty(o.override("os-project-name", o.ProjectName), ao.TenantName)
-	projectID := firstNonEmpty(o.override("os-project-id", o.ProjectID), ao.TenantID)
+	projectName := firstNonEmpty(o.override(flagOSProjectName, o.ProjectName), ao.TenantName)
+	projectID := firstNonEmpty(o.override(flagOSProjectID, o.ProjectID), ao.TenantID)
 
 	switch {
 	case projectID != "":

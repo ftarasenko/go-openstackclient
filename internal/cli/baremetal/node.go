@@ -123,7 +123,7 @@ func newNodeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.associated, "associated", false, "limit to nodes associated with an instance (use --associated=false to invert)")
 	fl.StringVar(&f.provisionState, "provision-state", "", "limit to nodes in this provision state")
 	fl.StringVar(&f.driver, "driver", "", "limit to nodes using this driver")
-	fl.StringVar(&f.resourceClass, "resource-class", "", "limit to nodes with this resource class")
+	fl.StringVar(&f.resourceClass, flagResourceClass, "", "limit to nodes with this resource class")
 	fl.StringVar(&f.sortKey, "sort-key", "", "sort output by this node attribute")
 	fl.StringVar(&f.sortDir, "sort-dir", "", "sort direction: asc or desc")
 	addFieldsAliases(cmd, o)

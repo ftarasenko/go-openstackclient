@@ -149,7 +149,7 @@ func newLBQuotaListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&projectRef, "project", "", "list only this project's quotas (name or ID)")
-	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	cmd.Flags().StringVar(&projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 
@@ -235,7 +235,7 @@ func newLBQuotaShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runLBQuotaShow(ctx, client, o, project, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	cmd.Flags().StringVar(&projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 
@@ -305,7 +305,7 @@ func newLBQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.IntVar(&f.healthMonitor, "healthmonitor", 0, "maximum health monitors; -1 for unlimited")
 	fl.IntVar(&f.l7Policy, "l7policy", 0, "maximum layer-7 policies; -1 for unlimited")
 	fl.IntVar(&f.l7Rule, "l7rule", 0, "maximum layer-7 rules; -1 for unlimited")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 
@@ -380,7 +380,7 @@ func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	for _, n := range lbQuotaNames {
 		clearFlags[n] = fl.Bool(n, false, "clear the "+n+" quota")
 	}
-	fl.StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	fl.StringVar(&projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 
@@ -438,7 +438,7 @@ func newLBQuotaResetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runLBQuotaReset(ctx, client, project, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&projectDomain, "project-domain", "", "domain owning the project (name or ID)")
+	cmd.Flags().StringVar(&projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 
@@ -1331,7 +1331,7 @@ func newFlavorProfileCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 	// As for `loadbalancer flavor create`, upstream spells this --name only.
 	fl.StringVar(&flagName, "name", "", "name of the flavor profile (upstream spelling; the positional form also works)")
 	fl.StringVar(&providerName, "provider", "", "provider driver the profile targets, e.g. amphora (required)")
-	fl.StringVar(&flavorData, "flavor-data", "", "driver-specific JSON, e.g. '{\"loadbalancer_topology\": \"ACTIVE_STANDBY\"}' (required)")
+	fl.StringVar(&flavorData, flagFlavorData, "", "driver-specific JSON, e.g. '{\"loadbalancer_topology\": \"ACTIVE_STANDBY\"}' (required)")
 	return cmd
 }
 
@@ -1362,7 +1362,7 @@ func newFlavorProfileSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 				return err
 			}
 			fl := cmd.Flags()
-			if !fl.Changed("name") && !fl.Changed("provider") && !fl.Changed("flavor-data") {
+			if !fl.Changed("name") && !fl.Changed("provider") && !fl.Changed(flagFlavorData) {
 				return fmt.Errorf("nothing to set: pass --name, --provider and/or --flavor-data")
 			}
 			ctx := cmd.Context()
@@ -1376,7 +1376,7 @@ func newFlavorProfileSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "new profile name")
 	fl.StringVar(&providerName, "provider", "", "new provider driver")
-	fl.StringVar(&flavorData, "flavor-data", "", "new driver-specific JSON")
+	fl.StringVar(&flavorData, flagFlavorData, "", "new driver-specific JSON")
 	return cmd
 }
 

@@ -55,7 +55,7 @@ func appConfigView(c *AppConfig) ([]string, []any) {
 }
 
 var haConfigColumns = []string{
-	"ID", "Availability Zone", "Host Aggregate", "Marker", "No-Op", "LB Period", "Created At",
+	"ID", "Availability Zone", "Host Aggregate", "Marker", "No-Op", "LB Period", colCreatedAt,
 }
 
 func haConfigRow(h HostAggregateConfig) []any {
@@ -89,7 +89,7 @@ func azRow(z AvailabilityZone) []any {
 	return []any{z.Name, z.AggregatesCount, z.EventCounts.Active, z.EventCounts.Warning, z.EventCounts.Error, z.EventCounts.NoOp}
 }
 
-var eventColumns = []string{"ID", "Host Aggregate Config", "Marker", "Status", "State", "Created At"}
+var eventColumns = []string{"ID", "Host Aggregate Config", "Marker", "Status", "State", colCreatedAt}
 
 func eventRow(e Event) []any {
 	return []any{e.ID, e.HostAggregateConfigID, e.Marker, e.Status, e.State, e.CreatedAt}
@@ -119,7 +119,7 @@ func recView(r *Recommendation) ([]string, []any) {
 	return fields, values
 }
 
-var opColumns = []string{"ID", "Recommendation", "Status", "Nova Migration", "Failure Type", "Created At"}
+var opColumns = []string{"ID", "Recommendation", "Status", "Nova Migration", "Failure Type", colCreatedAt}
 
 func opRow(o Operation) []any {
 	return []any{o.ID, o.RecommendationID, o.Status, o.NovaMigrationID, o.FailureType, o.CreatedAt}

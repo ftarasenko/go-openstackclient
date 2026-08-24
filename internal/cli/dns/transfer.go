@@ -105,11 +105,11 @@ func newZoneTransferRequestCreateCommand(a *auth.Options, o *output.Options) *co
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&targetProject, "target-project", "",
+	fl.StringVar(&targetProject, flagTargetProject, "",
 		"restrict the transfer to this project (name or ID); omit to let any project with the key accept")
 	fl.StringVar(&targetProjectDomain, "target-project-domain", "",
 		"domain owning the target project, to disambiguate the name (name or ID)")
-	fl.StringVar(&description, "description", "", "description for the transfer request")
+	fl.StringVar(&description, flagDescription, "", "description for the transfer request")
 	common.bind(cmd)
 	return cmd
 }
@@ -221,7 +221,7 @@ func newZoneTransferRequestSetCommand(a *auth.Options, o *output.Options) *cobra
 				return err
 			}
 			fl := cmd.Flags()
-			if !fl.Changed("target-project") && !fl.Changed("description") {
+			if !fl.Changed(flagTargetProject) && !fl.Changed(flagDescription) {
 				return fmt.Errorf("nothing to set: pass --target-project and/or --description")
 			}
 			ctx := cmd.Context()
@@ -240,9 +240,9 @@ func newZoneTransferRequestSetCommand(a *auth.Options, o *output.Options) *cobra
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&targetProject, "target-project", "", "restrict the transfer to this project (name or ID)")
+	fl.StringVar(&targetProject, flagTargetProject, "", "restrict the transfer to this project (name or ID)")
 	fl.StringVar(&targetProjectDomain, "target-project-domain", "", "domain owning the target project (name or ID)")
-	fl.StringVar(&description, "description", "", "new description")
+	fl.StringVar(&description, flagDescription, "", "new description")
 	common.bind(cmd)
 	return cmd
 }

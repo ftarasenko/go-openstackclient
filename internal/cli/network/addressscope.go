@@ -71,9 +71,9 @@ func newAddressScopeListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "filter by name")
 	fl.IntVar(&ipVersion, "ip-version", 0, "filter by IP version: 4 or 6")
-	fl.BoolVar(&shared, "share", false, "list only shared address scopes")
-	fl.BoolVar(&noShared, "no-share", false, "list only unshared address scopes")
-	cmd.MarkFlagsMutuallyExclusive("share", "no-share")
+	fl.BoolVar(&shared, flagShare, false, "list only shared address scopes")
+	fl.BoolVar(&noShared, flagNoShare, false, "list only unshared address scopes")
+	cmd.MarkFlagsMutuallyExclusive(flagShare, flagNoShare)
 	return cmd
 }
 
@@ -165,7 +165,7 @@ func newAddressScopeCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 	}
 	fl := cmd.Flags()
 	fl.IntVar(&ipVersion, "ip-version", 4, "IP version: 4 or 6")
-	fl.BoolVar(&share, "share", false, "share the address scope with every project")
+	fl.BoolVar(&share, flagShare, false, "share the address scope with every project")
 	fl.StringVar(&project, "project", "", "owning project ID")
 	return cmd
 }
@@ -207,9 +207,9 @@ func newAddressScopeSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "new name")
-	fl.BoolVar(&share, "share", false, "share the address scope with every project")
-	fl.BoolVar(&noShare, "no-share", false, "stop sharing the address scope")
-	cmd.MarkFlagsMutuallyExclusive("share", "no-share")
+	fl.BoolVar(&share, flagShare, false, "share the address scope with every project")
+	fl.BoolVar(&noShare, flagNoShare, false, "stop sharing the address scope")
+	cmd.MarkFlagsMutuallyExclusive(flagShare, flagNoShare)
 	return cmd
 }
 

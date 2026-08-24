@@ -63,40 +63,40 @@ type quotaFlag struct {
 
 func (f *quotaSetFlags) computeFlags() []quotaFlag {
 	return []quotaFlag{
-		{"cores", &f.cores},
-		{"instances", &f.instances},
-		{"ram", &f.ram},
-		{"key-pairs", &f.keyPairs},
-		{"properties", &f.metadataItems},
-		{"server-groups", &f.serverGroups},
-		{"server-group-members", &f.serverGroupMembers},
+		{flagCores, &f.cores},
+		{flagInstances, &f.instances},
+		{flagRAM, &f.ram},
+		{flagKeyPairs, &f.keyPairs},
+		{flagProperties, &f.metadataItems},
+		{flagServerGroups, &f.serverGroups},
+		{flagServerGroupMembers, &f.serverGroupMembers},
 	}
 }
 
 func (f *quotaSetFlags) volumeFlags() []quotaFlag {
 	return []quotaFlag{
-		{"volumes", &f.volumes},
-		{"snapshots", &f.snapshots},
-		{"gigabytes", &f.gigabytes},
-		{"per-volume-gigabytes", &f.perVolumeGigabytes},
-		{"backups", &f.backups},
-		{"backup-gigabytes", &f.backupGigabytes},
-		{"volume-groups", &f.volumeGroups},
+		{flagVolumes, &f.volumes},
+		{flagSnapshots, &f.snapshots},
+		{flagGigabytes, &f.gigabytes},
+		{flagPerVolumeGigabytes, &f.perVolumeGigabytes},
+		{flagBackups, &f.backups},
+		{flagBackupGigabytes, &f.backupGigabytes},
+		{flagVolumeGroups, &f.volumeGroups},
 	}
 }
 
 func (f *quotaSetFlags) networkFlags() []quotaFlag {
 	return []quotaFlag{
-		{"networks", &f.networks},
-		{"subnets", &f.subnets},
-		{"subnetpools", &f.subnetPools},
-		{"ports", &f.ports},
-		{"routers", &f.routers},
-		{"floating-ips", &f.floatingIPs},
-		{"secgroups", &f.securityGroups},
-		{"secgroup-rules", &f.securityGroupRules},
-		{"rbac-policies", &f.rbacPolicies},
-		{"trunks", &f.trunks},
+		{flagNetworks, &f.networks},
+		{flagSubnets, &f.subnets},
+		{flagSubnetPools, &f.subnetPools},
+		{flagPorts, &f.ports},
+		{flagRouters, &f.routers},
+		{flagFloatingIPs, &f.floatingIPs},
+		{flagSecgroups, &f.securityGroups},
+		{flagSecgroupRules, &f.securityGroupRules},
+		{flagRBACPolicies, &f.rbacPolicies},
+		{flagTrunks, &f.trunks},
 	}
 }
 
@@ -130,30 +130,30 @@ func newQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 	fl := cmd.Flags()
 	descriptions := map[string]string{
-		"cores":                "compute: total number of cores",
-		"instances":            "compute: number of instances",
-		"ram":                  "compute: megabytes of instance RAM",
-		"key-pairs":            "compute: number of key pairs",
-		"properties":           "compute: metadata items allowed per instance",
-		"server-groups":        "compute: number of server groups",
-		"server-group-members": "compute: members allowed per server group",
-		"volumes":              "volume: number of volumes",
-		"snapshots":            "volume: number of snapshots",
-		"gigabytes":            "volume: total gigabytes of volumes and snapshots",
-		"per-volume-gigabytes": "volume: gigabytes allowed for a single volume",
-		"backups":              "volume: number of backups",
-		"backup-gigabytes":     "volume: total gigabytes of backups",
-		"volume-groups":        "volume: number of volume groups",
-		"networks":             "network: number of networks",
-		"subnets":              "network: number of subnets",
-		"subnetpools":          "network: number of subnet pools",
-		"ports":                "network: number of ports",
-		"routers":              "network: number of routers",
-		"floating-ips":         "network: number of floating IPs",
-		"secgroups":            "network: number of security groups",
-		"secgroup-rules":       "network: number of security group rules",
-		"rbac-policies":        "network: number of RBAC policies",
-		"trunks":               "network: number of network trunks",
+		flagCores:              "compute: total number of cores",
+		flagInstances:          "compute: number of instances",
+		flagRAM:                "compute: megabytes of instance RAM",
+		flagKeyPairs:           "compute: number of key pairs",
+		flagProperties:         "compute: metadata items allowed per instance",
+		flagServerGroups:       "compute: number of server groups",
+		flagServerGroupMembers: "compute: members allowed per server group",
+		flagVolumes:            "volume: number of volumes",
+		flagSnapshots:          "volume: number of snapshots",
+		flagGigabytes:          "volume: total gigabytes of volumes and snapshots",
+		flagPerVolumeGigabytes: "volume: gigabytes allowed for a single volume",
+		flagBackups:            "volume: number of backups",
+		flagBackupGigabytes:    "volume: total gigabytes of backups",
+		flagVolumeGroups:       "volume: number of volume groups",
+		flagNetworks:           "network: number of networks",
+		flagSubnets:            "network: number of subnets",
+		flagSubnetPools:        "network: number of subnet pools",
+		flagPorts:              "network: number of ports",
+		flagRouters:            "network: number of routers",
+		flagFloatingIPs:        "network: number of floating IPs",
+		flagSecgroups:          "network: number of security groups",
+		flagSecgroupRules:      "network: number of security group rules",
+		flagRBACPolicies:       "network: number of RBAC policies",
+		flagTrunks:             "network: number of network trunks",
 	}
 	for _, group := range [][]quotaFlag{f.computeFlags(), f.volumeFlags(), f.networkFlags()} {
 		for _, qf := range group {
@@ -211,13 +211,13 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			return err
 		}
 		opts := computequotas.UpdateOpts{
-			Cores:              ptr("cores", &f.cores),
-			Instances:          ptr("instances", &f.instances),
-			RAM:                ptr("ram", &f.ram),
-			KeyPairs:           ptr("key-pairs", &f.keyPairs),
-			MetadataItems:      ptr("properties", &f.metadataItems),
-			ServerGroups:       ptr("server-groups", &f.serverGroups),
-			ServerGroupMembers: ptr("server-group-members", &f.serverGroupMembers),
+			Cores:              ptr(flagCores, &f.cores),
+			Instances:          ptr(flagInstances, &f.instances),
+			RAM:                ptr(flagRAM, &f.ram),
+			KeyPairs:           ptr(flagKeyPairs, &f.keyPairs),
+			MetadataItems:      ptr(flagProperties, &f.metadataItems),
+			ServerGroups:       ptr(flagServerGroups, &f.serverGroups),
+			ServerGroupMembers: ptr(flagServerGroupMembers, &f.serverGroupMembers),
 		}
 		qs, err := computequotas.Update(ctx, client, project, opts).Extract()
 		if err != nil {
@@ -234,13 +234,13 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			return partialError(applied, "volume", project, err)
 		}
 		opts := volumequotas.UpdateOpts{
-			Volumes:            ptr("volumes", &f.volumes),
-			Snapshots:          ptr("snapshots", &f.snapshots),
-			Gigabytes:          ptr("gigabytes", &f.gigabytes),
-			PerVolumeGigabytes: ptr("per-volume-gigabytes", &f.perVolumeGigabytes),
-			Backups:            ptr("backups", &f.backups),
-			BackupGigabytes:    ptr("backup-gigabytes", &f.backupGigabytes),
-			Groups:             ptr("volume-groups", &f.volumeGroups),
+			Volumes:            ptr(flagVolumes, &f.volumes),
+			Snapshots:          ptr(flagSnapshots, &f.snapshots),
+			Gigabytes:          ptr(flagGigabytes, &f.gigabytes),
+			PerVolumeGigabytes: ptr(flagPerVolumeGigabytes, &f.perVolumeGigabytes),
+			Backups:            ptr(flagBackups, &f.backups),
+			BackupGigabytes:    ptr(flagBackupGigabytes, &f.backupGigabytes),
+			Groups:             ptr(flagVolumeGroups, &f.volumeGroups),
 			Force:              f.force,
 		}
 		qs, err := volumequotas.Update(ctx, client, project, opts).Extract()
@@ -258,16 +258,16 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			return partialError(applied, "network", project, err)
 		}
 		opts := networkquotas.UpdateOpts{
-			Network:           ptr("networks", &f.networks),
-			Subnet:            ptr("subnets", &f.subnets),
-			SubnetPool:        ptr("subnetpools", &f.subnetPools),
-			Port:              ptr("ports", &f.ports),
-			Router:            ptr("routers", &f.routers),
-			FloatingIP:        ptr("floating-ips", &f.floatingIPs),
-			SecurityGroup:     ptr("secgroups", &f.securityGroups),
-			SecurityGroupRule: ptr("secgroup-rules", &f.securityGroupRules),
-			RBACPolicy:        ptr("rbac-policies", &f.rbacPolicies),
-			Trunk:             ptr("trunks", &f.trunks),
+			Network:           ptr(flagNetworks, &f.networks),
+			Subnet:            ptr(flagSubnets, &f.subnets),
+			SubnetPool:        ptr(flagSubnetPools, &f.subnetPools),
+			Port:              ptr(flagPorts, &f.ports),
+			Router:            ptr(flagRouters, &f.routers),
+			FloatingIP:        ptr(flagFloatingIPs, &f.floatingIPs),
+			SecurityGroup:     ptr(flagSecgroups, &f.securityGroups),
+			SecurityGroupRule: ptr(flagSecgroupRules, &f.securityGroupRules),
+			RBACPolicy:        ptr(flagRBACPolicies, &f.rbacPolicies),
+			Trunk:             ptr(flagTrunks, &f.trunks),
 		}
 		q, err := networkquotas.Update(ctx, client, project, opts).Extract()
 		if err != nil {

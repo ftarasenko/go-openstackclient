@@ -71,10 +71,10 @@ func newSubnetListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			fl := cmd.Flags()
-			if err := mutuallyExclusive(fl, "dhcp", "no-dhcp"); err != nil {
+			if err := mutuallyExclusive(fl, flagDHCP, flagNoDHCP); err != nil {
 				return err
 			}
-			f.enableDHCP = enableDisable(fl, f.dhcp, f.noDHCP, "dhcp", "no-dhcp")
+			f.enableDHCP = enableDisable(fl, f.dhcp, f.noDHCP, flagDHCP, flagNoDHCP)
 			ctx := cmd.Context()
 			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
@@ -95,8 +95,8 @@ func newSubnetListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.subnetPool, "subnet-pool", "", "list subnets allocated from this subnet pool (name or ID)")
 	fl.StringVar(&f.gateway, "gateway", "", "list subnets with this gateway IP")
 	fl.IntVar(&f.ipVersion, "ip-version", 0, "list subnets of this IP version (4 or 6)")
-	fl.BoolVar(&f.dhcp, "dhcp", false, "list only subnets with DHCP enabled")
-	fl.BoolVar(&f.noDHCP, "no-dhcp", false, "list only subnets with DHCP disabled")
+	fl.BoolVar(&f.dhcp, flagDHCP, false, "list only subnets with DHCP enabled")
+	fl.BoolVar(&f.noDHCP, flagNoDHCP, false, "list only subnets with DHCP disabled")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
@@ -226,9 +226,9 @@ func newSubnetCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.subnetRange, "subnet-range", "", "subnet CIDR range (e.g. 10.0.0.0/24)")
 	fl.IntVar(&f.ipVersion, "ip-version", 4, "IP version: 4 or 6")
 	fl.StringVar(&f.gateway, "gateway", "", "subnet gateway IP address")
-	fl.BoolVar(&f.dhcp, "dhcp", false, "enable DHCP (default)")
-	fl.BoolVar(&f.noDHCP, "no-dhcp", false, "disable DHCP")
-	fl.StringArrayVar(&f.dnsNameservers, "dns-nameserver", nil, "DNS nameserver (repeatable)")
+	fl.BoolVar(&f.dhcp, flagDHCP, false, "enable DHCP (default)")
+	fl.BoolVar(&f.noDHCP, flagNoDHCP, false, "disable DHCP")
+	fl.StringArrayVar(&f.dnsNameservers, flagDNSNameserver, nil, "DNS nameserver (repeatable)")
 	fl.StringArrayVar(&f.allocationPool, "allocation-pool", nil, "allocation pool as start=<ip>,end=<ip> (repeatable)")
 	_ = cmd.MarkFlagRequired("network")
 	return cmd
@@ -335,12 +335,12 @@ func newSubnetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new subnet name")
-	fl.StringArrayVar(&f.dnsNameservers, "dns-nameserver", nil, "set DNS nameserver(s), replacing existing (repeatable)")
+	fl.StringArrayVar(&f.dnsNameservers, flagDNSNameserver, nil, "set DNS nameserver(s), replacing existing (repeatable)")
 	fl.StringVar(&f.gateway, "gateway", "", "set the subnet gateway IP")
 	fl.BoolVar(&f.noGateway, "no-gateway", false, "clear the subnet gateway IP")
-	fl.BoolVar(&f.dhcp, "dhcp", false, "enable DHCP")
-	fl.BoolVar(&f.noDHCP, "no-dhcp", false, "disable DHCP")
-	cmd.MarkFlagsMutuallyExclusive("dhcp", "no-dhcp")
+	fl.BoolVar(&f.dhcp, flagDHCP, false, "enable DHCP")
+	fl.BoolVar(&f.noDHCP, flagNoDHCP, false, "disable DHCP")
+	cmd.MarkFlagsMutuallyExclusive(flagDHCP, flagNoDHCP)
 	cmd.MarkFlagsMutuallyExclusive("gateway", "no-gateway")
 	return cmd
 }
@@ -356,7 +356,7 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		opts.Name = &f.name
 		changed = true
 	}
-	if flags.Changed("dns-nameserver") {
+	if flags.Changed(flagDNSNameserver) {
 		opts.DNSNameservers = &f.dnsNameservers
 		changed = true
 	}

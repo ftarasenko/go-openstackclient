@@ -67,7 +67,7 @@ func runUserList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("parsing user list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Domain ID", "Enabled"}, Rows: make([][]any, 0, len(all))}
+	t := output.Table{Columns: []string{"ID", "Name", colDomainID, "Enabled"}, Rows: make([][]any, 0, len(all))}
 	for _, u := range all {
 		t.Rows = append(t.Rows, []any{u.ID, u.Name, u.DomainID, u.Enabled})
 	}
@@ -92,7 +92,7 @@ func newUserShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runUserShow(ctx, client, o, args[0], domain, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&domain, "domain", "", "domain owning the user (name or ID)")
+	cmd.Flags().StringVar(&domain, "domain", "", helpDomainUser)
 	return cmd
 }
 
@@ -110,7 +110,7 @@ func runUserShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		return fmt.Errorf("showing user %q: %w", nameOrID, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Domain ID", "Enabled", "Description", "Default Project ID"},
+		[]string{"ID", "Name", colDomainID, "Enabled", "Description", "Default Project ID"},
 		[]any{u.ID, u.Name, u.DomainID, u.Enabled, u.Description, u.DefaultProjectID})
 }
 
@@ -191,7 +191,7 @@ func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return fmt.Errorf("creating user %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Domain ID", "Enabled", "Description"},
+		[]string{"ID", "Name", colDomainID, "Enabled", "Description"},
 		[]any{u.ID, u.Name, u.DomainID, u.Enabled, u.Description})
 }
 
@@ -213,7 +213,7 @@ func newUserDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runUserDelete(ctx, client, args[0], domain)
 		},
 	}
-	cmd.Flags().StringVar(&domain, "domain", "", "domain owning the user (name or ID)")
+	cmd.Flags().StringVar(&domain, "domain", "", helpDomainUser)
 	return cmd
 }
 
@@ -256,7 +256,7 @@ func newUserSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.domain, "domain", "", "domain owning the user (name or ID)")
+	fl.StringVar(&f.domain, "domain", "", helpDomainUser)
 	fl.StringVar(&f.name, "name", "", "new user name")
 	fl.StringVar(&f.password, "password", "", "new user password")
 	fl.StringVar(&f.description, "description", "", "new user description")

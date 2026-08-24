@@ -176,7 +176,7 @@ func runKeypairList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	cols := []string{"Name", "Fingerprint", "Type"}
 	perUser := len(userIDs) > 1
 	if perUser {
-		cols = append(cols, "User ID")
+		cols = append(cols, colUserID)
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(rows))}
 	for _, r := range rows {
@@ -257,7 +257,7 @@ func runKeypairShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		}
 		return nil
 	}
-	fields := []string{"Name", "Fingerprint", "Type", "User ID", "Public Key"}
+	fields := []string{"Name", "Fingerprint", "Type", colUserID, "Public Key"}
 	values := []any{k.Name, k.Fingerprint, k.Type, k.UserID, k.PublicKey}
 	return o.WriteSingle(w, fields, values)
 }
@@ -320,7 +320,7 @@ func runKeypairCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return nil
 	}
 
-	fields := []string{"Name", "Fingerprint", "Type", "User ID"}
+	fields := []string{"Name", "Fingerprint", "Type", colUserID}
 	values := []any{k.Name, k.Fingerprint, k.Type, k.UserID}
 	return o.WriteSingle(w, fields, values)
 }

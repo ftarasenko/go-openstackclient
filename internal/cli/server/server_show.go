@@ -75,14 +75,14 @@ func humanizeServerValue(key string, v any, flatten bool) any {
 func serverImage(v any) any {
 	switch t := v.(type) {
 	case nil:
-		return "N/A (booted from volume)"
+		return bootedFromVolume
 	case string:
 		if t == "" {
-			return "N/A (booted from volume)"
+			return bootedFromVolume
 		}
 	case map[string]any:
 		if len(t) == 0 {
-			return "N/A (booted from volume)"
+			return bootedFromVolume
 		}
 	}
 	return v

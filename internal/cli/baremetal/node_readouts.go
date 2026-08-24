@@ -89,7 +89,7 @@ func newNodeVIFCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func newNodeVIFListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list <node>",
+		Use:   useListNode,
 		Short: "List the virtual interfaces attached to a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -237,7 +237,7 @@ func newNodeBIOSCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func newNodeBIOSSettingListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var long bool
 	cmd := &cobra.Command{
-		Use:   "list <node>",
+		Use:   useListNode,
 		Short: "List a node's BIOS settings",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -382,7 +382,7 @@ func newNodeFirmwareCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func newNodeFirmwareListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list <node>",
+		Use:   useListNode,
 		Short: "List a node's firmware components (requires ironic API 1.86)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

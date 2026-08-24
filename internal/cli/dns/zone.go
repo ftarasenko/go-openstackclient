@@ -214,7 +214,7 @@ func newZoneCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.email, "email", "", "email address of the zone owner (required for PRIMARY zones)")
 	fl.IntVar(&f.ttl, "ttl", 0, "time to live (seconds) for the zone")
-	fl.StringVar(&f.description, "description", "", "description of the zone")
+	fl.StringVar(&f.description, flagDescription, "", "description of the zone")
 	fl.StringVar(&f.typ, "type", "PRIMARY", "zone type: PRIMARY or SECONDARY")
 	fl.StringArrayVar(&f.masters, "master", nil, "master nameserver for a SECONDARY zone; repeat for multiple")
 	// --email is required for PRIMARY zones only and must be omitted for
@@ -346,14 +346,14 @@ func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			emailSet := cmd.Flags().Changed("email")
 			ttlSet := cmd.Flags().Changed("ttl")
-			descSet := cmd.Flags().Changed("description")
+			descSet := cmd.Flags().Changed(flagDescription)
 			return runZoneSet(ctx, client, o, args[0], f, emailSet, ttlSet, descSet, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.email, "email", "", "set the zone email")
 	fl.IntVar(&f.ttl, "ttl", 0, "set the zone TTL (seconds)")
-	fl.StringVar(&f.description, "description", "", "set the zone description")
+	fl.StringVar(&f.description, flagDescription, "", "set the zone description")
 	common.bind(cmd)
 	return cmd
 }

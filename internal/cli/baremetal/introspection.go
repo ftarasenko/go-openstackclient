@@ -321,7 +321,7 @@ type introspectionInterfaceListFlags struct {
 func newIntrospectionInterfaceListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &introspectionInterfaceListFlags{}
 	cmd := &cobra.Command{
-		Use:   "list <node>",
+		Use:   useListNode,
 		Short: "List interfaces discovered by introspection of a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

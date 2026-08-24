@@ -68,7 +68,7 @@ func runRoleList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("parsing role list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Domain ID"}, Rows: make([][]any, 0, len(all))}
+	t := output.Table{Columns: []string{"ID", "Name", colDomainID}, Rows: make([][]any, 0, len(all))}
 	for _, r := range all {
 		t.Rows = append(t.Rows, []any{r.ID, r.Name, r.DomainID})
 	}
@@ -104,7 +104,7 @@ func runRoleShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		return fmt.Errorf("showing role %q: %w", nameOrID, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Domain ID", "Description"},
+		[]string{"ID", "Name", colDomainID, "Description"},
 		[]any{r.ID, r.Name, r.DomainID, r.Description})
 }
 
@@ -136,7 +136,7 @@ func addGrantFlags(cmd *cobra.Command, f *grantFlags) {
 	fl.StringVar(&f.group, "group", "", "group to grant the role to (name or ID)")
 	fl.StringVar(&f.project, "project", "", "project to scope the grant to (name or ID)")
 	fl.StringVar(&f.domain, "domain", "", "domain to scope the grant to (name or ID)")
-	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user (name or ID)")
+	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning --user (name or ID)")
 	fl.StringVar(&f.groupDomain, "group-domain", "", "domain owning --group (name or ID)")
 	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID)")
 	fl.StringVar(&f.roleDomain, "role-domain", "", "domain owning the role (name or ID)")
@@ -313,7 +313,7 @@ func newRoleAssignmentListCommand(a *auth.Options, o *output.Options) *cobra.Com
 	fl.StringVar(&f.group, "group", "", "filter by group (name or ID)")
 	fl.StringVar(&f.project, "project", "", "filter by project scope (name or ID)")
 	fl.StringVar(&f.domain, "domain", "", "filter by domain scope (name or ID)")
-	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user (name or ID)")
+	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning --user (name or ID)")
 	fl.StringVar(&f.groupDomain, "group-domain", "", "domain owning --group (name or ID)")
 	fl.BoolVar(&f.names, "names", false, "display names instead of IDs (requires keystone 3.6+)")
 	return cmd

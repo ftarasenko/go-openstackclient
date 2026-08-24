@@ -384,10 +384,10 @@ func newQoSDisassociateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&volumeType, "volume-type", "", "volume type to disassociate (name or ID)")
-	fl.BoolVar(&all, "all", false, "disassociate every volume type")
-	cmd.MarkFlagsMutuallyExclusive("volume-type", "all")
-	cmd.MarkFlagsOneRequired("volume-type", "all")
+	fl.StringVar(&volumeType, flagVolumeType, "", "volume type to disassociate (name or ID)")
+	fl.BoolVar(&all, flagAll, false, "disassociate every volume type")
+	cmd.MarkFlagsMutuallyExclusive(flagVolumeType, flagAll)
+	cmd.MarkFlagsOneRequired(flagVolumeType, flagAll)
 	return cmd
 }
 

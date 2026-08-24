@@ -706,14 +706,14 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.properties, "property", nil, "metadata to set as key=value; repeatable")
 	fl.StringVar(&f.state, "state", "", "reset the server state to active or error (admin only)")
 	fl.StringArrayVar(&f.tags, "tag", nil, "tag to add to the server; repeatable (nova 2.26+)")
-	fl.StringVar(&f.password, "password", "", "set the server's admin password (requires cloud support)")
-	fl.BoolVar(&f.noPassword, "no-password", false,
+	fl.StringVar(&f.password, flagPassword, "", "set the server's admin password (requires cloud support)")
+	fl.BoolVar(&f.noPassword, flagNoPassword, false,
 		"clear the admin password from the metadata service; does not change the actual server password")
 	// Deprecated upstream alias that prompts for the password instead of taking
 	// it as a value; hidden there too, kept so existing scripts keep working.
-	fl.BoolVar(&rootPassword, "root-password", false, "prompt for the server's new admin password")
-	_ = fl.MarkHidden("root-password")
-	cmd.MarkFlagsMutuallyExclusive("password", "no-password", "root-password")
+	fl.BoolVar(&rootPassword, flagRootPassword, false, "prompt for the server's new admin password")
+	_ = fl.MarkHidden(flagRootPassword)
+	cmd.MarkFlagsMutuallyExclusive(flagPassword, flagNoPassword, flagRootPassword)
 	// KeyStack per-instance AZ change (KCP-1211), nova 2.90+; rejected by vanilla
 	// nova. The fork spells the flag with an underscore, kept as an alias.
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "KeyStack: move the server to a new availability zone")

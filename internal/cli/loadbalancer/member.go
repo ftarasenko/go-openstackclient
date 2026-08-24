@@ -226,7 +226,7 @@ func (f *memberWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl.IntVar(&f.weight, "weight", 0, "relative share of traffic this member takes (0 disables it)")
 	fl.StringVar(&f.monitorAddress, "monitor-address", "", "alternate address for health checks")
 	fl.IntVar(&f.monitorPort, "monitor-port", 0, "alternate port for health checks")
-	fl.BoolVar(&f.backup, "enable-backup", false, "make this a backup member, used only when the primaries are down")
+	fl.BoolVar(&f.backup, flagEnableBackup, false, "make this a backup member, used only when the primaries are down")
 	fl.StringArrayVar(&f.tag, "tag", nil, "tag to set (repeatable)")
 	fl.BoolVar(&f.enable, "enable", false, "administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "administratively down")
@@ -241,7 +241,7 @@ func (f *memberWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 		return
 	}
 	fl.StringVar(&f.name, "name", "", "new member name")
-	fl.BoolVar(&f.noBackup, "disable-backup", false, "stop treating this as a backup member")
+	fl.BoolVar(&f.noBackup, flagDisableBackup, false, "stop treating this as a backup member")
 	fl.BoolVar(&f.noTag, "no-tag", false, "clear all tags")
 }
 
@@ -308,7 +308,7 @@ func runMemberCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		opts.Weight = &weight
 	}
 	setIfNonZero(&opts.MonitorPort, f.monitorPort)
-	if changed["enable-backup"] {
+	if changed[flagEnableBackup] {
 		backup := f.backup
 		opts.Backup = &backup
 	}
@@ -337,7 +337,7 @@ func newMemberSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if fl.Changed("enable") && fl.Changed("disable") {
 				return fmt.Errorf("--enable and --disable are mutually exclusive")
 			}
-			if fl.Changed("enable-backup") && fl.Changed("disable-backup") {
+			if fl.Changed(flagEnableBackup) && fl.Changed(flagDisableBackup) {
 				return fmt.Errorf("--enable-backup and --disable-backup are mutually exclusive")
 			}
 			if fl.Changed("tag") && f.noTag {
@@ -367,9 +367,9 @@ func runMemberSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	assignInt(changed, "weight", f.weight, &opts.Weight, &touched)
 	assignInt(changed, "monitor-port", f.monitorPort, &opts.MonitorPort, &touched)
 	switch {
-	case changed["enable-backup"]:
-		assignBool(changed, "enable-backup", true, &opts.Backup, &touched)
-	case changed["disable-backup"]:
+	case changed[flagEnableBackup]:
+		assignBool(changed, flagEnableBackup, true, &opts.Backup, &touched)
+	case changed[flagDisableBackup]:
 		v := false
 		opts.Backup = &v
 		touched = true

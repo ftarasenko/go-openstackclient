@@ -67,7 +67,7 @@ func newQoSPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			if err := mutuallyExclusive(cmd.Flags(), "share", "no-share"); err != nil {
+			if err := mutuallyExclusive(cmd.Flags(), flagShare, flagNoShare); err != nil {
 				return err
 			}
 			c, err := newNetworkClient(cmd.Context(), a)
@@ -79,8 +79,8 @@ func newQoSPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&project, "project", "", "filter by project ID")
-	fl.BoolVar(&share, "share", false, "list only shared policies")
-	fl.BoolVar(&noShare, "no-share", false, "list only unshared policies")
+	fl.BoolVar(&share, flagShare, false, "list only shared policies")
+	fl.BoolVar(&noShare, flagNoShare, false, "list only unshared policies")
 	return cmd
 }
 
@@ -160,10 +160,10 @@ func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			if err := mutuallyExclusive(cmd.Flags(), "share", "no-share"); err != nil {
+			if err := mutuallyExclusive(cmd.Flags(), flagShare, flagNoShare); err != nil {
 				return err
 			}
-			if err := mutuallyExclusive(cmd.Flags(), "default", "no-default"); err != nil {
+			if err := mutuallyExclusive(cmd.Flags(), flagDefault, flagNoDefault); err != nil {
 				return err
 			}
 			c, err := newNetworkClient(cmd.Context(), a)
@@ -179,10 +179,10 @@ func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	fl := cmd.Flags()
 	fl.StringVar(&description, "description", "", "description of the policy")
 	fl.StringVar(&project, "project", "", "owning project ID")
-	fl.BoolVar(&share, "share", false, "make the policy usable by every project")
-	fl.BoolVar(&noShare, "no-share", false, "keep the policy private to its project (default)")
-	fl.BoolVar(&isDefault, "default", false, "make this the project's default policy")
-	fl.BoolVar(&noDefault, "no-default", false, "do not make this the default policy (default)")
+	fl.BoolVar(&share, flagShare, false, "make the policy usable by every project")
+	fl.BoolVar(&noShare, flagNoShare, false, "keep the policy private to its project (default)")
+	fl.BoolVar(&isDefault, flagDefault, false, "make this the project's default policy")
+	fl.BoolVar(&noDefault, flagNoDefault, false, "do not make this the default policy (default)")
 	return cmd
 }
 
@@ -215,10 +215,10 @@ func newQoSPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			fl := cmd.Flags()
-			if err := mutuallyExclusive(fl, "share", "no-share"); err != nil {
+			if err := mutuallyExclusive(fl, flagShare, flagNoShare); err != nil {
 				return err
 			}
-			if err := mutuallyExclusive(fl, "default", "no-default"); err != nil {
+			if err := mutuallyExclusive(fl, flagDefault, flagNoDefault); err != nil {
 				return err
 			}
 			c, err := newNetworkClient(cmd.Context(), a)
@@ -232,10 +232,10 @@ func newQoSPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "new name")
 	fl.StringVar(&description, "description", "", "new description")
-	fl.BoolVar(&share, "share", false, "make the policy usable by every project")
-	fl.BoolVar(&noShare, "no-share", false, "make the policy private to its project")
-	fl.BoolVar(&isDefault, "default", false, "make this the project's default policy")
-	fl.BoolVar(&noDefault, "no-default", false, "stop this being the default policy")
+	fl.BoolVar(&share, flagShare, false, "make the policy usable by every project")
+	fl.BoolVar(&noShare, flagNoShare, false, "make the policy private to its project")
+	fl.BoolVar(&isDefault, flagDefault, false, "make this the project's default policy")
+	fl.BoolVar(&noDefault, flagNoDefault, false, "stop this being the default policy")
 	return cmd
 }
 

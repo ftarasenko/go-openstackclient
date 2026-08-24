@@ -52,10 +52,10 @@ func newPortUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil,
+	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil,
 		"fixed IP to remove as subnet=<name|id>,ip-address=<ip> (repeatable)")
-	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "security group to remove (name or ID, repeatable)")
-	fl.StringArrayVar(&f.allowedAddress, "allowed-address", nil,
+	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "security group to remove (name or ID, repeatable)")
+	fl.StringArrayVar(&f.allowedAddress, flagAllowedAddress, nil,
 		"allowed address pair to remove as ip-address=<ip>[,mac-address=<mac>] (repeatable)")
 	fl.BoolVar(&f.host, "host", false, "clear the port's binding host ID")
 	return cmd

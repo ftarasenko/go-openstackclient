@@ -233,13 +233,13 @@ func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.enable, "enable", false, "enable the router (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the router (admin state down)")
 	fl.StringVar(&f.externalGateway, "external-gateway", "", "set the external gateway network (name or ID)")
-	fl.BoolVar(&f.enableSNAT, "enable-snat", false, "enable source NAT on the external gateway")
-	fl.BoolVar(&f.disableSNAT, "disable-snat", false, "disable source NAT on the external gateway")
+	fl.BoolVar(&f.enableSNAT, flagEnableSNAT, false, "enable source NAT on the external gateway")
+	fl.BoolVar(&f.disableSNAT, flagDisableSNAT, false, "disable source NAT on the external gateway")
 	fl.StringVar(&f.qosPolicy, "qos-policy", "", "QoS policy ID to attach to the external gateway")
 	fl.StringArrayVar(&f.route, "route", nil,
 		"static route as destination=<cidr>,gateway=<ip> (repeatable; appends unless --no-route is also given)")
 	fl.BoolVar(&f.noRoute, "no-route", false, "clear the router's static routes (with --route, replaces them instead)")
-	cmd.MarkFlagsMutuallyExclusive("enable-snat", "disable-snat")
+	cmd.MarkFlagsMutuallyExclusive(flagEnableSNAT, flagDisableSNAT)
 	return cmd
 }
 
@@ -299,7 +299,7 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 func buildGatewayInfo(ctx context.Context, client *gophercloud.ServiceClient,
 	nameOrID, id string, f *routerSetFlags, flags flagSet,
 ) (*routers.GatewayInfo, error) {
-	snat := enableDisable(flags, f.enableSNAT, f.disableSNAT, "enable-snat", "disable-snat")
+	snat := enableDisable(flags, f.enableSNAT, f.disableSNAT, flagEnableSNAT, flagDisableSNAT)
 	if f.externalGateway == "" && snat == nil && f.qosPolicy == "" {
 		return nil, nil
 	}

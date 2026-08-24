@@ -83,11 +83,11 @@ func newNodeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "unique name for the node")
 	fl.StringVar(&f.driver, "driver", "", "driver used to manage the node (required)")
-	fl.StringVar(&f.resourceClass, "resource-class", "", "resource class for scheduling")
+	fl.StringVar(&f.resourceClass, flagResourceClass, "", "resource class for scheduling")
 	fl.StringVar(&f.uuid, "uuid", "", "UUID to assign to the node")
-	fl.StringVar(&f.conductorGroup, "conductor-group", "", "conductor group for the node")
+	fl.StringVar(&f.conductorGroup, flagConductorGroup, "", "conductor group for the node")
 	fl.StringArrayVar(&f.property, "property", nil, "physical property key=value (repeatable)")
-	fl.StringArrayVar(&f.driverInfo, "driver-info", nil, "driver_info key=value (repeatable)")
+	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "driver_info key=value (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "arbitrary metadata key=value (repeatable)")
 	_ = cmd.MarkFlagRequired("driver")
 	return cmd
@@ -212,21 +212,21 @@ func newNodeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "set the node name")
 	fl.StringVar(&f.driver, "driver", "", "set the node driver")
-	fl.StringVar(&f.resourceClass, "resource-class", "", "set the resource class")
-	fl.StringVar(&f.conductorGroup, "conductor-group", "", "set the conductor group")
-	fl.StringVar(&f.instanceUUID, "instance-uuid", "", "associate the node with this instance UUID")
+	fl.StringVar(&f.resourceClass, flagResourceClass, "", "set the resource class")
+	fl.StringVar(&f.conductorGroup, flagConductorGroup, "", "set the conductor group")
+	fl.StringVar(&f.instanceUUID, flagInstanceUUID, "", "associate the node with this instance UUID")
 	fl.StringArrayVar(&f.property, "property", nil, "set a physical property key=value (repeatable)")
-	fl.StringArrayVar(&f.driverInfo, "driver-info", nil, "set a driver_info key=value (repeatable)")
+	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "set a driver_info key=value (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
 	f.interfaces = make(map[string]*string, len(hardwareInterfaces))
 	for _, name := range hardwareInterfaces {
 		v := new(string)
 		f.interfaces[name] = v
-		fl.StringVar(v, name+"-interface", "", "set the node's "+name+" hardware interface")
+		fl.StringVar(v, name+flagInterfaceSuffix, "", "set the node's "+name+" hardware interface")
 	}
-	fl.BoolVar(&f.automatedClean, "automated-clean", false, "enable automated cleaning for this node")
-	fl.BoolVar(&f.noAutomatedClean, "no-automated-clean", false, "disable automated cleaning for this node")
-	cmd.MarkFlagsMutuallyExclusive("automated-clean", "no-automated-clean")
+	fl.BoolVar(&f.automatedClean, flagAutomatedClean, false, "enable automated cleaning for this node")
+	fl.BoolVar(&f.noAutomatedClean, flagNoAutomatedClean, false, "disable automated cleaning for this node")
+	cmd.MarkFlagsMutuallyExclusive(flagAutomatedClean, flagNoAutomatedClean)
 	return cmd
 }
 
@@ -242,13 +242,13 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		scalar("driver", "/driver", f.driver)
 	}
 	if f.resourceClass != "" {
-		scalar("resource-class", "/resource_class", f.resourceClass)
+		scalar(flagResourceClass, "/resource_class", f.resourceClass)
 	}
 	if f.conductorGroup != "" {
-		scalar("conductor-group", "/conductor_group", f.conductorGroup)
+		scalar(flagConductorGroup, "/conductor_group", f.conductorGroup)
 	}
 	if f.instanceUUID != "" {
-		scalar("instance-uuid", "/instance_uuid", f.instanceUUID)
+		scalar(flagInstanceUUID, "/instance_uuid", f.instanceUUID)
 	}
 	if err := appendKVOps(&ops, "/properties/", f.property, "--property"); err != nil {
 		return err
@@ -263,7 +263,7 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	// map range would not be).
 	for _, name := range hardwareInterfaces {
 		if v := f.interfaces[name]; v != nil && *v != "" {
-			scalar(name+"-interface", "/"+name+"_interface", *v)
+			scalar(name+flagInterfaceSuffix, "/"+name+"_interface", *v)
 		}
 	}
 	// automated_clean is a tri-state in ironic: true, false, or null (defer to the
@@ -271,9 +271,9 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	// explicit values; "node unset --automated-clean" is what restores null.
 	switch {
 	case f.automatedClean:
-		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: "/automated_clean", Value: true})
+		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: pathAutomatedClean, Value: true})
 	case f.noAutomatedClean:
-		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: "/automated_clean", Value: false})
+		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: pathAutomatedClean, Value: false})
 	}
 	if len(ops) == 0 {
 		return fmt.Errorf("node set requires at least one attribute flag")
@@ -331,18 +331,18 @@ func newNodeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.name, "name", false, "clear the node name")
-	fl.BoolVar(&f.resourceClass, "resource-class", false, "clear the resource class")
-	fl.BoolVar(&f.instanceUUID, "instance-uuid", false, "disassociate the node from its instance")
+	fl.BoolVar(&f.resourceClass, flagResourceClass, false, "clear the resource class")
+	fl.BoolVar(&f.instanceUUID, flagInstanceUUID, false, "disassociate the node from its instance")
 	fl.StringArrayVar(&f.property, "property", nil, "remove a physical property by key (repeatable)")
-	fl.StringArrayVar(&f.driverInfo, "driver-info", nil, "remove a driver_info key (repeatable)")
+	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "remove a driver_info key (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "remove an extra metadata key (repeatable)")
-	fl.BoolVar(&f.automatedClean, "automated-clean", false,
+	fl.BoolVar(&f.automatedClean, flagAutomatedClean, false,
 		"clear the automated-clean override, restoring the conductor default")
 	f.interfaces = make(map[string]*bool, len(hardwareInterfaces))
 	for _, name := range hardwareInterfaces {
 		v := new(bool)
 		f.interfaces[name] = v
-		fl.BoolVar(v, name+"-interface", false, "clear the node's "+name+" hardware interface, restoring the driver default")
+		fl.BoolVar(v, name+flagInterfaceSuffix, false, "clear the node's "+name+" hardware interface, restoring the driver default")
 	}
 	return cmd
 }
@@ -371,7 +371,7 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		remove("/extra/" + escapeJSONPointer(k))
 	}
 	if f.automatedClean {
-		remove("/automated_clean")
+		remove(pathAutomatedClean)
 	}
 	// Fixed order so the patch is deterministic (a Go map range would not be).
 	for _, name := range hardwareInterfaces {

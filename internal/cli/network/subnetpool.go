@@ -93,14 +93,14 @@ func newSubnetPoolListCommand(a *auth.Options, o *output.Options) *cobra.Command
 				return err
 			}
 			fl := cmd.Flags()
-			if err := mutuallyExclusive(fl, "share", "no-share"); err != nil {
+			if err := mutuallyExclusive(fl, flagShare, flagNoShare); err != nil {
 				return err
 			}
-			if err := mutuallyExclusive(fl, "default", "no-default"); err != nil {
+			if err := mutuallyExclusive(fl, flagDefault, flagNoDefault); err != nil {
 				return err
 			}
-			f.shared = enableDisable(fl, f.share, f.noShare, "share", "no-share")
-			f.isDefault = enableDisable(fl, f.defaultOnly, f.notDefaultOnly, "default", "no-default")
+			f.shared = enableDisable(fl, f.share, f.noShare, flagShare, flagNoShare)
+			f.isDefault = enableDisable(fl, f.defaultOnly, f.notDefaultOnly, flagDefault, flagNoDefault)
 			ctx := cmd.Context()
 			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
@@ -116,12 +116,12 @@ func newSubnetPoolListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "filter by subnet pool name")
 	fl.StringVar(&f.project, "project", "", "filter by owning project (name or ID)")
-	fl.StringVar(&f.addressScope, "address-scope", "", "filter by address scope ID")
+	fl.StringVar(&f.addressScope, flagAddressScope, "", "filter by address scope ID")
 	fl.IntVar(&f.ipVersion, "ip-version", 0, "filter by IP version (4 or 6)")
-	fl.BoolVar(&f.share, "share", false, "list only shared subnet pools")
-	fl.BoolVar(&f.noShare, "no-share", false, "list only non-shared subnet pools")
-	fl.BoolVar(&f.defaultOnly, "default", false, "list only the default subnet pools")
-	fl.BoolVar(&f.notDefaultOnly, "no-default", false, "list only non-default subnet pools")
+	fl.BoolVar(&f.share, flagShare, false, "list only shared subnet pools")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "list only non-shared subnet pools")
+	fl.BoolVar(&f.defaultOnly, flagDefault, false, "list only the default subnet pools")
+	fl.BoolVar(&f.notDefaultOnly, flagNoDefault, false, "list only non-default subnet pools")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
@@ -224,18 +224,18 @@ func (f *subnetPoolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl.IntVar(&f.minPrefixLen, "min-prefix-length", 0, "smallest prefix length allocatable from this pool")
 	fl.IntVar(&f.maxPrefixLen, "max-prefix-length", 0, "largest prefix length allocatable from this pool")
 	fl.IntVar(&f.defaultQuota, "default-quota", 0, "per-project quota on the prefix space, in addresses")
-	fl.StringVar(&f.addressScope, "address-scope", "", "address scope ID to associate with the pool")
+	fl.StringVar(&f.addressScope, flagAddressScope, "", "address scope ID to associate with the pool")
 	fl.StringVar(&f.description, "description", "", "subnet pool description")
-	fl.BoolVar(&f.defaultPool, "default", false, "make this the default subnet pool for its IP version")
-	fl.BoolVar(&f.noDefaultPool, "no-default", false, "do not make this the default subnet pool")
+	fl.BoolVar(&f.defaultPool, flagDefault, false, "make this the default subnet pool for its IP version")
+	fl.BoolVar(&f.noDefaultPool, flagNoDefault, false, "do not make this the default subnet pool")
 	if isCreate {
 		fl.StringVar(&f.project, "project", "", "owning project (name or ID)")
 		// --share is create-only: neutron's subnetpool PUT has no "shared"
 		// attribute (gophercloud's UpdateOpts has no field for it either), so
 		// offering it on "set" would silently do nothing. Sharing an existing pool
 		// is an RBAC-policy operation, not an attribute update.
-		fl.BoolVar(&f.share, "share", false, "share the subnet pool across projects")
-		fl.BoolVar(&f.noShare, "no-share", false, "do not share the subnet pool")
+		fl.BoolVar(&f.share, flagShare, false, "share the subnet pool across projects")
+		fl.BoolVar(&f.noShare, flagNoShare, false, "do not share the subnet pool")
 		return
 	}
 	fl.StringVar(&f.name, "name", "", "new subnet pool name")
@@ -244,16 +244,16 @@ func (f *subnetPoolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 // check rejects contradictory flag pairs and folds each pair into its tri-state
 // pointer, so the run seams take resolved data rather than re-reading flags.
 func (f *subnetPoolWriteFlags) check(fl *pflag.FlagSet) error {
-	if err := mutuallyExclusive(fl, "default", "no-default"); err != nil {
+	if err := mutuallyExclusive(fl, flagDefault, flagNoDefault); err != nil {
 		return err
 	}
-	f.isDefault = enableDisable(fl, f.defaultPool, f.noDefaultPool, "default", "no-default")
+	f.isDefault = enableDisable(fl, f.defaultPool, f.noDefaultPool, flagDefault, flagNoDefault)
 	// --share exists on create only (see register), so guard it only when defined.
-	if fl.Lookup("share") != nil {
-		if err := mutuallyExclusive(fl, "share", "no-share"); err != nil {
+	if fl.Lookup(flagShare) != nil {
+		if err := mutuallyExclusive(fl, flagShare, flagNoShare); err != nil {
 			return err
 		}
-		f.shared = enableDisable(fl, f.share, f.noShare, "share", "no-share")
+		f.shared = enableDisable(fl, f.share, f.noShare, flagShare, flagNoShare)
 	}
 	return nil
 }
@@ -387,7 +387,7 @@ func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 		opts.DefaultQuota = &quota
 		touched = true
 	}
-	if changed.Changed("address-scope") {
+	if changed.Changed(flagAddressScope) {
 		scope := f.addressScope
 		opts.AddressScopeID = &scope
 		touched = true

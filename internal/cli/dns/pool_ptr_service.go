@@ -393,11 +393,11 @@ func newPTRRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.description, "description", "", "description")
-	fl.BoolVar(&f.noDescription, "no-description", false, "clear the description")
+	fl.StringVar(&f.description, flagDescription, "", flagDescription)
+	fl.BoolVar(&f.noDescription, flagNoDescription, false, "clear the description")
 	fl.IntVar(&f.ttl, "ttl", 0, "TTL in seconds")
 	fl.BoolVar(&f.noTTL, "no-ttl", false, "clear the TTL, falling back to the pool default")
-	cmd.MarkFlagsMutuallyExclusive("description", "no-description")
+	cmd.MarkFlagsMutuallyExclusive(flagDescription, flagNoDescription)
 	cmd.MarkFlagsMutuallyExclusive("ttl", "no-ttl")
 	common.bind(cmd)
 	return cmd

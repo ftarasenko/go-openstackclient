@@ -66,7 +66,7 @@ func runProjectList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return fmt.Errorf("parsing project list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Domain ID", "Enabled", "Description"}, Rows: make([][]any, 0, len(all))}
+	t := output.Table{Columns: []string{"ID", "Name", colDomainID, "Enabled", "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
 		t.Rows = append(t.Rows, []any{p.ID, p.Name, p.DomainID, p.Enabled, p.Description})
 	}
@@ -91,7 +91,7 @@ func newProjectShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runProjectShow(ctx, client, o, args[0], domain, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&domain, "domain", "", "domain owning the project (name or ID)")
+	cmd.Flags().StringVar(&domain, "domain", "", helpDomainProject)
 	return cmd
 }
 
@@ -109,7 +109,7 @@ func runProjectShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		return fmt.Errorf("showing project %q: %w", nameOrID, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Domain ID", "Enabled", "Description", "Parent ID"},
+		[]string{"ID", "Name", colDomainID, "Enabled", "Description", "Parent ID"},
 		[]any{p.ID, p.Name, p.DomainID, p.Enabled, p.Description, p.ParentID})
 }
 
@@ -193,7 +193,7 @@ func runProjectCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return fmt.Errorf("creating project %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Domain ID", "Enabled", "Description"},
+		[]string{"ID", "Name", colDomainID, "Enabled", "Description"},
 		[]any{p.ID, p.Name, p.DomainID, p.Enabled, p.Description})
 }
 
@@ -215,7 +215,7 @@ func newProjectDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			return runProjectDelete(ctx, client, args[0], domain)
 		},
 	}
-	cmd.Flags().StringVar(&domain, "domain", "", "domain owning the project (name or ID)")
+	cmd.Flags().StringVar(&domain, "domain", "", helpDomainProject)
 	return cmd
 }
 
@@ -258,7 +258,7 @@ func newProjectSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.domain, "domain", "", "domain owning the project (name or ID)")
+	fl.StringVar(&f.domain, "domain", "", helpDomainProject)
 	fl.StringVar(&f.name, "name", "", "new project name")
 	fl.StringVar(&f.description, "description", "", "new project description")
 	fl.StringArrayVar(&f.properties, "property", nil, "set a property key=value (repeatable)")

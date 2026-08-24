@@ -88,7 +88,7 @@ func newLBListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "filter by load balancer name")
 	fl.StringVar(&f.project, "project", "", "filter by owning project (name or ID)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", "domain owning --project, to disambiguate the name (name or ID)")
 	fl.StringVar(&f.provisioningStatus, "provisioning-status", "", "filter by provisioning status, e.g. ACTIVE or ERROR")
 	fl.StringVar(&f.operatingStatus, "operating-status", "", "filter by operating status, e.g. ONLINE or OFFLINE")
 	fl.StringVar(&f.vipAddress, "vip-address", "", "filter by VIP address")
@@ -147,7 +147,7 @@ func runLBList(ctx context.Context, client *gophercloud.ServiceClient, o *output
 
 func newLBShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <load-balancer>",
+		Use:   useShowLoadBalancer,
 		Short: "Show load balancer details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -257,9 +257,9 @@ func newLBCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.vipNetwork, "vip-network-id", "", "network to allocate the VIP from (name or ID)")
 	fl.StringVar(&f.vipPort, "vip-port-id", "", "existing neutron port to use as the VIP (name or ID)")
 	fl.StringVar(&f.vipAddress, "vip-address", "", "specific IP address to use for the VIP")
-	fl.StringVar(&f.vipQosPolicy, "vip-qos-policy-id", "", "QoS policy ID to apply to the VIP port")
+	fl.StringVar(&f.vipQosPolicy, flagVIPQoSPolicyID, "", "QoS policy ID to apply to the VIP port")
 	fl.StringVar(&f.project, "project", "", "owning project (name or ID)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", "domain owning --project, to disambiguate the name (name or ID)")
 	fl.StringVar(&f.provider, "provider", "", "provider driver, e.g. amphora or ovn")
 	fl.StringVar(&f.flavor, "flavor", "", "octavia flavor ID")
 	fl.StringVar(&f.availabilityZone, "availability-zone", "", "availability zone to create the load balancer in")
@@ -267,7 +267,7 @@ func newLBCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.enable, "enable", false, "create the load balancer administratively up (the default)")
 	fl.BoolVar(&f.disable, "disable", false, "create the load balancer administratively down")
 	fl.BoolVar(&f.wait, "wait", false, "wait until the load balancer reaches ACTIVE")
-	fl.DurationVar(&f.waitTimeout, "wait-timeout", provisioningPollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, provisioningPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
@@ -359,7 +359,7 @@ func newLBSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new load balancer name")
 	fl.StringVar(&f.description, "description", "", "new load balancer description")
-	fl.StringVar(&f.vipQosPolicy, "vip-qos-policy-id", "", "QoS policy ID to apply to the VIP port")
+	fl.StringVar(&f.vipQosPolicy, flagVIPQoSPolicyID, "", "QoS policy ID to apply to the VIP port")
 	fl.StringArrayVar(&f.tag, "tag", nil, "replace the tags with these (repeatable)")
 	fl.BoolVar(&f.noTag, "no-tag", false, "clear all tags")
 	fl.BoolVar(&f.enable, "enable", false, "set the load balancer administratively up")
@@ -385,7 +385,7 @@ func runLBSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.
 		opts.Description = &desc
 		touched = true
 	}
-	if changed["vip-qos-policy-id"] {
+	if changed[flagVIPQoSPolicyID] {
 		policy := f.vipQosPolicy
 		opts.VipQosPolicyID = &policy
 		touched = true
@@ -441,7 +441,7 @@ func newLBDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&cascade, "cascade", false, "also delete the load balancer's listeners, pools, members and monitors")
 	fl.BoolVar(&wait, "wait", false, "wait until each load balancer is gone")
-	fl.DurationVar(&waitTimeout, "wait-timeout", provisioningPollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&waitTimeout, flagWaitTimeout, provisioningPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
@@ -497,7 +497,7 @@ func newLBFailoverCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&wait, "wait", false, "wait until the load balancer is ACTIVE again")
-	fl.DurationVar(&waitTimeout, "wait-timeout", provisioningPollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&waitTimeout, flagWaitTimeout, provisioningPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
@@ -531,7 +531,7 @@ func runLBFailover(ctx context.Context, client *gophercloud.ServiceClient, ref s
 func newLBStatsCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{Use: "stats", Short: "Load balancer traffic statistics"}
 	cmd.AddCommand(&cobra.Command{
-		Use:   "show <load-balancer>",
+		Use:   useShowLoadBalancer,
 		Short: "Show a load balancer's traffic statistics",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -566,7 +566,7 @@ func runLBStatsShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 func newLBStatusCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{Use: "status", Short: "Load balancer status tree"}
 	cmd.AddCommand(&cobra.Command{
-		Use:   "show <load-balancer>",
+		Use:   useShowLoadBalancer,
 		Short: "Show the status of a load balancer and everything under it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

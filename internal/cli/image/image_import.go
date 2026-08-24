@@ -56,8 +56,8 @@ func newImageImportCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	// --import-method, while the shorter --method is what operators type (and
 	// what turned up in the shell history this command was added for). They are
 	// aliases; giving both with different values is an error.
-	fl.StringVar(&f.method, "method", "", "import method: web-download or glance-direct (default web-download when --uri is given)")
-	fl.StringVar(&f.importMethod, "import-method", "", "alias of --method (upstream OSC spelling)")
+	fl.StringVar(&f.method, flagMethod, "", "import method: web-download or glance-direct (default web-download when --uri is given)")
+	fl.StringVar(&f.importMethod, flagImportMethod, "", "alias of --method (upstream OSC spelling)")
 	fl.StringVar(&f.uri, "uri", "", "source URL for the web-download method")
 	fl.StringSliceVar(&f.stores, "store", nil, "backend store to import into (repeatable)")
 	fl.BoolVar(&f.allStores, "all-stores", false, "import into every backend store glance has")
@@ -88,11 +88,11 @@ var importMethods = []string{
 func (f *imageImportFlags) resolveMethod(cmd *cobra.Command) (imageimport.ImportMethod, error) {
 	fl := cmd.Flags()
 	switch {
-	case fl.Changed("method") && fl.Changed("import-method"):
+	case fl.Changed(flagMethod) && fl.Changed(flagImportMethod):
 		if f.method != f.importMethod {
 			return "", fmt.Errorf("--method and --import-method are aliases but were given different values (%q and %q)", f.method, f.importMethod)
 		}
-	case fl.Changed("import-method"):
+	case fl.Changed(flagImportMethod):
 		f.method = f.importMethod
 	}
 

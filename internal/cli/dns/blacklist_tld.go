@@ -209,7 +209,7 @@ func newZoneBlacklistCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 	fl := cmd.Flags()
 	// Upstream takes the pattern as a required option, not a positional.
 	fl.StringVar(&pattern, "pattern", "", "regular expression matching the zone names to refuse (required)")
-	fl.StringVar(&description, "description", "", "description")
+	fl.StringVar(&description, flagDescription, "", flagDescription)
 	common.bind(cmd)
 	return cmd
 }
@@ -242,7 +242,7 @@ func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 				return err
 			}
 			fl := cmd.Flags()
-			if !fl.Changed("pattern") && !fl.Changed("description") && !noDescription {
+			if !fl.Changed("pattern") && !fl.Changed(flagDescription) && !noDescription {
 				return fmt.Errorf("nothing to set: pass --pattern, --description or --no-description")
 			}
 			ctx := cmd.Context()
@@ -256,9 +256,9 @@ func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&pattern, "pattern", "", "new pattern")
-	fl.StringVar(&description, "description", "", "new description")
-	fl.BoolVar(&noDescription, "no-description", false, "clear the description")
-	cmd.MarkFlagsMutuallyExclusive("description", "no-description")
+	fl.StringVar(&description, flagDescription, "", "new description")
+	fl.BoolVar(&noDescription, flagNoDescription, false, "clear the description")
+	cmd.MarkFlagsMutuallyExclusive(flagDescription, flagNoDescription)
 	common.bind(cmd)
 	return cmd
 }
@@ -515,7 +515,7 @@ func newTLDCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	// Upstream takes the name as a required option, not a positional.
 	fl.StringVar(&name, "name", "", "TLD name, e.g. com (required)")
-	fl.StringVar(&description, "description", "", "description")
+	fl.StringVar(&description, flagDescription, "", flagDescription)
 	common.bind(cmd)
 	return cmd
 }
@@ -548,7 +548,7 @@ func newTLDSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			fl := cmd.Flags()
-			if !fl.Changed("name") && !fl.Changed("description") && !noDescription {
+			if !fl.Changed("name") && !fl.Changed(flagDescription) && !noDescription {
 				return fmt.Errorf("nothing to set: pass --name, --description or --no-description")
 			}
 			ctx := cmd.Context()
@@ -562,9 +562,9 @@ func newTLDSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "new TLD name")
-	fl.StringVar(&description, "description", "", "new description")
-	fl.BoolVar(&noDescription, "no-description", false, "clear the description")
-	cmd.MarkFlagsMutuallyExclusive("description", "no-description")
+	fl.StringVar(&description, flagDescription, "", "new description")
+	fl.BoolVar(&noDescription, flagNoDescription, false, "clear the description")
+	cmd.MarkFlagsMutuallyExclusive(flagDescription, flagNoDescription)
 	common.bind(cmd)
 	return cmd
 }

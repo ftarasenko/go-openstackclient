@@ -55,7 +55,7 @@ type networkExt struct {
 func networkShowFields(n *networkExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "status", "admin_state_up", "shared", "router:external",
-		"mtu", "subnets", "provider:network_type", "provider:physical_network",
+		"mtu", "subnets", fieldProviderNetworkType, fieldProviderPhysicalNetwork,
 		"availability_zone_hints", "description", "project_id", "tags",
 		"created_at", "updated_at",
 	}
@@ -80,10 +80,10 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			fl := cmd.Flags()
 			f.externalSet = fl.Changed("external")
-			if err := mutuallyExclusive(fl, "share", "no-share"); err != nil {
+			if err := mutuallyExclusive(fl, flagShare, flagNoShare); err != nil {
 				return err
 			}
-			f.shared = enableDisable(fl, f.share, f.noShare, "share", "no-share")
+			f.shared = enableDisable(fl, f.share, f.noShare, flagShare, flagNoShare)
 			ctx := cmd.Context()
 			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
@@ -103,8 +103,8 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.project, "project", "", "list networks owned by this project (name or ID)")
 	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
 	fl.StringVar(&f.status, "status", "", "list networks with this status (ACTIVE, DOWN, BUILD, ERROR)")
-	fl.BoolVar(&f.share, "share", false, "list only shared networks")
-	fl.BoolVar(&f.noShare, "no-share", false, "list only non-shared networks")
+	fl.BoolVar(&f.share, flagShare, false, "list only shared networks")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "list only non-shared networks")
 	fl.StringVar(&f.providerNetworkType, "provider-network-type", "", "list networks of this provider network type (flat, vlan, vxlan, ...)")
 	fl.StringVar(&f.providerPhysicalNetwork, "provider-physical-network", "", "list networks on this provider physical network")
 	fl.StringVar(&f.providerSegment, "provider-segment", "", "list networks with this provider segmentation ID")
@@ -154,9 +154,9 @@ func (opts providerListOptsExt) ToNetworkListQuery() (string, error) {
 	}
 	params := parsed.Query()
 	for key, value := range map[string]string{
-		"provider:network_type":     opts.NetworkType,
-		"provider:physical_network": opts.PhysicalNetwork,
-		"provider:segmentation_id":  opts.SegmentationID,
+		fieldProviderNetworkType:     opts.NetworkType,
+		fieldProviderPhysicalNetwork: opts.PhysicalNetwork,
+		"provider:segmentation_id":   opts.SegmentationID,
 	} {
 		if value != "" {
 			params.Add(key, value)
@@ -293,7 +293,7 @@ func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl := cmd.Flags()
 	fl.BoolVar(&f.enable, "enable", false, "enable the network (admin state up, default)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the network (admin state down)")
-	fl.BoolVar(&f.share, "share", false, "share the network across projects")
+	fl.BoolVar(&f.share, flagShare, false, "share the network across projects")
 	fl.BoolVar(&f.external, "external", false, "set the network as external")
 	fl.IntVar(&f.mtu, "mtu", 0, "maximum transmission unit for the network")
 	fl.StringVar(&f.providerType, "provider-network-type", "", "physical network type (flat, vlan, vxlan, ...)")
@@ -322,10 +322,10 @@ func (opts providerCreateOpts) ToNetworkCreateMap() (map[string]any, error) {
 		return nil, fmt.Errorf("providerCreateOpts: unexpected \"network\" body shape %T", base["network"])
 	}
 	if opts.NetworkType != "" {
-		m["provider:network_type"] = opts.NetworkType
+		m[fieldProviderNetworkType] = opts.NetworkType
 	}
 	if opts.PhysicalNetwork != "" {
-		m["provider:physical_network"] = opts.PhysicalNetwork
+		m[fieldProviderPhysicalNetwork] = opts.PhysicalNetwork
 	}
 	if opts.SegmentationID != "" {
 		m["provider:segmentation_id"] = opts.SegmentationID
@@ -435,7 +435,7 @@ func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.IntVar(&f.mtu, "mtu", 0, "new maximum transmission unit")
 	fl.BoolVar(&f.enable, "enable", false, "enable the network (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the network (admin state down)")
-	fl.BoolVar(&f.share, "share", false, "share the network across projects")
+	fl.BoolVar(&f.share, flagShare, false, "share the network across projects")
 	return cmd
 }
 
@@ -457,7 +457,7 @@ func runNetworkSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		base.AdminStateUp = state
 		changed = true
 	}
-	if flags.Changed("share") {
+	if flags.Changed(flagShare) {
 		base.Shared = boolPtr(f.share)
 		changed = true
 	}
@@ -501,7 +501,7 @@ func newNetworkUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runNetworkUnset(ctx, client, o, args[0], share, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().BoolVar(&share, "share", false, "make the network project-private (unset shared)")
+	cmd.Flags().BoolVar(&share, flagShare, false, "make the network project-private (unset shared)")
 	return cmd
 }
 

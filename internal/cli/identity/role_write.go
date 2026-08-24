@@ -43,7 +43,7 @@ func newRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&description, "description", "", "description of the role")
-	fl.StringVar(&domain, "domain", "", "domain the role belongs to (name or ID)")
+	fl.StringVar(&domain, "domain", "", helpDomainRole)
 	fl.BoolVar(&orShow, "or-show", false, "return the existing role if it already exists")
 	return cmd
 }
@@ -75,7 +75,7 @@ func runRoleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 
 func writeRole(o *output.Options, w io.Writer, r *roles.Role) error {
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Domain ID", "Description"},
+		[]string{"ID", "Name", colDomainID, "Description"},
 		[]any{r.ID, r.Name, r.DomainID, r.Description})
 }
 
@@ -99,7 +99,7 @@ func newRoleDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			return runRoleDelete(ctx, client, args, domain)
 		},
 	}
-	cmd.Flags().StringVar(&domain, "domain", "", "domain the role belongs to (name or ID)")
+	cmd.Flags().StringVar(&domain, "domain", "", helpDomainRole)
 	return cmd
 }
 
@@ -146,7 +146,7 @@ func newRoleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "new role name")
 	fl.StringVar(&description, "description", "", "new description")
-	fl.StringVar(&domain, "domain", "", "domain the role belongs to (name or ID)")
+	fl.StringVar(&domain, "domain", "", helpDomainRole)
 	return cmd
 }
 
@@ -204,8 +204,8 @@ func newImpliedRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Comm
 			return runImpliedRoleCreate(ctx, client, o, args[0], implied, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&implied, "implied-role", "", "role implied by the prior role (name or ID)")
-	_ = cmd.MarkFlagRequired("implied-role")
+	cmd.Flags().StringVar(&implied, flagImpliedRole, "", "role implied by the prior role (name or ID)")
+	_ = cmd.MarkFlagRequired(flagImpliedRole)
 	return cmd
 }
 
@@ -244,8 +244,8 @@ func newImpliedRoleDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comm
 			return runImpliedRoleDelete(ctx, client, args[0], implied)
 		},
 	}
-	cmd.Flags().StringVar(&implied, "implied-role", "", "role implied by the prior role (name or ID)")
-	_ = cmd.MarkFlagRequired("implied-role")
+	cmd.Flags().StringVar(&implied, flagImpliedRole, "", "role implied by the prior role (name or ID)")
+	_ = cmd.MarkFlagRequired(flagImpliedRole)
 	return cmd
 }
 

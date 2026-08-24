@@ -56,7 +56,7 @@ func newServerShelveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&offload, "offload", false, "also offload the server, releasing its host resources immediately")
 	fl.BoolVar(&wait, "wait", false, "wait for the shelve (and offload) to complete")
-	fl.DurationVar(&waitTimeout, "wait-timeout", statusPollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
@@ -155,7 +155,7 @@ func newServerUnshelveCommand(a *auth.Options, o *output.Options) *cobra.Command
 	fl.StringVar(&az, "availability-zone", "", "availability zone to unshelve into (nova 2.77 or later)")
 	fl.StringVar(&host, "host", "", "host to unshelve onto (nova 2.91 or later)")
 	fl.BoolVar(&wait, "wait", false, "wait for the unshelve to complete")
-	fl.DurationVar(&waitTimeout, "wait-timeout", statusPollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
@@ -208,7 +208,7 @@ func newServerRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&image, "image", "", "image to rescue with (name or ID; default: the server's own image)")
-	fl.StringVar(&password, "password", "", "administrative password for the rescued server (default: generated)")
+	fl.StringVar(&password, flagPassword, "", "administrative password for the rescued server (default: generated)")
 	return cmd
 }
 
@@ -287,7 +287,7 @@ func newServerImageCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&name, "name", "", "name of the new image (default: the server's name)")
 	fl.StringArrayVar(&properties, "property", nil, "key=value property to set on the image (repeatable)")
 	fl.BoolVar(&wait, "wait", false, "wait until the image becomes active")
-	fl.DurationVar(&waitTimeout, "wait-timeout", statusPollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 
 	cmd := &cobra.Command{Use: "image", Short: "Manage images created from a server"}
 	cmd.AddCommand(create)

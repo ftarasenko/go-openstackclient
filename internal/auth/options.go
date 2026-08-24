@@ -229,9 +229,9 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"user ID (env OS_USER_ID)")
 	fs.StringVar(&o.Password, "os-password", os.Getenv("OS_PASSWORD"),
 		"password (env OS_PASSWORD)")
-	fs.StringVar(&o.ProjectName, "os-project-name", os.Getenv("OS_PROJECT_NAME"),
+	fs.StringVar(&o.ProjectName, flagOSProjectName, os.Getenv("OS_PROJECT_NAME"),
 		"project name (env OS_PROJECT_NAME)")
-	fs.StringVar(&o.ProjectID, "os-project-id", os.Getenv("OS_PROJECT_ID"),
+	fs.StringVar(&o.ProjectID, flagOSProjectID, os.Getenv("OS_PROJECT_ID"),
 		"project ID (env OS_PROJECT_ID)")
 	fs.StringVar(&o.ProjectDomainName, "os-project-domain-name", os.Getenv("OS_PROJECT_DOMAIN_NAME"),
 		"project domain name (env OS_PROJECT_DOMAIN_NAME)")

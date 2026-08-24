@@ -546,7 +546,7 @@ func newTSIGKeyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.algorithm, "algorithm", "", "TSIG algorithm, e.g. hmac-sha256 (required)")
 	fl.StringVar(&f.secret, "secret", "", "shared secret (required)")
 	fl.StringVar(&f.scope, "scope", "", "scope: POOL or ZONE (required)")
-	fl.StringVar(&f.resourceID, "resource-id", "", "ID of the pool or zone the key applies to (required)")
+	fl.StringVar(&f.resourceID, flagResourceID, "", "ID of the pool or zone the key applies to (required)")
 	common.bind(cmd)
 	return cmd
 }
@@ -581,7 +581,7 @@ func newTSIGKeySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			fl := cmd.Flags()
 			if !fl.Changed("name") && !fl.Changed("algorithm") && !fl.Changed("secret") &&
-				!fl.Changed("scope") && !fl.Changed("resource-id") {
+				!fl.Changed("scope") && !fl.Changed(flagResourceID) {
 				return fmt.Errorf("nothing to set: pass at least one attribute flag")
 			}
 			ctx := cmd.Context()
@@ -597,7 +597,7 @@ func newTSIGKeySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.algorithm, "algorithm", "", "new algorithm")
 	fl.StringVar(&f.secret, "secret", "", "new shared secret")
 	fl.StringVar(&f.scope, "scope", "", "new scope: POOL or ZONE")
-	fl.StringVar(&f.resourceID, "resource-id", "", "new pool or zone ID")
+	fl.StringVar(&f.resourceID, flagResourceID, "", "new pool or zone ID")
 	common.bind(cmd)
 	return cmd
 }

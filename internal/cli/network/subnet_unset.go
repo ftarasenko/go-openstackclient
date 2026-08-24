@@ -58,7 +58,7 @@ func newSubnetUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringArrayVar(&f.allocationPool, "allocation-pool", nil,
 		"allocation pool to remove as start=<ip>,end=<ip> (repeatable)")
-	fl.StringArrayVar(&f.dnsNameserver, "dns-nameserver", nil, "DNS nameserver to remove (repeatable)")
+	fl.StringArrayVar(&f.dnsNameserver, flagDNSNameserver, nil, "DNS nameserver to remove (repeatable)")
 	fl.StringArrayVar(&f.hostRoute, "host-route", nil,
 		"host route to remove as destination=<cidr>,gateway=<ip> (repeatable)")
 	fl.StringArrayVar(&f.serviceType, "service-type", nil, "service type to remove (repeatable)")

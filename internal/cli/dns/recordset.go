@@ -240,7 +240,7 @@ func newRecordSetCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	fl.StringVar(&f.typ, "type", "", "RRTYPE of the recordset (A/AAAA/CNAME/MX/TXT/...)")
 	fl.StringArrayVar(&f.records, "record", nil, "record data; repeat for multiple records")
 	fl.IntVar(&f.ttl, "ttl", 0, "time to live (seconds) for the recordset")
-	fl.StringVar(&f.description, "description", "", "description of the recordset")
+	fl.StringVar(&f.description, flagDescription, "", "description of the recordset")
 	_ = cmd.MarkFlagRequired("type")
 	common.bind(cmd)
 	return cmd
@@ -339,14 +339,14 @@ func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			recordsSet := cmd.Flags().Changed("record")
 			ttlSet := cmd.Flags().Changed("ttl")
-			descSet := cmd.Flags().Changed("description")
+			descSet := cmd.Flags().Changed(flagDescription)
 			return runRecordSetSet(ctx, client, o, args[0], args[1], f, recordsSet, ttlSet, descSet, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringArrayVar(&f.records, "record", nil, "replace record data; repeat for multiple records")
 	fl.IntVar(&f.ttl, "ttl", 0, "set the recordset TTL (seconds)")
-	fl.StringVar(&f.description, "description", "", "set the recordset description")
+	fl.StringVar(&f.description, flagDescription, "", "set the recordset description")
 	common.bind(cmd)
 	return cmd
 }

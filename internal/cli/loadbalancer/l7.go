@@ -507,7 +507,7 @@ func newL7RuleListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.typ, "type", "", "filter by rule type, e.g. PATH, HOST_NAME, HEADER, COOKIE, FILE_TYPE, SSL_CONN_HAS_CERT")
-	fl.StringVar(&f.compareType, "compare-type", "", "filter by comparison: REGEX, STARTS_WITH, ENDS_WITH, CONTAINS or EQUAL_TO")
+	fl.StringVar(&f.compareType, flagCompareType, "", "filter by comparison: REGEX, STARTS_WITH, ENDS_WITH, CONTAINS or EQUAL_TO")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
@@ -599,11 +599,11 @@ func (f *l7RuleWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl := cmd.Flags()
 	fl.StringVar(&f.typ, "type", "",
 		"rule type: PATH, HOST_NAME, HEADER, COOKIE, FILE_TYPE, SSL_CONN_HAS_CERT, SSL_VERIFY_RESULT or SSL_DN_FIELD")
-	fl.StringVar(&f.compareType, "compare-type", "",
+	fl.StringVar(&f.compareType, flagCompareType, "",
 		"comparison: REGEX, STARTS_WITH, ENDS_WITH, CONTAINS or EQUAL_TO")
 	fl.StringVar(&f.value, "value", "", "value to compare against")
 	fl.StringVar(&f.key, "key", "", "key to compare, required for HEADER and COOKIE rules")
-	fl.BoolVar(&f.invert, "invert", false, "match when the comparison does NOT hold")
+	fl.BoolVar(&f.invert, flagInvert, false, "match when the comparison does NOT hold")
 	fl.StringArrayVar(&f.tag, "tag", nil, "tag to set (repeatable)")
 	fl.BoolVar(&f.enable, "enable", false, "administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "administratively down")
@@ -611,7 +611,7 @@ func (f *l7RuleWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 		fl.StringVar(&f.project, "project", "", "owning project (name or ID)")
 		return
 	}
-	fl.BoolVar(&f.noInvert, "no-invert", false, "match when the comparison holds (the default)")
+	fl.BoolVar(&f.noInvert, flagNoInvert, false, "match when the comparison holds (the default)")
 	fl.BoolVar(&f.noTag, "no-tag", false, "clear all tags")
 }
 
@@ -692,7 +692,7 @@ func newL7RuleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if fl.Changed("enable") && fl.Changed("disable") {
 				return fmt.Errorf("--enable and --disable are mutually exclusive")
 			}
-			if fl.Changed("invert") && fl.Changed("no-invert") {
+			if fl.Changed(flagInvert) && fl.Changed(flagNoInvert) {
 				return fmt.Errorf("--invert and --no-invert are mutually exclusive")
 			}
 			if fl.Changed("tag") && f.noTag {
@@ -722,7 +722,7 @@ func runL7RuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		opts.RuleType = l7policies.RuleType(f.typ)
 		touched = true
 	}
-	if changed["compare-type"] {
+	if changed[flagCompareType] {
 		opts.CompareType = l7policies.CompareType(f.compareType)
 		touched = true
 	}
@@ -731,9 +731,9 @@ func runL7RuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		touched = true
 	}
 	switch {
-	case changed["invert"]:
-		assignBool(changed, "invert", true, &opts.Invert, &touched)
-	case changed["no-invert"]:
+	case changed[flagInvert]:
+		assignBool(changed, flagInvert, true, &opts.Invert, &touched)
+	case changed[flagNoInvert]:
 		v := false
 		opts.Invert = &v
 		touched = true

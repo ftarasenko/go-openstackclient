@@ -179,7 +179,7 @@ func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.BoolVar(&f.sharedMigration, "shared-migration", false, "live migration only: force a shared-storage migration (no disk copy)")
 	fl.BoolVar(&f.diskOverCommit, "disk-overcommit", false, "live migration only: allow disk over-commit on the destination (compute API <= 2.24)")
 	fl.BoolVar(&f.wait, "wait", false, "wait for the migration to finish (server reaches ACTIVE, or VERIFY_RESIZE for a cold migration)")
-	fl.DurationVar(&f.waitTimeout, "wait-timeout", migratePollTimeout, "maximum time to wait for --wait to complete")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, migratePollTimeout, helpWaitTimeout)
 	return cmd
 }
 
@@ -1030,7 +1030,7 @@ func newServerEvacuateCommand(a *auth.Options, o *output.Options) *cobra.Command
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&host, "host", "", "target host to evacuate to (omit to let the scheduler choose)")
-	fl.StringVar(&password, "password", "", "set this admin password on the evacuated server")
+	fl.StringVar(&password, flagPassword, "", "set this admin password on the evacuated server")
 	fl.BoolVar(&preserveEphemeral, "preserve-ephemeral", false, "KeyStack: preserve the ephemeral partition during evacuation")
 	return cmd
 }

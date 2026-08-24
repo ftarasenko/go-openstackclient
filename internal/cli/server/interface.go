@@ -71,7 +71,7 @@ func newServerAddPortCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			return runServerAddPort(ctx, client, ac, o, args[0], args[1], tag, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&tag, "tag", "", "tag for the attached interface (nova 2.49 or later)")
+	cmd.Flags().StringVar(&tag, "tag", "", helpInterfaceTag)
 	return cmd
 }
 
@@ -117,7 +117,7 @@ func newServerAddNetworkCommand(a *auth.Options, o *output.Options) *cobra.Comma
 			return runServerAddNetwork(ctx, client, ac, o, args[0], args[1], "", tag, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&tag, "tag", "", "tag for the attached interface (nova 2.49 or later)")
+	cmd.Flags().StringVar(&tag, "tag", "", helpInterfaceTag)
 	return cmd
 }
 
@@ -143,7 +143,7 @@ func newServerAddFixedIPCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	}
 	fl := ip.Flags()
 	fl.StringVar(&address, "fixed-ip-address", "", "specific fixed IP address to request")
-	fl.StringVar(&tag, "tag", "", "tag for the attached interface (nova 2.49 or later)")
+	fl.StringVar(&tag, "tag", "", helpInterfaceTag)
 
 	cmd := &cobra.Command{Use: "fixed", Short: "Attach a fixed IP to a server"}
 	cmd.AddCommand(ip)

@@ -41,7 +41,7 @@ func newRouterAddGatewayCommand(a *auth.Options, o *output.Options) *cobra.Comma
 			return runRouterAddGateway(ctx, client, o, args[0], args[1], fixedIPs, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringArrayVar(&fixedIPs, "fixed-ip", nil,
+	cmd.Flags().StringArrayVar(&fixedIPs, flagFixedIP, nil,
 		"gateway address as subnet=<name|id>[,ip-address=<ip>] (repeatable)")
 	return cmd
 }

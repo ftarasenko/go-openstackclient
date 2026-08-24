@@ -36,7 +36,7 @@ func newGroupCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 // groupFields is the Field/Value view of a single group.
 func groupFields(g *groups.Group) ([]string, []any) {
-	return []string{"ID", "Name", "Domain ID", "Description"},
+	return []string{"ID", "Name", colDomainID, "Description"},
 		[]any{g.ID, g.Name, g.DomainID, g.Description}
 }
 
@@ -69,7 +69,7 @@ func newGroupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.domain, "domain", "", "filter by domain (name or ID)")
 	fl.StringVar(&f.user, "user", "", "list only the groups this user belongs to (name or ID)")
-	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning --user, to disambiguate the name (name or ID)")
 	return cmd
 }
 
@@ -123,7 +123,7 @@ func runGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		}
 	}
 
-	t := output.Table{Columns: []string{"ID", "Name", "Domain ID", "Description"}, Rows: make([][]any, 0, len(all))}
+	t := output.Table{Columns: []string{"ID", "Name", colDomainID, "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, g := range all {
 		t.Rows = append(t.Rows, []any{g.ID, g.Name, g.DomainID, g.Description})
 	}
@@ -395,7 +395,7 @@ func newGroupMembershipCommand(a *auth.Options, o *output.Options, v membershipV
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.groupDomain, "group-domain", "", "domain owning the group, to disambiguate its name (name or ID)")
-	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning the users, to disambiguate their names (name or ID)")
+	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning the users, to disambiguate their names (name or ID)")
 	return cmd
 }
 
@@ -452,7 +452,7 @@ func newGroupContainsCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	}
 	fl := sub.Flags()
 	fl.StringVar(&f.groupDomain, "group-domain", "", "domain owning the group, to disambiguate its name (name or ID)")
-	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning the user, to disambiguate its name (name or ID)")
+	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning the user, to disambiguate its name (name or ID)")
 	cmd.AddCommand(sub)
 	return cmd
 }

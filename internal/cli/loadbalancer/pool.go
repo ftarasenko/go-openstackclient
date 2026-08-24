@@ -115,7 +115,7 @@ func newPoolListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "filter by pool name")
 	fl.StringVar(&f.loadBalancer, "loadbalancer", "", "list only pools of this load balancer (name or ID)")
 	fl.StringVar(&f.protocol, "protocol", "", "filter by protocol, e.g. HTTP, HTTPS, TCP, PROXY, UDP")
-	fl.StringVar(&f.lbAlgorithm, "lb-algorithm", "", "filter by algorithm: ROUND_ROBIN, LEAST_CONNECTIONS, SOURCE_IP or SOURCE_IP_PORT")
+	fl.StringVar(&f.lbAlgorithm, flagLBAlgorithm, "", "filter by algorithm: ROUND_ROBIN, LEAST_CONNECTIONS, SOURCE_IP or SOURCE_IP_PORT")
 	fl.StringVar(&f.project, "project", "", "filter by owning project (name or ID)")
 	fl.BoolVar(&f.enable, "enable", false, "list only administratively up pools")
 	fl.BoolVar(&f.disable, "disable", false, "list only administratively down pools")
@@ -223,7 +223,7 @@ type poolWriteFlags struct {
 func (f *poolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl := cmd.Flags()
 	fl.StringVar(&f.description, "description", "", "pool description")
-	fl.StringVar(&f.lbAlgorithm, "lb-algorithm", "",
+	fl.StringVar(&f.lbAlgorithm, flagLBAlgorithm, "",
 		"load-balancing algorithm: ROUND_ROBIN, LEAST_CONNECTIONS, SOURCE_IP or SOURCE_IP_PORT")
 	fl.StringArrayVar(&f.sessionPersistence, "session-persistence", nil,
 		"session persistence as type=<SOURCE_IP|HTTP_COOKIE|APP_COOKIE>[,cookie_name=<name>]")
@@ -238,12 +238,12 @@ func (f *poolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 		fl.StringVar(&f.listener, "listener", "", "listener to attach the pool to (name or ID)")
 		fl.StringVar(&f.protocol, "protocol", "", "pool protocol: HTTP, HTTPS, TCP, PROXY, PROXYV2, UDP or SCTP (required)")
 		fl.StringVar(&f.project, "project", "", "owning project (name or ID)")
-		fl.BoolVar(&f.tlsEnabled, "enable-tls", false, "re-encrypt traffic to the members with TLS")
+		fl.BoolVar(&f.tlsEnabled, flagEnableTLS, false, "re-encrypt traffic to the members with TLS")
 		return
 	}
 	fl.StringVar(&f.name, "name", "", "new pool name")
-	fl.BoolVar(&f.tlsEnabled, "enable-tls", false, "re-encrypt traffic to the members with TLS")
-	fl.BoolVar(&f.noTLS, "disable-tls", false, "do not re-encrypt traffic to the members")
+	fl.BoolVar(&f.tlsEnabled, flagEnableTLS, false, "re-encrypt traffic to the members with TLS")
+	fl.BoolVar(&f.noTLS, flagDisableTLS, false, "do not re-encrypt traffic to the members")
 	fl.BoolVar(&f.noTag, "no-tag", false, "clear all tags")
 }
 
@@ -376,7 +376,7 @@ func newPoolSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if fl.Changed("enable") && fl.Changed("disable") {
 				return fmt.Errorf("--enable and --disable are mutually exclusive")
 			}
-			if fl.Changed("enable-tls") && fl.Changed("disable-tls") {
+			if fl.Changed(flagEnableTLS) && fl.Changed(flagDisableTLS) {
 				return fmt.Errorf("--enable-tls and --disable-tls are mutually exclusive")
 			}
 			if fl.Changed("tag") && f.noTag {
@@ -403,16 +403,16 @@ func runPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 
 	assignString(changed, "name", f.name, &opts.Name, &touched)
 	assignString(changed, "description", f.description, &opts.Description, &touched)
-	if changed["lb-algorithm"] {
+	if changed[flagLBAlgorithm] {
 		// LBMethod is a plain string with omitempty, not a pointer, so it can only
 		// be set to a real value — which is all octavia accepts anyway.
 		opts.LBMethod = pools.LBMethod(f.lbAlgorithm)
 		touched = true
 	}
 	switch {
-	case changed["enable-tls"]:
-		assignBool(changed, "enable-tls", true, &opts.TLSEnabled, &touched)
-	case changed["disable-tls"]:
+	case changed[flagEnableTLS]:
+		assignBool(changed, flagEnableTLS, true, &opts.TLSEnabled, &touched)
+	case changed[flagDisableTLS]:
 		v := false
 		opts.TLSEnabled = &v
 		touched = true

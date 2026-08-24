@@ -143,15 +143,15 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.router, "router", "", "list only ports attached to this router (name or ID)")
 	fl.StringVar(&f.server, "server", "", "list only ports attached to this server (name or ID)")
 	fl.StringVar(&f.deviceID, "device-id", "", "list only ports with this device ID")
-	fl.StringVar(&f.deviceOwner, "device-owner", "", "list only ports with this device owner")
+	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "list only ports with this device owner")
 	fl.StringVar(&f.host, "host", "", "list only ports bound to this host ID")
-	fl.StringVar(&f.macAddress, "mac-address", "", "list only ports with this MAC address")
+	fl.StringVar(&f.macAddress, flagMACAddress, "", "list only ports with this MAC address")
 	fl.StringVar(&f.status, "status", "", "list only ports with this status (ACTIVE, BUILD, DOWN, ERROR)")
 	fl.StringVar(&f.project, "project", "", "list only ports in this project (name or ID)")
 	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID)")
-	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "list only ports in this security group (name or ID, repeatable)")
+	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "list only ports in this security group (name or ID, repeatable)")
 	// OSC form: --fixed-ip subnet=<subnet>,ip-address=<ip>,ip-substring=<substr>; repeatable.
-	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "filter by fixed IP: subnet=/ip-address=/ip-substring= pairs; repeatable")
+	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "filter by fixed IP: subnet=/ip-address=/ip-substring= pairs; repeatable")
 	fl.StringSliceVar(&f.tags, "tags", nil, "list only ports with all of these tags (comma-separated)")
 	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only ports with any of these tags (comma-separated)")
 	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude ports with all of these tags (comma-separated)")
@@ -422,19 +422,19 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.network, "network", "", "network for the port (name or ID, required)")
-	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable)")
-	fl.StringVar(&f.macAddress, "mac-address", "", "MAC address for the port")
-	fl.StringVar(&f.deviceOwner, "device-owner", "", "device owner for the port")
+	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable)")
+	fl.StringVar(&f.macAddress, flagMACAddress, "", "MAC address for the port")
+	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "device owner for the port")
 	fl.StringVar(&f.description, "description", "", "description for the port")
-	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "security group to associate (name or ID, repeatable)")
-	fl.BoolVar(&f.noSecurityGroup, "no-security-group", false, "create the port with no security groups")
-	fl.StringArrayVar(&f.allowedAddress, "allowed-address", nil, "allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable)")
-	fl.BoolVar(&f.enablePortSecurity, "enable-port-security", false, "enable port security (security groups and anti-spoofing)")
-	fl.BoolVar(&f.disablePortSecurity, "disable-port-security", false, "disable port security")
+	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "security group to associate (name or ID, repeatable)")
+	fl.BoolVar(&f.noSecurityGroup, flagNoSecurityGroup, false, "create the port with no security groups")
+	fl.StringArrayVar(&f.allowedAddress, flagAllowedAddress, nil, "allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable)")
+	fl.BoolVar(&f.enablePortSecurity, flagEnablePortSecurity, false, "enable port security (security groups and anti-spoofing)")
+	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security")
 	fl.BoolVar(&f.enable, "enable", false, "create the port administratively up (default)")
 	fl.BoolVar(&f.disable, "disable", false, "create the port administratively down")
-	cmd.MarkFlagsMutuallyExclusive("security-group", "no-security-group")
-	cmd.MarkFlagsMutuallyExclusive("enable-port-security", "disable-port-security")
+	cmd.MarkFlagsMutuallyExclusive(flagSecurityGroup, flagNoSecurityGroup)
+	cmd.MarkFlagsMutuallyExclusive(flagEnablePortSecurity, flagDisablePortSecurity)
 	_ = cmd.MarkFlagRequired("network")
 	return cmd
 }
@@ -487,7 +487,7 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	// the same way runPortSet does it.
 	var builder ports.CreateOptsBuilder = opts
 	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
-		"enable-port-security", "disable-port-security"); secure != nil {
+		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {
 		builder = portCreateOptsExt{CreateOptsBuilder: opts, PortSecurityEnabled: secure}
 	}
 
@@ -588,24 +588,24 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new port name")
-	fl.StringArrayVar(&f.fixedIP, "fixed-ip", nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable, replaces existing)")
+	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable, replaces existing)")
 	fl.StringVar(&f.description, "description", "", "new port description")
-	fl.StringArrayVar(&f.securityGroup, "security-group", nil, "security group to associate (name or ID, repeatable, replaces existing)")
-	fl.BoolVar(&f.noSecurityGroup, "no-security-group", false, "clear all security groups from the port")
+	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "security group to associate (name or ID, repeatable, replaces existing)")
+	fl.BoolVar(&f.noSecurityGroup, flagNoSecurityGroup, false, "clear all security groups from the port")
 	fl.BoolVar(&f.enable, "enable", false, "set the port administratively up")
 	fl.BoolVar(&f.disable, "disable", false, "set the port administratively down")
-	fl.StringArrayVar(&f.allowedAddress, "allowed-address", nil,
+	fl.StringArrayVar(&f.allowedAddress, flagAllowedAddress, nil,
 		"allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable, replaces existing)")
-	fl.BoolVar(&f.noAllowedAddress, "no-allowed-address", false, "clear all allowed address pairs from the port")
-	fl.BoolVar(&f.enablePortSecurity, "enable-port-security", false, "enable port security (security groups and anti-spoofing)")
-	fl.BoolVar(&f.disablePortSecurity, "disable-port-security", false, "disable port security")
+	fl.BoolVar(&f.noAllowedAddress, flagNoAllowedAddress, false, "clear all allowed address pairs from the port")
+	fl.BoolVar(&f.enablePortSecurity, flagEnablePortSecurity, false, "enable port security (security groups and anti-spoofing)")
+	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security")
 	fl.StringVar(&f.host, "host", "", "binding host ID for the port")
 	fl.StringVar(&f.device, "device", "", "device ID the port is attached to")
-	fl.StringVar(&f.deviceOwner, "device-owner", "", "device owner of the port")
-	cmd.MarkFlagsMutuallyExclusive("security-group", "no-security-group")
+	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "device owner of the port")
+	cmd.MarkFlagsMutuallyExclusive(flagSecurityGroup, flagNoSecurityGroup)
 	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
-	cmd.MarkFlagsMutuallyExclusive("allowed-address", "no-allowed-address")
-	cmd.MarkFlagsMutuallyExclusive("enable-port-security", "disable-port-security")
+	cmd.MarkFlagsMutuallyExclusive(flagAllowedAddress, flagNoAllowedAddress)
+	cmd.MarkFlagsMutuallyExclusive(flagEnablePortSecurity, flagDisablePortSecurity)
 	return cmd
 }
 
@@ -624,7 +624,7 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		opts.Description = &f.description
 		changed = true
 	}
-	if flags.Changed("fixed-ip") {
+	if flags.Changed(flagFixedIP) {
 		fixedIPs, err := buildFixedIPs(ctx, client, f.fixedIP)
 		if err != nil {
 			return err
@@ -640,7 +640,7 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	case f.noSecurityGroup:
 		opts.SecurityGroups = &[]string{}
 		changed = true
-	case flags.Changed("security-group"):
+	case flags.Changed(flagSecurityGroup):
 		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
 		if err != nil {
 			return err
@@ -652,7 +652,7 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	case f.noAllowedAddress:
 		opts.AllowedAddressPairs = &[]ports.AddressPair{}
 		changed = true
-	case flags.Changed("allowed-address"):
+	case flags.Changed(flagAllowedAddress):
 		pairs, err := parseAddressPairs(f.allowedAddress)
 		if err != nil {
 			return err
@@ -664,7 +664,7 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		opts.DeviceID = &f.device
 		changed = true
 	}
-	if flags.Changed("device-owner") {
+	if flags.Changed(flagDeviceOwner) {
 		opts.DeviceOwner = &f.deviceOwner
 		changed = true
 	}
@@ -678,7 +678,7 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		changed = true
 	}
 	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
-		"enable-port-security", "disable-port-security"); secure != nil {
+		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {
 		ext.PortSecurityEnabled = secure
 		changed = true
 	}
