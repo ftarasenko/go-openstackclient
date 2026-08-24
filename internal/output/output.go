@@ -237,6 +237,44 @@ func numericValue(v any) (float64, bool) {
 	return 0, false
 }
 
+// selectFields keeps only the fields -c/--column asked for, with their values.
+// A field with no value (shorter values slice) keeps its place as nil rather
+// than shifting the pairing.
+func (o *Options) selectFields(fields []string, values []any) ([]string, []any) {
+	var outFields []string
+	var outValues []any
+	for i, f := range fields {
+		if !o.columnSelected(f) {
+			continue
+		}
+		outFields = append(outFields, f)
+		if i < len(values) {
+			outValues = append(outValues, values[i])
+		} else {
+			outValues = append(outValues, nil)
+		}
+	}
+	return outFields, outValues
+}
+
+// fieldMap pairs each field with its value, for the formats that emit an object.
+func fieldMap(fields []string, values []any) map[string]any {
+	m := make(map[string]any, len(fields))
+	for i, f := range fields {
+		m[f] = values[i]
+	}
+	return m
+}
+
+// fieldRows pairs each field with its value as Field/Value rows.
+func fieldRows(fields []string, values []any) [][]any {
+	rows := make([][]any, len(fields))
+	for i, f := range fields {
+		rows[i] = []any{f, values[i]}
+	}
+	return rows
+}
+
 // WriteSingle renders a single resource as a Field/Value view (e.g. "node show").
 func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error {
 	if len(values) != len(fields) {
@@ -254,42 +292,17 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 	}
 	values = normalized
 
-	// Column selection filters which fields are shown.
 	if len(o.Columns) > 0 {
-		var fFields []string
-		var fValues []any
-		for i, f := range fields {
-			if o.columnSelected(f) {
-				fFields = append(fFields, f)
-				if i < len(values) {
-					fValues = append(fValues, values[i])
-				} else {
-					fValues = append(fValues, nil)
-				}
-			}
-		}
-		fields, values = fFields, fValues
+		fields, values = o.selectFields(fields, values)
 	}
 
 	switch o.Format {
 	case FormatJSON:
-		m := make(map[string]any, len(fields))
-		for i, f := range fields {
-			m[f] = values[i]
-		}
-		return writeJSON(w, m)
+		return writeJSON(w, fieldMap(fields, values))
 	case FormatYAML:
-		m := make(map[string]any, len(fields))
-		for i, f := range fields {
-			m[f] = values[i]
-		}
-		return writeYAML(w, m)
+		return writeYAML(w, fieldMap(fields, values))
 	case FormatCSV:
-		rows := make([][]any, len(fields))
-		for i, f := range fields {
-			rows[i] = []any{f, values[i]}
-		}
-		return writeCSV(w, []string{"Field", "Value"}, rows)
+		return writeCSV(w, []string{"Field", "Value"}, fieldRows(fields, values))
 	case FormatValue:
 		rows := make([][]any, len(values))
 		for i := range values {
@@ -297,11 +310,8 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 		}
 		return writeValue(w, rows)
 	default:
-		rows := make([][]any, len(fields))
-		for i, f := range fields {
-			rows[i] = []any{f, values[i]}
-		}
-		return writeTable(w, []string{"Field", "Value"}, rows, o.fitWidth(w), 16, len(o.Columns) == 0)
+		return writeTable(w, []string{"Field", "Value"}, fieldRows(fields, values),
+			o.fitWidth(w), 16, len(o.Columns) == 0)
 	}
 }
 
@@ -472,21 +482,16 @@ func writeValue(w io.Writer, rows [][]any) error {
 	return nil
 }
 
-// writeTable renders an ASCII table. When fitWidth > 0 the column widths are
-// shrunk (and over-long cells wrapped across physical lines) so the table fits
-// within fitWidth, mirroring python-openstackclient/cliff; fitWidth == 0 leaves
-// the table unbounded (piped output). When elide is true, cells longer than
-// maxTableCell are replaced by a placeholder so a single opaque blob cannot
-// dominate the table. minWidth is the floor a wrapped column is shrunk to.
-func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int, elide bool) error {
-	// Column widths are measured in runes (not bytes) so multi-byte content
-	// (e.g. Cyrillic names on a KeyStack cloud) aligns with the ASCII border,
-	// matching fmt's rune-based %-*s padding used below.
+// tableCells renders every cell to its display string and measures the natural
+// width of each column. Widths are counted in runes, not bytes, so multi-byte
+// content (e.g. Cyrillic names on a KeyStack cloud) lines up with the ASCII
+// border — matching the rune-based %-*s padding the rows are printed with.
+func tableCells(cols []string, rows [][]any, elide bool) ([][]string, []int) {
 	natural := make([]int, len(cols))
 	for i, c := range cols {
 		natural[i] = utf8.RuneCountInString(c)
 	}
-	strRows := make([][]string, len(rows))
+	out := make([][]string, len(rows))
 	for ri, r := range rows {
 		sr := make([]string, len(cols))
 		for ci := range cols {
@@ -505,23 +510,22 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 				natural[ci] = n
 			}
 		}
-		strRows[ri] = sr
+		out[ri] = sr
 	}
+	return out, natural
+}
 
-	assigned := natural
-	if fitWidth > 0 {
-		assigned = shrinkWidths(natural, fitWidth, minWidth)
-	}
-
-	// Wrap the header and every cell to its assigned width, then set the final
-	// column widths to the widest wrapped line so the borders stay tight.
+// wrapTableCells wraps the header and every cell to its assigned width. The
+// returned widths are the widest wrapped line per column, so the borders stay
+// tight around content that wrapped short of its assignment.
+func wrapTableCells(cols []string, strRows [][]string, assigned []int) ([][]string, [][][]string, []int) {
 	widths := make([]int, len(cols))
-	wrapHeader := make([][]string, len(cols))
+	header := make([][]string, len(cols))
 	for i, c := range cols {
-		wrapHeader[i] = wrapText(c, assigned[i])
-		widths[i] = maxLineWidth(wrapHeader[i])
+		header[i] = wrapText(c, assigned[i])
+		widths[i] = maxLineWidth(header[i])
 	}
-	wrapRows := make([][][]string, len(strRows))
+	out := make([][][]string, len(strRows))
 	for ri, sr := range strRows {
 		wr := make([][]string, len(cols))
 		for ci := range cols {
@@ -530,60 +534,86 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 				widths[ci] = n
 			}
 		}
-		wrapRows[ri] = wr
+		out[ri] = wr
 	}
+	return header, out, widths
+}
 
-	border := func() error {
-		var b strings.Builder
+// tableWriter emits the borders and rows once the column widths are settled.
+type tableWriter struct {
+	w      io.Writer
+	widths []int
+}
+
+func (t tableWriter) border() error {
+	var b strings.Builder
+	b.WriteByte('+')
+	for _, wdt := range t.widths {
+		b.WriteString(strings.Repeat("-", wdt+2))
 		b.WriteByte('+')
-		for _, wdt := range widths {
-			b.WriteString(strings.Repeat("-", wdt+2))
-			b.WriteByte('+')
-		}
-		_, err := fmt.Fprintln(w, b.String())
-		return err
 	}
-	// row prints a logical row whose cells may each span several physical lines,
-	// padding shorter cells with blanks so every column stays aligned.
-	row := func(cells [][]string) error {
-		h := 1
-		for _, c := range cells {
-			if len(c) > h {
-				h = len(c)
-			}
-		}
-		for li := range h {
-			var b strings.Builder
-			b.WriteByte('|')
-			for ci := range cells {
-				var s string
-				if li < len(cells[ci]) {
-					s = cells[ci][li]
-				}
-				fmt.Fprintf(&b, " %-*s |", widths[ci], s)
-			}
-			if _, err := fmt.Fprintln(w, b.String()); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
+	_, err := fmt.Fprintln(t.w, b.String())
+	return err
+}
 
-	if err := border(); err != nil {
-		return err
+// row prints a logical row whose cells may each span several physical lines,
+// padding shorter cells with blanks so every column stays aligned.
+func (t tableWriter) row(cells [][]string) error {
+	h := 1
+	for _, c := range cells {
+		if len(c) > h {
+			h = len(c)
+		}
 	}
-	if err := row(wrapHeader); err != nil {
-		return err
-	}
-	if err := border(); err != nil {
-		return err
-	}
-	for _, wr := range wrapRows {
-		if err := row(wr); err != nil {
+	for li := range h {
+		var b strings.Builder
+		b.WriteByte('|')
+		for ci := range cells {
+			var s string
+			if li < len(cells[ci]) {
+				s = cells[ci][li]
+			}
+			fmt.Fprintf(&b, " %-*s |", t.widths[ci], s)
+		}
+		if _, err := fmt.Fprintln(t.w, b.String()); err != nil {
 			return err
 		}
 	}
-	return border()
+	return nil
+}
+
+// writeTable renders an ASCII table in four steps: measure, fit, wrap, emit.
+// When fitWidth > 0 the column widths are shrunk (and over-long cells wrapped
+// across physical lines) so the table fits within fitWidth, mirroring
+// python-openstackclient/cliff; fitWidth == 0 leaves the table unbounded (piped
+// output). When elide is true, cells longer than maxTableCell are replaced by a
+// placeholder so a single opaque blob cannot dominate the table. minWidth is the
+// floor a wrapped column is shrunk to.
+func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int, elide bool) error {
+	strRows, natural := tableCells(cols, rows, elide)
+
+	assigned := natural
+	if fitWidth > 0 {
+		assigned = shrinkWidths(natural, fitWidth, minWidth)
+	}
+	header, wrapRows, widths := wrapTableCells(cols, strRows, assigned)
+
+	t := tableWriter{w: w, widths: widths}
+	if err := t.border(); err != nil {
+		return err
+	}
+	if err := t.row(header); err != nil {
+		return err
+	}
+	if err := t.border(); err != nil {
+		return err
+	}
+	for _, wr := range wrapRows {
+		if err := t.row(wr); err != nil {
+			return err
+		}
+	}
+	return t.border()
 }
 
 // fitWidth resolves the width the table should be fitted to: an explicit
