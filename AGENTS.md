@@ -152,10 +152,15 @@ fails on work nobody just wrote. The same note sits next to the setting in
 Two known, accepted divergences — neither is a regression to chase:
 
 - **Cognitive complexity.** Sonar's `go:S3776` fires at 15; this repo's
-  `gocognit` gate is 25 for the reasons in "Build / test / lint" above. Functions
-  between the two thresholds (e.g. `runFlavorSet`) are reported by Sonar and
-  clean locally. `golangci-lint` is the gate that every commit passes through, so
-  it wins; do not split a function only to satisfy S3776.
+  `gocognit` gate is 25 for the reasons in "Build / test / lint" above. The two
+  cannot be reconciled server-side from here — the threshold is a rule
+  *parameter*, it lives in the Quality Profile, and the Go profile in use is the
+  built-in "Sonar way", which is read-only — so the rule is **suppressed
+  project-wide** by the `e2` entry in `sonar-project.properties`, which carries
+  the full reasoning. `golangci-lint` is the gate that every commit passes
+  through, so it wins; do not split a function only to satisfy S3776, and do not
+  re-enable the rule without raising its threshold to 25 on a custom profile
+  first.
 - **First scan of a fresh server.** With no prior analysis there is no previous
   version to diff against, so the whole tree lands in "new code" and the gate can
   fail on pre-existing findings. Re-check against the second scan before treating
