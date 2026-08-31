@@ -495,6 +495,74 @@ so each certificate is separately visible and separately encrypted. `decrypt`
 never writes to a Vault: recovering a secret and re-injecting it stay separate
 acts.
 
+### S3 object storage (`koc s3`)
+
+Another koc-specific group, for the LCM cluster's **Garage** — the S3 store that
+holds GitLab's object storage and the MariaDB dumps the `backup-db` scheduled
+pipeline uploads. Like `koc vault kv` it never authenticates against Keystone:
+S3 credentials alone are used, so it works on a host with no cloud credentials.
+
+```sh
+koc s3 bucket list
+koc s3 object list db-backups
+koc s3 object show db-backups/<key>            # HEAD only, no transfer
+koc s3 download   db-backups/<key> ./dump.mbs.gz.enc
+koc s3 download   db-backups/<key>.sha256 -    # "-" streams to stdout, so it pipes
+koc s3 upload     ./dump.mbs.gz.enc db-backups/
+```
+
+`bucket list` is scoped to the **access key**, not to the store: Garage answers
+with the buckets that key is granted, so a key made for one bucket lists exactly
+that one.
+
+Credentials come from flags, from the environment, or from a Kubernetes Secret:
+
+| flag | env | default |
+| --- | --- | --- |
+| `--s3-endpoint` | `AWS_ENDPOINT_URL`, `S3_ENDPOINT`, `s3_host` | — |
+| `--s3-access-key` | `AWS_ACCESS_KEY_ID`, `S3_ACCESS_KEY`, `s3_access_key` | — |
+| `--s3-secret-key` | `AWS_SECRET_ACCESS_KEY`, `S3_SECRET_KEY`, `s3_secret_key` | — |
+| `--s3-region` | `AWS_REGION`, `AWS_DEFAULT_REGION`, `S3_REGION`, `s3_region` | `garage` |
+| `--s3-cacert` | `AWS_CA_BUNDLE`, `S3_CACERT` | system roots |
+| `--s3-creds-from-ns` | `KOC_S3_CREDS_FROM_NS` | — |
+| `--insecure-s3` | `S3_SKIP_VERIFY` | off (the global `--insecure` also applies) |
+
+The three env families are deliberate: `AWS_*` so an existing `aws`/`boto`
+environment works unchanged, `S3_*` as the neutral spelling, and the lower-case
+`s3_host` / `s3_access_key` / `s3_secret_key` / `s3_region` that the KeyStack
+installer writes as GitLab **group CI/CD variables** — so a pipeline job can call
+`koc s3` with no flags at all. Prefer the environment to `--s3-secret-key`: a
+flag value is visible in the process list and in shell history.
+
+`--s3-creds-from-ns <namespace>[/<secret>][:<key>]` reads them from a Kubernetes
+Secret over the same read-only API `--creds-from-ns` uses (`--kubeconfig` /
+`--kube-context` apply). The secret name defaults to `gitlab-object-storage`, so
+on an LCM cluster node GitLab's own key needs nothing else:
+
+```sh
+koc s3 --s3-creds-from-ns lcm-gitlab bucket list
+```
+
+It handles the shapes S3 credentials actually appear in: one key per value
+(`access_key`/`secret_key`, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, …), and
+a Secret holding a whole connection config as a single value — GitLab's `config`
+key, an `rclone.conf` or an `.s3cfg` — from which the endpoint, region and
+path-style setting are read as well. A Secret carrying only a key pair
+supplies only that, and the endpoint still comes from `--s3-endpoint` or the
+environment. Note that on a KeyStack LCM cluster **only**
+GitLab's key is a Kubernetes Secret; the `db-backup` key is held by Garage itself
+and by the masked GitLab group variables, so export it from one of those.
+
+Addressing is **path-style** by default (`<endpoint>/<bucket>/<key>`), matching
+the `--host-bucket` setting the backup pipeline gives `s3cmd`; `--no-path-style`
+switches to `<bucket>.<endpoint>`, which needs a wildcard DNS record.
+
+Uploads are a single signed `PUT` — there is no multipart support, so the
+server's own single-part ceiling (5 GiB on Garage and on AWS) applies. Downloads
+never overwrite an existing file without `--force`, and a transfer that fails
+partway removes the partial file rather than leaving a truncated dump that looks
+complete.
+
 ## Layout
 
 ```
@@ -503,7 +571,9 @@ internal/auth/             clouds.Parse + provider + TLS + per-service clients
                            + --creds-from-ns / --creds-from-vault sources
 internal/kube/             minimal read-only k8s REST client (no client-go)
 internal/vault/            minimal Vault REST client (AppRole/token + KV v2)
+internal/s3/               minimal S3 REST client (SigV4, no aws-sdk/minio-go)
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt, no Keystone auth
+internal/cli/s3/           "koc s3" bucket/object/download/upload, no Keystone auth
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
 internal/cli/              root command wiring
 internal/cli/resolve/      cross-service name→ID resolution

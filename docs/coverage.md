@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-12 · `koc` @ this commit (base `3986d3a`) · 548 leaf
+**Snapshot:** 2026-08-31 · `koc` @ this commit (base `6d797ab`) · 553 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**513 of 844 in-scope upstream commands (61%).** Of `koc`'s 548 leaf commands,
-513 are upstream-equivalent and 35 are koc-native.
+**513 of 844 in-scope upstream commands (61%).** Of `koc`'s 553 leaf commands,
+513 are upstream-equivalent and 40 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -356,13 +356,14 @@ limitations"; the fix is to make the other resolvers match `server`'s behaviour.
 
 ## koc-native commands
 
-No upstream equivalent, by design — **35 leaves**, itemised so the total
-reconciles with the headline (548 = 513 + 35):
+No upstream equivalent, by design — **40 leaves**, itemised so the total
+reconciles with the headline (553 = 513 + 40):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
 | 18 | `koc keyvrm …` — `app-config` ×2, `availability-zone` ×2, `event` ×4, `host-aggregate-config` ×5, `recommendation` ×5 | in-house KeyVRM catalog service; no gophercloud package and no OSC plugin |
 | 5 | `koc vault kv list/get/copy/export/decrypt` | Vault is not an OpenStack service; `copy` fills a gap in the Vault CLI itself |
+| 5 | `koc s3 bucket list`, `koc s3 object list/show`, `koc s3 download/upload` | S3 is not an OpenStack service. Upstream's object-store commands speak **Swift**, which is a different API and is counted separately as not targeted (`openstack.object_store.v1`, 0/17); these talk to the LCM cluster's Garage, which holds GitLab's object storage and the `backup-db` pipeline's MariaDB dumps |
 | 2 | `koc dns pool list/show` | designate's API and its Python SDK both expose `/v2/pools`, but `python-designateclient` registers no `openstack` command for it. Reads only — pool *writes* are a `designate-manage`/config operation on the servers |
 | 2 | `koc server add/remove server-group` | KeyStack dynamic server groups |
 | 2 | `koc network trunk subport add`/`remove` | upstream folds these into `network trunk set`/`unset --subport` flags rather than giving them verbs (`network subport list` does exist and is counted — see "Naming deviations") |
@@ -393,7 +394,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (548 leaf commands at the snapshot above)
+# 1. koc's own command tree (553 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -423,7 +424,7 @@ Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
 1. every raw row numerator summed = the headline numerator (513);
-2. leaf commands = headline numerator + koc-native (548 = 513 + 35);
+2. leaf commands = headline numerator + koc-native (553 = 513 + 40);
 3. every raw row denominator summed = 901, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (844).
 

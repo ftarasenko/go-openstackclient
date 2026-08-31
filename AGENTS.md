@@ -184,9 +184,11 @@ internal/auth/             one authenticated ProviderClient per invocation + per
   debug.go                 --debug transport: redacts tokens+secrets, elides large bodies
 internal/kube/             minimal read-only k8s REST client (kubeconfig + secret/Ironic reads); no client-go
 internal/vault/            minimal Vault REST client (AppRole login / token + KV v2 read + X-Vault-Namespace)
+internal/s3/               minimal S3 REST client: hand-rolled SigV4 + list/head/get/put (no aws-sdk-go-v2 / minio-go)
 internal/output/           -f/--format {table,json,yaml,value,csv} and -c/--column layer
 internal/cli/keyvrm/       KeyVRM (in-house catalog service); typed request layer (types.go/requests.go) + cobra verbs
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt (package vaultcli); Vault creds only
+internal/cli/s3/           "koc s3" bucket/object list+show, download, upload (package s3cli); S3 creds only
 internal/cli/quota/        "koc quota show|set" — the one cross-service noun (nova+cinder+neutron)
 internal/cli/              root.go wires every service's command group onto the root
 internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
