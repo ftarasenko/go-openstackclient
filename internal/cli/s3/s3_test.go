@@ -115,7 +115,7 @@ func TestRunDownloadToFile(t *testing.T) {
 	var buf bytes.Buffer
 	dest := filepath.Join(dir, "out.gz")
 	err := runDownload(context.Background(), client, valueOpts(),
-		"db-backups", "e2e-mariadb.sql.gz", dest, &downloadFlags{}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,12 +132,12 @@ func TestRunDownloadToFile(t *testing.T) {
 
 	// A second run must refuse rather than clobber the local copy of a backup.
 	err = runDownload(context.Background(), client, valueOpts(),
-		"db-backups", "e2e-mariadb.sql.gz", dest, &downloadFlags{}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Errorf("err = %v, want a refusal pointing at --force", err)
 	}
 	if err := runDownload(context.Background(), client, valueOpts(),
-		"db-backups", "e2e-mariadb.sql.gz", dest, &downloadFlags{force: true}, &buf); err != nil {
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest, force: true}, &buf); err != nil {
 		t.Errorf("--force download failed: %v", err)
 	}
 }
@@ -150,7 +150,7 @@ func TestRunDownloadStdout(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		"db-backups", "e2e-mariadb.sql.gz.sha256", "-", &downloadFlags{}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz.sha256", dest: "-"}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestRunDownloadFailureLeavesNoFile(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		"db-backups", "missing", dest, &downloadFlags{}, &buf)
+		downloadRequest{bucket: "db-backups", key: "missing", dest: dest}, &buf)
 	if err == nil {
 		t.Fatal("expected an error")
 	}

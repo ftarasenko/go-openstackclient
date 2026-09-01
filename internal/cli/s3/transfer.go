@@ -17,8 +17,15 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/s3"
 )
 
-// downloadFlags holds the options accepted by "download".
-type downloadFlags struct {
+// downloadRequest is one "download" invocation: the object to fetch, where to
+// put it, and the one flag that governs it. The positional arguments travel
+// with the flag because runDownload needs all four and eight parameters is one
+// too many (go:S107).
+type downloadRequest struct {
+	bucket, key string
+	// dest is the destination path: "" means the key's basename, "-" means
+	// stream to stdout.
+	dest  string
 	force bool
 }
 
@@ -33,7 +40,7 @@ mistake. A transfer that fails partway removes the partial file rather than
 leaving a truncated dump that looks complete.`
 
 func newDownloadCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
-	df := &downloadFlags{}
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "download <bucket>/<key> [file]",
 		Short: "Download an object to a file",
@@ -47,46 +54,47 @@ func newDownloadCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra
 			if err != nil {
 				return err
 			}
-			dest := ""
+			req := downloadRequest{bucket: bucket, key: key, force: force}
 			if len(args) == 2 {
-				dest = args[1]
+				req.dest = args[1]
 			}
 			ctx := cmd.Context()
 			client, err := f.client(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runDownload(ctx, client, o, bucket, key, dest, df, cmd.OutOrStdout())
+			return runDownload(ctx, client, o, req, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().BoolVar(&df.force, "force", false, "overwrite the destination file if it exists")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite the destination file if it exists")
 	return cmd
 }
 
 // runDownload is the test seam for "download". w receives either the object's
 // raw bytes (dest "-") or the summary table.
 func runDownload(ctx context.Context, client *s3.Client, o *output.Options,
-	bucket, key, dest string, f *downloadFlags, w io.Writer) error {
-	if dest == "-" {
-		if _, err := client.GetObject(ctx, bucket, key, w); err != nil {
-			return downloadError(bucket, key, err)
+	r downloadRequest, w io.Writer) error {
+	if r.dest == "-" {
+		if _, err := client.GetObject(ctx, r.bucket, r.key, w); err != nil {
+			return downloadError(r.bucket, r.key, err)
 		}
 		return nil
 	}
+	dest := r.dest
 	if dest == "" {
-		dest = filepath.Base(key)
+		dest = filepath.Base(r.key)
 	}
 	if info, err := os.Stat(dest); err == nil && info.IsDir() {
-		dest = filepath.Join(dest, filepath.Base(key))
+		dest = filepath.Join(dest, filepath.Base(r.key))
 	}
 
-	n, err := downloadToFile(ctx, client, bucket, key, dest, f.force)
+	n, err := downloadToFile(ctx, client, r.bucket, r.key, dest, r.force)
 	if err != nil {
 		return err
 	}
 	return o.WriteSingle(w,
 		[]string{"Bucket", "Key", "File", "Size"},
-		[]any{bucket, key, dest, n})
+		[]any{r.bucket, r.key, dest, n})
 }
 
 // downloadToFile streams the object into dest, leaving nothing behind if it

@@ -303,7 +303,7 @@ func pageSize(limit, have int) int {
 // HeadObject fetches an object's metadata without its body.
 func (c *Client) HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error) {
 	var info *ObjectInfo
-	err := c.do(ctx, http.MethodHead, c.url(bucket, key, nil), nil, emptySHA256, 0, nil,
+	err := c.do(ctx, request{method: http.MethodHead, url: c.url(bucket, key, nil), payloadHash: emptySHA256},
 		func(resp *http.Response) error {
 			info = objectInfoFromHeader(bucket, key, resp)
 			return nil
@@ -318,7 +318,7 @@ func (c *Client) HeadObject(ctx context.Context, bucket, key string) (*ObjectInf
 // written.
 func (c *Client) GetObject(ctx context.Context, bucket, key string, w io.Writer) (int64, error) {
 	var n int64
-	err := c.do(ctx, http.MethodGet, c.url(bucket, key, nil), nil, emptySHA256, 0, nil,
+	err := c.do(ctx, request{method: http.MethodGet, url: c.url(bucket, key, nil), payloadHash: emptySHA256},
 		func(resp *http.Response) error {
 			var cerr error
 			n, cerr = io.Copy(w, resp.Body)
@@ -347,20 +347,27 @@ func (c *Client) PutObject(ctx context.Context, bucket, key string, body io.Read
 	}
 
 	var info *ObjectInfo
-	err = c.do(ctx, http.MethodPut, c.url(bucket, key, nil), body, hash, size, hdr,
-		func(resp *http.Response) error {
-			// Drain so the connection can be reused; a PUT reply has no body worth
-			// keeping beyond the ETag in its headers.
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errorBodyLimit))
-			info = &ObjectInfo{
-				Bucket:      bucket,
-				Key:         key,
-				Size:        size,
-				ETag:        strings.Trim(resp.Header.Get("ETag"), `"`),
-				ContentType: contentType,
-			}
-			return nil
-		})
+	put := request{
+		method:      http.MethodPut,
+		url:         c.url(bucket, key, nil),
+		body:        body,
+		payloadHash: hash,
+		size:        size,
+		header:      hdr,
+	}
+	err = c.do(ctx, put, func(resp *http.Response) error {
+		// Drain so the connection can be reused; a PUT reply has no body worth
+		// keeping beyond the ETag in its headers.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errorBodyLimit))
+		info = &ObjectInfo{
+			Bucket:      bucket,
+			Key:         key,
+			Size:        size,
+			ETag:        strings.Trim(resp.Header.Get("ETag"), `"`),
+			ContentType: contentType,
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -445,12 +452,25 @@ func (c *Client) url(bucket, key string, q url.Values) *url.URL {
 
 // getXML performs a signed GET and decodes the XML body into out.
 func (c *Client) getXML(ctx context.Context, u *url.URL, out any) error {
-	return c.do(ctx, http.MethodGet, u, nil, emptySHA256, 0, nil, func(resp *http.Response) error {
+	return c.do(ctx, request{method: http.MethodGet, url: u, payloadHash: emptySHA256}, func(resp *http.Response) error {
 		if err := xml.NewDecoder(resp.Body).Decode(out); err != nil {
 			return fmt.Errorf("decoding S3 response from %s: %w", u.Path, err)
 		}
 		return nil
 	})
+}
+
+// request describes one signed S3 call. It is a struct rather than a parameter
+// list because a bodyless GET/HEAD leaves most of it at its zero value, and
+// four positional nils at every call site said nothing about which was which.
+type request struct {
+	method string
+	url    *url.URL
+	body   io.Reader // nil for GET/HEAD
+	// payloadHash is the SigV4 hash of body; emptySHA256 when there is none.
+	payloadHash string
+	size        int64             // Content-Length; only read when body != nil
+	header      map[string]string // extra request headers, e.g. Content-Type
 }
 
 // do signs and performs one request, then hands the still-open response to sink.
@@ -460,31 +480,30 @@ func (c *Client) getXML(ctx context.Context, u *url.URL, out any) error {
 // Bodies are never logged, even under --debug: a request body is object data and
 // a response body can be too, while the headers carry the signature. Method,
 // path and status are enough to debug a 403.
-func (c *Client) do(ctx context.Context, method string, u *url.URL, body io.Reader, payloadHash string,
-	size int64, hdr map[string]string, sink func(*http.Response) error) error {
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+func (c *Client) do(ctx context.Context, r request, sink func(*http.Response) error) error {
+	req, err := http.NewRequestWithContext(ctx, r.method, r.url.String(), r.body)
 	if err != nil {
 		return err
 	}
-	for k, v := range hdr {
+	for k, v := range r.header {
 		req.Header.Set(k, v)
 	}
-	if body != nil {
-		req.ContentLength = size
+	if r.body != nil {
+		req.ContentLength = r.size
 	}
-	c.sign(req, payloadHash, c.now())
+	c.sign(req, r.payloadHash, c.now())
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("s3 %s %s: %w", method, u.Path, err)
+		return fmt.Errorf("s3 %s %s: %w", r.method, r.url.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if c.cfg.Debug {
-		fmt.Fprintf(os.Stderr, "s3: %s %s -> %d\n", method, u.RequestURI(), resp.StatusCode)
+		fmt.Fprintf(os.Stderr, "s3: %s %s -> %d\n", r.method, r.url.RequestURI(), resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return newAPIError(method, u.Path, resp)
+		return newAPIError(r.method, r.url.Path, resp)
 	}
 	return sink(resp)
 }
