@@ -18,6 +18,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
@@ -458,6 +459,26 @@ type serverCreateFlags struct {
 	bootVolumeType string
 	min            int
 	max            int
+
+	// Placement. --availability-zone takes nova's legacy forced-host form
+	// "<zone>[:<host>[:<node>]]"; --host / --hypervisor-hostname are the 2.74
+	// spelling of the same thing. Both are admin-only.
+	availabilityZone   string
+	host               string
+	hypervisorHostname string
+
+	// userData is a path; the file's bytes become the instance's user_data.
+	userData string
+
+	// blockDevices / blockDeviceMappings are the two upstream-OSC spellings of
+	// block_device_mapping_v2, parsed into bdmSpecs by RunE. bdmSpecs is what
+	// the seam reads, so a test drives the mappings without re-parsing flags.
+	blockDevices        []string
+	blockDeviceMappings []string
+	bdmSpecs            []map[string]any
+
+	wait        bool
+	waitTimeout time.Duration
 }
 
 func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -481,6 +502,23 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 					return err
 				}
 				f.nicSpecs = append(f.nicSpecs, spec)
+			}
+			// Both --block-device spellings feed one ordered mapping list, so a
+			// request may mix them; each is parsed and validated before anything
+			// is sent.
+			for _, raw := range f.blockDevices {
+				bdm, err := parseBlockDevice(raw)
+				if err != nil {
+					return err
+				}
+				f.bdmSpecs = append(f.bdmSpecs, bdm)
+			}
+			for _, raw := range f.blockDeviceMappings {
+				bdm, err := parseBlockDeviceMapping(raw)
+				if err != nil {
+					return err
+				}
+				f.bdmSpecs = append(f.bdmSpecs, bdm)
 			}
 			ctx := cmd.Context()
 			s, err := newComputeSession(ctx, a)
@@ -518,10 +556,34 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.bootVolumeType, "boot-volume-type", "", "cinder volume type for the --boot-from-volume root volume")
 	fl.IntVar(&f.min, "min", 0, "minimum number of servers to launch")
 	fl.IntVar(&f.max, "max", 0, "maximum number of servers to launch")
+	// Deterministic placement. nova has two mechanisms and rejects both at once:
+	// the legacy "<zone>:<host>[:<node>]" availability_zone, and the 2.74
+	// host/hypervisor_hostname pair. Either needs an admin token; on a
+	// non-admin one nova ignores the host part of the zone and refuses
+	// host/hypervisor_hostname outright.
+	fl.StringVar(&f.availabilityZone, "availability-zone", "",
+		"availability zone, optionally targeting a host as <zone>:<host>[:<node>] (admin)")
+	fl.StringVar(&f.host, "host", "", "schedule onto this compute host (admin; nova 2.74 or later)")
+	fl.StringVar(&f.hypervisorHostname, "hypervisor-hostname", "",
+		"schedule onto this hypervisor (admin; nova 2.74 or later)")
+	// user_data is read from a file and base64-encoded for nova; "-" is not
+	// accepted, matching upstream OSC.
+	fl.StringVar(&f.userData, "user-data", "", "path to a cloud-init/user-data file to inject at boot")
+	// The two upstream spellings of block_device_mapping_v2. --block-device is
+	// the current one and reaches every field; --block-device-mapping is the
+	// legacy positional form kept for scripts written against it.
+	fl.StringArrayVar(&f.blockDevices, "block-device", nil,
+		"block device as "+blockDeviceKeys()+" key=value pairs; repeatable")
+	fl.StringArrayVar(&f.blockDeviceMappings, "block-device-mapping", nil,
+		"legacy block device as <dev-name>=<id>[:<type>[:<size-GB>[:<delete-on-terminate>]]]; repeatable")
+	fl.BoolVar(&f.wait, "wait", false, "wait for the server to reach ACTIVE")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 	return cmd
 }
 
-func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *serverCreateFlags, w io.Writer) error {
+// validateServerCreate rejects the flag combinations nova (or koc) cannot
+// honour, before anything is sent.
+func validateServerCreate(f *serverCreateFlags) error {
 	if f.flavor == "" {
 		return fmt.Errorf("--flavor is required")
 	}
@@ -534,6 +596,67 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if f.bootVolumeType != "" && f.bootFromVolume == 0 {
 		return fmt.Errorf("--boot-volume-type requires --boot-from-volume")
 	}
+	// nova refuses the two host-targeting mechanisms together: a zone in the
+	// "<zone>:<host>" form already pins the host, and 2.74's host/
+	// hypervisor_hostname would be a second, possibly conflicting answer
+	// (nova/api/openstack/compute/servers.py _process_hosts).
+	if strings.Contains(f.availabilityZone, ":") && (f.host != "" || f.hypervisorHostname != "") {
+		return fmt.Errorf("--host/--hypervisor-hostname cannot be combined with an --availability-zone " +
+			"that already names a host; use one form or the other")
+	}
+	return nil
+}
+
+// serverCreateBlockDevices assembles the request's block_device_mapping_v2
+// list: the --boot-from-volume root device first, if asked for, then the
+// --block-device / --block-device-mapping entries in the order they were given.
+func serverCreateBlockDevices(f *serverCreateFlags) []map[string]any {
+	var bdms []map[string]any
+	if f.bootFromVolume > 0 {
+		// Boot from a new volume created from the image: move the image into a
+		// block_device_mapping_v2 entry (boot_index 0, image → volume) and clear
+		// the top-level imageRef, which nova rejects as a conflicting root device
+		// when a boot-index-0 block device is also present (matches OSC).
+		//
+		// The created volume is left unnamed: nova's block_device_mapping_v2 has
+		// no field for the resulting volume's display name, so naming it would
+		// require pre-creating the volume via cinder and booting from it by ID.
+		// That is out of scope here; the volume takes cinder's default name.
+		root := map[string]any{
+			"boot_index":            0,
+			"source_type":           string(servers.SourceImage),
+			"uuid":                  f.image,
+			"destination_type":      string(servers.DestinationVolume),
+			"volume_size":           f.bootFromVolume,
+			"delete_on_termination": false,
+		}
+		if f.bootVolumeType != "" {
+			root["volume_type"] = f.bootVolumeType
+		}
+		bdms = append(bdms, root)
+	}
+	return append(bdms, f.bdmSpecs...)
+}
+
+// readUserData loads the --user-data file. gophercloud base64-encodes the bytes
+// for nova unless they already decode as base64, so a pre-encoded file is
+// passed through rather than double-encoded.
+func readUserData(path string) ([]byte, error) {
+	//nolint:gosec // G304: operator-supplied user-data path, the point of the flag
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading --user-data %q: %w", path, err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("--user-data file %q is empty", path)
+	}
+	return data, nil
+}
+
+func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *serverCreateFlags, w io.Writer) error {
+	if err := validateServerCreate(f); err != nil {
+		return err
+	}
 	flavorRef, err := resolveFlavorRef(ctx, client, f.flavor)
 	if err != nil {
 		return err
@@ -544,13 +667,20 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	}
 
 	opts := servers.CreateOpts{
-		Name:           name,
-		ImageRef:       f.image,
-		FlavorRef:      flavorRef,
-		SecurityGroups: f.securityGroups,
-		Metadata:       metadata,
-		Min:            f.min,
-		Max:            f.max,
+		Name:               name,
+		ImageRef:           f.image,
+		FlavorRef:          flavorRef,
+		SecurityGroups:     f.securityGroups,
+		Metadata:           metadata,
+		Min:                f.min,
+		Max:                f.max,
+		AvailabilityZone:   f.availabilityZone,
+		HypervisorHostname: f.hypervisorHostname,
+	}
+	if f.userData != "" {
+		if opts.UserData, err = readUserData(f.userData); err != nil {
+			return err
+		}
 	}
 	if f.configDriveSet {
 		cd := f.configDrive
@@ -563,37 +693,36 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		}
 		opts.Networks = nets
 	}
-	if f.bootFromVolume > 0 {
-		// Boot from a new volume created from the image: move the image into a
-		// block_device_mapping_v2 entry (boot_index 0, image → volume) and clear
-		// the top-level imageRef, which nova rejects as a conflicting root device
-		// when a boot-index-0 block device is also present (matches OSC).
-		//
-		// The created volume is left unnamed: nova's block_device_mapping_v2 has
-		// no field for the resulting volume's display name, so naming it would
-		// require pre-creating the volume via cinder and booting from it by ID.
-		// That is out of scope here; the volume takes cinder's default name.
-		opts.BlockDevice = []servers.BlockDevice{{
-			BootIndex:       0,
-			SourceType:      servers.SourceImage,
-			UUID:            f.image,
-			DestinationType: servers.DestinationVolume,
-			VolumeSize:      f.bootFromVolume,
-			VolumeType:      f.bootVolumeType,
-		}}
+	bdms := serverCreateBlockDevices(f)
+	if bootsFromBlockDevice(bdms) {
+		// The request names its own root device, so the top-level imageRef would
+		// be a second one.
 		opts.ImageRef = ""
 	}
 
 	// key_name is not a field of servers.CreateOpts; it is injected by wrapping
-	// the base opts with keypairs.CreateOptsExt.
+	// the base opts with keypairs.CreateOptsExt. serverCreateOptsExt then adds
+	// what neither struct models — nova 2.74's `host` and the mapping list.
 	var createOpts servers.CreateOptsBuilder = opts
 	if f.keyName != "" {
 		createOpts = keypairs.CreateOptsExt{CreateOptsBuilder: opts, KeyName: f.keyName}
+	}
+	if f.host != "" || len(bdms) > 0 {
+		createOpts = serverCreateOptsExt{CreateOptsBuilder: createOpts, Host: f.host, BlockDevice: bdms}
 	}
 
 	s, err := servers.Create(ctx, client, createOpts, nil).Extract()
 	if err != nil {
 		return fmt.Errorf("creating server %q: %w", name, err)
+	}
+	// --wait blocks until nova finishes the build, so a script can boot and then
+	// use the guest in one step instead of polling `server show` itself. With
+	// --min/--max only the server nova returned is waited on; the rest of the
+	// batch is not named in the response.
+	if f.wait {
+		if err := waitForServerStatus(ctx, client, s.ID, "ACTIVE", f.waitTimeout); err != nil {
+			return fmt.Errorf("waiting for server %q to become ACTIVE: %w", name, err)
+		}
 	}
 	// Nova's create response carries only the ID and the generated admin
 	// password — name, status and networks are absent, so the raw response
