@@ -357,16 +357,24 @@ func serverBasicTable(list []servers.Server) output.Table {
 	return t
 }
 
+// serverListTable renders the listing. --long adds nova's OS-EXT-* attributes
+// plus the owning project and user: attributing a host's guests to their owners
+// is the first step of any drain, and without these columns it costs one
+// `--project` query per project (or a guess from the server names). Nova
+// returns tenant_id/user_id in /servers/detail at every microversion, so they
+// are free here.
 func serverListTable(list []servers.Server, long bool, flavorNames map[string]string) output.Table {
 	cols := []string{"ID", "Name", "Status", "Networks"}
 	if long {
-		cols = append(cols, "Image", "Flavor", "Availability Zone", "Host", "Task State", "Power State")
+		cols = append(cols, "Image", "Flavor", "Availability Zone", "Host",
+			"Task State", "Power State", "Project ID", "User ID")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, s := range list {
 		row := []any{s.ID, s.Name, s.Status, formatNetworks(s.Addresses)}
 		if long {
-			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone, s.Host, s.TaskState, s.PowerState)
+			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone,
+				s.Host, s.TaskState, s.PowerState, s.TenantID, s.UserID)
 		}
 		t.Rows = append(t.Rows, row)
 	}

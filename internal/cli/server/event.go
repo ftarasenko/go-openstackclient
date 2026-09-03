@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"sort"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
@@ -35,6 +36,7 @@ type instanceAction struct {
 
 type eventListFlags struct {
 	long          bool
+	result        bool
 	marker        string
 	limit         int
 	changesSince  string
@@ -74,6 +76,10 @@ func newServerEventListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of events to return")
 	fl.StringVar(&f.changesSince, "changes-since", "", "only actions changed at/after this ISO-8601 time (nova 2.58+)")
 	fl.StringVar(&f.changesBefore, "changes-before", "", "only actions changed at/before this ISO-8601 time (nova 2.66+)")
+	// The action list carries no outcome, so --result costs one extra GET per
+	// listed action. --limit bounds it.
+	fl.BoolVar(&f.result, "result", false,
+		"add a Result column, read from each action's own events (one extra API call per action)")
 	return cmd
 }
 
@@ -115,19 +121,108 @@ func runServerEventList(ctx context.Context, client *gophercloud.ServiceClient, 
 	if f.limit > 0 && len(all) > f.limit {
 		all = all[:f.limit]
 	}
-	return o.WriteList(w, eventTable(all, f.long))
+	var results map[string]string
+	if f.result {
+		results = fetchEventResults(ctx, client, id, all)
+	}
+	return o.WriteList(w, eventTable(all, f.long, results))
 }
 
-func eventTable(list []instanceAction, long bool) output.Table {
+// actionEvent is one entry of the "events" list on GET
+// /servers/{id}/os-instance-actions/{request_id}. Only "result" is decoded:
+// it is "Success" or "Error" once the step has finished and null while it is
+// still running, which is the whole of what the Result column needs. The
+// step's name and its admin-only traceback are left to "server event show".
+type actionEvent struct {
+	Result string `json:"result"`
+}
+
+// fetchEventResults reads each listed action's own events and reduces them to a
+// single outcome, keyed by request ID.
+//
+// nova's action *list* has no outcome field — os-instance-actions returns the
+// action's name, timestamps and, on failure, a message; the per-step "result"
+// values live only on the detail view. So establishing that an action failed
+// costs a "server event show" per action, which is precisely the loop this
+// replaces.
+//
+// Best effort by design, like the migration counters: a detail call that fails
+// leaves that row's Result blank rather than failing a listing that is already
+// complete without it.
+func fetchEventResults(ctx context.Context, client *gophercloud.ServiceClient,
+	serverID string, list []instanceAction,
+) map[string]string {
+	results := make(map[string]string, len(list))
+	for _, a := range list {
+		if a.RequestID == "" {
+			continue
+		}
+		var resp struct {
+			InstanceAction struct {
+				Events []actionEvent `json:"events"`
+			} `json:"instanceAction"`
+		}
+		u := client.ServiceURL("servers", serverID, "os-instance-actions", a.RequestID)
+		r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
+		if r != nil {
+			_ = r.Body.Close()
+		}
+		if err != nil {
+			continue
+		}
+		results[a.RequestID] = reduceEventResults(resp.InstanceAction.Events, a.Message)
+	}
+	return results
+}
+
+// reduceEventResults collapses an action's per-step results into one word.
+//
+// Any failed step fails the action, so "Error" wins outright. A step whose
+// result is still null means nova has not finished that step, so the action is
+// in progress — reporting it as a success would be wrong in the one case an
+// operator is watching for. An action with no events at all falls back to the
+// list's own message field, which nova only populates on failure.
+func reduceEventResults(events []actionEvent, message string) string {
+	if len(events) == 0 {
+		if message != "" {
+			return "Error"
+		}
+		return ""
+	}
+	pending := false
+	for _, e := range events {
+		switch {
+		case strings.EqualFold(e.Result, "error"):
+			return "Error"
+		case e.Result == "":
+			pending = true
+		}
+	}
+	if pending {
+		return "In Progress"
+	}
+	return "Success"
+}
+
+// eventTable renders the action listing. --long adds nova's own extra fields;
+// results, when --result gathered them, adds the outcome column the list
+// endpoint does not provide.
+func eventTable(list []instanceAction, long bool, results map[string]string) output.Table {
 	cols := []string{"Request ID", "Server ID", "Action", "Start Time"}
+	if results != nil {
+		cols = append(cols, "Result")
+	}
 	if long {
-		cols = append(cols, "Message", "Project ID", "User ID")
+		cols = append(cols, "Message", "Updated At", "Project ID", "User ID")
 	}
 	t := output.Table{Columns: cols}
 	for _, e := range list {
 		row := []any{e.RequestID, e.InstanceUUID, e.Action, e.StartTime}
+		if results != nil {
+			row = append(row, results[e.RequestID])
+		}
 		if long {
-			row = append(row, e.Message, e.ProjectID, e.UserID)
+			row = append(row, e.Message, e.UpdatedAt, e.ProjectID, e.UserID)
 		}
 		t.Rows = append(t.Rows, row)
 	}

@@ -136,31 +136,56 @@ func extractServiceExt(page pagination.Page) ([]serviceExt, error) {
 	return s.Services, err
 }
 
+// serviceListTable renders the compute-service listing.
+//
+// Two column groups are conditional rather than gated on --long, because both
+// are the read side of a write "compute service set" already performs, and a
+// setting you cannot read back is not much of a setting:
+//
+//   - Disabled Reason appears whenever any listed service carries one. That is
+//     exactly when --disable-reason has been used, or when an HA agent or
+//     autoevacuator disabled a host and left its reason behind; when nothing is
+//     disabled the column would be a blank strip, so it stays out and the
+//     vanilla listing is unchanged.
+//   - Admin State and Error Details are KeyStack's os-services extension
+//     (KCP-1886/7988), which vanilla nova does not return at all — so their
+//     presence in the response is itself the signal, and a cloud without the
+//     extension sees no change.
+//
+// --long adds Forced Down, and Disabled Reason unconditionally, so its column
+// set does not shift with the state of the fleet.
 func serviceListTable(list []services.Service, ext []serviceExt, long bool) output.Table {
 	cols := []string{"ID", "Binary", "Host", "Zone", "Status", "State", "Updated At"}
-	// The KeyStack admin_state/error_details columns are shown only when the
-	// cloud actually returns them, so vanilla-nova output stays unchanged.
-	keystack := long && slices.ContainsFunc(ext, func(e serviceExt) bool {
+	keystack := slices.ContainsFunc(ext, func(e serviceExt) bool {
 		return e.AdminState != "" || e.ErrorDetails != ""
 	})
+	reasons := long || slices.ContainsFunc(list, func(s services.Service) bool {
+		return s.DisabledReason != ""
+	})
+	if keystack {
+		cols = append(cols, "Admin State", "Error Details")
+	}
+	if reasons {
+		cols = append(cols, "Disabled Reason")
+	}
 	if long {
-		if keystack {
-			cols = append(cols, "Admin State", "Error Details")
-		}
-		cols = append(cols, "Disabled Reason", "Forced Down")
+		cols = append(cols, "Forced Down")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for i, s := range list {
 		row := []any{s.ID, s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt.String()}
-		if long {
-			if keystack {
-				var e serviceExt
-				if i < len(ext) {
-					e = ext[i]
-				}
-				row = append(row, e.AdminState, e.ErrorDetails)
+		if keystack {
+			var e serviceExt
+			if i < len(ext) {
+				e = ext[i]
 			}
-			row = append(row, s.DisabledReason, s.ForcedDown)
+			row = append(row, e.AdminState, e.ErrorDetails)
+		}
+		if reasons {
+			row = append(row, s.DisabledReason)
+		}
+		if long {
+			row = append(row, s.ForcedDown)
 		}
 		t.Rows = append(t.Rows, row)
 	}
