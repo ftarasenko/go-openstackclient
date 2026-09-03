@@ -193,3 +193,23 @@ func waitForVolumeMigration(ctx context.Context, client *gophercloud.ServiceClie
 	_, err = fmt.Fprintf(w, "Volume %s migrated to host %s\n", ref, host)
 	return err
 }
+
+// waitForVolumeAvailable polls until a freshly created volume settles.
+//
+// Cinder answers a create with 202 and status "creating"; a volume built from an
+// image passes through "downloading" on the way. Both are transient, and the
+// only terminal states are "available" and "error" — so unlike the retype and
+// migration waits above there is no attribute to cross-check, just the status.
+func waitForVolumeAvailable(ctx context.Context, client *gophercloud.ServiceClient,
+	ref, id string, timeout time.Duration,
+) error {
+	return pollVolume(ctx, client, ref, id, timeout, func(st volumeWaitState) (bool, error) {
+		switch strings.ToLower(st.Status) {
+		case "available":
+			return true, nil
+		case "error":
+			return false, fmt.Errorf("volume %q entered error status while being created", ref)
+		}
+		return false, nil
+	})
+}

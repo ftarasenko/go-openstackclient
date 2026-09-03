@@ -49,23 +49,34 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd.AddCommand(newServiceCommand(a, o))
 	cmd.AddCommand(newTransferCommand(a, o))
 	cmd.AddCommand(newQoSCommand(a, o))
+	cmd.AddCommand(newBackendCommand(a, o))
 
 	return []*cobra.Command{cmd}
 }
 
 // volumeShowFields is the curated Field/Value view for a single volume, matching
 // the most operationally useful attributes of `openstack volume show`.
+//
+// os-vol-host-attr:host and os-vol-tenant-attr:tenant_id are the backend
+// attribution: the host string is "<host>@<backend>#<pool>", so it is the only
+// answer to "which pool did this volume actually land on". Cinder renders both
+// only for an admin token (cinder/api/v3/views/volumes.py gates them on
+// context.is_admin), so they come back empty for an ordinary user rather than
+// missing — the field stays in the view either way, since a blank cell says
+// "not visible to you" where an absent row says nothing at all.
 func volumeShowFields(v *volumes.Volume) ([]string, []any) {
 	fields := []string{
 		"id", "name", "description", "status", "size", "volume_type",
 		"bootable", "availability_zone", "attachments", "snapshot_id",
 		"source_volid", "encrypted", "multiattach", "metadata",
+		"os-vol-host-attr:host", "os-vol-tenant-attr:tenant_id",
 		"user_id", "created_at", "updated_at",
 	}
 	values := []any{
 		v.ID, v.Name, v.Description, v.Status, v.Size, v.VolumeType,
 		v.Bootable, v.AvailabilityZone, v.Attachments, v.SnapshotID,
 		v.SourceVolID, v.Encrypted, v.Multiattach, v.Metadata,
+		v.Host, v.TenantID,
 		v.UserID, v.CreatedAt, v.UpdatedAt,
 	}
 	return fields, values
@@ -83,6 +94,7 @@ type volumeListFlags struct {
 	name        string
 	status      string
 	volumeType  string
+	host        string
 	limit       int
 	marker      string
 
@@ -149,6 +161,12 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "filter by volume name")
 	fl.StringVar(&f.status, "status", "", "filter by volume status")
 	fl.StringVar(&f.volumeType, "type", "", "filter by volume type (client-side)")
+	// --host matches the backend attribution shown as os-vol-host-attr:host,
+	// i.e. "<host>@<backend>#<pool>". Any prefix at a component boundary matches,
+	// so --host ceph-1 selects every pool on that host and
+	// --host 'ceph-1@vitastor' one backend on it.
+	fl.StringVar(&f.host, "host", "",
+		"filter by backend host, as <host>, <host>@<backend> or <host>@<backend>#<pool> (admin; client-side)")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of volumes to return")
 	fl.StringVar(&f.marker, "marker", "", "list volumes after this ID (pagination)")
 	return cmd
@@ -177,7 +195,7 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	// so every page has to be read first; without it, stop as soon as the cap is
 	// met.
 	collectCap := f.limit
-	if f.volumeType != "" {
+	if f.volumeType != "" || f.host != "" {
 		collectCap = 0
 	}
 	all, err := paging.Collect(ctx, volumes.List(client, opts), collectCap, volumes.ExtractVolumes)
@@ -185,13 +203,21 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return fmt.Errorf("listing volumes: %w", err)
 	}
 	// Cinder's volume list has no volume_type query param (and upstream OSC has no
-	// --type on list), so filter by type client-side after extraction.
-	if f.volumeType != "" {
+	// --type on list), so filter by type client-side after extraction. --host is
+	// client-side for a different reason: cinder's server-side host filter is
+	// admin-only and absent from the default resource_filters.json allow-list, so
+	// a non-admin (and several stock deployments) get the filter silently ignored
+	// rather than applied — which reads as "no volumes on that host".
+	if f.volumeType != "" || f.host != "" {
 		filtered := all[:0]
 		for _, v := range all {
-			if v.VolumeType == f.volumeType {
-				filtered = append(filtered, v)
+			if f.volumeType != "" && v.VolumeType != f.volumeType {
+				continue
 			}
+			if f.host != "" && !volumeHostMatches(v.Host, f.host) {
+				continue
+			}
+			filtered = append(filtered, v)
 		}
 		all = filtered
 		if f.limit > 0 && len(all) > f.limit {
@@ -201,20 +227,45 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	return o.WriteList(w, volumeListTable(all, f.long))
 }
 
+// volumeListTable renders the listing. --long adds the backend Host column —
+// "<host>@<backend>#<pool>", the same value volume show reports as
+// os-vol-host-attr:host — because without it there is no way to tell which pool
+// a volume landed on, which is what a capacity or a drain decision turns on.
+// Cinder renders the attribute for admin tokens only, so the column is blank
+// for an ordinary user.
 func volumeListTable(list []volumes.Volume, long bool) output.Table {
 	cols := []string{"ID", "Name", "Status", "Size", "Attached to"}
 	if long {
-		cols = append(cols, "Type", "Bootable", "Availability Zone")
+		cols = append(cols, "Type", "Bootable", "Availability Zone", "Host")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, v := range list {
 		row := []any{v.ID, v.Name, v.Status, v.Size, attachedTo(v)}
 		if long {
-			row = append(row, v.VolumeType, v.Bootable, v.AvailabilityZone)
+			row = append(row, v.VolumeType, v.Bootable, v.AvailabilityZone, v.Host)
 		}
 		t.Rows = append(t.Rows, row)
 	}
 	return t
+}
+
+// volumeHostMatches reports whether a volume's os-vol-host-attr:host satisfies
+// a --host filter. Cinder's host string is "<host>@<backend>#<pool>", and each
+// separator is a boundary an operator may reasonably stop at, so a want that
+// equals the whole string or any of its component prefixes matches. Matching is
+// not a bare strings.HasPrefix: "ceph-1" must not select "ceph-10@…".
+func volumeHostMatches(host, want string) bool {
+	if host == want {
+		return true
+	}
+	for i, r := range host {
+		if r == '@' || r == '#' {
+			if host[:i] == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // attachedTo renders the servers a volume is attached to in a compact form.
@@ -282,6 +333,8 @@ type volumeCreateFlags struct {
 	property         []string
 	bootable         bool
 	nonBootable      bool
+	wait             bool
+	waitTimeout      time.Duration
 }
 
 func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -320,6 +373,11 @@ func newVolumeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.property, "property", nil, "set a property key=value (repeatable)")
 	fl.BoolVar(&f.bootable, "bootable", false, "mark the created volume as bootable")
 	fl.BoolVar(&f.nonBootable, "non-bootable", false, "mark the created volume as non-bootable")
+	// Cinder's create returns 202 with status "creating", so a script that
+	// creates and then attaches has to poll. --wait does the polling here, the
+	// same way "volume set --type --wait" and "volume migrate --wait" do.
+	fl.BoolVar(&f.wait, "wait", false, "wait for the volume to become available")
+	fl.DurationVar(&f.waitTimeout, "wait-timeout", volumePollTimeout, "maximum time to wait for --wait to complete")
 	return cmd
 }
 
@@ -389,6 +447,16 @@ func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	v, err := volumes.Create(ctx, client, opts, nil).Extract()
 	if err != nil {
 		return fmt.Errorf("creating volume: %w", err)
+	}
+	if f.wait {
+		if err := waitForVolumeAvailable(ctx, client, name, v.ID, f.waitTimeout); err != nil {
+			return err
+		}
+		// The volume was "creating" in the create response; re-read it so the
+		// rendered table reports the settled state rather than the stale one.
+		if v, err = volumes.Get(ctx, client, v.ID).Extract(); err != nil {
+			return fmt.Errorf("getting volume %q: %w", name, err)
+		}
 	}
 	// CreateOpts has no bootable field, so apply the requested bootable flag as a
 	// follow-up cinder volume action once the volume exists.

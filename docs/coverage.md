@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-08-31 · `koc` @ this commit (base `6d797ab`) · 553 leaf
+**Snapshot:** 2026-09-03 · `koc` @ this commit (base `3ba95db`) · 555 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**513 of 844 in-scope upstream commands (61%).** Of `koc`'s 553 leaf commands,
-513 are upstream-equivalent and 40 are koc-native.
+**515 of 844 in-scope upstream commands (61%).** Of `koc`'s 555 leaf commands,
+515 are upstream-equivalent and 40 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -41,7 +41,7 @@ rows; the ironic figure has since grown to 52/118.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the four baselines that
-predate it and the inspector, the figure is 445/749 (59%).
+predate it and the inspector, the figure is 447/749 (60%).
 
 In-scope now includes `python-ironic-inspector-client`. The inspector is
 deprecated upstream — ironic removed the `inspector` inspect interface in 33.0.0
@@ -104,7 +104,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | --- | --- | --- |
 | `openstack.compute.v2` | 73/100 (73%) | **71/88 (81%)** — `usage list/show` land outside the core denominator but are implemented |
 | `openstack.image.v2` | 16/42 (38%) | **14/15 (93%)** — only `image member get` remains |
-| `openstack.volume.v3` | 47/94 (50%) | **34/38 (89%)** — QoS and transfers are outside the "core" denominator but now implemented |
+| `openstack.volume.v3` | 49/94 (52%) | **34/38 (89%)** — QoS, transfers and the backend pool/capability reads are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
 | `openstack.network.v2` | 102/165 (62%) | **85/94 (90%)** — QoS and RBAC land outside the "core" denominator but are implemented |
 | `openstack.common` | 6/11 (55%) | 6/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show` |
@@ -247,7 +247,8 @@ Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
-`false` would be dropped), `flavor set --description` (same cause: `omitempty` on
+`false` would be dropped), `volume backend pool list` and `volume backend
+capability show` (see below), `flavor set --description` (same cause: `omitempty` on
 `flavors.UpdateOpts.Description` cannot send the explicit null nova wants to
 clear it), `network qos rule create/set/show/delete` (one raw
 path per rule type, since `qos/rules` has no `minimum_packet_rate`), `dns quota reset` (gophercloud's `dns/v2/quotas` is
@@ -258,6 +259,18 @@ service`, `dns limit list` — for which gophercloud has no package at all. Thos
 share the helpers in `internal/cli/dns/raw.go`: JSON GET/POST/PATCH/DELETE, a
 `links.next` page walk standing in for the missing Pager, and designate's
 `--all-projects`/`--sudo-project-id` header shim.
+
+`volume backend pool list` is the one entry on that list where a typed package
+*does* exist and is still not used. `blockstorage/v3/schedulerstats` models six
+capability keys — `driver_version`, `storage_protocol`, `total_capacity_gb`,
+`free_capacity_gb`, `vendor_name`, `volume_backend_name` — and silently drops
+every other key the driver reported, including `backend_state`,
+`allocated_capacity_gb` and the whole vendor-specific set. Those are the figures
+a capacity decision turns on (and, on a replicated backend, the only place its
+raw capacity is visible next to cinder's post-replication one), so decoding into
+`map[string]any` keeps strictly more than the typed struct would. Vendoring it
+for the six keys it does model would also cost a `make tidy` for no gain.
+`/capabilities/{host}` has no gophercloud package at all.
 
 Follow the AGENTS.md raw-fallback rule: isolate behind a small helper, pin the
 microversion, and comment why the typed package is unavailable.
@@ -305,6 +318,42 @@ rather than manila's `--name~`, since manila is not a service `koc` targets. The
 same trap exists on other nouns whose API cannot do substring matching — `volume
 list`, `network list`, `port list`, `subnet list` — and they have no equivalent
 flag yet; nova is the exception, as `server list --name` is a server-side regex.
+
+Four more flags are **koc-native**, all of them read-backs or waits upstream
+never grew:
+
+- `koc volume create --wait` — OSC waits on `server create` but not on
+  `volume create`; cinderclient's equivalent is `--poll`. Same polling loop as
+  `volume set --type --wait` and `volume migrate --wait`.
+- `koc volume list --host` — filters on the backend attribution
+  (`os-vol-host-attr:host`, i.e. `<host>@<backend>#<pool>`), which upstream's
+  `volume list` cannot filter or display at all. Applied **client-side**:
+  cinder's server-side `host` filter is admin-only and outside the default
+  `resource_filters.json` allow-list, so sending it would be silently ignored on
+  a stock deployment — an empty table that reads as "no volumes there".
+- `koc server migration list --progress` — adds the live-migration byte
+  counters. `os-migrations` does not carry them (only
+  `/servers/{id}/migrations` does), so the flag costs one extra call per
+  distinct server with an in-flight migration and is opt-in for that reason.
+  Remaining-against-total is what distinguishes a converged live migration from
+  a force-completed one.
+- `koc server event list --result` — adds the outcome column nova's action
+  *list* has no field for; it is reduced from each action's own events, one
+  extra call per action. Upstream's only route to the same answer is a
+  `server event show` per row.
+
+One **column set** deviates: `koc volume backend pool list` shows
+`Backend State` and the capacity figures by default, where upstream shows the
+pool `Name` alone and puts everything else behind `--long`. A list of pool
+names cannot answer "does this pool have room", which is the only reason to run
+it; `--long` still adds every remaining capability key the driver reported,
+unioned across pools. That last part matters on a replicated backend: cinder
+hands the scheduler one normalised total and one normalised free figure per
+pool, and a driver that computes the total from raw cluster capacity while
+reporting free after replication produces a pair that cannot both be right.
+`koc` reports what cinder reports and does not try to reconcile it — `--long`
+and `volume backend capability show` are where the driver's own figures sit next
+to it.
 
 `--timing` deviates in **where it writes**, deliberately.
 `osc_lib/command/timing.py` is a cliff Lister: it prints a "URL | Seconds"
@@ -357,7 +406,7 @@ limitations"; the fix is to make the other resolvers match `server`'s behaviour.
 ## koc-native commands
 
 No upstream equivalent, by design — **40 leaves**, itemised so the total
-reconciles with the headline (553 = 513 + 40):
+reconciles with the headline (555 = 515 + 40):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -423,8 +472,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (513);
-2. leaf commands = headline numerator + koc-native (553 = 513 + 40);
+1. every raw row numerator summed = the headline numerator (515);
+2. leaf commands = headline numerator + koc-native (555 = 515 + 40);
 3. every raw row denominator summed = 901, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (844).
 

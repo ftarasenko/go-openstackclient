@@ -621,6 +621,22 @@ items are deferred and worth noting:
   port result type has no field for it and no catch-all, so `port show`/`port
   list` cannot render it back. Reading it needs a koc-owned DTO for the port
   reads.
+- **Cinder's pool capacity can mix raw and replicated figures.** `koc volume
+  backend pool list` reports what cinder's scheduler was handed: one
+  `total_capacity_gb` and one `free_capacity_gb` per pool. A driver that
+  computes the total from the cluster's raw capacity while reporting free space
+  after replication yields a pair that cannot both be right, and koc does not
+  try to reconcile them — it has no way to know a given driver's replication
+  factor. `--long` adds every remaining capability key the driver reported, and
+  `koc volume backend capability show <host>` shows the driver's own set, which
+  is where a raw figure can be compared against cinder's normalised one. Gate on
+  the driver's key when the backend publishes one.
+- **`volume list --host` filters client-side.** Cinder's server-side `host`
+  filter is admin-only and absent from the default `resource_filters.json`
+  allow-list, so a stock deployment ignores it silently — an empty table that
+  reads as "no volumes on that host". koc therefore reads the page and matches
+  `os-vol-host-attr:host` itself, which also means `--limit` caps what survives
+  the filter rather than what cinder returned.
 - **`server delete/start/stop --all-projects` is accepted, not required.** koc
   always resolves a server name across projects, so the flag upstream needs for
   that is a no-op here rather than a gate; it exists so an `openstack`
