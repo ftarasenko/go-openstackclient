@@ -83,8 +83,21 @@ func newClusterFlags(t *testing.T, kubeconfig, credsRef string) (*connFlags, *au
 	f.addTo(pflag.NewFlagSet("test", pflag.ContinueOnError))
 	f.credsFromNS = credsRef
 	// The env-derived defaults must not leak a developer's own AWS_* into the
-	// assertions.
+	// assertions. Clearing the parsed fields is not enough: connFlags.fill also
+	// re-reads the environment, and treats any value it finds there as the
+	// operator having answered already — so a shell (or a CI runner) that
+	// exports AWS_ACCESS_KEY_ID makes the cluster credentials silently not
+	// apply, and the assertions below see empty strings. Blank every name fill
+	// consults instead of only the flags.
 	f.endpoint, f.accessKey, f.secretKey, f.region = "", "", "", ""
+	for _, env := range []string{
+		"AWS_ACCESS_KEY_ID", "S3_ACCESS_KEY", "s3_access_key",
+		"AWS_SECRET_ACCESS_KEY", "S3_SECRET_KEY", "s3_secret_key",
+		"AWS_ENDPOINT_URL", "S3_ENDPOINT", "s3_host",
+		"AWS_REGION", "AWS_DEFAULT_REGION", "S3_REGION", "s3_region",
+	} {
+		t.Setenv(env, "")
+	}
 	return f, &auth.Options{Kubeconfig: kubeconfig}
 }
 
