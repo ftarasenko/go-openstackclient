@@ -193,7 +193,13 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List compute servers",
-		Args:  cobra.NoArgs,
+		Long: "List compute servers.\n\n" +
+			"Beyond the default and --long columns, these are rendered only when " +
+			"-c/--column (or --sort-column) names one:\n  " +
+			strings.Join(serverListOptionalNames(), ", ") + "\n\n" +
+			"So `server list -c Name -c \"Created At\"` reports each server's age " +
+			"without a `server show` per server.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := o.Validate(); err != nil {
 				return err
@@ -315,7 +321,8 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.long {
 		flavorNames = serverFlavorNames(ctx, client, all)
 	}
-	return o.WriteList(w, serverListTable(all, f.long, flavorNames))
+	extra := serverListExtraColumns(o, serverListColumns(f.long))
+	return o.WriteList(w, serverListTable(all, f.long, flavorNames, extra))
 }
 
 // serverListMicroversion is the lowest compute microversion that still answers
@@ -363,11 +370,12 @@ func serverBasicTable(list []servers.Server) output.Table {
 // `--project` query per project (or a guess from the server names). Nova
 // returns tenant_id/user_id in /servers/detail at every microversion, so they
 // are free here.
-func serverListTable(list []servers.Server, long bool, flavorNames map[string]string) output.Table {
-	cols := []string{"ID", "Name", "Status", "Networks"}
-	if long {
-		cols = append(cols, "Image", "Flavor", "Availability Zone", "Host",
-			"Task State", "Power State", "Project ID", "User ID")
+func serverListTable(list []servers.Server, long bool, flavorNames map[string]string,
+	extra []serverColumn,
+) output.Table {
+	cols := serverListColumns(long)
+	for _, c := range extra {
+		cols = append(cols, c.Name)
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, s := range list {
@@ -376,9 +384,23 @@ func serverListTable(list []servers.Server, long bool, flavorNames map[string]st
 			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone,
 				s.Host, s.TaskState, s.PowerState, s.TenantID, s.UserID)
 		}
+		for _, c := range extra {
+			row = append(row, c.Value(s))
+		}
 		t.Rows = append(t.Rows, row)
 	}
 	return t
+}
+
+// serverListColumns is the listing's fixed column set, before the opt-in extras
+// in serverListOptional are appended.
+func serverListColumns(long bool) []string {
+	cols := []string{"ID", "Name", "Status", "Networks"}
+	if long {
+		cols = append(cols, "Image", "Flavor", "Availability Zone", "Host",
+			"Task State", "Power State", "Project ID", "User ID")
+	}
+	return cols
 }
 
 func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

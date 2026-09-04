@@ -688,3 +688,49 @@ func TestColumnsWithin(t *testing.T) {
 		})
 	}
 }
+
+// SelectedColumns is what lets a command carry optional columns: the counterpart
+// to ColumnsWithin, which decides how little to fetch.
+func TestSelectedColumns(t *testing.T) {
+	candidates := []string{"Created At", "Security Groups", "Project ID"}
+	for _, tc := range []struct {
+		name string
+		o    *Options
+		want []string
+	}{
+		{"nothing selected", &Options{}, nil},
+		{"one column", &Options{Columns: []string{"Created At"}}, []string{"Created At"}},
+		{
+			// Case- and space-insensitive, like -c selection everywhere else.
+			name: "loose spelling",
+			o:    &Options{Columns: []string{" created at "}},
+			want: []string{"Created At"},
+		},
+		{
+			// Candidate order, not the order the user typed: the extras append
+			// to the table in a fixed order.
+			name: "candidate order wins",
+			o:    &Options{Columns: []string{"Project ID", "Created At"}},
+			want: []string{"Created At", "Project ID"},
+		},
+		{
+			// A sort key is never displayed but still has to exist.
+			name: "sort column counts as a request",
+			o:    &Options{SortColumns: []string{"Created At"}},
+			want: []string{"Created At"},
+		},
+		{"unrelated columns", &Options{Columns: []string{"ID", "Name"}}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.o.SelectedColumns(candidates...)
+			if len(got) != len(tc.want) {
+				t.Fatalf("SelectedColumns() = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("SelectedColumns() = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}

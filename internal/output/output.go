@@ -342,6 +342,29 @@ func (o *Options) ColumnsWithin(names ...string) bool {
 	return true
 }
 
+// SelectedColumns returns those of candidates the user named in -c/--column or
+// --sort-column, in candidate order.
+//
+// It is the counterpart to ColumnsWithin: that decides how little to fetch,
+// this decides which optional columns to materialize. `openstack server list`
+// has the same notion — created_at and security_groups are in neither the
+// default nor the --long listing, but naming one in -c adds it — and without a
+// primitive here koc can only reject the name, since -c selects from an
+// already-rendered table.
+//
+// --sort-column counts as a request because sorting runs against the full
+// column set before -c narrows it, so a sort key that is never displayed still
+// has to exist.
+func (o *Options) SelectedColumns(candidates ...string) []string {
+	var out []string
+	for _, c := range candidates {
+		if o.columnSelected(c) || o.sortColumnSelected(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // matchesAnyColumn reports whether the requested column name matches one of the
 // available headers, using the same case- and space-insensitive rule as
 // -c/--column selection everywhere else.
@@ -399,6 +422,15 @@ func (o *Options) selectColumns(all []string) (cols []string, idx []int) {
 
 func (o *Options) columnSelected(field string) bool {
 	for _, want := range o.Columns {
+		if strings.EqualFold(strings.TrimSpace(want), field) {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *Options) sortColumnSelected(field string) bool {
+	for _, want := range o.SortColumns {
 		if strings.EqualFold(strings.TrimSpace(want), field) {
 			return true
 		}

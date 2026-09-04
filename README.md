@@ -301,6 +301,21 @@ API. Numeric columns compare numerically (`--sort-column Size` puts 9 before
 10, not before 100), the sort is stable so repeated `--sort-column` flags break
 ties, and column names are matched case-insensitively.
 
+A few columns are **opt-in**: they are in neither the default nor the `--long`
+table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
+`server list` carries eleven — `Created At`, `Image ID`, `Flavor ID`,
+`Availability Zone`, `Host`, `Task State`, `Power State`, `Project ID`,
+`User ID`, `Security Groups`, `Properties` — mirroring the extras upstream's
+`server list` appends the same way. So a server's age comes from the listing:
+
+```sh
+koc server list --all-projects -c Name -c "Created At" --sort-column "Created At"
+```
+
+without which reading creation time costs one `server show` per server. The
+default and `--long` tables are unchanged, so nothing that reads either
+positionally is affected. `server list --help` names the full set.
+
 ### Flag abbreviation
 
 `openstack` is built on argparse, which accepts any **unambiguous prefix** of a

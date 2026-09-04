@@ -171,7 +171,7 @@ What each service's Zed release caps at, read from the Zed sdists on PyPI:
 | Service | Zed version | Max microversion | Consequence |
 | --- | --- | --- | --- |
 | ironic | 21.4.0 | **1.82** | no `unhold` (1.85), `firmware` (1.86), `service` (1.87), child nodes (1.83), runbooks (1.92), inspection rules (1.96) |
-| nova | 26.x | **2.93** | |
+| nova | 26.x | **2.93** | no `server list -c "Pinned Availability Zone"` (2.96) or `-c "Scheduler Hints"` (2.100) |
 | cinder | 21.3.2 | **3.70** | |
 | placement | 9.0.0 | **1.39** | |
 | keystone, glance, neutron, designate, octavia | — | no microversions | capability is discovered per-extension (`network extension list`) |
@@ -318,6 +318,24 @@ rather than manila's `--name~`, since manila is not a service `koc` targets. The
 same trap exists on other nouns whose API cannot do substring matching — `volume
 list`, `network list`, `port list`, `subnet list` — and they have no equivalent
 flag yet; nova is the exception, as `server list --name` is a server-side regex.
+
+`koc server list` restores upstream's **opt-in columns** — the extras
+`ListServer` appends when `-c/--column` names one (`compute/v2/server.py`, the
+`if parsed_args.columns:` block) rather than carrying them in the default or
+`--long` table, which neither client does. Eleven of upstream's thirteen are
+implemented; `Pinned Availability Zone` (nova 2.96) and `Scheduler Hints`
+(2.100) are above the Zed cap, so the fields are not in the response koc gets
+(see "Minimum supported cloud"). `Created At` is the one that mattered: without
+it a server's age was unreachable from a listing in *any* format, and the
+fallback was one `server show` per server.
+
+Two of these columns read better under `koc` than upstream. `Flavor ID` is
+populated, because `server list` pins the negotiated microversion to the lowest
+one that answers the request (2.1 for a plain listing) and nova stops returning
+the embedded flavor's ID at 2.47, where upstream — which negotiates `latest` —
+prints `None`. `Security Groups` is deduplicated, since nova repeats a group
+once per port it is applied to and the column answers "which groups", not "how
+many ports".
 
 Four more flags are **koc-native**, all of them read-backs or waits upstream
 never grew:

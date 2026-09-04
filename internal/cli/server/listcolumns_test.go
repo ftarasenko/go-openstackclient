@@ -146,3 +146,142 @@ func TestRunComputeServiceList_KeyStackAdminStateWithoutLong(t *testing.T) {
 		}
 	}
 }
+
+// The opt-in columns exist because creation time was unreachable from a
+// listing in any format: --long does not carry it (upstream's does not
+// either), and koc's -c only selects from the rendered table, so `-c "Created
+// At"` was a hard error and the fallback was one `server show` per server.
+func TestServerList_OptInColumns(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"servers":[{
+		  "id": "11111111-1111-1111-1111-111111111111",
+		  "name": "web-1",
+		  "status": "ACTIVE",
+		  "addresses": {},
+		  "created": "2026-01-02T03:04:05Z",
+		  "flavor": {"id": "flav-1"},
+		  "image": {"id": "img-123"},
+		  "metadata": {"role": "web", "env": "prod"},
+		  "security_groups": [{"name": "default"}, {"name": "web"}, {"name": "default"}]
+		}]}`))
+	})
+
+	for _, tc := range []struct {
+		name    string
+		columns []string
+		sort    []string
+		long    bool
+		want    []string
+		absent  []string
+	}{
+		{
+			name:    "created at",
+			columns: []string{"Name", "Created At"},
+			want:    []string{"Created At", "2026-01-02T03:04:05+00:00"},
+			absent:  []string{"Status"},
+		},
+		{
+			// Nova repeats a group once per port it is applied to.
+			name:    "security groups are deduplicated",
+			columns: []string{"Security Groups"},
+			want:    []string{`"default, web"`},
+		},
+		{
+			name:    "properties render as key='value'",
+			columns: []string{"Properties"},
+			want:    []string{`"env='prod', role='web'"`},
+		},
+		{
+			name:    "image and flavor ids",
+			columns: []string{"Image ID", "Flavor ID"},
+			want:    []string{"img-123", "flav-1"},
+		},
+		{
+			// Sorting runs against the full column set before -c narrows it, so
+			// a sort key that is never displayed still has to be materialized.
+			name: "sort column alone materializes it",
+			sort: []string{"Created At"},
+			want: []string{"2026-01-02T03:04:05+00:00"},
+		},
+		{
+			// --long already renders Project ID; selecting it must not duplicate
+			// the header.
+			name:    "column --long already carries is not duplicated",
+			columns: []string{"Name", "Project ID"},
+			long:    true,
+			want:    []string{"Project ID"},
+			absent:  []string{"Project ID,Project ID"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &output.Options{Format: output.FormatCSV, Columns: tc.columns, SortColumns: tc.sort}
+			var buf bytes.Buffer
+			if err := runServerList(context.Background(), computeClient(fakeServer, "latest"), o,
+				&serverListFlags{long: tc.long}, "", "", &buf); err != nil {
+				t.Fatalf("runServerList: %v", err)
+			}
+			out := buf.String()
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q\n---\n%s", want, out)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out, absent) {
+					t.Errorf("output unexpectedly contains %q\n---\n%s", absent, out)
+				}
+			}
+		})
+	}
+}
+
+// An opt-in column is materialized only on request: the default and --long
+// listings are unchanged, so nothing that reads either positionally breaks.
+func TestServerList_OptInColumnsAreAbsentUnlessAsked(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"servers":[{"id":"s1","name":"web-1","status":"ACTIVE",
+		  "created":"2026-01-02T03:04:05Z","flavor":{"id":"f1"},"image":{"id":"i1"}}]}`))
+	})
+
+	for _, long := range []bool{false, true} {
+		o := &output.Options{Format: output.FormatCSV}
+		var buf bytes.Buffer
+		if err := runServerList(context.Background(), computeClient(fakeServer, "latest"), o,
+			&serverListFlags{long: long}, "", "", &buf); err != nil {
+			t.Fatalf("runServerList(long=%v): %v", long, err)
+		}
+		for _, absent := range []string{"Created At", "Security Groups", "Properties", "Image ID"} {
+			if strings.Contains(buf.String(), absent) {
+				t.Errorf("listing (long=%v) unexpectedly carries %q\n---\n%s", long, absent, buf.String())
+			}
+		}
+	}
+}
+
+// A name that is neither a rendered nor an opt-in column still fails, rather
+// than being silently dropped.
+func TestServerList_UnknownColumnStillErrors(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"servers":[{"id":"s1","name":"web-1"}]}`))
+	})
+
+	o := &output.Options{Format: output.FormatCSV, Columns: []string{"Nope"}}
+	var buf bytes.Buffer
+	err := runServerList(context.Background(), computeClient(fakeServer, "latest"), o,
+		&serverListFlags{}, "", "", &buf)
+	if err == nil || !strings.Contains(err.Error(), "unknown column") {
+		t.Errorf("expected an unknown-column error, got %v", err)
+	}
+}
