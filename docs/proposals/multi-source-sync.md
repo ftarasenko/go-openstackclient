@@ -1,7 +1,8 @@
 # Proposal: `koc` as a cross-instance sync tool — NetBox, GitLab, Nexus
 
 Status: **design proposal**, not implemented. Supersedes nothing; extends the
-pattern `koc vault kv copy` established.
+pattern `koc vault kv copy` established. Revised once the deployment
+constraints came back — see "Settled constraints" and "Decisions".
 Context: `koc` already moves KV secrets from a source Vault to a destination
 Vault (`docs/proposals/vault-kv.md`). The same air-gapped fleet needs the same
 "copy this from the source instance to the destination instance" operation for
@@ -13,12 +14,29 @@ session.
 | System | Selector | Recursion | Version skew to survive |
 | --- | --- | --- | --- |
 | Vault | KV path | subtree (`-r`) | — (done) |
-| **NetBox** | device / config context | dependency closure + children | NetBox **4.x** across minors |
-| **GitLab** | project(s), or everything | group subtree, all projects | **17 / 18 / 19**, src ≠ dst |
-| **Nexus** | repository(-ies) | every component in the repo | Nexus Repository **3.x** across minors |
+| **NetBox** | device / config context | dependency closure + children | NetBox **4.x** across minors, forward |
+| **GitLab** | project(s), or everything | group subtree, all projects | **17.8.6 → 19.x**, forward only |
+| **Nexus** | repository(-ies) | every component in the repo | Nexus Repository **3.x** across minors, forward |
 
 Everything below is one-way, additive, src → dst. Two-way reconciliation and
 deletion are explicit non-goals (see "Non-goals").
+
+## Settled constraints
+
+Three things are decided and the design depends on them. They are recorded here
+because each one removes options rather than adding them.
+
+1. **The destination is always newer than the source, for every system.** Sync
+   is forward-only. koc therefore treats `destination < source` as a
+   **precondition failure refused before planning**, not as a case to support.
+   Everything below assumes it.
+2. **GitLab is 17.8.6 → 19.x.** Not "17/18/19 in any combination" — one pair,
+   spanning two majors and roughly a dozen minors. That single fact settles the
+   Phase 3 mechanism question outright; see "Phase 3".
+3. **The environment is air-gapped and everything ships inside it.** No module
+   proxy, no PyPI, no vendor SDK downloads, no `docker pull` at verification
+   time. This is the existing invariant in AGENTS.md, extended to the test and
+   verification story as well as the build; see §11.
 
 ## Why koc, and why not the obvious alternatives
 
@@ -105,6 +123,8 @@ and it removes the worst operational property of this whole feature: three more
 long-lived admin tokens pasted into CI variables and shell history.
 
 Precedent for the shape: `--s3-creds-from-ns` in `internal/cli/s3/client.go`.
+This is **Phase 0 work** (commit 0.4), not a later convenience — see
+"Decisions → Settled".
 
 ### 4. Plan, then apply — with the same guarantees Vault's copy gives
 
@@ -161,8 +181,13 @@ version:
 - Each system gets a single `capabilities.go` mapping feature → minimum
   version, consulted by the planner. No `if version >= x` scattered through
   request code.
-- A direction the system genuinely cannot support is **refused before any
-  write**, naming both versions (GitLab, below, is where this bites).
+- **`destination < source` is refused before any write**, naming both
+  versions. Per "Settled constraints" this never legitimately happens, which is
+  exactly why it must be checked: if it does, something is misconfigured and a
+  half-completed forward sync into an older instance is the worst outcome
+  available.
+- A direction the system genuinely cannot support is likewise **refused before
+  any write**, naming both versions (GitLab, below, is where this bites).
 - A 404/400 that a version difference explains is re-rendered as
   "`<endpoint>` requires <tool> >= X; the destination reports Y", not surfaced
   raw.
@@ -211,6 +236,32 @@ Every commit that adds a leaf updates `docs/coverage.md` in the same commit —
 all of these are **koc-native** rows, and the three arithmetic identities in
 "Updating this document" must still hold afterwards.
 
+### 11. Air-gapped operation, including the parts that are not the build
+
+The build invariant is already covered (`-mod=vendor`, `GOPROXY=off`, and this
+work adds **zero** modules). Three consequences reach further than the build and
+should be designed in rather than discovered:
+
+- **Verification cannot pull images on demand.** "Run it against NetBox 4.0 and
+  4.4" means those images are staged inside the perimeter beforehand. So the
+  per-version `testdata/` fixture sets are not a convenience — they are the
+  primary version-matrix gate, and they must be **recorded once, scrubbed, and
+  committed**, because re-recording them may not be possible on the day a
+  regression appears. A version counts as supported when it has a fixture set,
+  not when someone remembers testing it.
+- **The authoritative docs are the ones the instances serve.** Both GitLab
+  instances ship their own documentation at `/help/…`; NetBox serves its
+  OpenAPI schema at `/api/schema/`; Nexus serves its API docs locally. Every
+  rule this proposal cites from the public documentation should be re-read from
+  the deployed instance before it is coded against, and the endpoint that
+  *proves* the rule (a schema, a version document) is preferable to a rule
+  transcribed into Go.
+- **There is no upstream fallback mid-run.** A Nexus sync that dies at artifact
+  8,000 of 10,000 cannot be finished by fetching the rest from the internet.
+  That makes idempotent, checksum-skipping re-runs the recovery story, and it
+  is why `--continue-on-error` and a failure table that names exactly what to
+  retry are requirements rather than polish.
+
 ## Phase 0 — foundations (do this first)
 
 | # | Commit | What |
@@ -218,6 +269,7 @@ all of these are **koc-native** rows, and the three arithmetic identities in
 | 0.1 | `refactor(httpx): extract the shared HTTP transport policy` | new `internal/httpx`; vault/kube/s3 adopt it; behaviour identical, their tests unchanged |
 | 0.2 | `feat(sync): shared plan/apply vocabulary` | `internal/sync`: statuses, result rows, the dry-run/summary/table helper, `--dry-run`/`--on-conflict`/`--continue-on-error`/`--concurrency` flag set |
 | 0.3 | `refactor(vault): move kv copy onto internal/sync` | proves 0.2 against the one existing user; `internal/cli/vault` tests must pass **unchanged** |
+| 0.4 | `feat(auth): read third-party credentials from a Vault KV secret` | the `--<tool>-creds-from-vault` seam of §3, over the existing `auth.Options.VaultClient`; each group wires one flag to it |
 
 Deliberately **not** in Phase 0: a generic traversal/graph engine. Vault is a
 flat namespace, NetBox is a dependency graph and Nexus is a paged content list;
@@ -281,6 +333,13 @@ Decode into `map[string]any`, not a struct pinned to one minor:
    consults the destination's **OpenAPI schema at `/api/schema/`** and removes
    exactly the fields its serializer does not declare — data-driven, so a new
    NetBox minor needs no koc release.
+
+Forward-only sync (§Settled constraints) narrows what can go wrong to **one**
+case: a field the *source* still sends that the *destination* has since removed
+or renamed. The reverse — a destination demanding a field an older source
+cannot produce — is a genuine schema gap and must fail loudly, not be papered
+over with a default. Step 4 above handles the first; the second is a named
+refusal.
 
 Version reporting: the `API-Version` response header (major.minor) plus
 `/api/status/`'s `netbox-version` (full string, may carry build suffixes such as
@@ -356,9 +415,10 @@ most about.
 - Version skew: the `Server: Nexus/3.x.y` response header, with
   `/service/rest/v1/status` as the liveness probe. Two known skew points to
   encode in `capabilities.go`: pagination defaults changed in **3.74**, and
-  **3.88** replaced Elasticsearch with SQL search, changing wildcard behaviour —
-  which is a reason to enumerate via `components` rather than `search` wherever
-  possible.
+  **3.88** replaced Elasticsearch with SQL search, changing wildcard behaviour.
+  Because the source is the *older* side, both land on the enumeration half of
+  the job — which is the argument for enumerating via `components` (stable
+  across the range) rather than `search` (whose semantics moved at 3.88).
 
 ### Commands and rough cost
 
@@ -370,19 +430,31 @@ most about.
 
 ## Phase 3 — GitLab (`koc gitlab`)
 
-The largest, the riskiest, and the one whose scope must be decided before
-estimating. The version requirement in the ask — "different 17/18/19 src
-target" — is not a detail; it eliminates one of the three candidate mechanisms
-outright.
+The largest and the riskiest — but no longer the one with an open scope
+question. **17.8.6 → 19.x** is roughly a dozen minor versions across two
+majors, and that single fact eliminates both of GitLab's own migration
+mechanisms before any preference is expressed.
 
-### The four ways to move a GitLab project, and what each costs
+### The four ways to move a GitLab project, measured against 17.8.6 → 19.x
 
-| Mechanism | What moves | Version rule | Verdict |
+| Mechanism | What moves | Version rule | Verdict at 17.8.6 → 19.x |
 | --- | --- | --- | --- |
-| **REST API v4, object by object** | project + settings, members, CI/CD variables, protected branches/tags, labels, milestones, hooks, environments, deploy keys, badges, approval rules (EE) | v4 is stable across 17→19; deprecated attributes are removed at majors; feature-detect per endpoint | **koc's lane** |
-| Project export/import (`POST /projects/:id/export`, `POST /projects/import`) | repo, issues, MRs, wiki, snippets, as a tarball | target must be **the same or newer**, and imports are supported only from up to **two minor versions** behind | fails exactly the 17→19 and 19→17 cases the ask names |
-| Direct transfer (`POST /bulk_imports`) | groups and projects | source must be **no more than two minors behind** the destination; project-level migration only became GA in **18.3** | destination must reach the source over the network; unavailable on a 17 destination |
-| `git` itself | repository content | none | koc has no git implementation, and vendoring one contradicts the whole premise |
+| **REST API v4, object by object** | project + settings, members, CI/CD variables, protected branches/tags, labels, milestones, hooks, environments, deploy keys, badges, approval rules (EE) | v4 is stable across 17→19; deprecated attributes are removed at majors; feature-detect per endpoint | **the only mechanism that works — koc's lane** |
+| Project export/import (`POST /projects/:id/export`, `POST /projects/import`) | repo, issues, MRs, wiki, snippets, as a tarball | target must be the same or newer **and** the export may be at most ~**two minor versions** behind the importer | target is newer ✓, but the gap is ~12 minors and 2 majors ✗ — **ruled out** |
+| Direct transfer (`POST /bulk_imports`) | groups and projects | source must be **no more than two minors behind** the destination; project-level migration GA only in **18.3** | same gap ✗; the source instance is 17.8, below the GA version ✗ — **ruled out** |
+| `git` itself | repository content | none | works, but koc has no git implementation and vendoring one contradicts the premise |
+
+The network prerequisite that would normally sink direct transfer inside an
+air-gap (the destination must reach the source) is actually *satisfiable* here —
+both instances are inside the perimeter. It is the version distance that kills
+it, so no amount of network plumbing recovers the option.
+
+**Confirm this against the deployed instances, not against this table.** Both
+GitLabs serve their own bundled documentation; read the rule from the 19.x
+instance's `/help/user/project/settings/import_export` and
+`/help/user/group/import/direct_transfer_migrations` before anyone re-opens the
+question. That is the §11 rule applied to the single most consequential claim
+in this proposal.
 
 ### Recommended scope
 
@@ -406,9 +478,10 @@ writes, deterministic reporting) and out of the business of reimplementing git
 or shuffling multi-gigabyte tarballs it adds nothing to.
 
 The alternative scope — koc orchestrating export/import or `bulk_imports` — is
-implementable as a **later** phase and is genuinely useful as a *version-aware
-wrapper*, but it cannot satisfy "17/18/19 in any direction" and should not be
-sold as if it could. See "Decisions needed".
+**not implementable for this version pair at all**, so it is not a later phase
+and not a flag. It becomes interesting only if a future source instance lands
+within two minors of its destination, at which point `koc gitlab status`
+already knows the rule and can say so.
 
 ### Sub-resource families, selectable
 
@@ -446,6 +519,18 @@ its minimum version and to CE/EE. An EE-only endpoint against a CE destination
 is a **skipped row with a reason**, not a 403 traceback — the single most common
 way a cross-instance script fails today.
 
+Across this particular gap the field-level problem is concrete, not theoretical:
+`ci_job_token_scope_enabled` is still returned by the Projects API on 17.8 and
+was **removed in 19.0** (deprecated in 18.0, when the underlying setting went
+away). A sync that echoes the source project's attributes verbatim into a 19.x
+destination hits exactly that class of field. So GitLab needs the same
+**allow-list-by-destination** discipline NetBox gets: send the attributes the
+destination's API accepts, drop what it removed, and report the dropped ones
+rather than dropping them silently. `merged_by` and `merge_status` on merge
+requests are the same shape of hazard, deprecated in favour of `merge_user` and
+`detailed_merge_status` — still present through v4, so they matter only if MR
+metadata later enters scope.
+
 ### Commands and rough cost
 
 | Commit | Leaves | Size |
@@ -466,10 +551,11 @@ it happens to be the right capability ramp:
 2. Nexus adds streaming, checksum comparison, paging at scale, concurrency and
    continue-on-error. After it, `internal/sync` has three real users and the
    traversal engine can be extracted from evidence rather than guessed.
-3. GitLab is last because it is the largest and because its scope decision is
-   the one still open.
+3. GitLab is last because it is the largest — its scope is now settled, but it
+   is the phase with the widest surface (a dozen sub-resource families) and it
+   benefits most from an engine two systems have already exercised.
 
-Rough sizing, in the repo's own commit granularity: **Phase 0 ≈ 3 commits,
+Rough sizing, in the repo's own commit granularity: **Phase 0 ≈ 4 commits,
 NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Every
 `feat:` commit carries its `docs/coverage.md` row.
 
@@ -479,6 +565,8 @@ NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Eve
 | --- | --- |
 | Scope creep into "koc replaces git / koc replaces the migration tooling" | the GitLab scope decision, taken explicitly and written into the command help |
 | Version-matrix maintenance cost | per-version `testdata/`, one table test per system; a version only counts as supported if it has a fixture set |
+| Fixtures cannot be re-recorded on demand inside the air-gap | record and commit them once, scrubbed, while the instances are reachable — before the code that needs them (§11) |
+| A field the 17.8 source sends and the 19.x destination removed | allow-list writes by what the destination's API accepts; report dropped fields instead of dropping them silently |
 | Binary size — three clients plus three command groups | `make size` already records it in CI; budget and check it per phase |
 | `gocognit` 25 on planner/apply functions | plan for small named functions from the start; the Vault copy's `copySession.copyOne` split is the model |
 | A destination write path that a dry-run did not predict | plan-before-write is a hard rule, tested per system |
@@ -495,22 +583,35 @@ NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Eve
 - Repository/instance *configuration* management (Nexus blob stores, GitLab
   instance settings, NetBox plugins).
 
-## Decisions needed before Phase 3 (and two before Phase 1)
+## Decisions
 
-1. **GitLab scope** — configuration + metadata over API v4 (recommended), or
-   also orchestrating export/import / direct transfer with their version rules
-   enforced? This changes Phase 3 substantially.
-2. **Is the destination always at or ahead of the source's version?** If yes,
-   the export/import path becomes viable as an add-on; if 19 → 17 must work, it
-   is off the table permanently and should be documented as such.
-3. **Nexus formats actually in use**, and whether Docker repositories are a
-   requirement — if they are, `koc oci copy` is a fourth phase, not a flag.
-4. **NetBox object scope beyond devices and config contexts** — virtual
-   machines, IPAM prefixes/IPs, circuits? The engine is the same; the natural-key
-   and prerequisite tables grow per type.
-5. **Where these run** — CI job, operator workstation, or air-gapped cluster
-   node? It decides how much of §3 (credentials from Vault, auto-discovery)
-   is Phase 0 work rather than a later convenience.
-6. **Is additive-only sufficient long term**, or is a reconcile/prune mode
-   eventually needed? It does not change Phase 1–3, but it changes whether the
-   plan structure should carry a "would delete" row type from the start.
+### Settled
+
+1. **GitLab scope** — configuration and metadata over API v4; repository content
+   handed to git or to GitLab's own push mirroring. Not a preference: at
+   17.8.6 → 19.x both of GitLab's migration mechanisms are out of range.
+2. **Direction** — forward only, destination always newer, for all three
+   systems. `destination < source` is a refused precondition.
+3. **Deployment** — air-gapped, everything bundled. Zero new modules; §11 covers
+   what that means for verification and fixtures.
+4. **Credentials from Vault** — promoted into Phase 0 rather than left as a
+   later convenience. In an air-gapped estate the alternative is three more
+   long-lived admin tokens pasted into CI variables, and koc already reads KV v2
+   with cluster auto-discovery. `--<tool>-creds-from-vault` ships with the first
+   group.
+
+### Still open
+
+5. **Nexus formats actually in use**, and whether Docker repositories are a
+   requirement. If they are, that is `koc oci copy` — a fourth phase with its
+   own client (Registry v2: blobs, manifests, tags), not a flag on
+   `nexus sync`. This is the one open question that can change the size of the
+   plan, so it is worth answering before Phase 2 starts.
+6. **NetBox object scope beyond devices and config contexts** — virtual
+   machines, IPAM prefixes/IPs, circuits? The engine is unchanged; the
+   natural-key and prerequisite tables grow per type, so this is additive and
+   can be answered during Phase 1.
+7. **Is additive-only sufficient long term**, or is a reconcile/prune mode
+   eventually needed? It does not change Phases 1–3, but it decides whether the
+   plan structure should carry a "would delete" row type from the start — which
+   is cheap now and invasive later.
