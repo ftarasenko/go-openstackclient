@@ -171,9 +171,78 @@ func TestRunServerList_DefaultQueryUnchanged(t *testing.T) {
 	if err := runServerList(context.Background(), client, o, &serverListFlags{}, "", "", &buf); err != nil {
 		t.Fatalf("runServerList: %v", err)
 	}
-	for _, k := range []string{"deleted", "created-since", "created-before", "deleted-since", "deleted-before"} {
+	for _, k := range []string{"deleted", "created-since", "created-before", "deleted-since", "deleted-before",
+		"changes-since", "changes-before"} {
 		if _, ok := gotQuery[k]; ok {
 			t.Errorf("unexpected query param %q in default list: %v", k, gotQuery)
 		}
+	}
+}
+
+// TestRunServerList_ChangesWindow covers nova's own updated_at filters. They are
+// upstream's, not KeyStack's, and select on when a server last changed rather
+// than when it was created — so they are not interchangeable with
+// --created-since/--created-before, and nova answers both with deleted servers
+// included.
+func TestRunServerList_ChangesWindow(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery url.Values
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"servers":[]}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	f := &serverListFlags{
+		changesSince:  "2016-03-04T06:27:59Z",
+		changesBefore: "2016-04-04T06:27:59Z",
+	}
+	var buf bytes.Buffer
+	if err := runServerList(context.Background(), computeClient(fakeServer, "2.90"), o, f, "", "", &buf); err != nil {
+		t.Fatalf("runServerList: %v", err)
+	}
+	for k, v := range map[string]string{
+		"changes-since":  "2016-03-04T06:27:59Z",
+		"changes-before": "2016-04-04T06:27:59Z",
+		// Nova includes deleted servers in the window unless told otherwise, so
+		// the listing would otherwise be mostly tombstones.
+		"deleted": "false",
+	} {
+		if got := gotQuery.Get(k); got != v {
+			t.Errorf("query %q = %q, want %q", k, got, v)
+		}
+	}
+	// The KeyStack created-* params must not ride along.
+	for _, k := range []string{"created-since", "created-before"} {
+		if _, ok := gotQuery[k]; ok {
+			t.Errorf("unexpected query param %q: %v", k, gotQuery)
+		}
+	}
+}
+
+// --deleted asks for the tombstones outright, so it must win over the
+// deleted=false the changes-* window otherwise sends.
+func TestRunServerList_DeletedWinsOverChangesWindow(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery url.Values
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"servers":[]}`))
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	f := &serverListFlags{deleted: true, changesSince: "2016-03-04T06:27:59Z"}
+	var buf bytes.Buffer
+	if err := runServerList(context.Background(), computeClient(fakeServer, "2.90"), o, f, "", "", &buf); err != nil {
+		t.Fatalf("runServerList: %v", err)
+	}
+	if got := gotQuery.Get("deleted"); got != "true" {
+		t.Errorf("query deleted = %q, want %q", got, "true")
 	}
 }

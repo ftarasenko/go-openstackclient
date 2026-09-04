@@ -337,6 +337,15 @@ prints `None`. `Security Groups` is deduplicated, since nova repeats a group
 once per port it is applied to and the column answers "which groups", not "how
 many ports".
 
+`koc server list --changes-since/--changes-before` also carry one deliberate
+divergence from raw nova, matching upstream rather than the API: nova answers a
+changes-\* window with **deleted servers included**, and upstream never shows
+that because it sends `deleted=False` on every list. `koc` sends `deleted=false`
+only for the changes-\* window — `--deleted` still asks for the tombstones
+outright and wins — so the default query stays byte-identical to vanilla nova.
+On one measured window the raw form returned 117 `DELETED` rows against 15 live
+ones.
+
 Four more flags are **koc-native**, all of them read-backs or waits upstream
 never grew:
 

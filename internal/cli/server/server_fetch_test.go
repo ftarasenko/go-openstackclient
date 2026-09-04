@@ -29,6 +29,8 @@ func TestServerListMicroversion_LowestThatAnswersTheRequest(t *testing.T) {
 		{"deleted filter is in the 2.1 schema", serverListFlags{deleted: true}, "2.1"},
 		{"keystack created-since", serverListFlags{createdSince: "2026-01-01T00:00:00Z"}, "2.66"},
 		{"keystack deleted-before", serverListFlags{deletedBefore: "2026-01-01T00:00:00Z"}, "2.66"},
+		{"changes-since needs nothing above 2.1", serverListFlags{changesSince: "2026-01-01T00:00:00Z"}, "2.1"},
+		{"changes-before", serverListFlags{changesBefore: "2026-01-01T00:00:00Z"}, "2.66"},
 		{"user filter", serverListFlags{user: "u-1"}, "2.83"},
 		{"user filter outranks the time filters", serverListFlags{user: "u-1", createdSince: "x"}, "2.83"},
 	} {

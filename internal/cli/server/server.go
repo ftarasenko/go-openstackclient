@@ -138,6 +138,14 @@ type serverListFlags struct {
 	deletedSince  string
 	deletedBefore string
 
+	// Nova's own updated_at window (upstream --changes-since/--changes-before),
+	// unrelated to the KeyStack created-* filters above: these select on when a
+	// server last changed, not when it was created. Nova includes deleted
+	// servers in that window unless deleted=false is sent — see
+	// serverListQuery.ExcludeDeleted.
+	changesSince  string
+	changesBefore string
+
 	project       string
 	projectDomain string
 	user          string
@@ -159,6 +167,17 @@ type serverListQuery struct {
 	CreatedBefore string
 	DeletedSince  string
 	DeletedBefore string
+	// ChangesBefore is nova's own filter, not a KeyStack one, but it has no
+	// typed field either (ListOpts carries only ChangesSince).
+	ChangesBefore string
+	// ExcludeDeleted sends deleted=false explicitly. Nova answers a
+	// changes-since / changes-before window with deleted servers included
+	// unless told otherwise, so without this a --changes-since listing is
+	// mostly tombstones: one measured window returned 117 DELETED rows against
+	// 15 live ones. Upstream OSC never sees that because it sends
+	// deleted=False on every list; koc sends it only for the changes-* window,
+	// so the default query stays byte-identical to vanilla nova.
+	ExcludeDeleted bool
 }
 
 func (q serverListQuery) ToServerListQuery() (string, error) {
@@ -171,14 +190,18 @@ func (q serverListQuery) ToServerListQuery() (string, error) {
 		return "", err
 	}
 	vals := u.Query()
-	if q.Deleted {
+	switch {
+	case q.Deleted:
 		vals.Set("deleted", "true")
+	case q.ExcludeDeleted:
+		vals.Set("deleted", "false")
 	}
 	for key, val := range map[string]string{
 		"created-since":  q.CreatedSince,
 		"created-before": q.CreatedBefore,
 		"deleted-since":  q.DeletedSince,
 		"deleted-before": q.DeletedBefore,
+		"changes-before": q.ChangesBefore,
 	} {
 		if val != "" {
 			vals.Set(key, val)
@@ -237,6 +260,13 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.createdBefore, "created-before", "", "KeyStack: only servers created at/before this ISO-8601 time")
 	fl.StringVar(&f.deletedSince, "deleted-since", "", "KeyStack: only servers deleted at/after this ISO-8601 time (use with --deleted)")
 	fl.StringVar(&f.deletedBefore, "deleted-before", "", "KeyStack: only servers deleted at/before this ISO-8601 time (use with --deleted)")
+	// Nova's updated_at window. --changes-before is gated at 2.66; both make
+	// nova include deleted servers in the answer, which is why they are not
+	// interchangeable with --created-since/--created-before above.
+	fl.StringVar(&f.changesSince, "changes-since", "",
+		"only servers changed at/after this ISO-8601 time; add --deleted for the tombstones")
+	fl.StringVar(&f.changesBefore, "changes-before", "",
+		"only servers changed at/before this ISO-8601 time; add --deleted for the tombstones (nova 2.66+)")
 	return cmd
 }
 
@@ -278,17 +308,21 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 			// Listing another project's or user's servers is a cross-project read,
 			// which nova only honors together with all_tenants — so either filter
 			// implies it rather than quietly returning nothing.
-			AllTenants: f.all || f.allProjects || projectID != "" || userID != "",
-			TenantID:   projectID,
-			UserID:     userID,
-			Marker:     f.marker,
-			Limit:      f.limit,
+			AllTenants:   f.all || f.allProjects || projectID != "" || userID != "",
+			TenantID:     projectID,
+			UserID:       userID,
+			Marker:       f.marker,
+			Limit:        f.limit,
+			ChangesSince: f.changesSince,
 		},
 		Deleted:       f.deleted,
 		CreatedSince:  f.createdSince,
 		CreatedBefore: f.createdBefore,
 		DeletedSince:  f.deletedSince,
 		DeletedBefore: f.deletedBefore,
+		ChangesBefore: f.changesBefore,
+		// --deleted asks for the tombstones outright, so it wins.
+		ExcludeDeleted: !f.deleted && (f.changesSince != "" || f.changesBefore != ""),
 	}
 	listClient := client
 	if f.pinMicroversion {
@@ -339,6 +373,11 @@ func serverListMicroversion(f *serverListFlags) string {
 	if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
 		// The KeyStack created-/deleted-* filters only enter nova's query schema
 		// at 2.66 (api/openstack/compute/schemas/servers.py query_params_v266).
+		mv = "2.66"
+	}
+	if f.changesBefore != "" {
+		// changes-before is the upstream filter added by the same microversion;
+		// changes-since needs nothing above 2.1.
 		mv = "2.66"
 	}
 	if f.user != "" {
