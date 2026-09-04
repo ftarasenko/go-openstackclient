@@ -16,14 +16,14 @@ session.
 | Vault | KV path | subtree (`-r`) | — (done) |
 | **NetBox** | device / config context | dependency closure + children | NetBox **4.x** across minors, forward |
 | **GitLab** | project(s), or everything | group subtree, all projects | **17.8.6 → 19.x**, forward only |
-| **Nexus** | repository(-ies) | every component in the repo | Nexus Repository **3.x** across minors, forward |
+| **Nexus** | repository(-ies): `yum`, `raw`, `docker` | every component / every tag | Nexus Repository **3.x** across minors, forward |
 
 Everything below is one-way, additive, src → dst. Two-way reconciliation and
 deletion are explicit non-goals (see "Non-goals").
 
 ## Settled constraints
 
-Three things are decided and the design depends on them. They are recorded here
+Four things are decided and the design depends on them. They are recorded here
 because each one removes options rather than adding them.
 
 1. **The destination is always newer than the source, for every system.** Sync
@@ -33,7 +33,11 @@ because each one removes options rather than adding them.
 2. **GitLab is 17.8.6 → 19.x.** Not "17/18/19 in any combination" — one pair,
    spanning two majors and roughly a dozen minors. That single fact settles the
    Phase 3 mechanism question outright; see "Phase 3".
-3. **The environment is air-gapped and everything ships inside it.** No module
+3. **Nexus is `yum`, `raw` and `docker`.** Docker is a requirement, not an
+   option, so the OCI Registry v2 client is **in the plan** rather than a
+   deferred fourth phase — Nexus cannot move Docker content through its
+   components API at all. Phase 2 is correspondingly larger; see "Phase 2".
+4. **The environment is air-gapped and everything ships inside it.** No module
    proxy, no PyPI, no vendor SDK downloads, no `docker pull` at verification
    time. This is the existing invariant in AGENTS.md, extended to the test and
    verification story as well as the build; see §11.
@@ -375,50 +379,125 @@ code path koc touches (it moved in 4.4, removed in 4.5).
 | `feat(netbox): sync devices with their prerequisites` | 1 | L |
 | `feat(netbox): sync config contexts and device children` | 1 | M |
 
-## Phase 2 — Nexus (`koc nexus`)
+## Phase 2 — Nexus (`koc nexus`): yum, raw, docker
 
 ### Scope
 
-Component/asset content of **hosted** repositories, by format. Repository
-*configuration* sync and blob-store/cleanup policy are platform concerns and are
-out of scope (a later `koc nexus repository create --from-src` is the natural
-follow-up).
+Component/asset content of **hosted** repositories in exactly three formats:
+**`yum`, `raw`, `docker`**. Repository *configuration* sync and blob-store /
+cleanup policy stay out of scope (a later `koc nexus repository create
+--from-src` is the natural follow-up).
 
-### Formats
+`maven2`, `pypi`, `npm`, `apt` and `helm` are **not** in scope. The Phase 2a
+machinery generalises to them at low cost if they ever appear — a format is
+mostly a table of upload field names — but none is built, tested or claimed.
 
-In scope for Phase 2: `raw`, `maven2`, `yum`, `apt`, `pypi`, `npm`, `helm` —
-everything the components API can upload with format-specific fields.
+The three named formats split into two genuinely different jobs, and pretending
+otherwise is what makes Nexus sync tools quietly incomplete:
 
-**Out of scope, deliberately: `docker`.** Sonatype's own guidance is that Docker
-is not uploadable through the components API; a Docker repository has to be
-driven through the Registry v2 API (blobs, manifests, tags), which is a
-different client and arguably a different feature (`koc oci copy`). Pretending
-otherwise produces a sync that silently skips the repositories operators care
-most about.
+| | yum + raw | docker |
+| --- | --- | --- |
+| Enumerate | components API | Registry v2 `tags/list` + manifests |
+| Transfer | one asset = one file | manifest graph: manifest list → manifests → blobs |
+| Upload | components API, or a direct `PUT` | Registry v2 blob upload + manifest `PUT` |
+| Identity | server-reported checksum | **content-addressed digest** |
+| Auth | basic | Docker Bearer Token realm |
 
-### Mechanics
+So Phase 2 is two sub-phases with a shared plan/apply layer, not one command
+with a format switch.
+
+### Phase 2a — yum and raw
 
 - **Enumerate**: `GET /service/rest/v1/components?repository=<r>`, paged by
   `continuationToken` until it comes back null. (Default page size became 50 in
-  3.74; do not assume it.)
-- **Compare by checksum** — every asset carries `sha1`/`sha256`/`md5`. Equal
-  checksum → `skip`, and that is what makes a re-run of a large repository cheap
-  and makes `--on-conflict update` mean something precise.
-- **Transfer streams.** `GET <downloadUrl>` piped through `io.Pipe` +
-  `multipart.Writer` into `POST /service/rest/v1/components?repository=<dst>`.
-  Nexus authenticates with basic auth, so unlike S3's SigV4 there is no payload
-  hash forcing an `io.ReadSeeker` and no spooling. **Verify** whether Nexus
-  requires `Content-Length` on that multipart POST; if it does, fall back to a
-  temp file under `--spool-dir` and say so in the help.
-- **Refuse a non-hosted destination** (proxy/group), read from the repositories
-  API's `type`, with the reason.
-- Version skew: the `Server: Nexus/3.x.y` response header, with
-  `/service/rest/v1/status` as the liveness probe. Two known skew points to
-  encode in `capabilities.go`: pagination defaults changed in **3.74**, and
-  **3.88** replaced Elasticsearch with SQL search, changing wildcard behaviour.
-  Because the source is the *older* side, both land on the enumeration half of
-  the job — which is the argument for enumerating via `components` (stable
-  across the range) rather than `search` (whose semantics moved at 3.88).
+  3.74; do not assume it.) Each component's assets carry `path`,
+  `downloadUrl` and `checksum{sha1,sha256,md5}`.
+- **Compare by checksum.** Equal → `skip`. This is what makes a re-run of a
+  10,000-RPM repository cheap and gives `--on-conflict update` a precise
+  meaning.
+- **Upload by direct `PUT`, not multipart.** Sonatype's own guidance is that
+  raw and yum (unlike npm/nuget/docker) accept a plain HTTP `PUT` of the asset
+  to its repository path. That is strictly better than the components API here:
+  no multipart envelope, no `Content-Length` ambiguity, and the body streams
+  straight from the source response through `io.Pipe` with nothing spooled.
+  The components API stays the fallback for a format or a Nexus version where
+  the `PUT` path is not available, with its format fields
+  (`yum.directory` / `yum.asset` / `yum.asset.filename`;
+  `raw.directory` / `raw.asset1` / `raw.asset1.filename`) **read from the
+  destination's own API docs before coding** — the field spelling differs
+  between Sonatype's docs and the generated clients, and §11 says the deployed
+  instance is the authority.
+- **yum repodata is a post-condition, not an afterthought.** A yum sync is not
+  done when the last RPM lands; it is done when the destination's
+  `repodata/repomd.xml` reflects them. Nexus regenerates repodata for hosted
+  yum repositories on its own, so the sync **verifies** rather than triggers:
+  fetch `repomd.xml` after the last upload and report its revision. Note the
+  limitation honestly — the tasks API can list and run an existing task by id
+  but cannot create an ad-hoc `repository.yum.rebuild.metadata` run, so
+  `--rebuild-metadata` can only run a repair task an operator already created,
+  and says so when there is none.
+- **Refuse a non-hosted destination** (proxy or group), read from the
+  repositories API's `type`, with the reason.
+
+### Phase 2b — docker (`internal/oci`)
+
+Docker is the reason this is a phase and not a flag. Nexus cannot upload Docker
+content through the components API at all; a Docker repository is an OCI /
+Docker Registry v2 endpoint and has to be driven as one. That means a new
+stdlib-only client, `internal/oci`, and it is the largest single piece of new
+code in this whole proposal (~800–1200 lines with tests).
+
+What it has to do, and why each part is not optional:
+
+- **Reach the registry without a per-repository port.** Nexus normally exposes
+  each Docker repository on its own HTTP connector because the `docker` CLI
+  demands the registry at the host root. koc is not the `docker` CLI: it can
+  use the repository-path form, `/repository/<repo>/v2/…`, which needs no extra
+  port and no wildcard DNS. Keep the port/subdomain form as an override
+  (`--nexus-docker-endpoint`) for estates already wired that way.
+- **The Bearer token handshake.** With the Docker Bearer Token realm active,
+  `GET /v2/` answers 401 with `WWW-Authenticate: Bearer realm=…,service=…`;
+  koc exchanges basic auth at that realm for a token scoped
+  `repository:<name>:pull` on the source and `pull,push` on the destination.
+  Tokens expire, so a multi-gigabyte layer push must re-authenticate and resume
+  rather than fail at 90%.
+- **Walk the manifest graph, do not flatten it.** For each tag: fetch the
+  manifest with an `Accept` listing both Docker v2.2 and OCI media types; if it
+  is a manifest **list / image index, recurse into every child** — a sync that
+  copies only the amd64 child silently breaks every arm64 consumer, and that
+  failure surfaces weeks later on one node. Then blobs, then config, then the
+  manifest **last**: a manifest that references a blob the registry does not yet
+  have is a broken tag that looks fine until it is pulled.
+- **Content addressing is a gift — use it.** Every blob has a digest, so
+  existence is one `HEAD /v2/<name>/blobs/<digest>` and skipping is exact, not
+  heuristic. Layer sizes come from the manifest, so a monolithic blob `PUT` has
+  a known `Content-Length` and streams without spooling, while `crypto/sha256`
+  verifies the bytes in flight. This is the only system in this proposal where
+  the sync can *prove* the destination got exactly the source's bytes; the
+  design should lean on it rather than re-implement checksum bookkeeping.
+- **Cross-registry blob mounting does not apply.** `?mount=` only works within
+  one registry, so every missing layer is a real transfer. Shared base layers
+  are still deduplicated by the digest check, which in practice removes most of
+  the volume on a second and subsequent image.
+- **Scope selection**: `koc nexus sync repository <docker-repo>` copies every
+  tag; `--tag`/`--tag-prefix` narrows it, and `--digest` pins one image.
+  Untagged manifests are not copied — they are garbage-collectable by
+  definition.
+
+`internal/oci` is deliberately a general Registry v2 client with Nexus wired in
+at the endpoint layer, not a Nexus-specific one. It is the piece most likely to
+be wanted elsewhere later, and keeping it generic costs nothing today.
+
+### Version skew
+
+The `Server: Nexus/3.x.y` response header, with `/service/rest/v1/status` as the
+liveness probe. Two known skew points for `capabilities.go`: pagination defaults
+changed in **3.74**, and **3.88** replaced Elasticsearch with SQL search,
+changing wildcard behaviour. Because the source is the *older* side, both land
+on the enumeration half of the job — which is the argument for enumerating via
+`components` (stable across the range) rather than `search` (whose semantics
+moved at 3.88). Registry v2 is a versioned wire protocol independent of the
+Nexus release, so Phase 2b is largely insulated from this.
 
 ### Commands and rough cost
 
@@ -426,7 +505,13 @@ most about.
 | --- | --- | --- |
 | `feat(nexus): minimal Nexus REST client, status and repository list` | 2 | M |
 | `feat(nexus): list components and assets` | 2 | S |
-| `feat(nexus): sync a hosted repository's components` | 1 | L |
+| `feat(nexus): sync a hosted yum or raw repository` | 1 | L |
+| `feat(oci): Registry v2 client with the Docker bearer-token handshake` | — | L |
+| `feat(oci): copy a manifest graph between registries` | — | L |
+| `feat(nexus): sync a hosted docker repository` | — | M |
+
+The last three are the docker half; the `sync repository` leaf is shared, so
+the leaf count does not grow with them.
 
 ## Phase 3 — GitLab (`koc gitlab`)
 
@@ -549,14 +634,19 @@ it happens to be the right capability ramp:
 1. NetBox is pure JSON at small volume — it exercises planning, dependency
    ordering and version-skew handling without binary streaming.
 2. Nexus adds streaming, checksum comparison, paging at scale, concurrency and
-   continue-on-error. After it, `internal/sync` has three real users and the
-   traversal engine can be extracted from evidence rather than guessed.
+   continue-on-error — and, in 2b, a second protocol entirely. After it,
+   `internal/sync` has three real users and the traversal engine can be
+   extracted from evidence rather than guessed. **2a before 2b**: yum and raw
+   prove the enumeration, planning and streaming layers against a simple asset
+   model, so `internal/oci` only has to be new in the ways it genuinely is.
 3. GitLab is last because it is the largest — its scope is now settled, but it
    is the phase with the widest surface (a dozen sub-resource families) and it
    benefits most from an engine two systems have already exercised.
 
 Rough sizing, in the repo's own commit granularity: **Phase 0 ≈ 4 commits,
-NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Every
+NetBox ≈ 4, Nexus ≈ 6 (3 for yum/raw, 3 for docker), GitLab ≈ 5**, plus a
+`docs:` refresh per phase. Docker roughly doubles Phase 2 — `internal/oci` is
+the largest single new component in the plan. Every
 `feat:` commit carries its `docs/coverage.md` row.
 
 ## Risks
@@ -567,7 +657,11 @@ NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Eve
 | Version-matrix maintenance cost | per-version `testdata/`, one table test per system; a version only counts as supported if it has a fixture set |
 | Fixtures cannot be re-recorded on demand inside the air-gap | record and commit them once, scrubbed, while the instances are reachable — before the code that needs them (§11) |
 | A field the 17.8 source sends and the 19.x destination removed | allow-list writes by what the destination's API accepts; report dropped fields instead of dropping them silently |
-| Binary size — three clients plus three command groups | `make size` already records it in CI; budget and check it per phase |
+| Binary size — four clients plus three command groups | `make size` already records it in CI; budget and check it per phase |
+| A docker sync that copies only one architecture of a multi-arch image | recurse into every child of a manifest list; a partial index is a failure, not a partial success |
+| A manifest pushed before its blobs — a tag that looks fine until pulled | blobs and config first, manifest last; verify by pulling the manifest back from the destination |
+| A bearer token expiring mid-push of a multi-gigabyte layer | re-authenticate and resume rather than fail the transfer |
+| yum sync "complete" while `repodata/repomd.xml` still lags | treat repodata as a post-condition: fetch and report it after the last upload |
 | `gocognit` 25 on planner/apply functions | plan for small named functions from the start; the Vault copy's `copySession.copyOne` split is the model |
 | A destination write path that a dry-run did not predict | plan-before-write is a hard rule, tested per system |
 | Secret leakage through output, `--debug` or fixtures | redaction on the secret-carrying endpoints; masked rendering; the private-data rule applied to every fixture |
@@ -578,8 +672,11 @@ NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Eve
 - Two-way / bidirectional reconciliation.
 - Deletion of destination objects (`--prune`) — additive only.
 - A replacement for each system's own backup and restore.
-- Docker/OCI content (Nexus) and git repository content (GitLab), both named
-  above with the reason.
+- Git repository content (GitLab) — named above with the reason. Docker/OCI
+  content is **in** scope, as Phase 2b.
+- Nexus formats other than `yum`, `raw` and `docker`; `maven2`/`pypi`/`npm`/
+  `apt`/`helm` are reachable from the same machinery but are not built or
+  claimed.
 - Repository/instance *configuration* management (Nexus blob stores, GitLab
   instance settings, NetBox plugins).
 
@@ -599,19 +696,23 @@ NetBox ≈ 4, Nexus ≈ 3, GitLab ≈ 5**, plus a `docs:` refresh per phase. Eve
    long-lived admin tokens pasted into CI variables, and koc already reads KV v2
    with cluster auto-discovery. `--<tool>-creds-from-vault` ships with the first
    group.
+5. **Nexus formats** — `yum`, `raw`, `docker`. Docker brings `internal/oci` into
+   the plan as Phase 2b and roughly doubles Phase 2; the other formats are
+   explicitly not built.
 
 ### Still open
 
-5. **Nexus formats actually in use**, and whether Docker repositories are a
-   requirement. If they are, that is `koc oci copy` — a fourth phase with its
-   own client (Registry v2: blobs, manifests, tags), not a flag on
-   `nexus sync`. This is the one open question that can change the size of the
-   plan, so it is worth answering before Phase 2 starts.
 6. **NetBox object scope beyond devices and config contexts** — virtual
    machines, IPAM prefixes/IPs, circuits? The engine is unchanged; the
    natural-key and prerequisite tables grow per type, so this is additive and
    can be answered during Phase 1.
-7. **Is additive-only sufficient long term**, or is a reconcile/prune mode
+7. **Docker specifics to settle during Phase 2b** — are the source registry's
+   images multi-arch (manifest lists), and are any tags signed or referrer-linked
+   (cosign signatures and attestations live as separate tags or referrers and are
+   *not* carried by a plain tag copy)? Neither changes the plan's shape; both
+   change what "complete" means for a docker sync, so answer them before the
+   first migration is trusted.
+8. **Is additive-only sufficient long term**, or is a reconcile/prune mode
    eventually needed? It does not change Phases 1–3, but it decides whether the
    plan structure should carry a "would delete" row type from the start — which
    is cheap now and invasive later.
