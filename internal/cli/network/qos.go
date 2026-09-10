@@ -48,12 +48,12 @@ func newQoSPolicyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func qosPolicyShowFields(p *policies.Policy) ([]string, []any) {
 	return []string{
-			"id", "name", "description", "shared", "is_default", "project_id",
-			"revision_number", "tags", "created_at", "updated_at",
-		}, []any{
-			p.ID, p.Name, p.Description, p.Shared, p.IsDefault, p.ProjectID,
-			p.RevisionNumber, strings.Join(p.Tags, ", "), p.CreatedAt, p.UpdatedAt,
-		}
+		"id", "name", "description", "shared", "is_default", "project_id",
+		"revision_number", "tags", "created_at", "updated_at",
+	}, []any{
+		p.ID, p.Name, p.Description, p.Shared, p.IsDefault, p.ProjectID,
+		p.RevisionNumber, strings.Join(p.Tags, ", "), p.CreatedAt, p.UpdatedAt,
+	}
 }
 
 func newQoSPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Command {

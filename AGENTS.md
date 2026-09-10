@@ -11,8 +11,9 @@ the upstream `openstack` client's `noun → verb → flags` syntax and ships as 
 dependency-free binary for air-gapped / FSTEC-regulated deployment.
 
 - **Module**: `github.com/ftarasenko/go-openstackclient` (binary name: `koc`)
-- **Go**: see `go.mod` (currently `go 1.26.0`, the floor `golang.org/x/crypto`
-  forces); a toolchain older than that cannot build the tree offline
+- **Go**: `go.mod` floors the build at `go 1.26.0` (what `golang.org/x/crypto`
+  forces); **develop on 1.27+** — CI builds and formats there, and gofmt differs
+  (see "Build / test / lint")
 - **SDK**: gophercloud **v2** (`github.com/gophercloud/gophercloud/v2`) — never v1 or the dead rackspace fork
 - **CLI**: cobra + pflag; `golang.org/x/term` for terminal-width detection (rich gauges)
 - **Deps are vendored** (`vendor/` is committed) — builds must reproduce offline
@@ -88,6 +89,17 @@ Gate before committing: `gofmt` clean, `go vet` clean, `golangci-lint` **0
 issues**, `go test ./...` green, the offline static build succeeds, and — if the
 commit changes the command surface — `docs/coverage.md` is updated (see "Coverage
 tracking").
+
+**`gofmt` here means Go 1.27's.** 1.27 changed how a multi-value `return` whose
+operands are composite literals is indented, and the two versions disagree in
+both directions — 1.26's gofmt reformats what 1.27's wrote and vice versa. The
+pinned golangci-lint bundles 1.27's (the whole v2.13 line is built with
+go1.27.0) and enforces it as the `gofmt` formatter, so running `make fmt` under
+an older toolchain silently reverts the tree and the lint job then rejects the
+files it just touched. `go.mod`'s floor stays at 1.26.0 because nothing in the
+code needs 1.27 — building and testing on 1.26 is fine, formatting is not. If
+the golangci-lint pin ever moves to a build made with a newer Go, re-run
+`make fmt` with that Go in the same commit.
 
 ## SonarQube (out-of-band static analysis)
 
@@ -410,11 +422,15 @@ weakened by a check that happens to need a proxy.
   separate job because `-race` needs `CGO_ENABLED=1` and that must never leak into
   the shipped static binaries; and `lint`, with golangci-lint pinned and its
   download checksum-verified against the release's published `checksums.txt`.
-  Go is resolved as `1.26.x` + `check-latest` rather than `go-version-file:
-  go.mod`, so the binaries get the newest 1.26 patch stdlib instead of the exact
-  version go.mod pins — see the comment in the workflow before changing it. When
-  a dependency raises the floor in go.mod, move these pins in the same commit:
-  every offline job runs `GOTOOLCHAIN=local` and fails outright otherwise.
+  Go is resolved as `1.27.x` + `check-latest` rather than `go-version-file:
+  go.mod`, so the binaries get the newest 1.27 patch stdlib instead of the exact
+  version go.mod pins — see the comment in the workflow before changing it. The
+  pin sits a minor above go.mod's floor on purpose: it has to match the gofmt
+  the pinned golangci-lint bundles (above). Two rules follow. When a dependency
+  raises the floor in go.mod, these pins move in the same commit if the floor
+  would overtake them — every offline job runs `GOTOOLCHAIN=local` and fails
+  outright otherwise. And when the golangci-lint pin moves to a build made with
+  a newer Go, these pins and `make fmt` move with it.
 - `.github/workflows/supply-chain.yml` — the **network-allowed** checks, on the
   same triggers plus a weekly cron and `workflow_dispatch`. Three jobs:
   `vendor-integrity` re-derives the vendor tree (`go mod download && go mod

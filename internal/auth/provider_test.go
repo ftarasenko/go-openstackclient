@@ -302,15 +302,15 @@ func envOpenrc(t *testing.T) {
 // cloudsYAMLResult is what clouds.Parse would hand back for the named cloud.
 func cloudsYAMLResult() (gophercloud.AuthOptions, gophercloud.EndpointOpts) {
 	return gophercloud.AuthOptions{
-			IdentityEndpoint: "https://named-cloud.example:5000",
-			Username:         "cloudsuser",
-			Password:         "cloudssecret",
-			TenantName:       "cloudsproject",
-			DomainName:       "CloudsDom",
-		}, gophercloud.EndpointOpts{
-			Region:       "cloudsregion",
-			Availability: gophercloud.AvailabilityPublic,
-		}
+		IdentityEndpoint: "https://named-cloud.example:5000",
+		Username:         "cloudsuser",
+		Password:         "cloudssecret",
+		TenantName:       "cloudsproject",
+		DomainName:       "CloudsDom",
+	}, gophercloud.EndpointOpts{
+		Region:       "cloudsregion",
+		Availability: gophercloud.AvailabilityPublic,
+	}
 }
 
 // A named cloud must be used wholesale. Every auth flag defaults to its OS_*
