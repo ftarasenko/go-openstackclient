@@ -33,6 +33,10 @@ func newTestKeypair(t *testing.T, plaintext string) (*rsa.PrivateKey, string) {
 	if err != nil {
 		t.Fatalf("generating a test key: %v", err)
 	}
+	// PKCS#1 v1.5 is deprecated as of Go 1.26, but it is the padding nova's
+	// get-password API stores and the one gophercloud's ExtractPassword
+	// undoes, so the fixture has to speak it.
+	//nolint:staticcheck // SA1019: nova's wire format, see above
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &key.PublicKey, []byte(plaintext))
 	if err != nil {
 		t.Fatalf("encrypting the test password: %v", err)
