@@ -101,12 +101,12 @@ func extractAllocations(page pagination.Page) ([]allocation, error) {
 
 func allocationShowFields(al *allocation) ([]string, []any) {
 	return []string{
-			"uuid", "name", "state", "node_uuid", "resource_class", "traits",
-			"candidate_nodes", "last_error", "extra", "owner", "created_at", "updated_at",
-		}, []any{
-			al.UUID, al.Name, al.State, al.NodeUUID, al.ResourceClass, al.Traits,
-			al.CandidateNodes, al.LastError, al.Extra, al.Owner, al.CreatedAt, al.UpdatedAt,
-		}
+		"uuid", "name", "state", "node_uuid", "resource_class", "traits",
+		"candidate_nodes", "last_error", "extra", "owner", "created_at", "updated_at",
+	}, []any{
+		al.UUID, al.Name, al.State, al.NodeUUID, al.ResourceClass, al.Traits,
+		al.CandidateNodes, al.LastError, al.Extra, al.Owner, al.CreatedAt, al.UpdatedAt,
+	}
 }
 
 // --- list -------------------------------------------------------------------

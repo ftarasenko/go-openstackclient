@@ -57,6 +57,10 @@ lint:
 	golangci-lint run ./...
 
 ## fmt: format sources
+# Needs gofmt from Go 1.27+. Go 1.27 changed the indentation of a multi-value
+# return whose operands are composite literals, and the pinned golangci-lint
+# bundles that gofmt, so an older one silently reverts the tree and the lint job
+# then fails on files `make fmt` just "fixed".
 fmt:
 	gofmt -w $(shell find . -name '*.go' -not -path './vendor/*')
 
