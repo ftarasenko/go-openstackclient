@@ -11,7 +11,8 @@ the upstream `openstack` client's `noun → verb → flags` syntax and ships as 
 dependency-free binary for air-gapped / FSTEC-regulated deployment.
 
 - **Module**: `github.com/ftarasenko/go-openstackclient` (binary name: `koc`)
-- **Go**: see `go.mod` (currently `go 1.25`); target ≥ 1.22
+- **Go**: see `go.mod` (currently `go 1.26.0`, the floor `golang.org/x/crypto`
+  forces); a toolchain older than that cannot build the tree offline
 - **SDK**: gophercloud **v2** (`github.com/gophercloud/gophercloud/v2`) — never v1 or the dead rackspace fork
 - **CLI**: cobra + pflag; `golang.org/x/term` for terminal-width detection (rich gauges)
 - **Deps are vendored** (`vendor/` is committed) — builds must reproduce offline
@@ -409,9 +410,11 @@ weakened by a check that happens to need a proxy.
   separate job because `-race` needs `CGO_ENABLED=1` and that must never leak into
   the shipped static binaries; and `lint`, with golangci-lint pinned and its
   download checksum-verified against the release's published `checksums.txt`.
-  Go is resolved as `1.25.x` + `check-latest` rather than `go-version-file:
-  go.mod`, so the binaries get the newest 1.25 patch stdlib instead of the exact
-  version go.mod pins — see the comment in the workflow before changing it.
+  Go is resolved as `1.26.x` + `check-latest` rather than `go-version-file:
+  go.mod`, so the binaries get the newest 1.26 patch stdlib instead of the exact
+  version go.mod pins — see the comment in the workflow before changing it. When
+  a dependency raises the floor in go.mod, move these pins in the same commit:
+  every offline job runs `GOTOOLCHAIN=local` and fails outright otherwise.
 - `.github/workflows/supply-chain.yml` — the **network-allowed** checks, on the
   same triggers plus a weekly cron and `workflow_dispatch`. Three jobs:
   `vendor-integrity` re-derives the vendor tree (`go mod download && go mod

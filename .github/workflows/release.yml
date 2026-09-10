@@ -55,17 +55,19 @@ jobs:
         with:
           fetch-depth: 0 # full history + tags for git describe / release notes
 
-      # Explicit 1.25.x + check-latest instead of `go-version-file: go.mod`:
-      # go.mod pins the full patch `go 1.25.0`, so setup-go would resolve exactly
-      # 1.25.0 and every released binary would carry the original 1.25.0 standard
-      # library and its known vulnerabilities (crypto/x509 name-constraint
-      # verification GO-2025-4175, crypto/tls, encoding/pem GO-2025-4009,
-      # net/http HTTP/2). The floor stays at 1.25.0 in go.mod so contributors are
-      # not forced into a toolchain download.
+      # Explicit 1.26.x + check-latest instead of `go-version-file: go.mod`:
+      # go.mod pins the full patch `go 1.26.0`, so setup-go would resolve exactly
+      # 1.26.0 and every released binary would carry the original 1.26.0 standard
+      # library rather than the newest patch's — the trap that once shipped
+      # go1.25.0's crypto/x509 name-constraint verification (GO-2025-4175),
+      # crypto/tls, encoding/pem (GO-2025-4009) and net/http HTTP/2 bugs. The
+      # floor in go.mod stays as low as the dependency graph allows (1.26.0 is
+      # what golang.org/x/crypto v0.56.0 forces) so contributors need the
+      # smallest possible toolchain.
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           check-latest: true
           cache: false
 
