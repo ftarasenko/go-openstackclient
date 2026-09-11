@@ -582,7 +582,8 @@ correct if only one is present.
 2. **Pick the version** from the highest-impact commit (semver): `BREAKING
    CHANGE`/`!` → MAJOR, `feat` → MINOR, `fix`/`perf` → PATCH. While the project is
    `0.y.z` there is no stable API, so a breaking change bumps MINOR and any `feat`
-   bumps MINOR; a docs/ci/chore-only range is a PATCH.
+   bumps MINOR; a range with no `feat`/`fix`/`perf` — only
+   `build`/`ci`/`docs`/`chore`/`test`/`refactor` — is a PATCH.
 3. **Preview the notes** locally: `scripts/release-notes.sh vX.Y.Z`. If a bullet
    reads badly, fix it by rewording the offending commit (e.g. `git commit
    --amend` before it is tagged), not by hand-editing the release afterwards.
