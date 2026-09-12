@@ -420,7 +420,7 @@ func TestServerCreate_FlagParity(t *testing.T) {
 	for _, name := range []string{
 		"availability-zone", "host", "hypervisor-hostname",
 		"user-data", "block-device", "block-device-mapping",
-		"wait", flagWaitTimeout,
+		"hint", "wait", flagWaitTimeout,
 	} {
 		if leaf.Flags().Lookup(name) == nil {
 			t.Errorf("koc server create: missing --%s", name)

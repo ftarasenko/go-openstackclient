@@ -153,6 +153,8 @@ koc server list --all-projects --long
 koc server create --image ubuntu-cloudimage --flavor 1 --network private myvm
 koc server create --image ubuntu-cloudimage --flavor 1 --nic net-id=<uuid> \
   --boot-from-volume 20 --boot-volume-type ssd --config-drive myvm
+koc server create --image ubuntu-cloudimage --flavor 1 --network private \
+  --hint group=<server-group-uuid> --hint different_host=<uuid> --hint different_host=<uuid> myvm
 koc server add floating ip myvm 192.0.2.5
 koc flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny
 koc project create demo --domain example

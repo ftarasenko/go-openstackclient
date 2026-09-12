@@ -546,6 +546,10 @@ type serverCreateFlags struct {
 	blockDeviceMappings []string
 	bdmSpecs            []map[string]any
 
+	// hints are the repeatable "--hint key=value" values, kept raw so the seam
+	// owns the parse (a repeated key becomes a list, see parseSchedulerHints).
+	hints []string
+
 	wait        bool
 	waitTimeout time.Duration
 }
@@ -645,6 +649,11 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		"block device as "+blockDeviceKeys()+" key=value pairs; repeatable")
 	fl.StringArrayVar(&f.blockDeviceMappings, "block-device-mapping", nil,
 		"legacy block device as <dev-name>=<id>[:<type>[:<size-GB>[:<delete-on-terminate>]]]; repeatable")
+	// Scheduler hints. nova validates the keys it knows and passes the rest
+	// through to whichever filters the deployment enables, so the set of useful
+	// keys is a property of the cloud, not of the client.
+	fl.StringArrayVar(&f.hints, "hint", nil,
+		"scheduler hint as key=value; repeatable (a repeated key becomes a list)")
 	fl.BoolVar(&f.wait, "wait", false, "wait for the server to reach ACTIVE")
 	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 	return cmd
@@ -734,6 +743,10 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
+	hints, err := parseSchedulerHints(f.hints)
+	if err != nil {
+		return err
+	}
 
 	opts := servers.CreateOpts{
 		Name:               name,
@@ -780,7 +793,19 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		createOpts = serverCreateOptsExt{CreateOptsBuilder: createOpts, Host: f.host, BlockDevice: bdms}
 	}
 
-	s, err := servers.Create(ctx, client, createOpts, nil).Extract()
+	// Scheduler hints ride beside the server object rather than inside it, which
+	// is why they are a separate argument. Every hint goes in as an additional
+	// property: SchedulerHintOpts' typed fields validate client-side in ways
+	// nova does not — Query must be a parsed statement of at least three
+	// elements, BuildNearHostIP must carry a CIDR suffix it then splits in two —
+	// so routing a free-text flag through them would reject values upstream OSC
+	// sends verbatim. Nova is the validator; koc checks the flag's shape only.
+	var hintOpts servers.SchedulerHintOptsBuilder
+	if len(hints) > 0 {
+		hintOpts = servers.SchedulerHintOpts{AdditionalProperties: hints}
+	}
+
+	s, err := servers.Create(ctx, client, createOpts, hintOpts).Extract()
 	if err != nil {
 		return fmt.Errorf("creating server %q: %w", name, err)
 	}
