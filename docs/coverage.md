@@ -80,7 +80,8 @@ command that omits one is a regression rather than a known gap:
   / `--all-stores` / `--target-all-projects`. Every command in this tree that
   upstream gives one of these now has it; `ALL_PROJECTS` in the environment
   defaults `--all-projects` on the compute and block-storage verbs upstream reads
-  it for (`internal/cli/allprojects`).
+  it for (`internal/cli/allprojects`). `network port list` carries one upstream
+  does not define at all — see "koc-native commands".
 - **`--name`** — both as a list filter and as the *create* spelling. Upstream
   python-designateclient and python-octaviaclient name a new resource with
   `--name` and take no positional for it, where koc grew the positional first;
@@ -463,6 +464,16 @@ whole HTTP request/response exchange on every client `koc` builds. OSC has no
 global equivalent — keystoneauth carries a session `timeout`, but
 `python-openstackclient` registers no flag for it, so an operator's only recourse
 upstream is `clouds.yaml`. See README "Timeouts" for the semantics.
+
+`port list --all-projects` is koc-native for the same reason and likewise not
+counted: neutron has no cross-project switch, because an admin token already
+lists every project's ports and there is no `all_tenants` parameter to send, so
+upstream OSC defines no such flag on any network command. koc accepts it so an
+`openstack`-shaped invocation is not rejected for an unknown flag, and gives it
+a job — the `Project ID` column, without which a multi-project result's rows are
+indistinguishable (designate's `zone list` inserts the same column for the same
+reason). It defaults from `ALL_PROJECTS` like the compute and block-storage
+verbs, and is mutually exclusive with `--project`.
 
 ## Updating this document
 

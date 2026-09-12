@@ -1227,3 +1227,62 @@ func TestRunPortCreate_AllowedAddress(t *testing.T) {
 		t.Fatalf("runPortCreate: %v", err)
 	}
 }
+
+// --all-projects is presentational for neutron: an admin token already lists
+// every project's ports, so the flag must not put a filter on the wire — it only
+// adds the Project ID column that makes a multi-project result readable.
+func TestRunPortList_AllProjectsAddsProjectColumnAndFiltersNothing(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery url.Values
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		gotQuery = r.URL.Query()
+		writeJSON(t, w, http.StatusOK, `{"ports":[
+          {"id":"port-1","name":"p1","status":"ACTIVE","project_id":"proj-a"},
+          {"id":"port-2","name":"p2","status":"DOWN","project_id":"proj-b"}]}`)
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	f := &portListFlags{allProjects: true}
+	if err := runPortList(context.Background(), networkClient(fakeServer), o, f, portListDeps{}, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	if len(gotQuery) != 0 {
+		t.Errorf("port list query = %v, want no filters for --all-projects", gotQuery)
+	}
+	for _, want := range []string{"Project ID", "proj-a", "proj-b"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("port list output missing %q\n%s", want, buf.String())
+		}
+	}
+}
+
+// --all-projects also defaults from ALL_PROJECTS in the environment, so it can be
+// on while --project narrows the listing to one project. That result is
+// single-project, and keeps the upstream columns.
+func TestRunPortList_ProjectFilterKeepsUpstreamColumns(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	const projectID = "11111111-1111-1111-1111-111111111111"
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		th.TestFormValues(t, r, map[string]string{"project_id": projectID})
+		writeJSON(t, w, http.StatusOK,
+			`{"ports":[{"id":"port-1","name":"p1","status":"ACTIVE","project_id":"`+projectID+`"}]}`)
+	})
+
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	// A UUID --project passes through, so the seam stays single-service.
+	f := &portListFlags{allProjects: true, project: projectID}
+	if err := runPortList(context.Background(), networkClient(fakeServer), o, f, portListDeps{}, &buf); err != nil {
+		t.Fatalf("runPortList: %v", err)
+	}
+	if strings.Contains(buf.String(), "Project ID") {
+		t.Errorf("port list --project should not add the Project ID column\n%s", buf.String())
+	}
+}

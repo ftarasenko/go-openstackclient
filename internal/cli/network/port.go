@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
@@ -107,6 +109,7 @@ type portListFlags struct {
 	notTags       []string
 	notAnyTags    []string
 	long          bool
+	allProjects   bool
 }
 
 // portListDeps supplies the secondary service clients `port list` may need:
@@ -157,10 +160,24 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude ports with all of these tags (comma-separated)")
 	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude ports with any of these tags (comma-separated)")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
+	allprojects.Bind(cmd, &f.allProjects, allProjectsPortList)
 	// Upstream OSC models these three as one device filter; they all set device_id.
 	cmd.MarkFlagsMutuallyExclusive("router", "server", "device-id")
+	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
 	return cmd
 }
+
+// allProjectsPortList is the --all-projects help text. The flag is koc-native:
+// upstream OSC gives `port list` no cross-project option because neutron needs
+// none — it scopes a list to the caller's project only when the token is not an
+// admin one, so an admin already sees every project's ports and there is no
+// `all_tenants` query parameter to send (neutron's filter-validation extension
+// would reject one outright). What the listing lacked was any way to tell whose
+// port a row is, so --all-projects is presentational here: it adds the Project
+// ID column, and an `openstack`-shaped invocation carrying the flag stops
+// failing on an unknown flag.
+const allProjectsPortList = "list ports across all projects (admin); an admin token already sees them all, " +
+	"so this only adds the Project ID column"
 
 // portListOpts adds the query parameters neutron accepts but gophercloud's
 // ports.ListOpts does not model — binding:host_id, behind --host.
@@ -341,13 +358,22 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err := ports.ExtractPortsInto(pages, &all); err != nil {
 		return fmt.Errorf("parsing port list: %w", err)
 	}
-	return o.WriteList(w, portListTable(all, f.long))
+	// A listing narrowed to one project is single-project whatever the flag says,
+	// so it keeps the upstream columns — this matters because --all-projects also
+	// defaults from ALL_PROJECTS in the environment.
+	return o.WriteList(w, portListTable(all, f.long, f.allProjects && f.project == ""))
 }
 
-func portListTable(list []portExt, long bool) output.Table {
+// portListTable renders the list. A cross-project listing gains a Project ID
+// column, because without it the rows of a multi-project result are
+// indistinguishable — the same reason designate's `zone list` inserts one.
+func portListTable(list []portExt, long, allProjects bool) output.Table {
 	cols := []string{"ID", "Name", "MAC Address", "Fixed IP Addresses", "Status"}
 	if long {
 		cols = append(cols, "Security Groups", "Device Owner", "Tags", "Trunk subports")
+	}
+	if allProjects {
+		cols = slices.Insert(cols, 1, "Project ID")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for i := range list {
@@ -355,6 +381,9 @@ func portListTable(list []portExt, long bool) output.Table {
 		row := []any{p.ID, p.Name, p.MACAddress, formatFixedIPs(p.FixedIPs), p.Status}
 		if long {
 			row = append(row, p.SecurityGroups, p.DeviceOwner, p.Tags, p.TrunkDetails.SubPorts)
+		}
+		if allProjects {
+			row = slices.Insert(row, 1, any(p.ProjectID))
 		}
 		t.Rows = append(t.Rows, row)
 	}

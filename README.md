@@ -656,6 +656,16 @@ items are deferred and worth noting:
   always resolves a server name across projects, so the flag upstream needs for
   that is a no-op here rather than a gate; it exists so an `openstack`
   invocation carrying it does not fail on an unknown flag.
+- **`port list --all-projects` is presentational.** Neutron has no cross-project
+  switch: it scopes a listing to the caller's project only when the token is not
+  an admin one, so an admin already sees every project's ports and there is no
+  `all_tenants` parameter to send (a cloud running neutron's filter-validation
+  extension would reject one). Upstream OSC therefore gives `port list` no such
+  flag. koc accepts it anyway — so an `openstack`-shaped invocation carrying it
+  does not fail on an unknown flag — and makes it useful by inserting the
+  `Project ID` column, without which the rows of a multi-project result cannot be
+  told apart. It also honours `ALL_PROJECTS` and is refused together with
+  `--project`, which narrows to one project.
 
 ## KeyStack documentation caveat
 

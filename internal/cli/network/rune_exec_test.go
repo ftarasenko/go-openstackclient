@@ -139,3 +139,75 @@ func TestExec_InvalidFormatFailsBeforeRequest(t *testing.T) {
 		t.Fatal("an invalid --format still issued the API request")
 	}
 }
+
+// `port list --all-projects` is koc-native — upstream OSC has no such flag
+// because neutron needs none — so nothing upstream pins its wiring. This does:
+// the flag must parse, reach the seam, and turn into the Project ID column
+// without adding a filter neutron's filter validation would reject.
+func TestExec_PortList_AllProjects(t *testing.T) {
+	t.Setenv("ALL_PROJECTS", "")
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotQuery string
+	fakeServer.Mux.HandleFunc("/v2.0/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "GET")
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ports":[
+			{"id":"22222222-2222-2222-2222-222222222222","name":"p1","status":"ACTIVE",
+			 "project_id":"33333333-3333-3333-3333-333333333333"}
+		]}`))
+	})
+
+	out, err := execNetwork(t, fakeServer, "port", "list", "--all-projects")
+	if err != nil {
+		t.Fatalf("port list --all-projects: %v (output %q)", err, out)
+	}
+	if gotQuery != "" {
+		t.Errorf("--all-projects put %q on the wire; neutron takes no such filter", gotQuery)
+	}
+	for _, want := range []string{"Project ID", "33333333-3333-3333-3333-333333333333"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("port list --all-projects output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// --project narrows to one project, which is the opposite of what
+// --all-projects asks for; cobra must reject the pair rather than silently
+// letting one win.
+func TestExec_PortList_AllProjectsExcludesProject(t *testing.T) {
+	t.Setenv("ALL_PROJECTS", "")
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/v2.0/ports", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ports":[]}`))
+	})
+
+	_, err := execNetwork(t, fakeServer, "port", "list", "--all-projects", "--project", "p1")
+	if err == nil {
+		t.Error("--project with --all-projects was accepted; want a mutual-exclusion error")
+	}
+}
+
+// The ALL_PROJECTS envvar defaults the flag, the same as on the compute and
+// block-storage verbs upstream reads it for.
+func TestPortList_AllProjectsDefaultsFromEnvironment(t *testing.T) {
+	t.Setenv("ALL_PROJECTS", "1")
+	root := &cobra.Command{Use: "koc"}
+	root.AddCommand(NewCommand(&auth.Options{}, &output.Options{})...)
+	leaf, _, err := root.Find([]string{"port", "list"})
+	if err != nil || leaf == nil {
+		t.Fatalf("port list: not found: %v", err)
+	}
+	flag := leaf.Flags().Lookup("all-projects")
+	if flag == nil {
+		t.Fatal("koc port list: missing --all-projects")
+	}
+	if flag.DefValue != "true" {
+		t.Errorf("--all-projects default = %q, want true from ALL_PROJECTS", flag.DefValue)
+	}
+}
