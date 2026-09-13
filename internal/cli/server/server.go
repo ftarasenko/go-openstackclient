@@ -548,7 +548,10 @@ type serverCreateFlags struct {
 
 	// hints are the repeatable "--hint key=value" values, kept raw so the seam
 	// owns the parse (a repeated key becomes a list, see parseSchedulerHints).
-	hints []string
+	// serverGroup is upstream's shorthand for the one hint an operator reaches
+	// for most, and takes a name as well as an ID.
+	hints       []string
+	serverGroup string
 
 	wait        bool
 	waitTimeout time.Duration
@@ -654,6 +657,8 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	// keys is a property of the cloud, not of the client.
 	fl.StringArrayVar(&f.hints, "hint", nil,
 		"scheduler hint as key=value; repeatable (a repeated key becomes a list)")
+	fl.StringVar(&f.serverGroup, "server-group", "",
+		"server group to boot into (name or ID); shorthand for --hint group=<id>")
 	fl.BoolVar(&f.wait, "wait", false, "wait for the server to reach ACTIVE")
 	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout)
 	return cmd
@@ -746,6 +751,20 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	hints, err := parseSchedulerHints(f.hints)
 	if err != nil {
 		return err
+	}
+	// --server-group is upstream's alias for --hint group=<id>, with the name
+	// lookup done for you. Given both, it wins — the same precedence upstream
+	// has, since it assigns hints['group'] after collapsing the --hint values
+	// (openstackclient/compute/v2/server.py CreateServer.take_action).
+	if f.serverGroup != "" {
+		groupID, err := resolveServerGroupID(ctx, client, f.serverGroup)
+		if err != nil {
+			return err
+		}
+		if hints == nil {
+			hints = make(map[string]any, 1)
+		}
+		hints["group"] = groupID
 	}
 
 	opts := servers.CreateOpts{

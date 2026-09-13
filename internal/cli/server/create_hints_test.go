@@ -235,3 +235,96 @@ func TestExec_ServerCreate_HintReachesTheRequest(t *testing.T) {
 		t.Errorf("scheduler hints = %v, want both flag values", hints)
 	}
 }
+
+// --server-group is the one hint with a name→ID lookup attached, and it is the
+// authority when a bare --hint group= is also given.
+func TestRunServerCreate_ServerGroupResolvesAndWins(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flavors":[{"id":"2","name":"m1.small"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/os-server-groups", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server_groups":[{"id":"` + serverGroupID + `","name":"web","policy":"anti-affinity"}]}`))
+	})
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","adminPass":"pw"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/servers/new-id", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"web-9","status":"ACTIVE"}}`))
+	})
+
+	f := &serverCreateFlags{
+		image:       "img-uuid",
+		flavor:      "m1.small",
+		serverGroup: "web",
+		hints:       []string{"group=99999999-9999-4999-8999-999999999999", "rack=b12"},
+	}
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "web-9", f, &buf); err != nil {
+		t.Fatalf("runServerCreate: %v", err)
+	}
+
+	hints, ok := body["os:scheduler_hints"].(map[string]any)
+	if !ok {
+		t.Fatalf("create body carries no os:scheduler_hints: %v", body)
+	}
+	if got := hints["group"]; got != serverGroupID {
+		t.Errorf("group hint = %v, want the resolved %s from --server-group", got, serverGroupID)
+	}
+	// The other hints are untouched by the override.
+	if got := hints["rack"]; got != "b12" {
+		t.Errorf("rack hint = %v, want b12", got)
+	}
+}
+
+// --server-group alone still produces the hint, with no --hint given.
+func TestRunServerCreate_ServerGroupByIDNeedsNoLookup(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flavors":[{"id":"2","name":"m1.small"}]}`))
+	})
+	listed := false
+	fakeServer.Mux.HandleFunc("/os-server-groups", func(w http.ResponseWriter, _ *http.Request) {
+		listed = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server_groups":[]}`))
+	})
+	var body map[string]any
+	fakeServer.Mux.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","adminPass":"pw"}}`))
+	})
+	fakeServer.Mux.HandleFunc("/servers/new-id", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":{"id":"new-id","name":"web-9","status":"ACTIVE"}}`))
+	})
+
+	f := &serverCreateFlags{image: "img-uuid", flavor: "m1.small", serverGroup: serverGroupID}
+	var buf bytes.Buffer
+	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"),
+		&output.Options{Format: output.FormatTable}, "web-9", f, &buf); err != nil {
+		t.Fatalf("runServerCreate: %v", err)
+	}
+	if listed {
+		t.Error("--server-group <uuid> listed the groups; a UUID needs no lookup")
+	}
+	hints, _ := body["os:scheduler_hints"].(map[string]any)
+	if hints["group"] != serverGroupID {
+		t.Errorf("group hint = %v, want %s", hints["group"], serverGroupID)
+	}
+}
