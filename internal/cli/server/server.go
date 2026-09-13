@@ -748,23 +748,12 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	hints, err := parseSchedulerHints(f.hints)
+	// Scheduler hints are assembled (and --server-group resolved) before
+	// anything is sent; they ride beside the server object rather than inside
+	// it, which is why they stay a separate value all the way to Create.
+	hintOpts, err := buildSchedulerHints(ctx, client, f)
 	if err != nil {
 		return err
-	}
-	// --server-group is upstream's alias for --hint group=<id>, with the name
-	// lookup done for you. Given both, it wins — the same precedence upstream
-	// has, since it assigns hints['group'] after collapsing the --hint values
-	// (openstackclient/compute/v2/server.py CreateServer.take_action).
-	if f.serverGroup != "" {
-		groupID, err := resolveServerGroupID(ctx, client, f.serverGroup)
-		if err != nil {
-			return err
-		}
-		if hints == nil {
-			hints = make(map[string]any, 1)
-		}
-		hints["group"] = groupID
 	}
 
 	opts := servers.CreateOpts{
@@ -810,18 +799,6 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	}
 	if f.host != "" || len(bdms) > 0 {
 		createOpts = serverCreateOptsExt{CreateOptsBuilder: createOpts, Host: f.host, BlockDevice: bdms}
-	}
-
-	// Scheduler hints ride beside the server object rather than inside it, which
-	// is why they are a separate argument. Every hint goes in as an additional
-	// property: SchedulerHintOpts' typed fields validate client-side in ways
-	// nova does not — Query must be a parsed statement of at least three
-	// elements, BuildNearHostIP must carry a CIDR suffix it then splits in two —
-	// so routing a free-text flag through them would reject values upstream OSC
-	// sends verbatim. Nova is the validator; koc checks the flag's shape only.
-	var hintOpts servers.SchedulerHintOptsBuilder
-	if len(hints) > 0 {
-		hintOpts = servers.SchedulerHintOpts{AdditionalProperties: hints}
 	}
 
 	s, err := servers.Create(ctx, client, createOpts, hintOpts).Extract()
