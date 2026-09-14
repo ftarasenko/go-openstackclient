@@ -458,12 +458,20 @@ so the gap is upstream's, not the cloud's. The write side is already reachable:
 `nova clear-password` is `koc server set --no-password`, and changing the
 password is `koc server set --password`.
 
-One **global flag** is koc-native too, and is deliberately not in the counts
-above (the tables measure commands, not flags): `--timeout` / `OS_TIMEOUT` caps a
-whole HTTP request/response exchange on every client `koc` builds. OSC has no
-global equivalent — keystoneauth carries a session `timeout`, but
-`python-openstackclient` registers no flag for it, so an operator's only recourse
-upstream is `clouds.yaml`. See README "Timeouts" for the semantics.
+Two **global flags** are koc-native too, and are deliberately not in the counts
+above (the tables measure commands, not flags):
+
+- `--timeout` / `OS_TIMEOUT` caps a whole HTTP request/response exchange on every
+  client `koc` builds. OSC has no global equivalent — keystoneauth carries a
+  session `timeout`, but `python-openstackclient` registers no flag for it, so an
+  operator's only recourse upstream is `clouds.yaml`. See README "Timeouts" for
+  the semantics.
+- `--os-password-stdin` reads the password from standard input. Upstream has no
+  equivalent: osc-lib's only non-`OS_PASSWORD` route is the interactive `getpass`
+  prompt, which a CI job cannot use, leaving `--os-password` (visible in `ps` and
+  the shell history) or an exported `OS_PASSWORD` (inherited by every child
+  process). `koc` keeps that prompt — it is the parity half of the same change —
+  and adds the pipe. See README "Where the password comes from".
 
 `port list --all-projects` is koc-native for the same reason and likewise not
 counted: neutron has no cross-project switch, because an admin token already

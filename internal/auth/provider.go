@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/config"
@@ -41,6 +42,12 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 	if err := o.validateSystemScope(); err != nil {
 		return nil, err
 	}
+	// --os-password-stdin is read here, before the first network round trip, so
+	// a run that pipes its password in fails on a conflicting source rather than
+	// on a rejected token request.
+	if err := o.applyPasswordStdin(); err != nil {
+		return nil, err
+	}
 
 	// Vault: fetch an openrc secret and fold its OS_* values into o, then fall
 	// through to the normal Keystone flow below (works for every service).
@@ -62,6 +69,12 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 
 	ao, eo, baseTLS, err := o.resolveAuth()
 	if err != nil {
+		return nil, err
+	}
+	// Nothing supplied a password: ask for it the way osc-lib does, on the
+	// terminal. AllowReauth below then replays whatever was typed, so a token
+	// expiring mid-command does not ask twice.
+	if err := o.promptMissingPassword(&ao, os.Stderr); err != nil {
 		return nil, err
 	}
 	ao.AllowReauth = true
@@ -115,8 +128,8 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 		if o.AuthURL == "" {
 			return ao, eo, nil, fmt.Errorf("no credentials found: set --os-cloud, or OS_AUTH_URL and the related OS_* variables")
 		}
-		if o.Password == "" && o.AppCredID == "" && o.AppCredName == "" {
-			return ao, eo, nil, fmt.Errorf("no credentials found: set OS_PASSWORD or application credentials (OS_APPLICATION_CREDENTIAL_ID/_SECRET)")
+		if o.Password == "" && o.AppCredID == "" && o.AppCredName == "" && !o.willPromptForPassword() {
+			return ao, eo, nil, fmt.Errorf("no credentials found: set OS_PASSWORD or application credentials (OS_APPLICATION_CREDENTIAL_ID/_SECRET), pass --os-password-stdin, or run interactively to be prompted")
 		}
 		eo = gophercloud.EndpointOpts{Region: o.RegionName}
 	}
@@ -138,7 +151,7 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf(&ao.IdentityEndpoint, o.override("os-auth-url", o.AuthURL))
 	setIf(&ao.Username, o.override("os-username", o.Username))
 	setIf(&ao.UserID, o.override("os-user-id", o.UserID))
-	setIf(&ao.Password, o.override("os-password", o.Password))
+	setIf(&ao.Password, o.override(flagOSPassword, o.Password))
 	setIf(&ao.TenantName, o.override(flagOSProjectName, o.ProjectName))
 	setIf(&ao.TenantID, o.override(flagOSProjectID, o.ProjectID))
 	setIf(&ao.ApplicationCredentialID, o.override("os-application-credential-id", o.AppCredID))

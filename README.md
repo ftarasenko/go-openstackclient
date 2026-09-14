@@ -194,6 +194,40 @@ so `koc baremetal driver show ipmi --os-system-scope all` works from a shell
 that already has a project-scoped openrc sourced. `all` is the only value
 Keystone defines.
 
+#### Where the password comes from
+
+`--os-password` / `OS_PASSWORD` is the usual answer, but neither is a good place
+for a secret: a flag value is visible in `ps` and lands in the shell history, and
+an environment variable is inherited by every child process. Two more ways in:
+
+| Source | Use it for |
+| --- | --- |
+| `--os-password-stdin` | scripts and CI — `koc … --os-password-stdin < secret` |
+| the interactive prompt | a shell session, and a `clouds.yaml` entry that deliberately stores no password |
+
+`--os-password-stdin` follows `docker login --password-stdin`: `koc` reads
+standard input, strips one trailing line ending, and uses the rest verbatim
+(leading and trailing spaces included — only the newline goes). More than one
+line is an error, since that is a whole openrc piped in by mistake rather than a
+password. It conflicts with an explicitly typed `--os-password` and with
+`--creds-from-ns` / `--creds-from-vault`, which bring their own credentials; it
+overrides `OS_PASSWORD`, which is background configuration, and it outranks a
+named cloud's stored password the same way a typed `--os-password` does.
+
+```sh
+koc server list --os-password-stdin < ~/.config/koc/password
+pass show keystack/admin | koc server list --os-cloud keystack --os-password-stdin
+```
+
+When nothing supplies a password and the run is interactive, `koc` asks for it on
+the terminal without echo, the way `python-openstackclient` does — including for
+a named cloud whose `clouds.yaml` entry has a `username` but no `password`. A
+non-interactive run is never prompted: it fails with `no credentials found`
+instead of blocking on a pipe nobody is going to write to. Neither source is
+consulted when the request authenticates without a password (application
+credentials, a pre-issued token), and `--os-password-stdin` is not combined with
+a prompt — stdin has already been spent.
+
 #### Alternative credential sources
 
 Two koc-specific, mutually exclusive flags source credentials outside the normal

@@ -622,7 +622,7 @@ func (o *Options) applyOpenrcVars(kv map[string]string) {
 	set("os-auth-url", &o.AuthURL, "OS_AUTH_URL")
 	set("os-username", &o.Username, "OS_USERNAME")
 	set("os-user-id", &o.UserID, "OS_USER_ID")
-	set("os-password", &o.Password, "OS_PASSWORD")
+	set(flagOSPassword, &o.Password, "OS_PASSWORD")
 	set(flagOSProjectName, &o.ProjectName, "OS_PROJECT_NAME", "OS_TENANT_NAME")
 	set(flagOSProjectID, &o.ProjectID, "OS_PROJECT_ID", "OS_TENANT_ID")
 	set("os-project-domain-name", &o.ProjectDomainName, "OS_PROJECT_DOMAIN_NAME")
