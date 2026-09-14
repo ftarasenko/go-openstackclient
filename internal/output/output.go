@@ -968,3 +968,40 @@ func cellRaw(v any) string {
 		return string(b)
 	}
 }
+
+// byteUnits are the binary (IEC) multiples HumanBytes renders. Binary rather
+// than decimal because that is what df, ls -h and every S3 console show, so a
+// "14.2 GiB" from koc lines up with what an operator sees elsewhere.
+var byteUnits = []string{"KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
+
+// HumanBytes renders a byte count for a reader: exact bytes below 1 KiB, then
+// three significant figures with a binary unit.
+//
+// It is opt-in everywhere it appears (a --human flag), never the default: koc's
+// tables are meant to survive a pipe into awk, and a rounded "14.2 GiB" is not
+// a number a script can add up.
+func HumanBytes(n int64) string {
+	if n < 0 {
+		return "-" + HumanBytes(-n)
+	}
+	if n < 1024 {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+
+	value, unit := float64(n)/1024, byteUnits[0]
+	for _, next := range byteUnits[1:] {
+		if value < 1024 {
+			break
+		}
+		value, unit = value/1024, next
+	}
+
+	switch {
+	case value < 10:
+		return strconv.FormatFloat(value, 'f', 2, 64) + " " + unit
+	case value < 100:
+		return strconv.FormatFloat(value, 'f', 1, 64) + " " + unit
+	default:
+		return strconv.FormatFloat(value, 'f', 0, 64) + " " + unit
+	}
+}

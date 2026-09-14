@@ -76,7 +76,7 @@ func TestNewAPIErrorSynthesisesNoSuchKey(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 
-	_, err := c.HeadObject(context.Background(), "db-backups", "missing")
+	_, err := c.HeadObject(context.Background(), "db-backups", "missing", "")
 	if !IsNotFound(err) {
 		t.Fatalf("a bodiless 404 was not recognised as not-found: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGetObjectCopyError(t *testing.T) {
 		_, _ = w.Write([]byte("some bytes"))
 	})
 
-	_, err := c.GetObject(context.Background(), "db-backups", "key", failWriter{})
+	_, err := c.GetObject(context.Background(), "db-backups", "key", "", failWriter{})
 	if err == nil {
 		t.Fatal("a failing writer was reported as success")
 	}
@@ -225,7 +225,7 @@ func TestDoTransportError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = c.HeadObject(context.Background(), "db-backups", "key")
+	_, err = c.HeadObject(context.Background(), "db-backups", "key", "")
 	if err == nil {
 		t.Fatal("an unreachable endpoint was reported as success")
 	}
@@ -244,7 +244,7 @@ func TestHeadObjectUsesContentLengthHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	info, err := c.HeadObject(context.Background(), "db-backups", "key")
+	info, err := c.HeadObject(context.Background(), "db-backups", "key", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -521,34 +521,79 @@ S3 credentials alone are used, so it works on a host with no cloud credentials.
 
 ```sh
 koc s3 bucket list
+koc s3 bucket show db-backups                  # exists? reachable? versioned?
 koc s3 bucket create scratch
 koc s3 bucket delete scratch                   # the bucket must be empty
 koc s3 object list db-backups
+koc s3 object list db-backups --delimiter /    # one level, like a directory
 koc s3 object show db-backups/<key>            # HEAD only, no transfer
 koc s3 object delete db-backups/<key>
 koc s3 object delete db-backups/e2e- -r        # every key under a prefix
-koc s3 du         db-backups                   # objects and exact bytes
-koc s3 du         db-backups --group           # per storage class
+koc s3 du         db-backups --human --group   # size, per storage class
 koc s3 download   db-backups/<key> ./dump.mbs.gz.enc
 koc s3 download   db-backups/<key>.sha256 -    # "-" streams to stdout, so it pipes
+koc s3 download   db-backups/2026/ ./restore -r
 koc s3 upload     ./dump.mbs.gz.enc db-backups/
+koc s3 upload     ./restore db-backups/2026/ -r
+koc s3 copy       db-backups/<key> db-backups/latest.mbs.gz.enc
+koc s3 move       db-backups/<key> archive/
+koc s3 presign    db-backups/<key> --expire 1h
 ```
 
 Every ref also accepts the `s3://<bucket>/<key>` spelling, so a path copied from
-`s5cmd` or `aws s3` pastes in unchanged.
+`s5cmd` or `aws s3` pastes in unchanged, and a wildcard (`"db-backups/2026/*.gz"`)
+selects many where a command takes one.
 
 `bucket list` is scoped to the **access key**, not to the store: Garage answers
 with the buckets that key is granted, so a key made for one bucket lists exactly
 that one.
 
+**Transfers.** `upload` has no 5 GiB ceiling: anything past `--part-size` (16 MiB
+by default) goes out as a multipart upload, `--concurrency` parts at a time, and
+a failure aborts it so a half-written object never becomes visible. `-` as the
+source reads **standard input**, which is what makes a dump streamable without
+staging it on disk:
+
+```sh
+mysqldump --all-databases | gzip | koc s3 upload - db-backups/nightly.sql.gz
+```
+
+`--recursive` on `download`, `upload`, `copy`, `move` and `object delete` works
+on a whole prefix or tree, `--concurrency` objects at a time — which is most of
+why a bulk restore finishes, since a thousand small objects are otherwise a
+thousand serial round trips. `--include`/`--exclude` take globs (where `*` spans
+`/`, as in s5cmd) and `--dry-run` prints exactly what would move.
+
+`copy` and `move` are **server-side**: the source is named in a header, so the
+bytes never travel through koc and a 100 GiB object is one small request. A move
+is the copy and then the delete, in that order — a failure leaves the source
+intact rather than losing the object.
+
 `object delete --recursive` is the one destructive shape in the group, so it is
-never inferred from a trailing slash or a wildcard — and `--dry-run` prints
-exactly the keys it would remove without touching any of them. It is also how a
-bucket is emptied before `bucket delete`, which never removes objects
-implicitly.
+never inferred from a trailing slash — and `--dry-run` prints exactly the keys it
+would remove without touching any of them. It is also how a bucket is emptied
+before `bucket delete`, which never removes objects implicitly. Keys go out in
+batches of up to 1000 per request, so emptying a large bucket costs a thousandth
+of the round trips.
 
 `du` is a listing folded into a sum, because S3 has no "how big is this" call:
 no object is downloaded, but every key is walked, one request per 1000 of them.
+Sizes are exact bytes everywhere unless `--human` is given — a rounded
+"14.2 GiB" is not a number a script can add up.
+
+`presign` prints a URL that reads (or, with `--method put`, writes) one object
+with no credentials attached to the recipient. It makes **no request** — pure
+local signing — so it works offline, and the URL is a bearer credential for that
+key until it expires: treat it like a password and keep `--expire` short.
+
+**Versioning** (`bucket show`, `bucket set --versioning`, `--all-versions`,
+`--version-id`) is implemented but Garage has none — it reports every bucket as
+unversioned — so those are for a koc pointed at AWS, Ceph RGW or MinIO.
+
+A failed request is retried with exponential backoff (`--s3-retries`, 5 by
+default): on a cluster network a reset connection mid-transfer should not cost
+the whole command. `--s3-anonymous` sends requests unsigned, for a bucket
+granted to everyone.
 
 Credentials come from flags, from the environment, or from a Kubernetes Secret:
 
@@ -560,6 +605,8 @@ Credentials come from flags, from the environment, or from a Kubernetes Secret:
 | `--s3-region` | `AWS_REGION`, `AWS_DEFAULT_REGION`, `S3_REGION`, `s3_region` | `garage` |
 | `--s3-cacert` | `AWS_CA_BUNDLE`, `S3_CACERT` | system roots |
 | `--s3-creds-from-ns` | `KOC_S3_CREDS_FROM_NS` | — |
+| `--s3-anonymous` | `S3_ANONYMOUS` | off (no credentials needed or used) |
+| `--s3-retries` | — | `5` |
 | `--insecure-s3` | `S3_SKIP_VERIFY` | off (the global `--insecure` also applies) |
 
 The three env families are deliberate: `AWS_*` so an existing `aws`/`boto`
@@ -608,7 +655,7 @@ internal/kube/             minimal read-only k8s REST client (no client-go)
 internal/vault/            minimal Vault REST client (AppRole/token + KV v2)
 internal/s3/               minimal S3 REST client (SigV4, no aws-sdk/minio-go)
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt, no Keystone auth
-internal/cli/s3/           "koc s3" bucket/object/du/download/upload, no Keystone auth
+internal/cli/s3/           "koc s3" bucket/object/du/transfer/copy/presign, no Keystone auth
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
 internal/cli/              root command wiring
 internal/cli/resolve/      cross-service name→ID resolution

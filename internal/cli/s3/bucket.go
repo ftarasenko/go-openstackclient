@@ -2,8 +2,10 @@ package s3cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +25,8 @@ func newBucketCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.C
 	cmd.AddCommand(newBucketListCommand(a, o, f))
 	cmd.AddCommand(newBucketCreateCommand(a, o, f))
 	cmd.AddCommand(newBucketDeleteCommand(a, o, f))
+	cmd.AddCommand(newBucketShowCommand(a, o, f))
+	cmd.AddCommand(newBucketSetCommand(a, o, f))
 	return cmd
 }
 
@@ -170,4 +174,128 @@ func runBucketDelete(ctx context.Context, client *s3.Client, refs []string, w io
 		_, err = fmt.Fprintf(w, "Deleted bucket: %s\n", bucket)
 		return err
 	})
+}
+
+const bucketShowLong = `Show a bucket: that it exists, that the credentials reach it, and its
+versioning state.
+
+The existence check is a HEAD, which costs the server no listing work — the
+cheapest possible probe, and the one to use in a script that must know whether
+a bucket is there before writing to it.
+
+Versioning is reported as Enabled, Suspended, or Unversioned for a bucket that
+was never configured. Garage answers Unversioned for every bucket because it
+implements no versioning at all, so this is also how to tell which kind of store
+is on the other end. A store that does not answer the versioning call leaves the
+field unknown rather than failing the command.`
+
+func newBucketShowCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <bucket>",
+		Short: "Show a bucket's existence and versioning state",
+		Long:  bucketShowLong,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			bucket, err := parseBucketRef(args[0])
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := f.client(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runBucketShow(ctx, client, o, bucket, cmd.OutOrStdout())
+		},
+	}
+}
+
+// runBucketShow is the test seam for "bucket show".
+func runBucketShow(ctx context.Context, client *s3.Client, o *output.Options,
+	bucket string, w io.Writer) error {
+	if err := client.HeadBucket(ctx, bucket); err != nil {
+		if s3.IsNotFound(err) {
+			return fmt.Errorf("no bucket %q on %s (or the credentials cannot see it)", bucket, client.Endpoint())
+		}
+		return fmt.Errorf("reading bucket %q: %w", bucket, err)
+	}
+
+	// The bucket is there, which is the answer asked for; a store that does not
+	// implement the versioning call must not turn that into a failure.
+	versioning := "unknown"
+	if status, err := client.GetBucketVersioning(ctx, bucket); err == nil {
+		versioning = status
+	}
+	return o.WriteSingle(w,
+		[]string{"Bucket", "Endpoint", "Region", "Versioning"},
+		[]any{bucket, client.Endpoint(), client.Region(), versioning})
+}
+
+const bucketSetLong = `Change a bucket's settings. Only versioning is settable.
+
+--versioning enabled starts keeping every version of every key; suspended stops
+without discarding what is already kept. S3 has no way back to the
+never-versioned state, which is why "unversioned" is not accepted here.
+
+Garage implements no versioning, so this fails against it — that is the store
+saying so, not koc. Use "koc s3 bucket show" to see which kind of store answers.`
+
+func newBucketSetCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
+	var versioning string
+	cmd := &cobra.Command{
+		Use:   "set <bucket>",
+		Short: "Change a bucket's settings",
+		Long:  bucketSetLong,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			bucket, err := parseBucketRef(args[0])
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("versioning") {
+				return errors.New("nothing to set: pass --versioning enabled|suspended")
+			}
+			status, err := versioningStatus(versioning)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := f.client(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runBucketSet(ctx, client, o, bucket, status, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().StringVar(&versioning, "versioning", "",
+		"object versioning: enabled or suspended")
+	return cmd
+}
+
+// versioningStatus maps the flag's lower-case spelling to the protocol's.
+// Accepting both keeps "--versioning Enabled" from being a puzzling error.
+func versioningStatus(v string) (string, error) {
+	switch strings.ToLower(v) {
+	case "enabled":
+		return s3.VersioningEnabled, nil
+	case "suspended":
+		return s3.VersioningSuspended, nil
+	default:
+		return "", fmt.Errorf("--versioning must be enabled or suspended, got %q", v)
+	}
+}
+
+// runBucketSet is the test seam for "bucket set".
+func runBucketSet(ctx context.Context, client *s3.Client, o *output.Options,
+	bucket, status string, w io.Writer) error {
+	if err := client.SetBucketVersioning(ctx, bucket, status); err != nil {
+		return fmt.Errorf("setting versioning on %q: %w", bucket, err)
+	}
+	return o.WriteSingle(w, []string{"Bucket", "Versioning"}, []any{bucket, status})
 }

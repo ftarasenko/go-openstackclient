@@ -10,7 +10,7 @@ import (
 // s3Long documents the credential sources on the group itself. The connection
 // flags are this group's primary input and are registered here rather than
 // globally, so this is the only place they are discoverable.
-const s3Long = `Manage buckets and objects in an S3-compatible store, and move files in and out.
+const s3Long = `Manage buckets and objects in an S3-compatible store, and move data in and out.
 
 This group is koc-specific (S3 is not an OpenStack service, and upstream's
 object-store commands speak Swift) and does not authenticate against Keystone:
@@ -45,7 +45,17 @@ Addressing is path-style by default (<endpoint>/<bucket>/<key>), matching the
 a store fronted by wildcard DNS.
 
 Every reference accepts either "<bucket>/<key>" or the "s3://<bucket>/<key>"
-spelling, so a path copied out of s5cmd or "aws s3" pastes in unchanged.`
+spelling, so a path copied out of s5cmd or "aws s3" pastes in unchanged, and a
+wildcard ("db-backups/2026/*.gz") selects many where a command takes one.
+
+Uploads are multipart past --part-size, so there is no 5 GiB ceiling, and "-" as
+the source reads standard input. download, upload, copy, move and object delete
+all take --recursive over a whole prefix or tree, --concurrency objects at a
+time, with --include/--exclude and --dry-run. copy and move are server-side: the
+bytes never travel through koc.
+
+A failed request is retried with backoff (--s3-retries); --s3-anonymous sends
+requests unsigned, for a bucket granted to everyone.`
 
 const s3Example = `  # Everything the credentials can see
   koc s3 bucket list
@@ -64,6 +74,18 @@ const s3Example = `  # Everything the credentials can see
   koc s3 bucket create scratch
   koc s3 object delete scratch/ --recursive
   koc s3 bucket delete scratch
+
+  # Stream a dump straight in, no staging on disk
+  mysqldump --all-databases | gzip | koc s3 upload - db-backups/nightly.sql.gz
+
+  # Restore a month, four objects at a time
+  koc s3 download db-backups/2026/08/ ./restore --recursive --concurrency 4
+
+  # Promote last night's dump, server-side
+  koc s3 copy db-backups/nightly-2026-09-13.sql.gz db-backups/latest.sql.gz
+
+  # Hand someone one backup for an hour, without a key
+  koc s3 presign db-backups/latest.sql.gz --expire 1h
 
   # GitLab's own key, straight from the cluster
   koc s3 --s3-creds-from-ns lcm-gitlab bucket list`
@@ -84,5 +106,8 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newDownloadCommand(a, o, f))
 	cmd.AddCommand(newUploadCommand(a, o, f))
 	cmd.AddCommand(newDuCommand(a, o, f))
+	cmd.AddCommand(newCopyCommand(a, o, f))
+	cmd.AddCommand(newMoveCommand(a, o, f))
+	cmd.AddCommand(newPresignCommand(a, o, f))
 	return cmd
 }

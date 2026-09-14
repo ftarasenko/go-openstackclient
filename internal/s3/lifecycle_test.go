@@ -111,7 +111,7 @@ func TestDeleteObject(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	if err := client.DeleteObject(context.Background(), "db-backups", "dump.sql.gz"); err != nil {
+	if err := client.DeleteObject(context.Background(), "db-backups", "dump.sql.gz", ""); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodDelete || gotPath != "/db-backups/dump.sql.gz" {
@@ -150,7 +150,7 @@ func TestListObjectsFuncPagesAndCapsLimit(t *testing.T) {
 
 	var keys []string
 	var sum int64
-	err := client.ListObjectsFunc(context.Background(), "b", "", 3, func(o Object) error {
+	err := client.ListObjectsFunc(context.Background(), "b", ListOptions{Limit: 3}, func(o Object) error {
 		keys = append(keys, o.Key)
 		sum += o.Size
 		return nil
@@ -183,7 +183,7 @@ func TestListObjectsFuncPropagatesCallbackError(t *testing.T) {
 	})
 
 	seen := 0
-	err := client.ListObjectsFunc(context.Background(), "b", "", 0, func(Object) error {
+	err := client.ListObjectsFunc(context.Background(), "b", ListOptions{}, func(Object) error {
 		seen++
 		return io.ErrUnexpectedEOF
 	})
