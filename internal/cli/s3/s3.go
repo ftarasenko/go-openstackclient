@@ -109,5 +109,6 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newCopyCommand(a, o, f))
 	cmd.AddCommand(newMoveCommand(a, o, f))
 	cmd.AddCommand(newPresignCommand(a, o, f))
+	cmd.AddCommand(newSyncCommand(a, o, f))
 	return cmd
 }

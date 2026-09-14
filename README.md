@@ -538,6 +538,7 @@ koc s3 upload     ./restore db-backups/2026/ -r
 koc s3 copy       db-backups/<key> db-backups/latest.mbs.gz.enc
 koc s3 move       db-backups/<key> archive/
 koc s3 presign    db-backups/<key> --expire 1h
+koc s3 sync       ./restore s3://db-backups/2026/ --delete
 ```
 
 Every ref also accepts the `s3://<bucket>/<key>` spelling, so a path copied from
@@ -568,6 +569,20 @@ thousand serial round trips. `--include`/`--exclude` take globs (where `*` spans
 bytes never travel through koc and a 100 GiB object is one small request. A move
 is the copy and then the delete, in that order — a failure leaves the source
 intact rather than losing the object.
+
+**`sync`** makes a destination match a source, transferring only what differs —
+local→S3, S3→local, or S3→S3 (server-side). It is the one command in the group
+that *requires* the `s3://` prefix to mark a remote side: it has two sides, and
+mistaking which is local is how a `--delete` removes the wrong one. An object
+moves when it is absent, when the sizes differ, or when the source is newer;
+`--size-only` drops the timestamp test, which is the right rule for content that
+never changes in place (a dated backup). The S3-side timestamp is the object's
+Last-Modified, because S3 keeps no record of the source file's mtime and a
+listing would not return one if it did — correct in the steady state, with one
+seam: a tree restored by `download` carries the restore time, so syncing it
+*back* re-uploads once and then settles. `--delete` turns the sync into a mirror
+and is refused when the source turned out to be empty unless `--force` is also
+given, so a mistyped source cannot erase the destination.
 
 `object delete --recursive` is the one destructive shape in the group, so it is
 never inferred from a trailing slash — and `--dry-run` prints exactly the keys it

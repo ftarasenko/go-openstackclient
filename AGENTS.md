@@ -204,7 +204,7 @@ internal/output/           -f/--format {table,json,yaml,value,csv} and -c/--colu
 internal/cli/keyvrm/       KeyVRM (in-house catalog service); typed request layer (types.go/requests.go) + cobra verbs
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt (package vaultcli); Vault creds only
 internal/cli/s3/           "koc s3" bucket/object lifecycle, du, download/upload (multipart, stdin,
-                           recursive), server-side copy/move, presign (package s3cli); S3 creds only
+                           recursive), server-side copy/move, presign, sync (package s3cli); S3 creds only
 internal/cli/quota/        "koc quota show|set" — the one cross-service noun (nova+cinder+neutron)
 internal/cli/              root.go wires every service's command group onto the root
 internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
