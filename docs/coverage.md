@@ -302,9 +302,19 @@ flags (`--loadbalancer`, `--listener`, `--pool`, `--member`, `--healthmonitor`,
 clear-everything behaviour moved to the new `koc loadbalancer quota reset`. This
 is a breaking change for anyone who relied on the old flagless `unset`.
 
-One flag deviates rather than a command: `koc dns service list --service-name`,
-where upstream spells the same filter `--service_name` — the only underscored flag
-in designate's CLI. Both work; the underscored form is registered hidden.
+One flag deviates in **spelling** rather than a command: `koc dns service list
+--service-name`, where upstream spells the same filter `--service_name` — the only
+underscored flag in designate's CLI. Both work; the underscored form is
+registered hidden.
+
+One deviates in **semantics**: on `koc user create` and `koc user set`,
+`--project-domain` falls back to `--domain` — the user's own domain — when it is
+absent, where upstream resolves the default project unscoped across all domains
+(`identity/v3/user.py`, `CreateUser`/`SetUser.take_action`). The two differ only
+when `--domain` is given and the default project lives in another domain, which
+`--project-domain` then states explicitly; scoping to the user's domain is the
+safer reading of a project name that is ambiguous cloud-wide, and it keeps the
+two user write verbs consistent with each other.
 
 One flag is **koc-native**: `koc image list --name-contains`, a case-insensitive
 substring filter applied client-side. Glance's query builder accepts only `in:`

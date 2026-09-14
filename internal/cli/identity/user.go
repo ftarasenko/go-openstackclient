@@ -126,6 +126,26 @@ type userWriteFlags struct {
 	disableSet    bool
 }
 
+// resolveDefaultProjectID turns --project into the ID that goes on the user's
+// `default_project_id`. The default project may live in a different domain than
+// the user, so it is resolved with its own qualifier; absent --project-domain
+// the lookup falls back to the user's domain, which is where upstream leaves it
+// unscoped (see docs/coverage.md, "Naming deviations"). An empty --project
+// short-circuits inside resolveProjectID, so callers may invoke this
+// unconditionally: the resulting empty ID is omitempty on both opts structs and
+// leaves the field untouched.
+func resolveDefaultProjectID(ctx context.Context, client *gophercloud.ServiceClient, f *userWriteFlags, userDomainID string) (string, error) {
+	projectDomainID := userDomainID
+	if f.projectDomain != "" {
+		var err error
+		projectDomainID, err = resolveDomainID(ctx, client, f.projectDomain)
+		if err != nil {
+			return "", err
+		}
+	}
+	return resolveProjectID(ctx, client, f.project, projectDomainID)
+}
+
 func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &userWriteFlags{}
 	cmd := &cobra.Command{
@@ -153,7 +173,7 @@ func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.domain, "domain", "", "domain to create the user in (name or ID)")
 	fl.StringVar(&f.password, "password", "", "user password")
 	fl.StringVar(&f.project, "project", "", "default project (name or ID)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID; defaults to --domain)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", helpDomainDefaultProject)
 	fl.StringVar(&f.description, "description", "", "user description")
 	fl.BoolVar(&f.enable, "enable", true, "enable the user (default)")
 	fl.BoolVar(new(bool), "disable", false, "disable the user")
@@ -165,16 +185,7 @@ func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	// The default project may live in a different domain than the user; resolve
-	// it with its own qualifier, falling back to the user's domain.
-	projectDomainID := domainID
-	if f.projectDomain != "" {
-		projectDomainID, err = resolveDomainID(ctx, client, f.projectDomain)
-		if err != nil {
-			return err
-		}
-	}
-	projectID, err := resolveProjectID(ctx, client, f.project, projectDomainID)
+	projectID, err := resolveDefaultProjectID(ctx, client, f, domainID)
 	if err != nil {
 		return err
 	}
@@ -259,6 +270,8 @@ func newUserSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.domain, "domain", "", helpDomainUser)
 	fl.StringVar(&f.name, "name", "", "new user name")
 	fl.StringVar(&f.password, "password", "", "new user password")
+	fl.StringVar(&f.project, "project", "", "new default project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", helpDomainDefaultProject)
 	fl.StringVar(&f.description, "description", "", "new user description")
 	fl.BoolVar(&f.enable, "enable", false, "enable the user")
 	fl.BoolVar(new(bool), "disable", false, "disable the user")
@@ -274,10 +287,15 @@ func runUserSet(ctx context.Context, client *gophercloud.ServiceClient, nameOrID
 	if err != nil {
 		return err
 	}
+	projectID, err := resolveDefaultProjectID(ctx, client, f, domainID)
+	if err != nil {
+		return err
+	}
 	opts := users.UpdateOpts{
-		Name:     f.name,
-		Password: f.password,
-		Enabled:  enabledFromFlags(f.enableSet, f.disableSet, f.enable),
+		Name:             f.name,
+		Password:         f.password,
+		DefaultProjectID: projectID,
+		Enabled:          enabledFromFlags(f.enableSet, f.disableSet, f.enable),
 	}
 	if descSet {
 		opts.Description = &f.description

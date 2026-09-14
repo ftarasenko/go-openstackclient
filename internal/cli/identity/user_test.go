@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -176,5 +177,100 @@ func TestRunUserSet_ResolvesNameAndPatches(t *testing.T) {
 	}
 	if patchMethod != http.MethodPatch {
 		t.Errorf("method = %q, want PATCH", patchMethod)
+	}
+}
+
+// `openstack user set --project <project> <user>` is upstream's way of moving a
+// user's default project; koc carried the flag on `create` only until this
+// test's subject was wired up.
+func TestRunUserSet_ProjectSetsDefaultProjectID(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var projQuery url.Values
+	fakeServer.Mux.HandleFunc("/users", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"users":[{"id":"u1","name":"admin"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/projects", func(w http.ResponseWriter, r *http.Request) {
+		projQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"projects":[{"id":"p1","name":"admin"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/users/u1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestJSONRequest(t, r, `{"user":{"default_project_id":"p1"}}`)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"user":{"id":"u1","name":"admin","default_project_id":"p1"}}`))
+	})
+
+	client := identityClient(fakeServer)
+	f := &userWriteFlags{project: "admin"}
+	if err := runUserSet(context.Background(), client, "admin", f, false); err != nil {
+		t.Fatalf("runUserSet error: %v", err)
+	}
+	if got := projQuery.Get("name"); got != "admin" {
+		t.Errorf("project resolve name = %q, want admin", got)
+	}
+	if got := projQuery.Get("domain_id"); got != "" {
+		t.Errorf("project resolve domain_id = %q, want empty", got)
+	}
+}
+
+// The default project may live outside the user's domain, so --project-domain
+// qualifies the lookup; without it koc falls back to the user's own domain
+// (where upstream leaves the lookup unscoped) — see docs/coverage.md.
+func TestRunUserSet_ProjectDomainQualifiesLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		projectDomain string
+		wantDomainID  string
+	}{
+		{name: "falls back to the user domain", wantDomainID: "d-user"},
+		{name: "--project-domain wins", projectDomain: "other", wantDomainID: "d-other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			var projDomainID string
+			fakeServer.Mux.HandleFunc("/domains", func(w http.ResponseWriter, r *http.Request) {
+				id := "d-user"
+				if r.URL.Query().Get("name") == "other" {
+					id = "d-other"
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"domains":[{"id":"` + id + `","name":"x"}]}`))
+			})
+			fakeServer.Mux.HandleFunc("/users", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"users":[{"id":"u1","name":"admin"}]}`))
+			})
+			fakeServer.Mux.HandleFunc("/projects", func(w http.ResponseWriter, r *http.Request) {
+				projDomainID = r.URL.Query().Get("domain_id")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"projects":[{"id":"p1","name":"admin"}]}`))
+			})
+			fakeServer.Mux.HandleFunc("/users/u1", func(w http.ResponseWriter, r *http.Request) {
+				th.TestJSONRequest(t, r, `{"user":{"default_project_id":"p1"}}`)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"user":{"id":"u1","name":"admin","default_project_id":"p1"}}`))
+			})
+
+			client := identityClient(fakeServer)
+			f := &userWriteFlags{domain: "default", project: "admin", projectDomain: tc.projectDomain}
+			if err := runUserSet(context.Background(), client, "admin", f, false); err != nil {
+				t.Fatalf("runUserSet error: %v", err)
+			}
+			if projDomainID != tc.wantDomainID {
+				t.Errorf("project resolve domain_id = %q, want %q", projDomainID, tc.wantDomainID)
+			}
+		})
 	}
 }
