@@ -22,6 +22,7 @@ func newObjectCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.C
 	}
 	cmd.AddCommand(newObjectListCommand(a, o, f))
 	cmd.AddCommand(newObjectShowCommand(a, o, f))
+	cmd.AddCommand(newObjectDeleteCommand(a, o, f))
 	return cmd
 }
 

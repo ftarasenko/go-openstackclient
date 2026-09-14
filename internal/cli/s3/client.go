@@ -289,6 +289,21 @@ func parseRef(ref string) (bucket, key string, err error) {
 	return bucket, key, nil
 }
 
+// parseBucketRef is parseRef where a key is not accepted at all. "scratch/x" as
+// a bucket name is almost always a mistyped object ref, and on a create that
+// would make a bucket literally named "scratch" while the operator believed
+// they had addressed a path.
+func parseBucketRef(ref string) (string, error) {
+	bucket, key, err := parseRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if strings.Trim(key, "/") != "" {
+		return "", fmt.Errorf("%q names an object, not a bucket: expected <bucket> or s3://<bucket>", ref)
+	}
+	return bucket, nil
+}
+
 // parseObjectRef is parseRef where the key is mandatory.
 func parseObjectRef(ref string) (bucket, key string, err error) {
 	bucket, key, err = parseRef(ref)

@@ -13,6 +13,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -190,6 +191,18 @@ func IsNotFound(err error) bool {
 	return ae.StatusCode == http.StatusNotFound
 }
 
+// ErrorCode returns the S3 error code carried by err ("BucketNotEmpty",
+// "BucketAlreadyOwnedByYou"), or "" if err is not an S3 API error. Callers use
+// it to turn a specific server answer into advice; matching on the message
+// would break with the server's wording.
+func ErrorCode(err error) string {
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	return ae.Code
+}
+
 // Bucket is one entry of a ListBuckets result.
 type Bucket struct {
 	Name         string
@@ -240,6 +253,56 @@ func (c *Client) ListBuckets(ctx context.Context) ([]Bucket, error) {
 	return out, nil
 }
 
+// usEast1 is the one region whose name must NOT appear in a
+// CreateBucketConfiguration: AWS treats it as the default and rejects the body
+// that names it.
+const usEast1 = "us-east-1"
+
+// createBucketConfiguration is the CreateBucket request body. It exists because
+// every region other than us-east-1 requires the bucket's location to be stated
+// explicitly, and Garage validates the value against its configured region.
+type createBucketConfiguration struct {
+	XMLName            xml.Name `xml:"CreateBucketConfiguration"`
+	LocationConstraint string   `xml:"LocationConstraint"`
+}
+
+// CreateBucket creates a bucket. The location constraint is the signing region,
+// which is necessarily the right answer: a request signed for region R is only
+// accepted by a store serving R.
+//
+// Creating a bucket the credentials already own is not an error on AWS outside
+// us-east-1 either — it answers BucketAlreadyOwnedByYou, which the caller can
+// recognise with ErrorCode.
+func (c *Client) CreateBucket(ctx context.Context, bucket string) error {
+	req := request{method: http.MethodPut, url: c.url(bucket, "", nil), payloadHash: emptySHA256}
+
+	if region := c.cfg.Region; region != "" && region != usEast1 {
+		body, err := xml.Marshal(createBucketConfiguration{LocationConstraint: region})
+		if err != nil {
+			return fmt.Errorf("encoding create-bucket body: %w", err)
+		}
+		req.body = bytes.NewReader(body)
+		req.payloadHash = hexSHA256(body)
+		req.size = int64(len(body))
+		req.header = map[string]string{"Content-Type": "application/xml"}
+	}
+
+	return c.do(ctx, req, drainBody)
+}
+
+// DeleteBucket removes an empty bucket. A bucket with objects in it is refused
+// by the server with BucketNotEmpty; nothing is deleted implicitly.
+func (c *Client) DeleteBucket(ctx context.Context, bucket string) error {
+	return c.do(ctx, request{method: http.MethodDelete, url: c.url(bucket, "", nil), payloadHash: emptySHA256}, drainBody)
+}
+
+// drainBody is the sink for a call whose reply carries nothing the caller wants.
+// The body is still read so the connection goes back to the pool.
+func drainBody(resp *http.Response) error {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errorBodyLimit))
+	return nil
+}
+
 // listObjectsPage is one ListObjectsV2 response.
 type listObjectsPage struct {
 	IsTruncated           bool   `xml:"IsTruncated"`
@@ -259,9 +322,25 @@ type listObjectsPage struct {
 // same rule the rest of koc's --limit flags follow.
 func (c *Client) ListObjects(ctx context.Context, bucket, prefix string, limit int) ([]Object, error) {
 	var out []Object
-	token := ""
+	err := c.ListObjectsFunc(ctx, bucket, prefix, limit, func(o Object) error {
+		out = append(out, o)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListObjectsFunc is ListObjects without materialising the result: fn is called
+// once per key, in listing order, and an error from it stops the walk and is
+// returned as-is. Callers that only fold over the listing (summing sizes,
+// deleting as they go) use this so a bucket with a million keys costs one page
+// of memory instead of all of them.
+func (c *Client) ListObjectsFunc(ctx context.Context, bucket, prefix string, limit int, fn func(Object) error) error {
+	token, seen := "", 0
 	for {
-		q := url.Values{"list-type": {"2"}, "max-keys": {strconv.Itoa(pageSize(limit, len(out)))}}
+		q := url.Values{"list-type": {"2"}, "max-keys": {strconv.Itoa(pageSize(limit, seen))}}
 		if prefix != "" {
 			q.Set("prefix", prefix)
 		}
@@ -271,22 +350,25 @@ func (c *Client) ListObjects(ctx context.Context, bucket, prefix string, limit i
 
 		var page listObjectsPage
 		if err := c.getXML(ctx, c.url(bucket, "", q), &page); err != nil {
-			return nil, err
+			return err
 		}
 		for _, o := range page.Contents {
-			out = append(out, Object{
+			err := fn(Object{
 				Key:          o.Key,
 				Size:         o.Size,
 				LastModified: parseS3Time(o.LastModified),
 				ETag:         strings.Trim(o.ETag, `"`),
 				StorageClass: o.StorageClass,
 			})
-			if limit > 0 && len(out) >= limit {
-				return out, nil
+			if err != nil {
+				return err
+			}
+			if seen++; limit > 0 && seen >= limit {
+				return nil
 			}
 		}
 		if !page.IsTruncated || page.NextContinuationToken == "" {
-			return out, nil
+			return nil
 		}
 		token = page.NextContinuationToken
 	}
@@ -328,6 +410,13 @@ func (c *Client) GetObject(ctx context.Context, bucket, key string, w io.Writer)
 			return nil
 		})
 	return n, err
+}
+
+// DeleteObject removes one object. S3 answers 204 for a key that was never
+// there, so a delete is idempotent and "no such key" is not reported — the
+// caller asked for the key to be gone, and it is.
+func (c *Client) DeleteObject(ctx context.Context, bucket, key string) error {
+	return c.do(ctx, request{method: http.MethodDelete, url: c.url(bucket, key, nil), payloadHash: emptySHA256}, drainBody)
 }
 
 // PutObject uploads body as a single part. The reader must be seekable because
