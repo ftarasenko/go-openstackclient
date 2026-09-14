@@ -20,7 +20,10 @@ const (
 // Flag help strings reused across commands, so the wording stays identical.
 const (
 	helpDomainProject = "domain owning the project (name or ID)"
-	helpDomainUser    = "domain owning the user (name or ID)"
-	helpDomainRole    = "domain the role belongs to (name or ID)"
-	helpOwningUser    = "owning user (name or ID; defaults to the current user)"
+	// helpDomainDefaultProject qualifies --project on the user write verbs,
+	// where the flag names the user's default project rather than a scope.
+	helpDomainDefaultProject = "domain owning --project (name or ID; defaults to --domain)"
+	helpDomainUser           = "domain owning the user (name or ID)"
+	helpDomainRole           = "domain the role belongs to (name or ID)"
+	helpOwningUser           = "owning user (name or ID; defaults to the current user)"
 )
