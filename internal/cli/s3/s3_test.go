@@ -36,6 +36,18 @@ func newMockClient(t *testing.T, h http.HandlerFunc) *s3.Client {
 
 func valueOpts() *output.Options { return &output.Options{Format: output.FormatValue} }
 
+// testUploadFlags is the flag set an "upload" seam gets when a test drives it
+// directly: real defaults, but one part at a time so a mock endpoint sees the
+// requests in a deterministic order.
+func testUploadFlags() *uploadFlags {
+	return &uploadFlags{partSizeMiB: s3.DefaultPartSize >> 20, concurrency: 1}
+}
+
+// testDownloadFlags is the same for "download".
+func testDownloadFlags() *downloadFlags {
+	return &downloadFlags{concurrency: 1}
+}
+
 func TestRunBucketList(t *testing.T) {
 	client := newMockClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `<ListAllMyBucketsResult><Buckets>
@@ -88,7 +100,7 @@ func TestRunObjectShow(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runObjectShow(context.Background(), client, &output.Options{Format: output.FormatJSON},
-		"db-backups", "e2e-mariadb.sql.gz.sha256", &buf)
+		"db-backups", "e2e-mariadb.sql.gz.sha256", "", false, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +110,7 @@ func TestRunObjectShow(t *testing.T) {
 		}
 	}
 
-	err = runObjectShow(context.Background(), client, valueOpts(), "db-backups", "missing", &buf)
+	err = runObjectShow(context.Background(), client, valueOpts(), "db-backups", "missing", "", false, &buf)
 	if err == nil || !strings.Contains(err.Error(), `no object "missing" in bucket "db-backups"`) {
 		t.Errorf("err = %v, want a friendly not-found message", err)
 	}
@@ -115,7 +127,7 @@ func TestRunDownloadToFile(t *testing.T) {
 	var buf bytes.Buffer
 	dest := filepath.Join(dir, "out.gz")
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest, flags: &downloadFlags{}}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,12 +144,12 @@ func TestRunDownloadToFile(t *testing.T) {
 
 	// A second run must refuse rather than clobber the local copy of a backup.
 	err = runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest, flags: &downloadFlags{}}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Errorf("err = %v, want a refusal pointing at --force", err)
 	}
 	if err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest, force: true}, &buf); err != nil {
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dest, flags: &downloadFlags{force: true}}, &buf); err != nil {
 		t.Errorf("--force download failed: %v", err)
 	}
 }
@@ -150,7 +162,7 @@ func TestRunDownloadStdout(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz.sha256", dest: "-"}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz.sha256", dest: "-", flags: &downloadFlags{}}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +182,7 @@ func TestRunDownloadFailureLeavesNoFile(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "missing", dest: dest}, &buf)
+		downloadRequest{bucket: "db-backups", key: "missing", dest: dest, flags: &downloadFlags{}}, &buf)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -197,7 +209,8 @@ func TestRunUpload(t *testing.T) {
 
 	// No key given: the file's basename is used.
 	var buf bytes.Buffer
-	if err := runUpload(context.Background(), client, valueOpts(), file, "db-backups", "", &buf); err != nil {
+	if err := runUpload(context.Background(), client, valueOpts(),
+		uploadRequest{src: file, bucket: "db-backups", key: "", flags: testUploadFlags()}, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != "/db-backups/dump.sql.gz" {
@@ -214,14 +227,16 @@ func TestRunUpload(t *testing.T) {
 	}
 
 	// A key ending in "/" is a prefix, not a key.
-	if err := runUpload(context.Background(), client, valueOpts(), file, "db-backups", "2026/", &buf); err != nil {
+	if err := runUpload(context.Background(), client, valueOpts(),
+		uploadRequest{src: file, bucket: "db-backups", key: "2026/", flags: testUploadFlags()}, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != "/db-backups/2026/dump.sql.gz" {
 		t.Errorf("path = %q, want the basename appended to the prefix", gotPath)
 	}
 
-	if err := runUpload(context.Background(), client, valueOpts(), filepath.Dir(file), "db-backups", "", &buf); err == nil {
+	if err := runUpload(context.Background(), client, valueOpts(),
+		uploadRequest{src: filepath.Dir(file), bucket: "db-backups", key: "", flags: testUploadFlags()}, &buf); err == nil {
 		t.Error("uploading a directory was accepted")
 	}
 }

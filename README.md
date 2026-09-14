@@ -194,6 +194,40 @@ so `koc baremetal driver show ipmi --os-system-scope all` works from a shell
 that already has a project-scoped openrc sourced. `all` is the only value
 Keystone defines.
 
+#### Where the password comes from
+
+`--os-password` / `OS_PASSWORD` is the usual answer, but neither is a good place
+for a secret: a flag value is visible in `ps` and lands in the shell history, and
+an environment variable is inherited by every child process. Two more ways in:
+
+| Source | Use it for |
+| --- | --- |
+| `--os-password-stdin` | scripts and CI — `koc … --os-password-stdin < secret` |
+| the interactive prompt | a shell session, and a `clouds.yaml` entry that deliberately stores no password |
+
+`--os-password-stdin` follows `docker login --password-stdin`: `koc` reads
+standard input, strips one trailing line ending, and uses the rest verbatim
+(leading and trailing spaces included — only the newline goes). More than one
+line is an error, since that is a whole openrc piped in by mistake rather than a
+password. It conflicts with an explicitly typed `--os-password` and with
+`--creds-from-ns` / `--creds-from-vault`, which bring their own credentials; it
+overrides `OS_PASSWORD`, which is background configuration, and it outranks a
+named cloud's stored password the same way a typed `--os-password` does.
+
+```sh
+koc server list --os-password-stdin < ~/.config/koc/password
+pass show keystack/admin | koc server list --os-cloud keystack --os-password-stdin
+```
+
+When nothing supplies a password and the run is interactive, `koc` asks for it on
+the terminal without echo, the way `python-openstackclient` does — including for
+a named cloud whose `clouds.yaml` entry has a `username` but no `password`. A
+non-interactive run is never prompted: it fails with `no credentials found`
+instead of blocking on a pipe nobody is going to write to. Neither source is
+consulted when the request authenticates without a password (application
+credentials, a pre-issued token), and `--os-password-stdin` is not combined with
+a prompt — stdin has already been spent.
+
 #### Alternative credential sources
 
 Two koc-specific, mutually exclusive flags source credentials outside the normal
@@ -521,16 +555,94 @@ S3 credentials alone are used, so it works on a host with no cloud credentials.
 
 ```sh
 koc s3 bucket list
+koc s3 bucket show db-backups                  # exists? reachable? versioned?
+koc s3 bucket create scratch
+koc s3 bucket delete scratch                   # the bucket must be empty
 koc s3 object list db-backups
+koc s3 object list db-backups --delimiter /    # one level, like a directory
 koc s3 object show db-backups/<key>            # HEAD only, no transfer
+koc s3 object delete db-backups/<key>
+koc s3 object delete db-backups/e2e- -r        # every key under a prefix
+koc s3 du         db-backups --human --group   # size, per storage class
 koc s3 download   db-backups/<key> ./dump.mbs.gz.enc
 koc s3 download   db-backups/<key>.sha256 -    # "-" streams to stdout, so it pipes
+koc s3 download   db-backups/2026/ ./restore -r
 koc s3 upload     ./dump.mbs.gz.enc db-backups/
+koc s3 upload     ./restore db-backups/2026/ -r
+koc s3 copy       db-backups/<key> db-backups/latest.mbs.gz.enc
+koc s3 move       db-backups/<key> archive/
+koc s3 presign    db-backups/<key> --expire 1h
+koc s3 sync       ./restore s3://db-backups/2026/ --delete
 ```
+
+Every ref also accepts the `s3://<bucket>/<key>` spelling, so a path copied from
+`s5cmd` or `aws s3` pastes in unchanged, and a wildcard (`"db-backups/2026/*.gz"`)
+selects many where a command takes one.
 
 `bucket list` is scoped to the **access key**, not to the store: Garage answers
 with the buckets that key is granted, so a key made for one bucket lists exactly
 that one.
+
+**Transfers.** `upload` has no 5 GiB ceiling: anything past `--part-size` (16 MiB
+by default) goes out as a multipart upload, `--concurrency` parts at a time, and
+a failure aborts it so a half-written object never becomes visible. `-` as the
+source reads **standard input**, which is what makes a dump streamable without
+staging it on disk:
+
+```sh
+mysqldump --all-databases | gzip | koc s3 upload - db-backups/nightly.sql.gz
+```
+
+`--recursive` on `download`, `upload`, `copy`, `move` and `object delete` works
+on a whole prefix or tree, `--concurrency` objects at a time — which is most of
+why a bulk restore finishes, since a thousand small objects are otherwise a
+thousand serial round trips. `--include`/`--exclude` take globs (where `*` spans
+`/`, as in s5cmd) and `--dry-run` prints exactly what would move.
+
+`copy` and `move` are **server-side**: the source is named in a header, so the
+bytes never travel through koc and a 100 GiB object is one small request. A move
+is the copy and then the delete, in that order — a failure leaves the source
+intact rather than losing the object.
+
+**`sync`** makes a destination match a source, transferring only what differs —
+local→S3, S3→local, or S3→S3 (server-side). It is the one command in the group
+that *requires* the `s3://` prefix to mark a remote side: it has two sides, and
+mistaking which is local is how a `--delete` removes the wrong one. An object
+moves when it is absent, when the sizes differ, or when the source is newer;
+`--size-only` drops the timestamp test, which is the right rule for content that
+never changes in place (a dated backup). The S3-side timestamp is the object's
+Last-Modified, because S3 keeps no record of the source file's mtime and a
+listing would not return one if it did — correct in the steady state, with one
+seam: a tree restored by `download` carries the restore time, so syncing it
+*back* re-uploads once and then settles. `--delete` turns the sync into a mirror
+and is refused when the source turned out to be empty unless `--force` is also
+given, so a mistyped source cannot erase the destination.
+
+`object delete --recursive` is the one destructive shape in the group, so it is
+never inferred from a trailing slash — and `--dry-run` prints exactly the keys it
+would remove without touching any of them. It is also how a bucket is emptied
+before `bucket delete`, which never removes objects implicitly. Keys go out in
+batches of up to 1000 per request, so emptying a large bucket costs a thousandth
+of the round trips.
+
+`du` is a listing folded into a sum, because S3 has no "how big is this" call:
+no object is downloaded, but every key is walked, one request per 1000 of them.
+Sizes are exact bytes everywhere unless `--human` is given — a rounded
+"14.2 GiB" is not a number a script can add up.
+
+`presign` prints a URL that reads (or, with `--method put`, writes) one object
+with no credentials attached to the recipient. It makes **no request** — pure
+local signing — so it works offline, and the URL is a bearer credential for that
+key until it expires: treat it like a password and keep `--expire` short.
+
+**Versioning** (`bucket show`, `bucket set --versioning`, `--all-versions`,
+`--version-id`) is implemented but Garage has none — it reports every bucket as
+unversioned — so those are for a koc pointed at AWS, Ceph RGW or MinIO.
+
+A failed request is retried with exponential backoff (`--s3-retries`, 5 by
+default): on a cluster network a reset connection mid-transfer should not cost
+the whole command. `--s3-anonymous` sends requests unsigned, for a bucket
+granted to everyone.
 
 Credentials come from flags, from the environment, or from a Kubernetes Secret:
 
@@ -542,6 +654,8 @@ Credentials come from flags, from the environment, or from a Kubernetes Secret:
 | `--s3-region` | `AWS_REGION`, `AWS_DEFAULT_REGION`, `S3_REGION`, `s3_region` | `garage` |
 | `--s3-cacert` | `AWS_CA_BUNDLE`, `S3_CACERT` | system roots |
 | `--s3-creds-from-ns` | `KOC_S3_CREDS_FROM_NS` | — |
+| `--s3-anonymous` | `S3_ANONYMOUS` | off (no credentials needed or used) |
+| `--s3-retries` | — | `5` |
 | `--insecure-s3` | `S3_SKIP_VERIFY` | off (the global `--insecure` also applies) |
 
 The three env families are deliberate: `AWS_*` so an existing `aws`/`boto`
@@ -590,7 +704,7 @@ internal/kube/             minimal read-only k8s REST client (no client-go)
 internal/vault/            minimal Vault REST client (AppRole/token + KV v2)
 internal/s3/               minimal S3 REST client (SigV4, no aws-sdk/minio-go)
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt, no Keystone auth
-internal/cli/s3/           "koc s3" bucket/object/download/upload, no Keystone auth
+internal/cli/s3/           "koc s3" bucket/object/du/transfer/copy/presign, no Keystone auth
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
 internal/cli/              root command wiring
 internal/cli/resolve/      cross-service name→ID resolution

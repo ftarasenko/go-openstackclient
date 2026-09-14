@@ -1,5 +1,7 @@
-// Package s3cli implements the koc-specific "koc s3 ..." command group: list
-// buckets and objects, and move files in and out of an S3-compatible store.
+// Package s3cli implements the koc-specific "koc s3 ..." command group: the
+// bucket and object lifecycle of an S3-compatible store, and moving data in and
+// out of it — including multipart and streamed uploads, recursive and wildcard
+// transfers, server-side copy/move, and presigned URLs.
 //
 // It has no python-openstackclient equivalent. S3 is not an OpenStack service —
 // upstream's object-store commands speak Swift, which KeyStack does not deploy —
@@ -33,6 +35,13 @@ import (
 // the group's Long help for where the other keys live).
 const defaultCredsSecret = "gitlab-object-storage" //nolint:gosec // G101: name of a k8s Secret object, not a credential value
 
+// defaultRetries is --s3-retries' default. A koc S3 call can be a transfer of
+// several gigabytes across a cluster network, where one reset connection should
+// not cost the whole command; s5cmd defaults to ten for the same reason, and
+// this is lower only because koc's backoff is not jittered across hundreds of
+// workers.
+const defaultRetries = 5
+
 // connFlags holds the "koc s3" connection and credential flags. They are
 // persistent flags on the group rather than global ones: every other koc command
 // needs Keystone, none of them needs these, and koc --help is long enough.
@@ -45,6 +54,8 @@ type connFlags struct {
 	credsFromNS string
 	insecure    bool
 	noPathStyle bool
+	anonymous   bool
+	retries     int
 
 	fs *pflag.FlagSet // to tell "unset" from "explicitly empty"
 }
@@ -72,6 +83,10 @@ func (f *connFlags) addTo(fs *pflag.FlagSet) {
 		"disable TLS verification for the S3 endpoint (env S3_SKIP_VERIFY)")
 	fs.BoolVar(&f.noPathStyle, "no-path-style", false,
 		"address buckets as <bucket>.<endpoint> instead of <endpoint>/<bucket>; needs a wildcard DNS record")
+	fs.BoolVar(&f.anonymous, "s3-anonymous", auth.EnvBool("S3_ANONYMOUS"),
+		"send requests unsigned, for a publicly readable bucket (env S3_ANONYMOUS); no credentials are needed or used")
+	fs.IntVar(&f.retries, "s3-retries", defaultRetries,
+		"retries for a failed request, with exponential backoff (0 = none)")
 }
 
 // client builds the S3 client. --timeout, --debug, --insecure, --kubeconfig and
@@ -85,9 +100,14 @@ func (f *connFlags) client(ctx context.Context, a *auth.Options) (*s3.Client, er
 		PathStyle: !f.noPathStyle,
 		// The global --insecure is honoured too: a user who typed it once meant
 		// it for the endpoint they are talking to.
-		Insecure: f.insecure || a.Insecure,
-		Timeout:  a.Timeout,
-		Debug:    a.Debug,
+		Insecure:   f.insecure || a.Insecure,
+		Timeout:    a.Timeout,
+		Debug:      a.Debug,
+		Anonymous:  f.anonymous,
+		MaxRetries: f.retries,
+	}
+	if f.retries < 0 {
+		return nil, fmt.Errorf("--s3-retries cannot be negative, got %d", f.retries)
 	}
 
 	if f.credsFromNS != "" {
@@ -287,6 +307,21 @@ func parseRef(ref string) (bucket, key string, err error) {
 		return "", "", fmt.Errorf("%q names no bucket: expected <bucket>/<key> or s3://<bucket>/<key>", ref)
 	}
 	return bucket, key, nil
+}
+
+// parseBucketRef is parseRef where a key is not accepted at all. "scratch/x" as
+// a bucket name is almost always a mistyped object ref, and on a create that
+// would make a bucket literally named "scratch" while the operator believed
+// they had addressed a path.
+func parseBucketRef(ref string) (string, error) {
+	bucket, key, err := parseRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if strings.Trim(key, "/") != "" {
+		return "", fmt.Errorf("%q names an object, not a bucket: expected <bucket> or s3://<bucket>", ref)
+	}
+	return bucket, nil
 }
 
 // parseObjectRef is parseRef where the key is mandatory.

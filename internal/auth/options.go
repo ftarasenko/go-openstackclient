@@ -11,6 +11,11 @@
 //  4. Application credentials (OS_APPLICATION_CREDENTIAL_ID / _SECRET),
 //     which are honored through either of the two paths above.
 //
+// The password has two further sources, both in password.go and neither a
+// separate precedence tier: --os-password-stdin (koc-native) reads it from
+// standard input instead of a flag or the environment, and a run that reaches
+// authentication without one is prompted on the terminal, as osc-lib does.
+//
 // Naming a cloud selects it wholesale: because every auth flag defaults to its
 // OS_* variable, a sourced openrc would otherwise override the named cloud
 // field by field and silently send the command — credentials included — to the
@@ -26,6 +31,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -65,6 +71,7 @@ type Options struct {
 	Username          string
 	UserID            string
 	Password          string
+	PasswordStdin     bool
 	ProjectName       string
 	ProjectID         string
 	ProjectDomainName string
@@ -161,6 +168,12 @@ type Options struct {
 	// see testhooks.go for why the hook is here rather than in an
 	// export_test.go.
 	authenticate func(context.Context) (*Client, error)
+
+	// passwordStdinSrc and promptPassword seam the two terminal password
+	// sources (see password.go). Nil in every non-test build, meaning the real
+	// os.Stdin and an unechoed read from it.
+	passwordStdinSrc io.Reader
+	promptPassword   func(io.Writer) (string, error)
 }
 
 // markForced records that flag's value was supplied by a source pflag cannot
@@ -234,8 +247,15 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"username (env OS_USERNAME)")
 	fs.StringVar(&o.UserID, "os-user-id", os.Getenv("OS_USER_ID"),
 		"user ID (env OS_USER_ID)")
-	fs.StringVar(&o.Password, "os-password", os.Getenv("OS_PASSWORD"),
+	fs.StringVar(&o.Password, flagOSPassword, os.Getenv("OS_PASSWORD"),
 		"password (env OS_PASSWORD)")
+	// UNVERIFIED against KeyStack: koc-native, python-openstackclient has no
+	// equivalent (it only prompts). Deliberately flag-only — reading a secret
+	// from stdin is a thing a run must opt into visibly, not something an
+	// exported variable can turn on under a command that wanted stdin for
+	// something else.
+	fs.BoolVar(&o.PasswordStdin, flagOSPasswordStdin, false,
+		"read the password from standard input instead of --os-password, which is visible in ps and the shell history")
 	fs.StringVar(&o.ProjectName, flagOSProjectName, os.Getenv("OS_PROJECT_NAME"),
 		"project name (env OS_PROJECT_NAME)")
 	fs.StringVar(&o.ProjectID, flagOSProjectID, os.Getenv("OS_PROJECT_ID"),
