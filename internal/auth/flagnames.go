@@ -8,4 +8,5 @@ package auth
 const (
 	flagOSProjectName = "os-project-name"
 	flagOSProjectID   = "os-project-id"
+	flagOSPassword    = "os-password"
 )
