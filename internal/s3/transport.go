@@ -19,6 +19,12 @@ const (
 	// maxRedirects caps a redirect chain. See sameHostRedirect for what travels
 	// with one.
 	maxRedirects = 5
+
+	// abortTimeout bounds the cleanup request a failed multipart upload sends.
+	// It runs on a fresh context — the caller's is usually already cancelled —
+	// so it needs a deadline of its own or a wedged endpoint would hang the
+	// error path.
+	abortTimeout = 30 * time.Second
 )
 
 // credentialHeaders are dropped when a redirect leaves the origin host. Go's own

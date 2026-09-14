@@ -23,7 +23,7 @@ func TestRunDownload_DefaultsToTheKeyBasename(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "nested/e2e-mariadb.sql.gz"}, &buf)
+		downloadRequest{bucket: "db-backups", key: "nested/e2e-mariadb.sql.gz", flags: &downloadFlags{}}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestRunDownload_DirectoryDestination(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dir}, &buf)
+		downloadRequest{bucket: "db-backups", key: "e2e-mariadb.sql.gz", dest: dir, flags: &downloadFlags{}}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestRunDownload_UncreatableDestination(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "key", dest: filepath.Join(file, "dump")}, &buf)
+		downloadRequest{bucket: "db-backups", key: "key", dest: filepath.Join(file, "dump"), flags: &downloadFlags{}}, &buf)
 	if err == nil {
 		t.Fatal("an uncreatable destination was reported as success")
 	}
@@ -82,7 +82,7 @@ func TestRunDownload_StdoutMissingKey(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "missing", dest: "-"}, &buf)
+		downloadRequest{bucket: "db-backups", key: "missing", dest: "-", flags: &downloadFlags{}}, &buf)
 	if err == nil {
 		t.Fatal("a 404 streaming to stdout was reported as success")
 	}
@@ -101,7 +101,7 @@ func TestRunDownload_NonNotFoundErrorIsWrapped(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDownload(context.Background(), client, valueOpts(),
-		downloadRequest{bucket: "db-backups", key: "key", dest: filepath.Join(t.TempDir(), "dump")}, &buf)
+		downloadRequest{bucket: "db-backups", key: "key", dest: filepath.Join(t.TempDir(), "dump"), flags: &downloadFlags{}}, &buf)
 	if err == nil {
 		t.Fatal("a 403 was reported as success")
 	}
@@ -120,7 +120,7 @@ func TestRunUpload_MissingSourceFile(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runUpload(context.Background(), client, valueOpts(),
-		filepath.Join(t.TempDir(), "absent"), "db-backups", "key", &buf)
+		uploadRequest{src: filepath.Join(t.TempDir(), "absent"), bucket: "db-backups", key: "key", flags: testUploadFlags()}, &buf)
 	if err == nil {
 		t.Fatal("a missing source file was reported as success")
 	}
@@ -139,7 +139,8 @@ func TestRunUpload_RejectsADirectory(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runUpload(context.Background(), client, valueOpts(), t.TempDir(), "db-backups", "", &buf)
+	err := runUpload(context.Background(), client, valueOpts(),
+		uploadRequest{src: t.TempDir(), bucket: "db-backups", key: "", flags: testUploadFlags()}, &buf)
 	if err == nil {
 		t.Fatal("a directory was accepted as an upload source")
 	}
@@ -166,7 +167,8 @@ func TestRunUpload_PrefixKeyAppendsBasename(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runUpload(context.Background(), client, valueOpts(), src, "db-backups", "daily/", &buf); err != nil {
+	if err := runUpload(context.Background(), client, valueOpts(),
+		uploadRequest{src: src, bucket: "db-backups", key: "daily/", flags: testUploadFlags()}, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != "/db-backups/daily/dump.sql.gz" {
@@ -186,7 +188,8 @@ func TestRunUpload_APIErrorIsWrapped(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runUpload(context.Background(), client, valueOpts(), src, "db-backups", "key", &buf)
+	err := runUpload(context.Background(), client, valueOpts(),
+		uploadRequest{src: src, bucket: "db-backups", key: "key", flags: testUploadFlags()}, &buf)
 	if err == nil {
 		t.Fatal("a 403 was reported as success")
 	}

@@ -204,3 +204,7 @@ func hexSHA256(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+// hexEncode names encoding/hex at the one call site outside this file, so
+// presign.go does not import it only to render a signature.
+func hexEncode(b []byte) string { return hex.EncodeToString(b) }

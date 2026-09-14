@@ -121,7 +121,7 @@ func TestListObjectsPaging(t *testing.T) {
 			</ListBucketResult>`)
 	})
 
-	objs, err := c.ListObjects(context.Background(), "db-backups", "e2e-", 0)
+	objs, err := c.ListObjects(context.Background(), "db-backups", ListOptions{Prefix: "e2e-"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestListObjectsLimit(t *testing.T) {
 			</ListBucketResult>`)
 	})
 
-	objs, err := c.ListObjects(context.Background(), "b", "", 1)
+	objs, err := c.ListObjects(context.Background(), "b", ListOptions{Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestHeadObject(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	info, err := c.HeadObject(context.Background(), "db-backups", "e2e-a.sql.gz")
+	info, err := c.HeadObject(context.Background(), "db-backups", "e2e-a.sql.gz", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestGetObject(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	n, err := c.GetObject(context.Background(), "db-backups", "dir/a b.txt", &buf)
+	n, err := c.GetObject(context.Background(), "db-backups", "dir/a b.txt", "", &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestAPIError(t *testing.T) {
 			`<Resource>/db-backups/</Resource><Region>garage</Region></Error>`))
 	})
 
-	_, err := c.ListObjects(context.Background(), "db-backups", "", 0)
+	_, err := c.ListObjects(context.Background(), "db-backups", ListOptions{})
 	var apiErr *APIError
 	if !asAPIError(err, &apiErr) {
 		t.Fatalf("err = %v (%T), want *APIError", err, err)
@@ -311,7 +311,7 @@ func TestAPIError(t *testing.T) {
 		t.Error("AccessDenied must not read as not-found")
 	}
 
-	_, err = c.HeadObject(context.Background(), "db-backups", "missing")
+	_, err = c.HeadObject(context.Background(), "db-backups", "missing", "")
 	if !IsNotFound(err) {
 		t.Errorf("bodiless 404 = %v, want IsNotFound", err)
 	}
