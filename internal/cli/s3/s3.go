@@ -10,7 +10,7 @@ import (
 // s3Long documents the credential sources on the group itself. The connection
 // flags are this group's primary input and are registered here rather than
 // globally, so this is the only place they are discoverable.
-const s3Long = `List buckets and objects in an S3-compatible store, and move files in and out.
+const s3Long = `Manage buckets and objects in an S3-compatible store, and move files in and out.
 
 This group is koc-specific (S3 is not an OpenStack service, and upstream's
 object-store commands speak Swift) and does not authenticate against Keystone:
@@ -42,7 +42,10 @@ variables, so export it from either:
 
 Addressing is path-style by default (<endpoint>/<bucket>/<key>), matching the
 --host-bucket setting the backup pipeline gives s3cmd; pass --no-path-style for
-a store fronted by wildcard DNS.`
+a store fronted by wildcard DNS.
+
+Every reference accepts either "<bucket>/<key>" or the "s3://<bucket>/<key>"
+spelling, so a path copied out of s5cmd or "aws s3" pastes in unchanged.`
 
 const s3Example = `  # Everything the credentials can see
   koc s3 bucket list
@@ -53,6 +56,14 @@ const s3Example = `  # Everything the credentials can see
   # Fetch one backup and its checksum
   koc s3 download db-backups/<key> ./dump.sql.gz
   koc s3 download db-backups/<key>.sha256 -
+
+  # How much space the backups take, per storage class
+  koc s3 du db-backups --group
+
+  # A scratch bucket, and its removal once emptied
+  koc s3 bucket create scratch
+  koc s3 object delete scratch/ --recursive
+  koc s3 bucket delete scratch
 
   # GitLab's own key, straight from the cluster
   koc s3 --s3-creds-from-ns lcm-gitlab bucket list`
@@ -72,5 +83,6 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newObjectCommand(a, o, f))
 	cmd.AddCommand(newDownloadCommand(a, o, f))
 	cmd.AddCommand(newUploadCommand(a, o, f))
+	cmd.AddCommand(newDuCommand(a, o, f))
 	return cmd
 }

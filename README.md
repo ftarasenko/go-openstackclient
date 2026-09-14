@@ -555,16 +555,34 @@ S3 credentials alone are used, so it works on a host with no cloud credentials.
 
 ```sh
 koc s3 bucket list
+koc s3 bucket create scratch
+koc s3 bucket delete scratch                   # the bucket must be empty
 koc s3 object list db-backups
 koc s3 object show db-backups/<key>            # HEAD only, no transfer
+koc s3 object delete db-backups/<key>
+koc s3 object delete db-backups/e2e- -r        # every key under a prefix
+koc s3 du         db-backups                   # objects and exact bytes
+koc s3 du         db-backups --group           # per storage class
 koc s3 download   db-backups/<key> ./dump.mbs.gz.enc
 koc s3 download   db-backups/<key>.sha256 -    # "-" streams to stdout, so it pipes
 koc s3 upload     ./dump.mbs.gz.enc db-backups/
 ```
 
+Every ref also accepts the `s3://<bucket>/<key>` spelling, so a path copied from
+`s5cmd` or `aws s3` pastes in unchanged.
+
 `bucket list` is scoped to the **access key**, not to the store: Garage answers
 with the buckets that key is granted, so a key made for one bucket lists exactly
 that one.
+
+`object delete --recursive` is the one destructive shape in the group, so it is
+never inferred from a trailing slash or a wildcard — and `--dry-run` prints
+exactly the keys it would remove without touching any of them. It is also how a
+bucket is emptied before `bucket delete`, which never removes objects
+implicitly.
+
+`du` is a listing folded into a sum, because S3 has no "how big is this" call:
+no object is downloaded, but every key is walked, one request per 1000 of them.
 
 Credentials come from flags, from the environment, or from a Kubernetes Secret:
 
@@ -624,7 +642,7 @@ internal/kube/             minimal read-only k8s REST client (no client-go)
 internal/vault/            minimal Vault REST client (AppRole/token + KV v2)
 internal/s3/               minimal S3 REST client (SigV4, no aws-sdk/minio-go)
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt, no Keystone auth
-internal/cli/s3/           "koc s3" bucket/object/download/upload, no Keystone auth
+internal/cli/s3/           "koc s3" bucket/object/du/download/upload, no Keystone auth
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
 internal/cli/              root command wiring
 internal/cli/resolve/      cross-service name→ID resolution

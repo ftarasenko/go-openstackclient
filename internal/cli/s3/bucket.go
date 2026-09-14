@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 	"github.com/ftarasenko/go-openstackclient/internal/s3"
 )
@@ -20,6 +21,8 @@ func newBucketCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.C
 		Short: "Manage buckets",
 	}
 	cmd.AddCommand(newBucketListCommand(a, o, f))
+	cmd.AddCommand(newBucketCreateCommand(a, o, f))
+	cmd.AddCommand(newBucketDeleteCommand(a, o, f))
 	return cmd
 }
 
@@ -62,4 +65,109 @@ func runBucketList(ctx context.Context, client *s3.Client, o *output.Options, w 
 		rows[i] = []any{b.Name, formatTime(b.CreationDate)}
 	}
 	return o.WriteList(w, output.Table{Columns: []string{"Name", "Created"}, Rows: rows})
+}
+
+const bucketCreateLong = `Create a bucket.
+
+The request states the bucket's location as the signing region (--s3-region,
+default "garage"), which is the only value a store will accept: a request signed
+for one region is not served by another. So there is no separate location flag —
+set --s3-region and the bucket lands there.
+
+Creating a bucket the credentials already own fails rather than succeeding
+quietly, so a script can tell "I created this" from "it was already there". On
+Garage the key that creates a bucket owns it and needs no further grant.`
+
+const bucketCreateExample = `  koc s3 bucket create scratch
+  koc s3 bucket create s3://scratch`
+
+func newBucketCreateCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:     "create <bucket>",
+		Short:   "Create a bucket",
+		Long:    bucketCreateLong,
+		Example: bucketCreateExample,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			bucket, err := parseBucketRef(args[0])
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := f.client(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runBucketCreate(ctx, client, o, bucket, cmd.OutOrStdout())
+		},
+	}
+}
+
+// runBucketCreate is the test seam for "bucket create".
+func runBucketCreate(ctx context.Context, client *s3.Client, o *output.Options,
+	bucket string, w io.Writer) error {
+	if err := client.CreateBucket(ctx, bucket); err != nil {
+		switch s3.ErrorCode(err) {
+		case "BucketAlreadyOwnedByYou":
+			return fmt.Errorf("bucket %q already exists and is owned by these credentials", bucket)
+		case "BucketAlreadyExists":
+			return fmt.Errorf("bucket %q already exists and is owned by someone else", bucket)
+		}
+		return fmt.Errorf("creating bucket %q on %s: %w", bucket, client.Endpoint(), err)
+	}
+	return o.WriteSingle(w, []string{"Bucket", "Region"}, []any{bucket, client.Region()})
+}
+
+const bucketDeleteLong = `Delete one or more empty buckets.
+
+A bucket that still holds objects is refused by the server — nothing is ever
+removed implicitly. Empty it first:
+
+  koc s3 object delete <bucket>/ --recursive
+
+Every bucket named is attempted even if an earlier one fails, and the command
+exits non-zero naming each failure.`
+
+func newBucketDeleteCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:     "delete <bucket> [<bucket> ...]",
+		Short:   "Delete empty buckets",
+		Long:    bucketDeleteLong,
+		Aliases: []string{"remove"},
+		Args:    cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := f.client(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runBucketDelete(ctx, client, args, cmd.OutOrStdout())
+		},
+	}
+}
+
+// runBucketDelete is the test seam for "bucket delete". It follows koc's batch
+// contract: attempt every ref, join the failures.
+func runBucketDelete(ctx context.Context, client *s3.Client, refs []string, w io.Writer) error {
+	return batchdelete.Each(refs, func(ref string) error {
+		bucket, err := parseBucketRef(ref)
+		if err != nil {
+			return err
+		}
+		if err := client.DeleteBucket(ctx, bucket); err != nil {
+			if s3.ErrorCode(err) == "BucketNotEmpty" {
+				return fmt.Errorf("bucket %q is not empty: delete its objects first "+
+					"(koc s3 object delete %s/ --recursive)", bucket, bucket)
+			}
+			return fmt.Errorf("deleting bucket %q: %w", bucket, err)
+		}
+		_, err = fmt.Fprintf(w, "Deleted bucket: %s\n", bucket)
+		return err
+	})
 }
