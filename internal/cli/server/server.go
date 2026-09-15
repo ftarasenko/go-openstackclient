@@ -352,7 +352,7 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return o.WriteList(w, serverBasicTable(all))
 	}
 	var flavorNames map[string]string
-	if f.long {
+	if wantsFlavorNames(o, f) {
 		flavorNames = serverFlavorNames(ctx, client, all)
 	}
 	extra := serverListExtraColumns(o, serverListColumns(f.long))
@@ -385,6 +385,23 @@ func serverListMicroversion(f *serverListFlags) string {
 		mv = "2.83"
 	}
 	return mv
+}
+
+// wantsFlavorNames reports whether the listing is going to render the Flavor
+// column, which is the only reason to pay for the flavor lookup behind it.
+//
+// Below nova 2.47 the server response carries the flavor's ID and not its name,
+// and serverListMicroversion pins the listing at 2.1 by default — so without
+// the lookup the column would be a page of flavor UUIDs, which is no more use
+// than not having it. The check matters because the column is now in the
+// default listing: `server list -c Name -c Status --watch` must not buy a
+// flavor listing per refresh for a column it is not showing.
+func wantsFlavorNames(o *output.Options, f *serverListFlags) bool {
+	if f.long {
+		return true
+	}
+	// No -c at all means every column, Flavor included.
+	return len(o.Columns) == 0 || len(o.SelectedColumns("Flavor")) > 0
 }
 
 // serverListBasic reports whether nova's non-detail listing (GET /servers,
@@ -422,6 +439,8 @@ func serverListTable(list []servers.Server, long bool, flavorNames map[string]st
 		if long {
 			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone,
 				s.Host, s.TaskState, s.PowerState, s.TenantID, s.UserID)
+		} else {
+			row = append(row, flavorName(s.Flavor, flavorNames))
 		}
 		for _, c := range extra {
 			row = append(row, c.Value(s))
@@ -433,13 +452,29 @@ func serverListTable(list []servers.Server, long bool, flavorNames map[string]st
 
 // serverListColumns is the listing's fixed column set, before the opt-in extras
 // in serverListOptional are appended.
+//
+// Flavor is in the default listing because upstream's is `ID, Name, Status,
+// Networks, Image, Flavor` (python-openstackclient 10.2.1,
+// compute/v2/server.py, the `column_headers` assembly at ListServer) and koc's
+// stopped at Networks — so `koc server list` and `openstack server list`
+// disagreed about the one attribute an operator reads a listing for after the
+// status.
+//
+// Image is deliberately still absent. Upstream's default column is the image
+// *name*, resolved with a glance lookup koc does not make; what koc has is the
+// ID, and a 36-character UUID per row is what makes this table wrap in the
+// first place. `-c "Image ID"` renders it for anyone who wants it, and the
+// deviation is recorded in docs/coverage.md under "Naming deviations from
+// upstream".
 func serverListColumns(long bool) []string {
 	cols := []string{"ID", "Name", "Status", "Networks"}
-	if long {
-		cols = append(cols, "Image", "Flavor", "Availability Zone", "Host",
-			"Task State", "Power State", "Project ID", "User ID")
+	if !long {
+		return append(cols, "Flavor")
 	}
-	return cols
+	// --long keeps the column order it has always had: it is the listing
+	// scripts read positionally, and Flavor is already in it.
+	return append(cols, "Image", "Flavor", "Availability Zone", "Host",
+		"Task State", "Power State", "Project ID", "User ID")
 }
 
 func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

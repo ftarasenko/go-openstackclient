@@ -337,6 +337,14 @@ API. Numeric columns compare numerically (`--sort-column Size` puts 9 before
 10, not before 100), the sort is stable so repeated `--sort-column` flags break
 ties, and column names are matched case-insensitively.
 
+`server list`'s default table is upstream's — `ID`, `Name`, `Status`,
+`Networks`, `Flavor` — with one deviation: upstream's sixth column is the image
+*name*, resolved with a glance lookup `koc` does not make, so rather than
+printing a 36-character image UUID in its place `koc` leaves it out and offers
+it as the opt-in `Image ID`. Below nova 2.47 the flavor's name comes from a
+single flavor listing per invocation, and only when the column is actually
+being rendered — so `-c Name -c Status` does not pay for it.
+
 A few columns are **opt-in**: they are in neither the default nor the `--long`
 table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
 `server list` carries eleven — `Created At`, `Image ID`, `Flavor ID`,
@@ -348,9 +356,10 @@ table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
 koc server list --all-projects -c Name -c "Created At" --sort-column "Created At"
 ```
 
-without which reading creation time costs one `server show` per server. The
-default and `--long` tables are unchanged, so nothing that reads either
-positionally is affected. `server list --help` names the full set.
+without which reading creation time costs one `server show` per server. Naming
+one adds it for that invocation only — the default and `--long` tables are not
+otherwise widened, so nothing that reads either positionally is affected.
+`server list --help` names the full set.
 
 ### Live refresh (`--watch`)
 

@@ -307,6 +307,30 @@ One flag deviates in **spelling** rather than a command: `koc dns service list
 underscored flag in designate's CLI. Both work; the underscored form is
 registered hidden.
 
+One **default column set** deviates. Upstream's `server list` renders `ID, Name,
+Status, Networks, Image, Flavor` (python-openstackclient 10.2.1,
+`compute/v2/server.py`, the `column_headers` assembly in `ListServer`). `koc`
+renders all of those but **Image**: upstream's column is the image *name*, which
+it resolves with a glance lookup `koc` does not make, and what nova returns is
+the ID — so the honest `koc` column would be a 36-character UUID per row, which
+is most of what makes this table wrap. `-c "Image ID"` renders it on request.
+Flavor *is* in the default listing, and below nova 2.47 — which is where
+`serverListMicroversion` pins the listing by default — its name comes from one
+flavor listing for the whole page rather than from the 2.47 detail response,
+whose extra payload (`user_data` above all) costs roughly twenty times as much.
+
+One **default column set** deviates. Upstream's `server list` renders `ID, Name,
+Status, Networks, Image, Flavor` (python-openstackclient 10.2.1,
+`compute/v2/server.py`, the `column_headers` assembly in `ListServer`). `koc`
+renders all of those but **Image**: upstream's column is the image *name*, which
+it resolves with a glance lookup per listing, and what nova returns is the ID —
+so the honest `koc` column would be a 36-character UUID per row, which is most of
+what makes this table wrap. `-c "Image ID"` renders it on request. Flavor *is*
+in the default listing, and below nova 2.47 — which is where
+`serverListMicroversion` pins the listing by default — its name comes from one
+flavor listing for the whole page rather than from the 2.47 detail response,
+whose extra payload (`user_data` above all) costs roughly twenty times as much.
+
 One deviates in **semantics**: on `koc user create` and `koc user set`,
 `--project-domain` falls back to `--domain` — the user's own domain — when it is
 absent, where upstream resolves the default project unscoped across all domains

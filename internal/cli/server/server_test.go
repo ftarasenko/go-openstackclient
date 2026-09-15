@@ -83,17 +83,22 @@ func TestRunServerList_RequestAndTableOutput(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{
-		"ID", "Name", "Status", "Networks",
+		// The default listing is upstream's: ID, Name, Status, Networks, Flavor
+		// (python-openstackclient 10.2.1, compute/v2/server.py ListServer).
+		"ID", "Name", "Status", "Networks", "Flavor",
 		"web-1", "web-2", "ACTIVE", "SHUTOFF",
 		"11111111-1111-1111-1111-111111111111", "private=10.0.0.5",
+		"m1.small", "m1.large",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table output missing %q\n---\n%s", want, out)
 		}
 	}
-	// --long columns should not appear by default.
-	if strings.Contains(out, "m1.small") {
-		t.Errorf("default output should not contain --long Flavor column:\n%s", out)
+	// The rest of --long still does not appear by default.
+	for _, unwanted := range []string{"Availability Zone", "Power State", "Project ID"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("default output carries the --long column %q:\n%s", unwanted, out)
+		}
 	}
 }
 
