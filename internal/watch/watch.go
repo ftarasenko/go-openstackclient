@@ -152,6 +152,11 @@ type runner struct {
 	force    bool // refresh on the next pass even if paused
 	skipped  int  // refreshes dropped because the previous one overran
 
+	// deferred holds keys that arrived while a refresh was in flight and could
+	// not be acted on until it finished. They are drained, in order, before the
+	// loop waits on anything else.
+	deferred []byte
+
 	// stopWinch unsubscribes from window-resize notifications.
 	stopWinch func()
 }
@@ -253,7 +258,7 @@ func (r *runner) loop(ctx context.Context, cancel context.CancelFunc) error {
 		}
 		if r.force || !r.paused {
 			r.force = false
-			stop, err := r.tick(ctx)
+			stop, err := r.tick(ctx, cancel)
 			if err != nil {
 				return err
 			}
@@ -274,16 +279,23 @@ func (r *runner) loop(ctx context.Context, cancel context.CancelFunc) error {
 // tick performs one refresh and paints the result. It reports stop when the
 // loop has reached a normal end (--watch-count exhausted, --watch-until-change
 // satisfied).
-func (r *runner) tick(ctx context.Context) (bool, error) {
+func (r *runner) tick(ctx context.Context, cancel context.CancelFunc) (bool, error) {
 	started := r.o.now()
 	r.tickAt = started
 	r.attempts++
 	var body, warn bytes.Buffer
 
 	r.differ.BeginFrame()
-	err := r.render(ctx, &body, &warn)
+	aborted, err := r.refresh(ctx, &body, &warn)
 	latency := r.o.now().Sub(started)
 
+	if aborted != 0 {
+		// The refresh was cut short on purpose, so whatever it returned is
+		// koc's own cancellation rather than anything the endpoint did. The key
+		// that stopped it is acted on here instead.
+		r.differ.Rollback()
+		return r.key(aborted, cancel) == evQuit, nil
+	}
 	if err != nil {
 		r.differ.Rollback()
 		if fatal := r.recordError(err); fatal != nil {
@@ -323,6 +335,52 @@ func (r *runner) tick(ctx context.Context) (bool, error) {
 
 // countReached reports whether --watch-count has been satisfied.
 func (r *runner) countReached() bool { return r.o.Count > 0 && r.attempts >= r.o.Count }
+
+// refresh runs one render, watching the keyboard while it is in flight.
+//
+// The render goes on its own goroutine so this one stays free to answer keys:
+// without that, a refresh is a hole in the loop as long as the round trip, and
+// `q` on a four-second fleet query took four seconds to be noticed — measured,
+// not supposed. It returns the render's error, and the key that aborted it if
+// one did.
+//
+// The two goroutines share nothing that is written on both sides. The render
+// writes only into out and warn, which this goroutine does not read until the
+// channel receive below has already ordered the two; and the keys acted on
+// mid-flight are the ones classifyKey calls immediate, which touch the
+// interval, the pause state and the help panel — never the differ the render is
+// calling into. Everything else queues.
+func (r *runner) refresh(ctx context.Context, out, warn io.Writer) (byte, error) {
+	rctx, rcancel := context.WithCancel(ctx)
+	defer rcancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.render(rctx, out, warn) }()
+
+	var aborted byte
+	for {
+		select {
+		case err := <-done:
+			return aborted, err
+		case b, ok := <-r.o.keys:
+			if !ok {
+				r.o.keys = nil
+				continue
+			}
+			switch classifyKey(b) {
+			case keyAbort:
+				if aborted == 0 {
+					aborted = b
+					rcancel() // and keep waiting, so the goroutine is joined
+				}
+			case keyImmediate:
+				r.key(b, rcancel)
+			case keyDeferred:
+				r.deferred = append(r.deferred, b)
+			}
+		}
+	}
+}
 
 // recordError classifies a failed refresh. It returns non-nil when the loop
 // must stop: cancellation, a credential the endpoint has already rejected, a
@@ -383,7 +441,7 @@ func (r *runner) overlay() []string {
 	if !r.showHelp {
 		return nil
 	}
-	return helpLines()
+	return r.helpLines()
 }
 
 // wait blocks until the next refresh is due, returning early for a keypress
@@ -393,6 +451,16 @@ func (r *runner) overlay() []string {
 // it.
 func (r *runner) wait(ctx context.Context, cancel context.CancelFunc) (event, error) {
 	for {
+		// Keys held back during the refresh come first, in the order they were
+		// pressed, so nothing is lost and nothing arrives out of turn.
+		if len(r.deferred) > 0 {
+			b := r.deferred[0]
+			r.deferred = r.deferred[1:]
+			if ev := r.key(b, cancel); ev != evNone {
+				return ev, nil
+			}
+			continue
+		}
 		d := r.untilNext()
 		if d <= 0 {
 			r.noteSkips()

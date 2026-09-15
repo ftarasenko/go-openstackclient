@@ -413,9 +413,21 @@ On a terminal, single keys drive it: `q` quit, `space`/`r` refresh now, `p`
 pause/resume, `+`/`-` lengthen and shorten the interval, `d` toggle
 highlighting — and **`?` for the key map**, which is also where `--watch --help`
 points, so none of that has to be remembered. (`+` is *slower*: it adds to the
-interval.) The keys need only *stdin* to be a terminal, so
-`koc … --watch | tee` still works — it just has no keys, and the status line
-says so by leaving the hint off.
+interval.) Whether highlighting is on is reported on the status line as
+`diff on`/`diff off`, because a frame with it off looks exactly like a frame in
+which nothing changed.
+
+`q` and Ctrl-C **cut a refresh short** rather than waiting it out. The loop runs
+the refresh on its own goroutine and watches the keyboard meanwhile, so a
+fleet-wide query that takes seconds does not make the two keys you press when
+the screen looks stuck the slowest ones to answer — measured on a 4s refresh,
+that was 3.05s before and is now immediate. Keys that only change what is
+painted (`p`, `+`, `-`, `?`) are answered mid-refresh too; `d` and `r` wait for
+it, because they touch what the refresh is doing.
+
+The keys need only *stdin* to be a terminal, so `koc … --watch | tee` still
+works — it just has no keys, and the status line says so by leaving the hint
+off.
 
 **Piped output stays composable.** With no terminal (or with `--watch-plain`)
 `koc` emits no escape sequences at all and appends one whole snapshot per tick,

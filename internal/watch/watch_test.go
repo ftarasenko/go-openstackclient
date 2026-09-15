@@ -27,6 +27,11 @@ type testClock struct {
 	// (or cancellation) can move the loop. The key tests use it to keep the
 	// select from racing a due tick against a keypress.
 	blocked bool
+	// onWait runs whenever the loop asks how long to sleep, which only wait()
+	// does. It is the exact moment the loop is idle between refreshes, so a key
+	// scripted there is a key "pressed while idle" — as opposed to one the
+	// refresh itself picks up, which now takes a different path entirely.
+	onWait func()
 }
 
 func newClock() *testClock {
@@ -36,6 +41,9 @@ func newClock() *testClock {
 func (c *testClock) Now() time.Time { return c.now }
 
 func (c *testClock) After(d time.Duration) <-chan time.Time {
+	if c.onWait != nil {
+		c.onWait()
+	}
 	if c.blocked {
 		return make(chan time.Time)
 	}

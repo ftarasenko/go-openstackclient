@@ -46,6 +46,17 @@ message). Tests: `internal/watch/*_test.go`, `internal/cli/watch_test.go`,
 - **Two `show` verbs are denied**, which §3 anticipated without naming:
   `console url show` POSTs to nova's remote-consoles API and mints a session per
   call, and `server password show` reads a key passphrase from the terminal.
+- **A refresh is interruptible.** §6 phase 3 said "never block a refresh on a
+  key read", and the loop did not — but it blocked the *key read* on the
+  refresh, which is the same hole seen from the other side. With a 4s round
+  trip, `q` took 3.05s to be noticed (measured). The refresh now runs on its own
+  goroutine while the loop watches the keyboard: `q`/Ctrl-C cancel it, the keys
+  that only change what is painted are answered mid-flight, and the rest queue
+  in order. The loop is still the only goroutine that touches the differ.
+- **The highlighting state is reported**, in the key map and on the status line
+  (`diff on` / `diff off`). Nothing else on screen can say it: a frame with
+  highlighting off is indistinguishable from one in which nothing changed, so
+  `d` was a key with no visible effect until the fleet next moved.
 - **`?` opens a key map**, which §6 phase 3 did not call for. The status line
   originally listed the letters (`keys: q p r + - d`), which says that six keys
   exist and nothing about what they do — and `+` reads backwards, since it

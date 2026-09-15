@@ -43,6 +43,12 @@ func (r *runner) status() string {
 		segs = append(segs, compactDuration(r.screen.latency))
 	}
 	segs = append(segs, r.stateSegments()...)
+	// Whether changes are highlighted is otherwise invisible: a frame with
+	// highlighting off is indistinguishable from one in which nothing changed,
+	// so 'd' would be a key with no feedback until the fleet moved.
+	if !r.o.Plain && r.lastErr == nil {
+		segs = append(segs, "diff "+r.diffState())
+	}
 	if r.skipped > 0 {
 		segs = append(segs, plural(r.skipped, "skipped refresh"))
 	}

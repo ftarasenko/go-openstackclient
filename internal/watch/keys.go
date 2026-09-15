@@ -54,6 +54,41 @@ func stepDown(d time.Duration) time.Duration {
 	return time.Second
 }
 
+// keyClass says what may be done with a key that arrives while a refresh is
+// still in flight.
+//
+// The loop runs the refresh on its own goroutine and watches the keyboard
+// meanwhile, which is what stops a four-second fleet query from making the
+// terminal look hung for four seconds. But that goroutine is inside the
+// command, so what the loop may touch while it runs is not everything.
+type keyClass int
+
+const (
+	// keyDeferred waits for the refresh to finish. Either it touches state the
+	// refresh is using — 'd' flips the differ the output layer is calling into
+	// right now — or acting early would lose it: 'r' asks for another refresh,
+	// and the wait it would short-circuit has not started yet.
+	keyDeferred keyClass = iota
+	// keyImmediate changes only how the frame is presented, so it is safe to
+	// act on and repaint while the refresh runs.
+	keyImmediate
+	// keyAbort stops the refresh rather than waiting it out. These are the keys
+	// pressed *because* the screen looks stuck, so making them the slowest to
+	// answer was exactly backwards.
+	keyAbort
+)
+
+func classifyKey(b byte) keyClass {
+	switch b {
+	case keyETX, keyEOT, keyQuit, 'Q':
+		return keyAbort
+	case keyPause, 'P', keySlower, keySlowerAlt, keyFaster, keyHelp:
+		return keyImmediate
+	default:
+		return keyDeferred
+	}
+}
+
 // key acts on one byte of input and reports what the loop should do next.
 //
 // In raw mode the terminal no longer turns Ctrl-C into SIGINT — it hands the

@@ -53,7 +53,7 @@ func TestHelpPanelReplacesTheFrame(t *testing.T) {
 func TestHelpPanelNamesEveryBinding(t *testing.T) {
 	// helpLines is hand-written, so this is the check that a binding added to
 	// keys.go does not stay undocumented.
-	panel := strings.Join(helpLines(), "\n")
+	panel := strings.Join(newTestRunner(Options{Interval: time.Second}).helpLines(), "\n")
 	for _, key := range []string{"q", "space, r", "p", "+, =", "-", "d", "?", "Ctrl-C"} {
 		if !helpMentions(panel, key) {
 			t.Errorf("the key map does not name %q:\n%s", key, panel)
@@ -124,7 +124,7 @@ func TestHelpPanelFitsAConventionalTerminal(t *testing.T) {
 	// panel that gets clipped is the one frame that must not, so this pins the
 	// shape rather than trusting it: 20 rows is the smallest terminal anyone
 	// watches a fleet in, and two of them go to the status line.
-	lines := helpLines()
+	lines := newTestRunner(Options{Interval: time.Second}).helpLines()
 	if len(lines) > 18 {
 		t.Errorf("the key map is %d lines; it will clip on a 20-row terminal", len(lines))
 	}
@@ -156,5 +156,58 @@ func TestHelpPanelIsNotClippedAtTwentyRows(t *testing.T) {
 	}
 	if !strings.Contains(painted, "Ctrl-C") {
 		t.Error("the last binding did not survive to the screen")
+	}
+}
+
+func TestDiffStateIsVisible(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		h := newHarness()
+		h.render = staticFrames("row\n")
+		// The panel says it in words; the status line says it every frame. With
+		// highlighting off, nothing else on screen can — a frame with no
+		// highlights looks exactly like a frame in which nothing changed.
+		if err := h.keyed(t, Options{Interval: time.Second, Diff: on}, keyHelp, keyQuit); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		want := "off"
+		if on {
+			want = "on"
+		}
+		painted := h.out.String()
+		if !strings.Contains(painted, "toggle change highlighting — now "+want) {
+			t.Errorf("Diff=%v: the key map does not report the state:\n%q", on, painted)
+		}
+		if !strings.Contains(painted, "diff "+want) {
+			t.Errorf("Diff=%v: the status line does not report the state", on)
+		}
+	}
+}
+
+func TestDiffKeyChangesWhatTheStatusLineSays(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+	// Pressing 'd' has to be visible at once, not only when the fleet next
+	// moves.
+	if err := h.keyed(t, Options{Interval: time.Second, Diff: true}, keyDiff, keyQuit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	painted := h.out.String()
+	if !strings.Contains(painted, "diff on") {
+		t.Error("the first frame did not report highlighting as on")
+	}
+	if !strings.Contains(painted, "diff off") {
+		t.Errorf("pressing d did not change what the status line says:\n%q", lastStatus(painted))
+	}
+}
+
+func TestDiffStateIsAbsentFromAppendedFrames(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+	if err := h.run(context.Background(), Options{Interval: time.Second, Count: 1, Plain: true}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Appending frames carries no status line at all; the stream stays parseable.
+	if strings.Contains(h.out.String(), "diff ") {
+		t.Errorf("appended output carries the diff state:\n%q", h.out.String())
 	}
 }

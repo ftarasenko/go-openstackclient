@@ -18,7 +18,7 @@ import "strings"
 // clips an overlong frame and says how much it dropped, and a help panel that
 // gets clipped is the one thing that must not. This fits a 20-row terminal with
 // the status line, and leaves room on an 80-column one.
-func helpLines() []string {
+func (r *runner) helpLines() []string {
 	return []string{
 		"koc --watch — keys",
 		"",
@@ -27,7 +27,7 @@ func helpLines() []string {
 		"  p           pause / resume — resuming refreshes at once",
 		"  +, =        slower: longer interval (+1s, or +250ms below 1s)",
 		"  -           faster: shorter interval, floored at " + MinInterval.String(),
-		"  d           toggle change highlighting",
+		"  d           toggle change highlighting — now " + r.diffState(),
 		"  ?           close this help",
 		"  Ctrl-C      interrupt (exit 130)",
 		"",
@@ -35,6 +35,17 @@ func helpLines() []string {
 		"Highlighting: a changed cell is reverse-video, a new row green, and",
 		"a row that has just left is held dimmed for one frame.",
 	}
+}
+
+// diffState names whether change highlighting is on, for the places that have
+// to say so. Nothing else on screen can: with highlighting off the frame looks
+// exactly like a frame in which nothing happened to change, so pressing 'd'
+// used to have no visible effect at all until something moved.
+func (r *runner) diffState() string {
+	if r.differ.Enabled() {
+		return "on"
+	}
+	return "off"
 }
 
 // helpHint is the status line's pointer at the panel. It replaces the bare list
