@@ -23,6 +23,23 @@ import (
 // a cloud with lockout configured, is how an operator locks their own account
 // out while staring at the screen that is doing it.
 
+// reauthFailure returns the error gophercloud produces when a token expired,
+// it went back to Keystone for a new one, and Keystone said no.
+//
+// It has to be reached for explicitly. ErrUnableToReauthenticate deliberately
+// does not Unwrap — its comment says ErrOriginal and ErrReauth are independent
+// failures — so errors.As finds no status code inside it and every rule below
+// that keys on one silently declines to fire. Measured before this existed: a
+// watch whose credential Keystone had started refusing ran all twenty of its
+// refreshes, each one a fresh rejected login.
+func reauthFailure(err error) (*gophercloud.ErrUnableToReauthenticate, bool) {
+	var unable *gophercloud.ErrUnableToReauthenticate
+	if errors.As(err, &unable) {
+		return unable, true
+	}
+	return nil, false
+}
+
 // httpStatus reports the HTTP status an error carries, if any. It covers both
 // error shapes koc produces: gophercloud's for every OpenStack service, and
 // internal/s3's for the hand-rolled S3 client, which has no gophercloud
@@ -44,6 +61,14 @@ func httpStatus(err error) (int, bool) {
 // --watch-errors says: a second attempt with the same token cannot succeed, and
 // a thousand of them is an attack on the operator's own account.
 func isAuthFailure(err error) bool {
+	if unable, ok := reauthFailure(err); ok {
+		// Keystone refused a new token. That is the credential being rejected —
+		// the password changed, the account was disabled, the application
+		// credential was revoked — unless Keystone itself was what failed, in
+		// which case the credential may well still be good and the loop should
+		// ride it out.
+		return !isTransient(unable.ErrReauth)
+	}
 	code, ok := httpStatus(err)
 	if !ok {
 		return false
@@ -59,6 +84,11 @@ func isAuthFailure(err error) bool {
 // every non-auth failure is tolerated: there is a last good frame to hold, and
 // an operator watching a fleet through a rolling restart wants exactly that.
 func isTransient(err error) bool {
+	// A failed re-authentication is as transient as whatever stopped Keystone
+	// answering, which is the one thing inside it that says so.
+	if unable, ok := reauthFailure(err); ok {
+		return isTransient(unable.ErrReauth)
+	}
 	if code, ok := httpStatus(err); ok {
 		switch {
 		case code >= http.StatusInternalServerError:

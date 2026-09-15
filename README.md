@@ -426,6 +426,13 @@ interval.) Whether highlighting is on is reported on the status line as
 `diff on`/`diff off`, because a frame with it off looks exactly like a frame in
 which nothing changed.
 
+A watch outlives its token. Keystone's default Fernet lifetime is an hour, and
+gophercloud re-authenticates on the 401 by itself — so an expiry costs one extra
+token, not one per tick. A credential Keystone *refuses* is the opposite: the
+loop stops at once rather than retrying a rejected login every second, which is
+how an account gets locked out. A Keystone that is merely unreachable is ridden
+out like any other transient failure.
+
 `q` and Ctrl-C **cut a refresh short** rather than waiting it out. The loop runs
 the refresh on its own goroutine and watches the keyboard meanwhile, so a
 fleet-wide query that takes seconds does not make the two keys you press when
