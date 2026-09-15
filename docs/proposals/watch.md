@@ -46,6 +46,23 @@ message). Tests: `internal/watch/*_test.go`, `internal/cli/watch_test.go`,
 - **Two `show` verbs are denied**, which §3 anticipated without naming:
   `console url show` POSTs to nova's remote-consoles API and mints a session per
   call, and `server password show` reads a key passphrase from the terminal.
+- **The frame scrolls.** §4 said height-clipping lives in the watch layer and
+  left it there: the painter kept the first screenful and said
+  "… +407 more line(s)", which named a dead end without offering a way out of
+  it. A 250-server `server list --all` measures 495 physical lines at 120
+  columns, so the frame is now a window — arrows/j/k, PgUp/PgDn/Ctrl-B/Ctrl-F,
+  Home/End/g/G — with the table's header pinned above it, the position on the
+  status line, and the offset preserved across refreshes and clamped when the
+  list shrinks.
+- **Escape sequences are decoded.** The arrows and the navigation block arrive
+  as ESC [ A and ESC [ 6 ~, and a reader forwarding one byte at a time turns
+  Down into three presses nobody made — one of which closes the key map on its
+  way past. `keycode.go` decodes CSI and SS3, holds an incomplete sequence for
+  the next read, and takes the first CSI parameter only, so a modified
+  Shift-PgDn is still PgDn.
+- **`--watch-compact`** renders one line per row, which halves that 250-server
+  frame (492 → 251 lines). Opt-in by decision: without it a watched command
+  renders byte-for-byte as an unwatched one does.
 - **A refresh is interruptible.** §6 phase 3 said "never block a refresh on a
   key read", and the loop did not — but it blocked the *key read* on the
   refresh, which is the same hole seen from the other side. With a 4s round

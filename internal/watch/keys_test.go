@@ -35,7 +35,7 @@ func newTestRunner(o Options) *runner {
 // while a refresh is in flight take a different path now (see
 // TestStopKeyAbortsTheRefreshInFlight), so the two cases are driven apart
 // rather than left to whichever branch the select happens to pick.
-func (h *harness) keyed(t *testing.T, o Options, keys ...byte) error {
+func (h *harness) keyed(t *testing.T, o Options, keys ...keyCode) error {
 	t.Helper()
 	h.clock.blocked = true
 	pending := keys
@@ -110,7 +110,7 @@ func TestKeyIntervalAdjustment(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		start time.Duration
-		key   byte
+		key   keyCode
 		want  time.Duration
 	}{
 		{"slower by a second", 2 * time.Second, keySlower, 3 * time.Second},
@@ -175,12 +175,12 @@ func TestTerminalRestoredOnEveryExitPath(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		o    Options
-		keys []byte
+		keys []keyCode
 		run  func(*harness)
 	}{
 		{name: "count reached", o: Options{Interval: time.Second, Count: 1}},
-		{name: "quit key", o: Options{Interval: time.Second}, keys: []byte{keyQuit}},
-		{name: "interrupt", o: Options{Interval: time.Second}, keys: []byte{keyETX}},
+		{name: "quit key", o: Options{Interval: time.Second}, keys: []keyCode{keyQuit}},
+		{name: "interrupt", o: Options{Interval: time.Second}, keys: []keyCode{keyETX}},
 		{name: "fatal error", o: Options{Interval: time.Second}, run: func(h *harness) {
 			h.render = func(int, io.Writer, io.Writer) error { return errors.New("settled") }
 		}},
@@ -281,15 +281,19 @@ func TestWindowResizeRepaints(t *testing.T) {
 // midRefreshKeys delivers keys from inside the render itself, on an unbuffered
 // channel: the send completes only when the loop's refresh watcher takes it, so
 // "pressed while the round trip is in flight" is exact rather than timed.
-func (h *harness) midRefreshKeys(o Options, keys ...byte) (Options, func(int, io.Writer, io.Writer) error) {
-	ch := make(chan byte)
+func (h *harness) midRefreshKeys(o Options, atFrame int, keys ...keyCode) (Options, func(int, io.Writer, io.Writer) error) {
+	ch := make(chan keyCode)
 	o = h.options(o)
 	o.keys = ch
 	o.Keys = true
-	h.clock.blocked = true
+	// Blocking the clock keeps a later tick from racing the keys — but only
+	// once the loop has reached the frame being scripted, so a test that needs
+	// an earlier frame on screen first leaves the clock running.
+	h.clock.blocked = atFrame == 1
 	inner := h.render
 	return o, func(n int, out, warn io.Writer) error {
-		if n == 1 {
+		if n == atFrame {
+			h.clock.blocked = true
 			for _, k := range keys {
 				ch <- k
 			}
@@ -301,7 +305,7 @@ func (h *harness) midRefreshKeys(o Options, keys ...byte) (Options, func(int, io
 func TestStopKeyAbortsTheRefreshInFlight(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		key     byte
+		key     keyCode
 		wantErr error
 	}{
 		{"quit", keyQuit, nil},
@@ -315,7 +319,7 @@ func TestStopKeyAbortsTheRefreshInFlight(t *testing.T) {
 				_, err := io.WriteString(out, "row\n")
 				return err
 			}
-			o, render := h.midRefreshKeys(Options{Interval: time.Second}, tc.key)
+			o, render := h.midRefreshKeys(Options{Interval: time.Second}, 1, tc.key)
 
 			err := Run(context.Background(), o, &h.out, &h.errOut,
 				func(ctx context.Context, out, warn io.Writer) error {
@@ -346,7 +350,7 @@ func TestAbortedRefreshIsNotReportedAsAFailure(t *testing.T) {
 		// What a cancelled round trip actually returns.
 		return fmt.Errorf("listing servers: %w", context.Canceled)
 	}
-	o, render := h.midRefreshKeys(Options{Interval: time.Second}, keyQuit)
+	o, render := h.midRefreshKeys(Options{Interval: time.Second}, 1, keyQuit)
 
 	err := Run(context.Background(), o, &h.out, &h.errOut,
 		func(_ context.Context, out, warn io.Writer) error {
@@ -365,7 +369,7 @@ func TestKeysHeldBackDuringARefreshAreAppliedInOrder(t *testing.T) {
 	h.render = staticFrames("row\n")
 	// 'd' touches the differ the render is calling into, so it queues rather
 	// than being acted on mid-flight; 'q' then ends the run.
-	o, render := h.midRefreshKeys(Options{Interval: time.Second, Diff: true}, keyDiff, keyQuit)
+	o, render := h.midRefreshKeys(Options{Interval: time.Second, Diff: true}, 1, keyDiff, keyQuit)
 
 	err := Run(context.Background(), o, &h.out, &h.errOut,
 		func(_ context.Context, out, warn io.Writer) error {
@@ -389,7 +393,7 @@ func TestPresentationKeyActsDuringARefresh(t *testing.T) {
 	// '?' only changes what is painted, so it is safe to answer while the round
 	// trip is still out — which is the difference between a terminal that feels
 	// alive and one that does not.
-	o, render := h.midRefreshKeys(Options{Interval: time.Second}, keyHelp, keyQuit)
+	o, render := h.midRefreshKeys(Options{Interval: time.Second}, 1, keyHelp, keyQuit)
 
 	err := Run(context.Background(), o, &h.out, &h.errOut,
 		func(_ context.Context, out, warn io.Writer) error {

@@ -360,3 +360,18 @@ func TestWatchAuthenticatesOnce(t *testing.T) {
 		t.Errorf("appended output carries an escape sequence:\n%q", out)
 	}
 }
+
+func TestWatchCompactFlagReachesTheOutputLayer(t *testing.T) {
+	root := NewRootCommand("test")
+	cmd, _, err := root.Find([]string{"server", "list"})
+	if err != nil {
+		t.Fatalf("finding server list: %v", err)
+	}
+	if cmd.Flags().Lookup(flagWatchCompact) == nil {
+		t.Fatal("--watch-compact is not registered on a read verb")
+	}
+	// Opt-in: a watched run renders exactly as an unwatched one unless asked.
+	if cmd.Flags().Lookup(flagWatchCompact).DefValue != "false" {
+		t.Error("--watch-compact defaults on; it is meant to be opt-in")
+	}
+}

@@ -49,6 +49,11 @@ func (r *runner) status() string {
 	if !r.o.Plain && r.lastErr == nil {
 		segs = append(segs, "diff "+r.diffState())
 	}
+	// Where the window sits, but only when there is something off screen: on a
+	// frame that fits, a range covering all of it is noise.
+	if v := r.scrollView(); !v.fits() {
+		segs = append(segs, fmt.Sprintf("lines %d–%d of %d", r.lastFrame.first, r.lastFrame.last, v.total))
+	}
 	if r.skipped > 0 {
 		segs = append(segs, plural(r.skipped, "skipped refresh"))
 	}

@@ -60,14 +60,14 @@ type harness struct {
 	errOut   strings.Builder
 	frames   int
 	restores int
-	keys     chan byte
+	keys     chan keyCode
 
 	// render is the scripted renderer; frame is its call count (1-based).
 	render func(frame int, out, warn io.Writer) error
 }
 
 func newHarness() *harness {
-	return &harness{clock: newClock(), keys: make(chan byte, 16)}
+	return &harness{clock: newClock(), keys: make(chan keyCode, 16)}
 }
 
 func (h *harness) options(o Options) Options {

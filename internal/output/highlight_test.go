@@ -260,3 +260,108 @@ func uniformWidth(s string) bool {
 	}
 	return true
 }
+
+func TestCompactRowsPutEachRowOnOneLine(t *testing.T) {
+	tbl := Table{
+		Columns: []string{"Name", "Networks"},
+		Rows: [][]any{
+			{"web-01", "tenant-net-019=198.51.100.20, 203.0.113.20, 192.0.2.44"},
+			{"web-02", "short"},
+		},
+	}
+
+	var wrapped, compact strings.Builder
+	o := &Options{Format: FormatTable, MaxWidth: 40}
+	if err := o.WriteList(&wrapped, tbl); err != nil {
+		t.Fatalf("WriteList: %v", err)
+	}
+	o.SetCompactRows(true)
+	if err := o.WriteList(&compact, tbl); err != nil {
+		t.Fatalf("WriteList: %v", err)
+	}
+
+	// Measured on a 250-server fleet, this is the difference between 1.96 and
+	// 1.00 physical lines per row at 120 columns.
+	wn, cn := lineCount(wrapped.String()), lineCount(compact.String())
+	if cn >= wn {
+		t.Errorf("compact rendered %d lines and wrapped %d; compaction did nothing", cn, wn)
+	}
+	// Two borders, a header, a rule and one line per row.
+	if want := 2 + 1 + 1 + 2; cn != want {
+		t.Errorf("compact rendered %d lines, want %d:\n%s", cn, want, compact.String())
+	}
+	if !strings.Contains(compact.String(), "…") {
+		t.Errorf("the over-long cell was not cut short:\n%s", compact.String())
+	}
+	if maxLine(compact.String()) > 40 {
+		t.Errorf("compact output is %d columns, over --max-width:\n%s", maxLine(compact.String()), compact.String())
+	}
+}
+
+func TestCompactRowsFoldMultiLineCells(t *testing.T) {
+	// A cell that already contains newlines — an address map, a property list —
+	// becomes one line rather than several.
+	var buf strings.Builder
+	o := &Options{Format: FormatTable}
+	o.SetCompactRows(true)
+	if err := o.WriteList(&buf, Table{
+		Columns: []string{"Name", "Addresses"},
+		Rows:    [][]any{{"web-01", "private=192.0.2.10\npublic=203.0.113.7"}},
+	}); err != nil {
+		t.Fatalf("WriteList: %v", err)
+	}
+	if n := lineCount(buf.String()); n != 5 {
+		t.Errorf("rendered %d lines, want 5:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "private=192.0.2.10 public=203.0.113.7") {
+		t.Errorf("the folded cell lost its separator:\n%s", buf.String())
+	}
+}
+
+func TestCompactRowsAreOffByDefault(t *testing.T) {
+	// An unwatched run, and a watched one that has not asked, render exactly as
+	// they always have.
+	tbl := Table{
+		Columns: []string{"Name", "Networks"},
+		Rows:    [][]any{{"web-01", "tenant-net-019=198.51.100.20, 203.0.113.20, 192.0.2.44"}},
+	}
+	var before, after strings.Builder
+	o := &Options{Format: FormatTable, MaxWidth: 40}
+	if err := o.WriteList(&before, tbl); err != nil {
+		t.Fatalf("WriteList: %v", err)
+	}
+	o.SetCompactRows(true)
+	o.SetCompactRows(false)
+	if err := o.WriteList(&after, tbl); err != nil {
+		t.Fatalf("WriteList: %v", err)
+	}
+	if before.String() != after.String() {
+		t.Error("turning compaction off did not restore the default rendering")
+	}
+}
+
+func TestTruncateCell(t *testing.T) {
+	for _, tc := range []struct {
+		in    string
+		width int
+		want  string
+	}{
+		{"short", 10, "short"},
+		{"exactly-10", 10, "exactly-10"},
+		{"truncate-me", 10, "truncate-…"},
+		{"multi\nline", 20, "multi line"},
+		{"x", 1, "x"},
+		{"xyz", 1, "…"},
+		{"anything", 0, "anything"}, // no width to fit to; leave it alone
+	} {
+		got := truncateCell(tc.in, tc.width)
+		if len(got) != 1 || got[0] != tc.want {
+			t.Errorf("truncateCell(%q, %d) = %q, want [%q]", tc.in, tc.width, got, tc.want)
+		}
+	}
+}
+
+// lineCount reports how many physical lines s holds.
+func lineCount(s string) int {
+	return len(strings.Split(strings.TrimRight(s, "\n"), "\n"))
+}

@@ -2,7 +2,6 @@ package watch
 
 import (
 	"context"
-	"io"
 	"os"
 	"time"
 
@@ -19,8 +18,9 @@ const (
 	evQuit
 )
 
-// Key bytes the loop understands. They are deliberately the ones viddy and
-// less already use, so nothing here has to be learned.
+// Keys the loop understands. They are deliberately the ones viddy and less
+// already use, so nothing here has to be learned: hence j/k alongside the
+// arrows, and g/G alongside Home/End.
 const (
 	keyETX       = 0x03 // Ctrl-C
 	keyEOT       = 0x04 // Ctrl-D
@@ -33,6 +33,16 @@ const (
 	keySlowerAlt = '=' // the unshifted '+' on most layouts
 	keyDiff      = 'd'
 	keyHelp      = '?'
+
+	// Scrolling. The single-byte spellings are here as well as the escape
+	// sequences because they need no decoding and because anyone who reaches
+	// for j/k will not thank us for arrows only.
+	keyLineDown = 'j'
+	keyLineUp   = 'k'
+	keyTop      = 'g'
+	keyBottom   = 'G'
+	keyPageFwd  = 0x06 // Ctrl-F
+	keyPageBack = 0x02 // Ctrl-B
 )
 
 // intervalStep is how far '+' moves the interval. Below a second the step is a
@@ -78,11 +88,15 @@ const (
 	keyAbort
 )
 
-func classifyKey(b byte) keyClass {
-	switch b {
+func classifyKey(k keyCode) keyClass {
+	switch k {
 	case keyETX, keyEOT, keyQuit, 'Q':
 		return keyAbort
-	case keyPause, 'P', keySlower, keySlowerAlt, keyFaster, keyHelp:
+	case keyPause, 'P', keySlower, keySlowerAlt, keyFaster, keyHelp,
+		keyLineDown, keyLineUp, keyTop, keyBottom, keyPageFwd, keyPageBack,
+		keyDown, keyUp, keyPageDown, keyPageUp, keyHome, keyEnd, keyEscape:
+		// Scrolling and the key map only change which lines are painted, never
+		// what the refresh is doing.
 		return keyImmediate
 	default:
 		return keyDeferred
@@ -96,8 +110,12 @@ func classifyKey(b byte) keyClass {
 // cancelling the context. It is *only* cancelled, never reported: cmd/koc's
 // exit-130 path stays the single place an interrupt is announced, so a watched
 // command and an interrupted `node deploy --wait` say the same thing.
-func (r *runner) key(b byte, cancel context.CancelFunc) event {
-	switch b {
+func (r *runner) key(k keyCode, cancel context.CancelFunc) event {
+	if r.scrollKey(k) {
+		r.paint()
+		return evNone
+	}
+	switch k {
 	case keyETX, keyEOT:
 		cancel()
 		return evNone
@@ -118,9 +136,43 @@ func (r *runner) key(b byte, cancel context.CancelFunc) event {
 		return evTick
 	case keyHelp:
 		r.showHelp = !r.showHelp
+		// The key map is short and always read from the top; the frame keeps
+		// the place it was left at.
+		r.helpView.reset()
 		r.paint()
+	case keyEscape:
+		// Escape closes the key map and does nothing else — it is the other
+		// thing everyone tries.
+		if r.showHelp {
+			r.showHelp = false
+			r.paint()
+		}
 	}
 	return evNone
+}
+
+// scrollKey moves the window if k is a scrolling key, and reports whether it
+// was one. The clamping happens at the next paint, which is the only place the
+// terminal's height is known.
+func (r *runner) scrollKey(k keyCode) bool {
+	v := r.scrollView()
+	switch k {
+	case keyLineDown, keyDown:
+		v.scroll(1)
+	case keyLineUp, keyUp:
+		v.scroll(-1)
+	case keyPageFwd, keyPageDown:
+		v.scroll(v.page())
+	case keyPageBack, keyPageUp:
+		v.scroll(-v.page())
+	case keyTop, keyHome:
+		v.top()
+	case keyBottom, keyEnd:
+		v.bottom()
+	default:
+		return false
+	}
+	return true
 }
 
 // togglePause flips the pause state. Resuming refreshes at once rather than
@@ -166,31 +218,4 @@ func rawStdin() (func(), error) {
 		return nil, err
 	}
 	return func() { _ = term.Restore(fd, state) }, nil
-}
-
-// readKeys pumps single bytes from src into a channel the loop can select on.
-//
-// The read runs on its own goroutine because it blocks: doing it inline would
-// make a refresh wait on a keypress, which is precisely backwards. The channel
-// is buffered so a burst of held keys is not lost between ticks, and the
-// goroutine ends when the reader returns an error — which, for a terminal, is
-// when the process is on its way out. A read still parked in the kernel at that
-// point is not worth chasing: the terminal's mode has already been restored by
-// the deferred restore in Run, so the parked read holds nothing.
-func readKeys(src io.Reader) <-chan byte {
-	ch := make(chan byte, 16)
-	go func() {
-		defer close(ch)
-		buf := make([]byte, 1)
-		for {
-			n, err := src.Read(buf)
-			if n > 0 {
-				ch <- buf[0]
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return ch
 }

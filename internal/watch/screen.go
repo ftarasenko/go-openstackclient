@@ -125,15 +125,15 @@ func (s *screen) accept(body, warn []byte, latency time.Duration, rows int) {
 // left alone: a transient 503 should not blank an operator's view of a fleet.
 func (s *screen) reject(err error) { s.stale = err }
 
-// paint puts the current state on the display. overlay, when non-nil, is shown
-// in place of the frame — today only the '?' key map, which appending frames
-// has no use for, so it is ignored in plain mode.
-func (s *screen) paint(status string, overlay []string) {
+// paint puts the current state on the display. f is the already-windowed frame
+// (see viewport); appending frames has no window and no status line, so plain
+// mode ignores both.
+func (s *screen) paint(status string, f frame, hadOverlay bool) {
 	if s.plain {
 		s.appendFrame()
 		return
 	}
-	s.repaint(status, overlay)
+	s.repaint(status, f, hadOverlay)
 }
 
 // appendFrame writes one whole frame to the stream, with no escape sequences at
@@ -175,22 +175,23 @@ func (s *screen) stripRepeatHeader(body []byte) []byte {
 // repaint draws one full frame in a single write: cursor home, erase to the end
 // of the screen, then the frame and the status line. One write means the
 // terminal never shows a half-drawn table.
-func (s *screen) repaint(status string, overlay []string) {
-	cols, rows := s.size()
+func (s *screen) repaint(status string, f frame, hadOverlay bool) {
+	cols, _ := s.size()
 	var b strings.Builder
 	b.WriteString(homeErase)
 
-	lines := overlay
-	if lines == nil {
-		lines = frameLines(s.body, s.warn)
-	}
-	reserve := 0
-	if status != "" {
-		reserve = 2
-	}
-	lines = clipLines(lines, rows, reserve)
-	for _, ln := range lines {
+	for _, ln := range f.head {
 		b.WriteString(ln)
+		b.WriteString("\r\n")
+	}
+	for _, ln := range f.body {
+		b.WriteString(ln)
+		b.WriteString("\r\n")
+	}
+	if f.more > 0 {
+		b.WriteString(faint)
+		b.WriteString(truncate(moreMarker(f.more), cols))
+		b.WriteString(resetStyle)
 		b.WriteString("\r\n")
 	}
 	if status != "" {
@@ -202,7 +203,14 @@ func (s *screen) repaint(status string, overlay []string) {
 	io.WriteString(s.out, b.String()) //nolint:errcheck,gosec // a failed paint resurfaces on the next one; blanking the screen to report it would be worse
 	// The frame is only consumed when it was the frame that was drawn: with the
 	// key map up, the refresh underneath has still not been seen.
-	s.pending = overlay != nil && s.pending
+	s.pending = hadOverlay && s.pending
+}
+
+// moreMarker names what is below the window, and how to get to it. The version
+// that only said how much was left — "… +407 more line(s); the terminal is 91
+// rows" — described a dead end without mentioning the way out of it.
+func moreMarker(n int) string {
+	return "… " + strconv.Itoa(n) + " more line(s) below — ↓/j PgDn G to scroll, ? for keys"
 }
 
 // frameLines splits the rendered body and any captured warnings into physical
@@ -225,23 +233,6 @@ func splitLines(b []byte) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
-}
-
-// clipLines trims a frame to the height the terminal actually has, saying how
-// much was dropped. Letting it overflow instead would scroll the alternate
-// screen and push the status line out of sight.
-func clipLines(lines []string, rows, reserve int) []string {
-	if rows <= 0 || len(lines) <= rows-reserve {
-		return lines
-	}
-	keep := rows - reserve - 1
-	if keep < 0 {
-		keep = 0
-	}
-	dropped := len(lines) - keep
-	out := make([]string, 0, keep+1)
-	out = append(out, lines[:keep]...)
-	return append(out, "… +"+strconv.Itoa(dropped)+" more line(s); the terminal is "+strconv.Itoa(rows)+" rows")
 }
 
 // truncate cuts s to at most cols runes. The status line is the one string koc

@@ -429,6 +429,22 @@ The keys need only *stdin* to be a terminal, so `koc … --watch | tee` still
 works — it just has no keys, and the status line says so by leaving the hint
 off.
 
+**A list taller than the screen scrolls.** A 250-server `server list --all`
+measures 495 physical lines at 120 columns, so the frame is a window onto it
+rather than the first screenful of it: `↓`/`j` and `↑`/`k` a line, `PgDn`/`Ctrl-F`
+and `PgUp`/`Ctrl-B` a page, `End`/`G` and `Home`/`g` either end. The table's
+header stays pinned above the window while the body moves, the status line says
+where you are (`lines 35–52 of 251`), and the marker at the cut names the keys
+instead of only counting what it hid. The place you scrolled to survives each
+refresh, and is clamped if the next one returns a shorter list.
+
+`--watch-compact` puts each row on one physical line, cutting an over-long cell
+short with an ellipsis instead of wrapping it onto further lines. On that same
+fleet it takes 492 rendered lines to 251 — the `Networks` column is what wraps —
+and a row of constant height makes the change highlighting far easier to follow.
+It is opt-in: without it a watched command renders exactly as an unwatched one
+does.
+
 **Piped output stays composable.** With no terminal (or with `--watch-plain`)
 `koc` emits no escape sequences at all and appends one whole snapshot per tick,
 so `--watch -f json | jq .` is a clean stream and `-f csv` writes its header

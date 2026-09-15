@@ -106,6 +106,10 @@ type Options struct {
 	// refreshed.
 	Title string
 
+	// Compact renders one physical line per table row. See
+	// output.Options.SetCompactRows, which the cli layer calls when this is set.
+	Compact bool
+
 	// CSVHeaderOnce suppresses the repeated header line in appended frames. Set
 	// by the cli layer when -f csv is in effect; a stream of snapshots with a
 	// header wedged between each pair is not CSV anyone can read back.
@@ -123,7 +127,7 @@ type Options struct {
 	after   func(time.Duration) <-chan time.Time
 	size    func() (cols, rows int)
 	rawMode func() (restore func(), err error)
-	keys    <-chan byte
+	keys    <-chan keyCode
 	winch   <-chan struct{}
 }
 
@@ -147,6 +151,15 @@ type runner struct {
 	lastErr  error     // the most recent refresh failure
 	tickAt   time.Time // when the most recent refresh started
 	lastOK   time.Time // when the frame currently on screen was rendered
+	// view windows the frame, and helpView does the same for the key map, so
+	// closing the map puts the operator back where they were in the list rather
+	// than at the top of it.
+	view     viewport
+	helpView viewport
+	// lastFrame is the window the current paint resolved to, so the status line
+	// can say where it sits. It is filled before the status line is composed.
+	lastFrame frame
+
 	paused   bool
 	showHelp bool // the '?' key map is open, in place of the frame
 	force    bool // refresh on the next pass even if paused
@@ -155,7 +168,7 @@ type runner struct {
 	// deferred holds keys that arrived while a refresh was in flight and could
 	// not be acted on until it finished. They are drained, in order, before the
 	// loop waits on anything else.
-	deferred []byte
+	deferred []keyCode
 
 	// stopWinch unsubscribes from window-resize notifications.
 	stopWinch func()
@@ -350,14 +363,14 @@ func (r *runner) countReached() bool { return r.o.Count > 0 && r.attempts >= r.o
 // mid-flight are the ones classifyKey calls immediate, which touch the
 // interval, the pause state and the help panel — never the differ the render is
 // calling into. Everything else queues.
-func (r *runner) refresh(ctx context.Context, out, warn io.Writer) (byte, error) {
+func (r *runner) refresh(ctx context.Context, out, warn io.Writer) (keyCode, error) {
 	rctx, rcancel := context.WithCancel(ctx)
 	defer rcancel()
 
 	done := make(chan error, 1)
 	go func() { done <- r.render(rctx, out, warn) }()
 
-	var aborted byte
+	var aborted keyCode
 	for {
 		select {
 		case err := <-done:
@@ -433,15 +446,40 @@ func (r *runner) backoff(latency time.Duration) {
 
 // paint renders the current state onto the display: the frame, or the key map
 // when '?' is open.
-func (r *runner) paint() { r.screen.paint(r.status(), r.overlay()) }
-
-// overlay is what the painter should show in place of the frame, or nil for the
-// frame itself.
-func (r *runner) overlay() []string {
-	if !r.showHelp {
-		return nil
+//
+// The window is resolved here rather than in the painter because the status
+// line has to report where in the frame it lands, and the status line is
+// composed before anything is written.
+func (r *runner) paint() {
+	if r.o.Plain {
+		r.screen.paint("", frame{}, false)
+		return
 	}
-	return r.helpLines()
+	lines, vp := r.frameLines()
+	_, rows := r.screen.size()
+	reserve := 0
+	if !r.o.NoTitle {
+		reserve = 2
+	}
+	r.lastFrame = vp.apply(lines, rows, reserve)
+	r.screen.paint(r.status(), r.lastFrame, r.showHelp)
+}
+
+// frameLines is what should be on screen, with the viewport that windows it.
+func (r *runner) frameLines() ([]string, *viewport) {
+	if r.showHelp {
+		return r.helpLines(), &r.helpView
+	}
+	return frameLines(r.screen.body, r.screen.warn), &r.view
+}
+
+// scrollView is the window the scroll keys move: whichever of the two is on
+// screen.
+func (r *runner) scrollView() *viewport {
+	if r.showHelp {
+		return &r.helpView
+	}
+	return &r.view
 }
 
 // wait blocks until the next refresh is due, returning early for a keypress

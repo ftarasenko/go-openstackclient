@@ -72,6 +72,9 @@ type Options struct {
 
 	// highlighter, when set, decorates table output. See SetHighlighter.
 	highlighter Highlighter
+
+	// compactRows renders one physical line per row. See SetCompactRows.
+	compactRows bool
 }
 
 // SetDisplayWidth records the width tables should be fitted to when the writer
@@ -92,6 +95,18 @@ func (o *Options) SetDisplayWidth(width int) { o.displayWidth = width }
 // when h is nil. Only the table format is decorated: the machine-readable
 // formats must stay byte-exact for the tools consuming them.
 func (o *Options) SetHighlighter(h Highlighter) { o.highlighter = h }
+
+// SetCompactRows makes every table row occupy exactly one physical line: a cell
+// too wide for its column is cut short with an ellipsis instead of wrapping
+// onto further lines.
+//
+// It exists for --watch-compact. A fleet-wide `server list --all` measured 1.96
+// physical lines per row at 120 columns — the Networks column wraps — so half
+// the screen goes to continuation lines that cannot be read anyway in a view
+// that repaints every second, and rows of varying height make the change
+// highlighting jump about. Off by default: an unwatched run, and a watched one
+// that has not asked, render exactly as they always have.
+func (o *Options) SetCompactRows(on bool) { o.compactRows = on }
 
 // AddFlags registers -f/--format and -c/--column on the given flag set.
 func (o *Options) AddFlags(fs *pflag.FlagSet) {
@@ -223,7 +238,13 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 		return writeValue(w, rows)
 	default:
 		frame, styles := o.highlight(cols, rows)
-		return writeTable(w, cols, frame, o.fitWidth(w), 8, len(o.Columns) == 0, styles)
+		return writeTable(w, cols, frame, tableLayout{
+			fitWidth: o.fitWidth(w),
+			minWidth: 8,
+			elide:    len(o.Columns) == 0,
+			compact:  o.compactRows,
+			styles:   styles,
+		})
 	}
 }
 
@@ -407,7 +428,13 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 	default:
 		cols := []string{"Field", "Value"}
 		frame, styles := o.highlight(cols, fieldRows(fields, values))
-		return writeTable(w, cols, frame, o.fitWidth(w), 16, len(o.Columns) == 0, styles)
+		return writeTable(w, cols, frame, tableLayout{
+			fitWidth: o.fitWidth(w),
+			minWidth: 16,
+			elide:    len(o.Columns) == 0,
+			compact:  o.compactRows,
+			styles:   styles,
+		})
 	}
 }
 
@@ -614,7 +641,7 @@ func writeValue(w io.Writer, rows [][]any) error {
 // width of each column. Widths are counted in runes, not bytes, so multi-byte
 // content (e.g. Cyrillic names on a KeyStack cloud) lines up with the ASCII
 // border — matching the rune-based %-*s padding the rows are printed with.
-func tableCells(cols []string, rows [][]any, elide bool) ([][]string, []int) {
+func tableCells(cols []string, rows [][]any, elide, compact bool) ([][]string, []int) {
 	natural := make([]int, len(cols))
 	for i, c := range cols {
 		natural[i] = utf8.RuneCountInString(c)
@@ -631,6 +658,12 @@ func tableCells(cols []string, rows [][]any, elide bool) ([][]string, []int) {
 			if elide {
 				s = elideCell(s)
 			}
+			if compact {
+				// Measured as the one line it will be rendered as, not as its
+				// widest line: otherwise shrinkWidths optimises for a shape
+				// this table is not going to have.
+				s = collapseLines(s)
+			}
 			sr[ci] = s
 			// A multi-line cell is as wide as its widest line, not as wide as
 			// the whole string: it is rendered across several physical rows.
@@ -646,18 +679,22 @@ func tableCells(cols []string, rows [][]any, elide bool) ([][]string, []int) {
 // wrapTableCells wraps the header and every cell to its assigned width. The
 // returned widths are the widest wrapped line per column, so the borders stay
 // tight around content that wrapped short of its assignment.
-func wrapTableCells(cols []string, strRows [][]string, assigned []int) ([][]string, [][][]string, []int) {
+func wrapTableCells(cols []string, strRows [][]string, assigned []int, compact bool) ([][]string, [][][]string, []int) {
+	fit := wrapText
+	if compact {
+		fit = truncateCell
+	}
 	widths := make([]int, len(cols))
 	header := make([][]string, len(cols))
 	for i, c := range cols {
-		header[i] = wrapText(c, assigned[i])
+		header[i] = fit(c, assigned[i])
 		widths[i] = maxLineWidth(header[i])
 	}
 	out := make([][][]string, len(strRows))
 	for ri, sr := range strRows {
 		wr := make([][]string, len(cols))
 		for ci := range cols {
-			wr[ci] = wrapText(sr[ci], assigned[ci])
+			wr[ci] = fit(sr[ci], assigned[ci])
 			if n := maxLineWidth(wr[ci]); n > widths[ci] {
 				widths[ci] = n
 			}
@@ -665,6 +702,30 @@ func wrapTableCells(cols []string, strRows [][]string, assigned []int) ([][]stri
 		out[ri] = wr
 	}
 	return header, out, widths
+}
+
+// truncateCell is wrapText's counterpart for compact rows: one line, cut short
+// with an ellipsis when it does not fit. The ellipsis is a character of its own,
+// so the result is never wider than the column it was given.
+func truncateCell(s string, width int) []string {
+	s = collapseLines(s)
+	if width <= 0 || utf8.RuneCountInString(s) <= width {
+		return []string{s}
+	}
+	r := []rune(s)
+	if width == 1 {
+		return []string{"…"}
+	}
+	return []string{string(r[:width-1]) + "…"}
+}
+
+// collapseLines folds a multi-line cell onto one line. The newline becomes a
+// space rather than being dropped, so two values do not run together.
+func collapseLines(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	return strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
 }
 
 // tableWriter emits the borders and rows once the column widths are settled.
@@ -736,6 +797,22 @@ func (t tableWriter) row(cells [][]string, styles []CellStyle) error {
 	return nil
 }
 
+// tableLayout carries the knobs writeTable renders under. It is a struct rather
+// than five more parameters because every one of them is optional and three are
+// bools, which at a call site say nothing about which is which.
+type tableLayout struct {
+	// fitWidth is the width to fit the table to; 0 leaves it unbounded.
+	fitWidth int
+	// minWidth is the floor a shrunk column is wrapped to.
+	minWidth int
+	// elide replaces a cell longer than maxTableCell with a placeholder.
+	elide bool
+	// compact renders one physical line per row (see SetCompactRows).
+	compact bool
+	// styles is the per-cell decoration, or nil.
+	styles [][]CellStyle
+}
+
 // writeTable renders an ASCII table in four steps: measure, fit, wrap, emit.
 // When fitWidth > 0 the column widths are shrunk (and over-long cells wrapped
 // across physical lines) so the table fits within fitWidth, mirroring
@@ -743,16 +820,14 @@ func (t tableWriter) row(cells [][]string, styles []CellStyle) error {
 // output). When elide is true, cells longer than maxTableCell are replaced by a
 // placeholder so a single opaque blob cannot dominate the table. minWidth is the
 // floor a wrapped column is shrunk to.
-func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int, elide bool,
-	styles [][]CellStyle,
-) error {
-	strRows, natural := tableCells(cols, rows, elide)
+func writeTable(w io.Writer, cols []string, rows [][]any, l tableLayout) error {
+	strRows, natural := tableCells(cols, rows, l.elide, l.compact)
 
 	assigned := natural
-	if fitWidth > 0 {
-		assigned = shrinkWidths(natural, fitWidth, minWidth)
+	if l.fitWidth > 0 {
+		assigned = shrinkWidths(natural, l.fitWidth, l.minWidth)
 	}
-	header, wrapRows, widths := wrapTableCells(cols, strRows, assigned)
+	header, wrapRows, widths := wrapTableCells(cols, strRows, assigned, l.compact)
 
 	t := tableWriter{w: w, widths: widths}
 	if err := t.border(); err != nil {
@@ -766,8 +841,8 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 	}
 	for ri, wr := range wrapRows {
 		var rowStyles []CellStyle
-		if ri < len(styles) {
-			rowStyles = styles[ri]
+		if ri < len(l.styles) {
+			rowStyles = l.styles[ri]
 		}
 		if err := t.row(wr, rowStyles); err != nil {
 			return err

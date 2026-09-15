@@ -43,6 +43,7 @@ const (
 	flagWatchUntilChange = "watch-until-change"
 	flagWatchPlain       = "watch-plain"
 	flagWatchNoTitle     = "watch-no-title"
+	flagWatchCompact     = "watch-compact"
 )
 
 // ErrWatchStopped reports a refresh loop the operator stopped with Ctrl-C.
@@ -123,6 +124,7 @@ type watchFlags struct {
 	untilChange bool
 	plain       bool
 	noTitle     bool
+	compact     bool
 }
 
 func newWatchFlags() *watchFlags { return &watchFlags{} }
@@ -168,6 +170,8 @@ func (wf *watchFlags) register(cmd *cobra.Command) {
 		"append whole frames to the stream instead of repainting one in place, and emit no escape sequences")
 	fl.BoolVar(&wf.noTitle, flagWatchNoTitle, false,
 		"suppress the status line")
+	fl.BoolVar(&wf.compact, flagWatchCompact, false,
+		"render one line per row, cutting a cell short rather than wrapping it onto further lines")
 }
 
 // wrapRunE turns the command's own RunE into the loop's renderer. Nothing in
@@ -202,6 +206,7 @@ func (wf *watchFlags) wrapRunE(cmd *cobra.Command, a *auth.Options, o *output.Op
 			c.SetErr(errOut)
 			o.SetHighlighter(nil)
 			o.SetDisplayWidth(0)
+			o.SetCompactRows(false)
 		}()
 
 		render := func(ctx context.Context, frame, warn io.Writer) error {
@@ -209,6 +214,7 @@ func (wf *watchFlags) wrapRunE(cmd *cobra.Command, a *auth.Options, o *output.Op
 			// even where SIGWINCH does not exist.
 			width, _ := watch.Size(out)
 			o.SetDisplayWidth(width)
+			o.SetCompactRows(wo.Compact)
 			c.SetOut(frame)
 			c.SetErr(warn)
 			c.SetContext(ctx)
@@ -254,6 +260,7 @@ func (wf *watchFlags) resolve(cmd *cobra.Command, a *auth.Options, o *output.Opt
 		UntilChange:   wf.untilChange,
 		Plain:         plain,
 		NoTitle:       wf.noTitle,
+		Compact:       wf.compact,
 		Keys:          !plain && watch.StdinIsTerminal(),
 		Title:         watchTitle(cmd),
 		CSVHeaderOnce: o.Format == output.FormatCSV,
