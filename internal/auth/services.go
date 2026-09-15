@@ -9,14 +9,34 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack"
 )
 
-// authenticated is Authenticate, or the test hook when one is installed. It is
-// the single place both client factories below obtain a *Client, which is what
-// lets a test execute a command's RunE without a Keystone.
+// authenticated is Authenticate, or the test hook when one is installed, and
+// memoized: the first call authenticates, every later one returns that same
+// result. It is the single place both client factories below obtain a *Client,
+// which is what lets a test execute a command's RunE without a Keystone.
+//
+// Memoization matters twice. A command that touches two services (any
+// cross-service name→ID resolution — `server list --project foo`, `server
+// create --image`) used to mint a second Keystone token for the second client.
+// And --watch turns a read command into a refresh loop, where re-authenticating
+// per tick would have Keystone mint and persist a Fernet token every second per
+// watching terminal — the restart tax `watch -n1 koc …` pays today, which is
+// most of what --watch exists to remove. gophercloud re-authenticates on token
+// expiry by itself (provider.go sets ao.AllowReauth), so caching the *Client
+// does not cap how long a watch can run.
+//
+// The failure is cached too, deliberately: looping on a credential Keystone has
+// already rejected hammers it and can trip account lockout.
 func (o *Options) authenticated(ctx context.Context) (*Client, error) {
-	if o.authenticate != nil {
-		return o.authenticate(ctx)
+	if o.authDone {
+		return o.authClient, o.authErr
 	}
-	return o.Authenticate(ctx)
+	if o.authenticate != nil {
+		o.authClient, o.authErr = o.authenticate(ctx)
+	} else {
+		o.authClient, o.authErr = o.Authenticate(ctx)
+	}
+	o.authDone = true
+	return o.authClient, o.authErr
 }
 
 // NewServiceClient authenticates once (clouds.yaml / OS_* / --creds-from-*) and

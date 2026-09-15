@@ -169,6 +169,21 @@ type Options struct {
 	// export_test.go.
 	authenticate func(context.Context) (*Client, error)
 
+	// authDone/authClient/authErr memoize the one authentication an invocation
+	// performs. See services.go authenticated for why the result — failure
+	// included — is cached rather than recomputed per service client.
+	//
+	// Deliberately a plain flag rather than a sync.Once: a Once would make
+	// Options uncopyable for every holder of one, and nothing needs it.
+	// Authentication happens on the command's own goroutine, at the top of
+	// RunE, before any fan-out; the two commands that do fan out
+	// (`hypervisor list --placement`, `--check-actual`) hand their workers an
+	// already-built service client. -race in CI is the check on that staying
+	// true.
+	authDone   bool
+	authClient *Client
+	authErr    error
+
 	// passwordStdinSrc and promptPassword seam the two terminal password
 	// sources (see password.go). Nil in every non-test build, meaning the real
 	// os.Stdin and an unechoed read from it.

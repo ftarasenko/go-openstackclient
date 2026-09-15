@@ -105,6 +105,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	// Must run last, once the whole tree is assembled.
 	requireSubcommands(root)
+	enableWatch(root, authOpts, outOpts)
 
 	return root
 }

@@ -52,11 +52,9 @@ func main() {
 	case err == nil:
 		return
 	case errors.Is(err, context.Canceled):
-		// Ctrl-C during e.g. `node deploy --wait`: the operation itself keeps
-		// running server-side, unwatched, so silence here would be actively
-		// misleading. 130 is the conventional "killed by SIGINT" exit status
-		// (128 + SIGINT's signal number 2).
-		fmt.Fprintln(os.Stderr, "koc: interrupted (the server-side operation may still be running)")
+		// 130 is the conventional "killed by SIGINT" exit status (128 +
+		// SIGINT's signal number 2).
+		fmt.Fprintln(os.Stderr, interruptMessage(err))
 		os.Exit(130)
 	case isUsageError(cmd, err):
 		// cobra rejected the invocation itself — unknown flag, wrong argument
@@ -68,6 +66,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "koc: "+err.Error())
 		os.Exit(1)
 	}
+}
+
+// interruptMessage says what an interrupt left behind.
+//
+// Ctrl-C during e.g. `node deploy --wait` leaves the operation running
+// server-side, unwatched, so silence there would be actively misleading. Ctrl-C
+// during a --watch refresh loop leaves nothing at all — it is how a watch is
+// meant to end — so the caveat is dropped rather than printed on every exit
+// from a read-only loop.
+func interruptMessage(err error) string {
+	if errors.Is(err, cli.ErrWatchStopped) {
+		return "koc: interrupted"
+	}
+	return "koc: interrupted (the server-side operation may still be running)"
 }
 
 // isUsageError reports whether err comes from cobra rejecting the invocation

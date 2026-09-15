@@ -337,6 +337,14 @@ API. Numeric columns compare numerically (`--sort-column Size` puts 9 before
 10, not before 100), the sort is stable so repeated `--sort-column` flags break
 ties, and column names are matched case-insensitively.
 
+`server list`'s default table is upstream's — `ID`, `Name`, `Status`,
+`Networks`, `Flavor` — with one deviation: upstream's sixth column is the image
+*name*, resolved with a glance lookup `koc` does not make, so rather than
+printing a 36-character image UUID in its place `koc` leaves it out and offers
+it as the opt-in `Image ID`. Below nova 2.47 the flavor's name comes from a
+single flavor listing per invocation, and only when the column is actually
+being rendered — so `-c Name -c Status` does not pay for it.
+
 A few columns are **opt-in**: they are in neither the default nor the `--long`
 table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
 `server list` carries eleven — `Created At`, `Image ID`, `Flavor ID`,
@@ -348,9 +356,129 @@ table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
 koc server list --all-projects -c Name -c "Created At" --sort-column "Created At"
 ```
 
-without which reading creation time costs one `server show` per server. The
-default and `--long` tables are unchanged, so nothing that reads either
-positionally is affected. `server list --help` names the full set.
+without which reading creation time costs one `server show` per server. Naming
+one adds it for that invocation only — the default and `--long` tables are not
+otherwise widened, so nothing that reads either positionally is affected.
+`server list --help` names the full set.
+
+### Live refresh (`--watch`)
+
+Every read verb — all 219 `list` and `show` leaves — takes `--watch`, which
+refreshes it in place instead of exiting:
+
+```sh
+koc server list --all --host node-14 -c Name -c Status --watch=1s
+koc server list --watch                   # bare: every 2s, as watch(1) defaults
+koc baremetal node list --watch=5s --watch-count 12
+```
+
+This replaces `watch -n1 koc …`, which re-executes the binary every tick. For
+`koc` that is not a redraw but a full cold start, and the cost is almost all
+overhead: a TLS handshake to Keystone, a **new Fernet token minted and
+persisted**, the catalog parsed again, and every `--project`/`--user` name
+resolved again — before the one request you actually wanted. At `-n1` a single
+operator terminal is a sustained ~2 req/s write-ish load on the control plane.
+`--watch` authenticates once and keeps the connection, so an hour of watching
+costs one token instead of 3,600.
+
+It also fixes what `watch(1)` does to the display. Under `watch` the command's
+stdout is a pipe, so `koc` renders the table unbounded and `watch` hard-clips
+each line at the right edge, silently cutting columns (`--max-width $(tput
+cols)` is the usual workaround); colour is off for the same reason, so
+`hypervisor list --gauge` loses its thresholds. `--watch` measures the real
+terminal and fits the table to it, keeps colour, paints inside the **alternate
+screen buffer** so your scrollback survives and quitting leaves the terminal
+exactly as it was, and writes each frame in one call so there is no flicker.
+
+A status line reports what is happening:
+
+```
+koc server list --all --host node-14 · every 1s · 12:03:45 · 42 rows · 218ms · ok
+```
+
+Only the command's own filters appear there — the global flags are where the
+credentials live, and a status line is exactly the sort of thing that ends up in
+a screenshot.
+
+**Changes are highlighted** (on a terminal, unless `NO_COLOR` is set): a changed
+cell in reverse video, a new row in green, a row that has just left the result
+held dimmed for one more frame. Rows are matched by identity — the `ID` column,
+else `Name`, else position — not by character offset the way `watch -d` does, so
+a server being created or deleted does not light up every row below it. Watching
+`-c Name -c Status`, you see `BUILD → ACTIVE` land rather than having to spot it.
+
+**A failed refresh does not blank the screen.** The last good frame stays up and
+the status line says how stale it is and why (`stale 4s · 2 errors · last: 503
+Service Unavailable`), because a fleet-wide listing crossing every cell picks up
+a transient 5xx often enough that exiting on one would make the feature useless.
+Two failures are still fatal: a rejected credential, since retrying it every
+second hammers Keystone and can lock the account out, and a settled error before
+any frame has rendered (an unknown column, a bad filter) where there is nothing
+to hold and no reason to expect a different answer. If refreshes start taking
+more than half the interval, the loop widens it rather than saturating the
+control plane, and says so.
+
+On a terminal, single keys drive it: `q` quit, `space`/`r` refresh now, `p`
+pause/resume, `+`/`-` lengthen and shorten the interval, `d` toggle
+highlighting — and **`?` for the key map**, which is also where `--watch --help`
+points, so none of that has to be remembered. (`+` is *slower*: it adds to the
+interval.) Whether highlighting is on is reported on the status line as
+`diff on`/`diff off`, because a frame with it off looks exactly like a frame in
+which nothing changed.
+
+`q` and Ctrl-C **cut a refresh short** rather than waiting it out. The loop runs
+the refresh on its own goroutine and watches the keyboard meanwhile, so a
+fleet-wide query that takes seconds does not make the two keys you press when
+the screen looks stuck the slowest ones to answer — measured on a 4s refresh,
+that was 3.05s before and is now immediate. Keys that only change what is
+painted (`p`, `+`, `-`, `?`) are answered mid-refresh too; `d` and `r` wait for
+it, because they touch what the refresh is doing.
+
+The keys need only *stdin* to be a terminal, so `koc … --watch | tee` still
+works — it just has no keys, and the status line says so by leaving the hint
+off.
+
+**A list taller than the screen scrolls.** A 250-server `server list --all`
+measures 495 physical lines at 120 columns, so the frame is a window onto it
+rather than the first screenful of it: `↓`/`j` and `↑`/`k` a line, `PgDn`/`Ctrl-F`
+and `PgUp`/`Ctrl-B` a page, `End`/`G` and `Home`/`g` either end. The table's
+header stays pinned above the window while the body moves, the status line says
+where you are (`lines 35–52 of 251`), and the marker at the cut names the keys
+instead of only counting what it hid. The place you scrolled to survives each
+refresh, and is clamped if the next one returns a shorter list.
+
+`--watch-compact` puts each row on one physical line, cutting an over-long cell
+short with an ellipsis instead of wrapping it onto further lines. On that same
+fleet it takes 492 rendered lines to 251 — the `Networks` column is what wraps —
+and a row of constant height makes the change highlighting far easier to follow.
+It is opt-in: without it a watched command renders exactly as an unwatched one
+does.
+
+**Piped output stays composable.** With no terminal (or with `--watch-plain`)
+`koc` emits no escape sequences at all and appends one whole snapshot per tick,
+so `--watch -f json | jq .` is a clean stream and `-f csv` writes its header
+once:
+
+```sh
+koc server list --watch=5s -f json | jq -c '.[] | select(.Status != "ACTIVE")'
+```
+
+| Flag | Default | |
+| --- | --- | --- |
+| `-w`, `--watch[=DURATION]` | off / `2s` | the interval attaches with `=`; minimum `250ms` |
+| `--watch-diff` | on when a terminal | highlight what changed |
+| `--watch-count N` | `0` | stop after N refreshes (failures included) |
+| `--watch-errors tolerate\|exit` | `tolerate` | `exit` is `watch -e` |
+| `--watch-until-change` | off | exit 0 on the first refresh that differs — `watch -g` |
+| `--watch-plain` | off | append frames, no escape sequences, even on a terminal |
+| `--watch-no-title` | off | suppress the status line — `watch -t` |
+
+`--watch` is registered on the read verbs only, so `koc server delete --watch`
+is an unknown flag rather than a loop. Two `show` commands are deliberately
+excluded: `console url show` *creates* a console session on every call, and
+`server password show` reads a key passphrase from the terminal. `--debug` and
+`--timing` are refused alongside a repainting `--watch` (their per-request output
+would overwrite the frame) and allowed with `--watch-plain`.
 
 ### Flag abbreviation
 
