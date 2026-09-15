@@ -201,12 +201,15 @@ internal/s3/               minimal S3 REST client, no aws-sdk-go-v2 / minio-go: 
                            (header + presigned query), list/head/get/put, multipart upload,
                            server-side copy, batch delete, versioning, retry with backoff
 internal/output/           -f/--format {table,json,yaml,value,csv} and -c/--column layer
+internal/watch/            --watch: the in-process refresh loop (ticker, alternate-screen
+                           painter, status line, identity-based diff, raw-mode keys)
 internal/cli/keyvrm/       KeyVRM (in-house catalog service); typed request layer (types.go/requests.go) + cobra verbs
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt (package vaultcli); Vault creds only
 internal/cli/s3/           "koc s3" bucket/object lifecycle, du, download/upload (multipart, stdin,
                            recursive), server-side copy/move, presign, sync (package s3cli); S3 creds only
 internal/cli/quota/        "koc quota show|set" — the one cross-service noun (nova+cinder+neutron)
-internal/cli/              root.go wires every service's command group onto the root
+internal/cli/              root.go wires every service's command group onto the root;
+                           watch.go gives every read verb --watch in the same final pass
 internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
 ```
@@ -250,6 +253,15 @@ Every command file mirrors `internal/cli/baremetal/node.go`:
    then `Extract*`. `--limit` is a hard result cap where the API treats it only
    as a page size (truncate after Extract).
 5. **Update `docs/coverage.md` in the same commit** — see "Coverage tracking".
+
+A new `list` or `show` leaf gets `--watch` for free: `internal/cli/watch.go`
+wraps every read verb in the final tree pass, so the command is re-run into a
+frame buffer on a ticker with nothing in its own file to say so. Two things
+follow. A read verb has to be genuinely read-only and non-interactive — a `show`
+that POSTs (nova's remote-consoles API) or that prompts belongs in that file's
+`watchDenied`, with the reason. And it has to stay safe to call repeatedly:
+`RunE` may not consume stdin, write a file, or depend on state a previous call
+left behind.
 
 Client helpers (`client.go`) authenticate once via `a.Authenticate(ctx)` then
 call the right `auth.Client` factory. When a command needs a **second** service

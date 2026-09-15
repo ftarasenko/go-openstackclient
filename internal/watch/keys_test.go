@@ -1,0 +1,268 @@
+package watch
+
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+	"time"
+)
+
+// newTestRunner builds a runner for the key handlers that do not need the whole
+// loop: the seams are filled in as Run would, and frames go nowhere.
+func newTestRunner(o Options) *runner {
+	o.Plain = true
+	o.applyDefaults()
+	return &runner{
+		o:        o,
+		out:      io.Discard,
+		errOut:   io.Discard,
+		differ:   NewDiffer(false),
+		screen:   newScreen(io.Discard, o),
+		interval: o.Interval,
+	}
+}
+
+// The key tests block the clock, so the refresh deadline never comes due and
+// nothing but a keypress can move the loop. Without that, a ready timer and a
+// ready key channel would both be selectable and Go would pick between them at
+// random.
+
+func (h *harness) keyed(t *testing.T, o Options, keys ...byte) error {
+	t.Helper()
+	h.clock.blocked = true
+	for _, k := range keys {
+		h.keys <- k
+	}
+	o.Keys = true
+	return h.run(context.Background(), o)
+}
+
+func TestKeyQuitStopsCleanly(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+
+	if err := h.keyed(t, Options{Interval: time.Second}, keyQuit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if h.frames != 1 {
+		t.Errorf("rendered %d frames, want 1 (the first, then quit)", h.frames)
+	}
+	if h.restores != 1 {
+		t.Errorf("the terminal mode was restored %d times, want exactly 1", h.restores)
+	}
+}
+
+func TestKeyRefreshRendersExactlyOneExtraFrame(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+
+	if err := h.keyed(t, Options{Interval: time.Second}, keySpace, keyRefresh, keyQuit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The first frame, then one per refresh key.
+	if h.frames != 3 {
+		t.Errorf("rendered %d frames, want 3", h.frames)
+	}
+}
+
+func TestKeyPauseStopsRefreshing(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+
+	// Pause, then a key that is not bound to anything, then quit. Nothing
+	// between the pause and the quit may refresh.
+	if err := h.keyed(t, Options{Interval: time.Second}, keyPause, 'z', keyQuit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if h.frames != 1 {
+		t.Errorf("rendered %d frames while paused, want 1 (the frame before the pause)", h.frames)
+	}
+}
+
+func TestKeyPauseResumeRefreshesAtOnce(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+
+	if err := h.keyed(t, Options{Interval: time.Second}, keyPause, keyPause, keyQuit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Resuming refreshes immediately rather than waiting out the interval,
+	// which is what the operator who just pressed the key is asking for.
+	if h.frames != 2 {
+		t.Errorf("rendered %d frames, want 2", h.frames)
+	}
+}
+
+func TestKeyIntervalAdjustment(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start time.Duration
+		key   byte
+		want  time.Duration
+	}{
+		{"slower by a second", 2 * time.Second, keySlower, 3 * time.Second},
+		{"slower on the unshifted key", 2 * time.Second, keySlowerAlt, 3 * time.Second},
+		{"faster by a second", 3 * time.Second, keyFaster, 2 * time.Second},
+		{"sub-second steps", 500 * time.Millisecond, keySlower, 750 * time.Millisecond},
+		{"one second steps down to 750ms", time.Second, keyFaster, 750 * time.Millisecond},
+		{"floored at the minimum", MinInterval, keyFaster, MinInterval},
+		{"capped at the maximum", MaxInterval, keySlower, MaxInterval},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTestRunner(Options{Interval: tc.start})
+			r.key(tc.key, func() {})
+			if r.interval != tc.want {
+				t.Errorf("interval %s, want %s", r.interval, tc.want)
+			}
+			if r.o.Interval != tc.want {
+				t.Errorf("an explicit change must also reset the backoff baseline: %s", r.o.Interval)
+			}
+		})
+	}
+}
+
+func TestKeyDiffToggle(t *testing.T) {
+	r := newTestRunner(Options{Interval: time.Second})
+	r.differ = NewDiffer(true)
+
+	if ev := r.key(keyDiff, func() {}); ev != evTick {
+		t.Errorf("the diff key returned %v, want an immediate refresh so the change is visible", ev)
+	}
+	if r.differ.Enabled() {
+		t.Error("the diff key did not turn highlighting off")
+	}
+	r.key(keyDiff, func() {})
+	if !r.differ.Enabled() {
+		t.Error("the diff key did not turn highlighting back on")
+	}
+}
+
+func TestKeyCtrlCCancelsTheContext(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+
+	// In raw mode the tty no longer turns Ctrl-C into SIGINT, so the loop has to
+	// re-create the interrupt itself. The error has to come back as
+	// context.Canceled, because cmd/koc's exit-130 path is the single place an
+	// interrupt is reported.
+	err := h.keyed(t, Options{Interval: time.Second}, keyETX)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned %v, want context.Canceled", err)
+	}
+	if h.restores != 1 {
+		t.Errorf("the terminal mode was restored %d times, want exactly 1", h.restores)
+	}
+	painted := h.out.String()
+	if n := strings.Count(painted, altScreenOff); n != 1 {
+		t.Errorf("left the alternate screen %d times, want exactly 1", n)
+	}
+}
+
+func TestTerminalRestoredOnEveryExitPath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    Options
+		keys []byte
+		run  func(*harness)
+	}{
+		{name: "count reached", o: Options{Interval: time.Second, Count: 1}},
+		{name: "quit key", o: Options{Interval: time.Second}, keys: []byte{keyQuit}},
+		{name: "interrupt", o: Options{Interval: time.Second}, keys: []byte{keyETX}},
+		{name: "fatal error", o: Options{Interval: time.Second}, run: func(h *harness) {
+			h.render = func(int, io.Writer, io.Writer) error { return errors.New("settled") }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness()
+			h.render = staticFrames("row\n")
+			if tc.run != nil {
+				tc.run(h)
+			}
+			if len(tc.keys) > 0 {
+				_ = h.keyed(t, tc.o, tc.keys...)
+			} else {
+				o := tc.o
+				o.Keys = true
+				_ = h.run(context.Background(), o)
+			}
+			if h.restores != 1 {
+				t.Errorf("the terminal mode was restored %d times, want exactly 1", h.restores)
+			}
+			painted := h.out.String()
+			if n := strings.Count(painted, cursorShow); n != 1 {
+				t.Errorf("the cursor was restored %d times, want exactly 1", n)
+			}
+			if n := strings.Count(painted, altScreenOff); n != 1 {
+				t.Errorf("left the alternate screen %d times, want exactly 1", n)
+			}
+		})
+	}
+}
+
+func TestRawModeFailureStillWatches(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+	o := h.options(Options{Interval: time.Second, Count: 2, Keys: true})
+	o.rawMode = func() (func(), error) { return nil, errors.New("not a terminal") }
+
+	// Keys are a convenience. A terminal that refuses raw mode loses them and
+	// keeps the watch, rather than the other way round.
+	err := Run(context.Background(), o, &h.out, &h.errOut, func(_ context.Context, out, warn io.Writer) error {
+		h.frames++
+		return h.render(h.frames, out, warn)
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if h.frames != 2 {
+		t.Errorf("rendered %d frames, want 2", h.frames)
+	}
+}
+
+func TestPlainModeHasNoKeys(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+	o := h.options(Options{Interval: time.Second, Count: 1, Keys: true, Plain: true})
+
+	err := Run(context.Background(), o, &h.out, &h.errOut, func(_ context.Context, out, warn io.Writer) error {
+		h.frames++
+		return h.render(h.frames, out, warn)
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if h.restores != 0 {
+		t.Error("appending frames to a stream must not put the terminal into raw mode")
+	}
+}
+
+func TestWindowResizeRepaints(t *testing.T) {
+	h := newHarness()
+	h.render = staticFrames("row\n")
+	h.clock.blocked = true
+	winch := make(chan struct{}, 1)
+	winch <- struct{}{}
+
+	o := h.options(Options{Interval: time.Second, Keys: true})
+	o.winch = winch
+	go func() {
+		// The resize repaints without refreshing; the quit key then ends the run.
+		time.Sleep(10 * time.Millisecond)
+		h.keys <- keyQuit
+	}()
+	if err := Run(context.Background(), o, &h.out, &h.errOut, func(_ context.Context, out, warn io.Writer) error {
+		h.frames++
+		return h.render(h.frames, out, warn)
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if h.frames != 1 {
+		t.Errorf("rendered %d frames, want 1 — a resize repaints, it does not refresh", h.frames)
+	}
+	// The first frame's paint plus the resize repaint.
+	if n := strings.Count(h.out.String(), homeErase); n < 2 {
+		t.Errorf("painted %d times, want at least 2 (the frame and the resize)", n)
+	}
+}

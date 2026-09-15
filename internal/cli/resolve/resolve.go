@@ -45,7 +45,7 @@ func IsUUID(ref string) bool { return uuidRe.MatchString(ref) }
 // ImageID resolves a glance image name (or ID) to an image ID using the given
 // image service client.
 func ImageID(ctx context.Context, imageClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "image", ref, func(ctx context.Context) ([]images.Image, error) {
+	return byName(ctx, "image", "", ref, func(ctx context.Context) ([]images.Image, error) {
 		pages, err := images.List(imageClient, images.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -57,7 +57,7 @@ func ImageID(ctx context.Context, imageClient *gophercloud.ServiceClient, ref st
 // NetworkID resolves a neutron network name (or ID) to a network ID using the
 // given network service client.
 func NetworkID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "network", ref, func(ctx context.Context) ([]networks.Network, error) {
+	return byName(ctx, "network", "", ref, func(ctx context.Context) ([]networks.Network, error) {
 		pages, err := networks.List(networkClient, networks.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -69,7 +69,7 @@ func NetworkID(ctx context.Context, networkClient *gophercloud.ServiceClient, re
 // ProjectID resolves a keystone project name (or ID) to a project ID using the
 // given identity service client.
 func ProjectID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "project", ref, func(ctx context.Context) ([]projects.Project, error) {
+	return byName(ctx, "project", "", ref, func(ctx context.Context) ([]projects.Project, error) {
 		pages, err := projects.List(identityClient, projects.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -90,6 +90,10 @@ func ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref
 	if ref == "" || IsUUID(ref) {
 		return ref, nil
 	}
+	key := cacheKey{kind: "server", ref: ref}
+	if id, ok := cacheGet(key); ok {
+		return id, nil
+	}
 	// ListSimple: nova's non-detail listing returns the ID and name this lookup
 	// needs, where the detail view would ship every attribute of every regex
 	// match (user_data included) to pick one UUID out of it.
@@ -107,13 +111,20 @@ func ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref
 			matches = append(matches, s)
 		}
 	}
-	return pick("server", ref, len(matches), func(i int) string { return matches[i].ID })
+	id, err := pick("server", ref, len(matches), func(i int) string { return matches[i].ID })
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 1 {
+		cachePut(key, id)
+	}
+	return id, nil
 }
 
 // DomainID resolves a keystone domain name (or ID) to a domain ID using the
 // given identity service client.
 func DomainID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "domain", ref, func(ctx context.Context) ([]domains.Domain, error) {
+	return byName(ctx, "domain", "", ref, func(ctx context.Context) ([]domains.Domain, error) {
 		pages, err := domains.List(identityClient, domains.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -136,7 +147,7 @@ func ProjectIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceC
 	if err != nil {
 		return "", err
 	}
-	return byName(ctx, "project", ref, func(ctx context.Context) ([]projects.Project, error) {
+	return byName(ctx, "project", domainID, ref, func(ctx context.Context) ([]projects.Project, error) {
 		pages, err := projects.List(identityClient, projects.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -148,7 +159,7 @@ func ProjectIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceC
 // SubnetID resolves a neutron subnet name (or ID) to a subnet ID using the given
 // network service client.
 func SubnetID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "subnet", ref, func(ctx context.Context) ([]subnets.Subnet, error) {
+	return byName(ctx, "subnet", "", ref, func(ctx context.Context) ([]subnets.Subnet, error) {
 		pages, err := subnets.List(networkClient, subnets.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -160,7 +171,7 @@ func SubnetID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref
 // PortID resolves a neutron port name (or ID) to a port ID using the given
 // network service client.
 func PortID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "port", ref, func(ctx context.Context) ([]ports.Port, error) {
+	return byName(ctx, "port", "", ref, func(ctx context.Context) ([]ports.Port, error) {
 		pages, err := ports.List(networkClient, ports.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -172,7 +183,7 @@ func PortID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref s
 // UserID resolves a keystone user name (or ID) to a user ID using the given
 // identity service client.
 func UserID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, "user", ref, func(ctx context.Context) ([]users.User, error) {
+	return byName(ctx, "user", "", ref, func(ctx context.Context) ([]users.User, error) {
 		pages, err := users.List(identityClient, users.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -195,7 +206,7 @@ func UserIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceClie
 	if err != nil {
 		return "", err
 	}
-	return byName(ctx, "user", ref, func(ctx context.Context) ([]users.User, error) {
+	return byName(ctx, "user", domainID, ref, func(ctx context.Context) ([]users.User, error) {
 		pages, err := users.List(identityClient, users.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -207,17 +218,33 @@ func UserIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceClie
 // byName is the shared engine for the cross-service resolvers: an empty ref or a
 // UUID short-circuits without an API call; otherwise fetch runs a name-filtered
 // list and pick applies the match policy.
-func byName[T any](ctx context.Context, kind, ref string,
+//
+// scope distinguishes two lookups of the same kind and name that need not have
+// the same answer — today only the domain the in-domain resolvers narrow to —
+// and is otherwise empty. It exists for the memo (see cache.go); the lookup
+// itself is already narrowed by whatever fetch sends.
+func byName[T any](ctx context.Context, kind, scope, ref string,
 	fetch func(context.Context) ([]T, error), idOf func(T) string,
 ) (string, error) {
 	if ref == "" || IsUUID(ref) {
 		return ref, nil
 	}
+	key := cacheKey{kind: kind, scope: scope, ref: ref}
+	if id, ok := cacheGet(key); ok {
+		return id, nil
+	}
 	all, err := fetch(ctx)
 	if err != nil {
 		return "", fmt.Errorf("looking up %s %q: %w", kind, ref, err)
 	}
-	return pick(kind, ref, len(all), func(i int) string { return idOf(all[i]) })
+	id, err := pick(kind, ref, len(all), func(i int) string { return idOf(all[i]) })
+	if err != nil {
+		return "", err
+	}
+	if len(all) == 1 {
+		cachePut(key, id)
+	}
+	return id, nil
 }
 
 // pick applies the shared match policy: one → its ID, zero → ref passthrough,

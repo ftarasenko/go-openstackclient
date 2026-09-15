@@ -63,7 +63,35 @@ type Options struct {
 	// list in every format, and so it needs no API support: the rows are already
 	// in memory by the time they reach this layer.
 	SortColumns []string
+
+	// displayWidth is an explicit render width, set by a caller that knows the
+	// display size even though the writer it hands in is not the terminal —
+	// today only internal/watch, which renders each frame into a buffer. See
+	// SetDisplayWidth.
+	displayWidth int
+
+	// highlighter, when set, decorates table output. See SetHighlighter.
+	highlighter Highlighter
 }
+
+// SetDisplayWidth records the width tables should be fitted to when the writer
+// they are rendered into is not itself the terminal.
+//
+// Width is normally derived from the writer (see terminalSize), which is right
+// for a command writing straight to stdout but wrong for one rendering into a
+// buffer: the buffer is not an *os.File, so the table would come out unbounded
+// and whatever paints the buffer would clip it — exactly the defect
+// `watch -n1 koc …` has today, where the pipe makes koc render unbounded and
+// watch(1) then cuts each line at the right edge.
+//
+// An explicit --max-width still wins; a width of 0 restores the derive-from-
+// writer default.
+func (o *Options) SetDisplayWidth(width int) { o.displayWidth = width }
+
+// SetHighlighter installs h as the decorator for table output, or clears it
+// when h is nil. Only the table format is decorated: the machine-readable
+// formats must stay byte-exact for the tools consuming them.
+func (o *Options) SetHighlighter(h Highlighter) { o.highlighter = h }
 
 // AddFlags registers -f/--format and -c/--column on the given flag set.
 func (o *Options) AddFlags(fs *pflag.FlagSet) {
@@ -93,6 +121,72 @@ func (o *Options) Validate() error {
 type Table struct {
 	Columns []string
 	Rows    [][]any
+}
+
+// CellStyle names how one rendered table cell is emphasised. It is deliberately
+// an enum rather than an escape sequence: cell values are run through
+// stripControl precisely so a server-supplied resource name can never carry
+// ANSI into the operator's terminal, and a decorator handing in raw escapes
+// would reopen that hole. The mapping to SGR lives in styleSeq, below, so every
+// escape koc prints still originates in koc.
+type CellStyle uint8
+
+// The styles a decorator can ask for. CellPlain is the zero value, so an
+// under-length style row leaves the remaining cells undecorated.
+const (
+	CellPlain CellStyle = iota
+	// CellChanged marks a value that differs from the previous frame.
+	CellChanged
+	// CellAdded marks a row that was not in the previous frame.
+	CellAdded
+	// CellRemoved marks a row that has just left the result and is being held
+	// on screen for one more frame.
+	CellRemoved
+)
+
+// Highlighter decorates table output. It is handed the effective columns and
+// rows — after --sort-column ordering and -c/--column selection, before
+// rendering — and returns the rows to render (it may add rows, e.g. to hold a
+// departed row on screen for one frame) together with a parallel matrix of
+// per-cell styles.
+//
+// Returning a nil style matrix, or a short one, is fine: missing entries are
+// CellPlain. Returning nil rows leaves the input rows unchanged.
+type Highlighter interface {
+	Highlight(cols []string, rows [][]any) (frame [][]any, styles [][]CellStyle)
+}
+
+// styleSeq maps a CellStyle to the SGR parameters that render it. Reverse video
+// for a changed value reads on any palette (including a light terminal) and
+// needs no color; green and faint follow the same convention the hypervisor
+// gauges already use.
+func styleSeq(s CellStyle) string {
+	switch s {
+	case CellChanged:
+		return "7"
+	case CellAdded:
+		return "32"
+	case CellRemoved:
+		return "2"
+	case CellPlain:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// highlight runs the installed decorator, if any. It is a no-op — and in
+// particular allocates nothing — when no decorator is installed, which is every
+// invocation that is not a --watch refresh.
+func (o *Options) highlight(cols []string, rows [][]any) ([][]any, [][]CellStyle) {
+	if o.highlighter == nil {
+		return rows, nil
+	}
+	frame, styles := o.highlighter.Highlight(cols, rows)
+	if frame == nil {
+		frame = rows
+	}
+	return frame, styles
 }
 
 // WriteList renders a multi-row result (e.g. "node list") in the selected format.
@@ -128,7 +222,8 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 	case FormatValue:
 		return writeValue(w, rows)
 	default:
-		return writeTable(w, cols, rows, o.fitWidth(w), 8, len(o.Columns) == 0)
+		frame, styles := o.highlight(cols, rows)
+		return writeTable(w, cols, frame, o.fitWidth(w), 8, len(o.Columns) == 0, styles)
 	}
 }
 
@@ -310,8 +405,9 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 		}
 		return writeValue(w, rows)
 	default:
-		return writeTable(w, []string{"Field", "Value"}, fieldRows(fields, values),
-			o.fitWidth(w), 16, len(o.Columns) == 0)
+		cols := []string{"Field", "Value"}
+		frame, styles := o.highlight(cols, fieldRows(fields, values))
+		return writeTable(w, cols, frame, o.fitWidth(w), 16, len(o.Columns) == 0, styles)
 	}
 }
 
@@ -577,6 +673,25 @@ type tableWriter struct {
 	widths []int
 }
 
+// styledCell pads s to width and wraps the result in the SGR sequence for
+// style. Padding happens first and decoration second, on purpose twice over:
+// the %-*s padding counts runes, so escapes inside the value would be counted
+// as content and knock the column out of alignment; and decorating after
+// measurement keeps the highlight over the cell's whole box rather than just
+// its text.
+func styledCell(s string, width int, style CellStyle) string {
+	padded := fmt.Sprintf("%-*s", width, s)
+	seq := styleSeq(style)
+	if seq == "" {
+		return padded
+	}
+	return csiPrefix + seq + "m" + padded + csiPrefix + "0m"
+}
+
+// csiPrefix introduces an SGR sequence. Spelled out here rather than shared with
+// internal/cli/server's gauge code so the output layer stays dependency-free.
+const csiPrefix = "\x1b["
+
 func (t tableWriter) border() error {
 	var b strings.Builder
 	b.WriteByte('+')
@@ -589,8 +704,9 @@ func (t tableWriter) border() error {
 }
 
 // row prints a logical row whose cells may each span several physical lines,
-// padding shorter cells with blanks so every column stays aligned.
-func (t tableWriter) row(cells [][]string) error {
+// padding shorter cells with blanks so every column stays aligned. styles, when
+// non-nil, carries one CellStyle per column for this row.
+func (t tableWriter) row(cells [][]string, styles []CellStyle) error {
 	h := 1
 	for _, c := range cells {
 		if len(c) > h {
@@ -605,7 +721,13 @@ func (t tableWriter) row(cells [][]string) error {
 			if li < len(cells[ci]) {
 				s = cells[ci][li]
 			}
-			fmt.Fprintf(&b, " %-*s |", t.widths[ci], s)
+			style := CellPlain
+			if ci < len(styles) {
+				style = styles[ci]
+			}
+			b.WriteByte(' ')
+			b.WriteString(styledCell(s, t.widths[ci], style))
+			b.WriteString(" |")
 		}
 		if _, err := fmt.Fprintln(t.w, b.String()); err != nil {
 			return err
@@ -621,7 +743,9 @@ func (t tableWriter) row(cells [][]string) error {
 // output). When elide is true, cells longer than maxTableCell are replaced by a
 // placeholder so a single opaque blob cannot dominate the table. minWidth is the
 // floor a wrapped column is shrunk to.
-func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int, elide bool) error {
+func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int, elide bool,
+	styles [][]CellStyle,
+) error {
 	strRows, natural := tableCells(cols, rows, elide)
 
 	assigned := natural
@@ -634,14 +758,18 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 	if err := t.border(); err != nil {
 		return err
 	}
-	if err := t.row(header); err != nil {
+	if err := t.row(header, nil); err != nil {
 		return err
 	}
 	if err := t.border(); err != nil {
 		return err
 	}
-	for _, wr := range wrapRows {
-		if err := t.row(wr); err != nil {
+	for ri, wr := range wrapRows {
+		var rowStyles []CellStyle
+		if ri < len(styles) {
+			rowStyles = styles[ri]
+		}
+		if err := t.row(wr, rowStyles); err != nil {
 			return err
 		}
 	}
@@ -649,12 +777,16 @@ func writeTable(w io.Writer, cols []string, rows [][]any, fitWidth, minWidth int
 }
 
 // fitWidth resolves the width the table should be fitted to: an explicit
-// --max-width wins; otherwise a TTY is fitted to its size (or --fit-width forces
-// fitting when piped), falling back to $COLUMNS then 80. Piped output with no
-// explicit request returns 0 (unbounded), matching OSC.
+// --max-width wins, then a width the caller measured itself (SetDisplayWidth);
+// otherwise a TTY is fitted to its size (or --fit-width forces fitting when
+// piped), falling back to $COLUMNS then 80. Piped output with no explicit
+// request returns 0 (unbounded), matching OSC.
 func (o *Options) fitWidth(w io.Writer) int {
 	if o.MaxWidth > 0 {
 		return o.MaxWidth
+	}
+	if o.displayWidth > 0 {
+		return o.displayWidth
 	}
 	isTTY, width := terminalSize(w)
 	if !o.FitWidth && !isTTY {
