@@ -46,10 +46,12 @@ func (r *runner) status() string {
 	if r.skipped > 0 {
 		segs = append(segs, plural(r.skipped, "skipped refresh"))
 	}
-	// The keys hint is the first thing to go: it is the same every frame, and
-	// the line is truncated to the display.
+	// A pointer at the key map, not a list of the letters: `keys: q p r + - d`
+	// said six keys existed and nothing about what they did, and `+` reads
+	// backwards (it lengthens the interval). It is still the first thing to go
+	// when a refresh fails — the error needs the width more.
 	if r.o.Keys && r.lastErr == nil {
-		segs = append(segs, "keys: q p r + - d")
+		segs = append(segs, r.helpHint())
 	}
 	return strings.Join(segs, statusSep)
 }

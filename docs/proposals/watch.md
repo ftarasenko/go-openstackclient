@@ -46,6 +46,12 @@ message). Tests: `internal/watch/*_test.go`, `internal/cli/watch_test.go`,
 - **Two `show` verbs are denied**, which §3 anticipated without naming:
   `console url show` POSTs to nova's remote-consoles API and mints a session per
   call, and `server password show` reads a key passphrase from the terminal.
+- **`?` opens a key map**, which §6 phase 3 did not call for. The status line
+  originally listed the letters (`keys: q p r + - d`), which says that six keys
+  exist and nothing about what they do — and `+` reads backwards, since it
+  lengthens the interval. The hint now points at the panel, and the `--watch`
+  flag's own usage string names the key, so `koc <noun> list --help` answers it
+  too.
 - **A departed row is held at the bottom of the table**, not in its old
   position: the rows above it have already been reconciled by identity, so
   re-inserting it would imply an ordering the API did not send.

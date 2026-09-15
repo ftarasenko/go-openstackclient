@@ -125,13 +125,15 @@ func (s *screen) accept(body, warn []byte, latency time.Duration, rows int) {
 // left alone: a transient 503 should not blank an operator's view of a fleet.
 func (s *screen) reject(err error) { s.stale = err }
 
-// paint puts the current state on the display.
-func (s *screen) paint(status string) {
+// paint puts the current state on the display. overlay, when non-nil, is shown
+// in place of the frame — today only the '?' key map, which appending frames
+// has no use for, so it is ignored in plain mode.
+func (s *screen) paint(status string, overlay []string) {
 	if s.plain {
 		s.appendFrame()
 		return
 	}
-	s.repaint(status)
+	s.repaint(status, overlay)
 }
 
 // appendFrame writes one whole frame to the stream, with no escape sequences at
@@ -173,12 +175,15 @@ func (s *screen) stripRepeatHeader(body []byte) []byte {
 // repaint draws one full frame in a single write: cursor home, erase to the end
 // of the screen, then the frame and the status line. One write means the
 // terminal never shows a half-drawn table.
-func (s *screen) repaint(status string) {
+func (s *screen) repaint(status string, overlay []string) {
 	cols, rows := s.size()
 	var b strings.Builder
 	b.WriteString(homeErase)
 
-	lines := frameLines(s.body, s.warn)
+	lines := overlay
+	if lines == nil {
+		lines = frameLines(s.body, s.warn)
+	}
 	reserve := 0
 	if status != "" {
 		reserve = 2
@@ -195,7 +200,9 @@ func (s *screen) repaint(status string) {
 		b.WriteString(resetStyle)
 	}
 	io.WriteString(s.out, b.String()) //nolint:errcheck,gosec // a failed paint resurfaces on the next one; blanking the screen to report it would be worse
-	s.pending = false
+	// The frame is only consumed when it was the frame that was drawn: with the
+	// key map up, the refresh underneath has still not been seen.
+	s.pending = overlay != nil && s.pending
 }
 
 // frameLines splits the rendered body and any captured warnings into physical

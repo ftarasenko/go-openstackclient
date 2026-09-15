@@ -32,6 +32,7 @@ const (
 	keySlower    = '+'
 	keySlowerAlt = '=' // the unshifted '+' on most layouts
 	keyDiff      = 'd'
+	keyHelp      = '?'
 )
 
 // intervalStep is how far '+' moves the interval. Below a second the step is a
@@ -80,6 +81,9 @@ func (r *runner) key(b byte, cancel context.CancelFunc) event {
 		r.differ.SetEnabled(!r.differ.Enabled())
 		r.force = true
 		return evTick
+	case keyHelp:
+		r.showHelp = !r.showHelp
+		r.paint()
 	}
 	return evNone
 }

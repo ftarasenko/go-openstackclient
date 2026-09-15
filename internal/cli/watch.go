@@ -149,7 +149,7 @@ func (wf *watchFlags) register(cmd *cobra.Command) {
 	// the tree.
 	fl.StringVarP(&wf.interval, flagWatch, "w", "",
 		"refresh this command in place every DURATION (default "+watch.DefaultInterval.String()+
-			"); the interval must be attached with '=', as --watch=1s")
+			"); the interval attaches with '=', as --watch=1s; "+watch.HelpFlagNote)
 	fl.Lookup(flagWatch).NoOptDefVal = watch.DefaultInterval.String()
 
 	// Registered false so cobra does not advertise "(default true)": the real

@@ -410,9 +410,12 @@ more than half the interval, the loop widens it rather than saturating the
 control plane, and says so.
 
 On a terminal, single keys drive it: `q` quit, `space`/`r` refresh now, `p`
-pause/resume, `+`/`-` adjust the interval, `d` toggle highlighting. They need
-only *stdin* to be a terminal, so `koc … --watch | tee` still works — it just has
-no keys.
+pause/resume, `+`/`-` lengthen and shorten the interval, `d` toggle
+highlighting — and **`?` for the key map**, which is also where `--watch --help`
+points, so none of that has to be remembered. (`+` is *slower*: it adds to the
+interval.) The keys need only *stdin* to be a terminal, so
+`koc … --watch | tee` still works — it just has no keys, and the status line
+says so by leaving the hint off.
 
 **Piped output stays composable.** With no terminal (or with `--watch-plain`)
 `koc` emits no escape sequences at all and appends one whole snapshot per tick,

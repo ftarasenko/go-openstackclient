@@ -148,6 +148,7 @@ type runner struct {
 	tickAt   time.Time // when the most recent refresh started
 	lastOK   time.Time // when the frame currently on screen was rendered
 	paused   bool
+	showHelp bool // the '?' key map is open, in place of the frame
 	force    bool // refresh on the next pass even if paused
 	skipped  int  // refreshes dropped because the previous one overran
 
@@ -372,8 +373,18 @@ func (r *runner) backoff(latency time.Duration) {
 	r.interval = want
 }
 
-// paint renders the current state onto the display.
-func (r *runner) paint() { r.screen.paint(r.status()) }
+// paint renders the current state onto the display: the frame, or the key map
+// when '?' is open.
+func (r *runner) paint() { r.screen.paint(r.status(), r.overlay()) }
+
+// overlay is what the painter should show in place of the frame, or nil for the
+// frame itself.
+func (r *runner) overlay() []string {
+	if !r.showHelp {
+		return nil
+	}
+	return helpLines()
+}
 
 // wait blocks until the next refresh is due, returning early for a keypress
 // that asks for one. Because the refresh itself runs on this goroutine, ticks
