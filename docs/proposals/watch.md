@@ -63,6 +63,16 @@ message). Tests: `internal/watch/*_test.go`, `internal/cli/watch_test.go`,
 - **`--watch-compact`** renders one line per row, which halves that 250-server
   frame (492 → 251 lines). Opt-in by decision: without it a watched command
   renders byte-for-byte as an unwatched one does.
+- **Token expiry is handled, and a refused re-authentication is fatal.** §5.1
+  said gophercloud's AllowReauth means "a multi-hour watch keeps working", which
+  is true for the expiry itself. What it missed is the other half: when Keystone
+  *refuses* the new token, gophercloud returns ErrUnableToReauthenticate, which
+  deliberately does not Unwrap — so the status-code rules in §4 never saw the
+  401 and the loop tolerated it. Measured before the fix: a watch with a refused
+  credential ran all twenty of its refreshes, each a fresh rejected login, which
+  is precisely the lockout §4 set out to prevent. The classifier now reaches
+  into that error, and distinguishes a refused credential (fatal) from a
+  Keystone that was briefly unavailable (ridden out).
 - **A refresh is interruptible.** §6 phase 3 said "never block a refresh on a
   key read", and the loop did not — but it blocked the *key read* on the
   refresh, which is the same hole seen from the other side. With a 4s round

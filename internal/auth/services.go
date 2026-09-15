@@ -21,8 +21,10 @@ import (
 // per tick would have Keystone mint and persist a Fernet token every second per
 // watching terminal — the restart tax `watch -n1 koc …` pays today, which is
 // most of what --watch exists to remove. gophercloud re-authenticates on token
-// expiry by itself (provider.go sets ao.AllowReauth), so caching the *Client
-// does not cap how long a watch can run.
+// expiry by itself (provider.go sets ao.AllowReauth, and openstack/client.go
+// installs the ReauthFunc that a 401 then drives), so caching the *Client does
+// not cap how long a watch can run — internal/cli's TestWatchSurvivesTokenExpiry
+// holds that to a fake Keystone that expires its token mid-watch.
 //
 // The failure is cached too, deliberately: looping on a credential Keystone has
 // already rejected hammers it and can trip account lockout.

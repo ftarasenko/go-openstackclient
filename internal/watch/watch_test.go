@@ -493,3 +493,71 @@ func TestRenderRunsOnOneGoroutine(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 }
+
+// reauthErr is what gophercloud returns when a token expired, it asked Keystone
+// for a new one, and that request failed. It deliberately does not Unwrap, so
+// every rule that keys on a status code has to reach into it explicitly.
+func reauthErr(reauth error) error {
+	e := &gophercloud.ErrUnableToReauthenticate{}
+	e.ErrOriginal = httpErr(http.StatusUnauthorized)
+	e.ErrReauth = reauth
+	return e
+}
+
+func TestRefusedReauthenticationIsFatal(t *testing.T) {
+	h := newHarness()
+	h.render = func(n int, out, _ io.Writer) error {
+		if n >= 2 {
+			// The credential is no longer accepted: password changed, account
+			// disabled, application credential revoked.
+			return reauthErr(httpErr(http.StatusUnauthorized))
+		}
+		_, err := io.WriteString(out, "row\n")
+		return err
+	}
+
+	err := h.run(context.Background(), Options{Interval: time.Second, ErrorMode: ErrorsTolerate, Count: 20})
+	if err == nil {
+		t.Fatal("Run returned nil; retrying a refused credential once a second is how an account gets locked out")
+	}
+	if h.frames != 2 {
+		t.Errorf("rendered %d frames, want 2 — it must stop at the refusal", h.frames)
+	}
+}
+
+func TestReauthenticationThroughATransientKeystoneIsTolerated(t *testing.T) {
+	h := newHarness()
+	h.render = func(n int, out, _ io.Writer) error {
+		if n == 2 {
+			// Keystone itself was briefly unavailable. The credential may well
+			// still be good, so this is the case to ride out rather than exit
+			// on.
+			return reauthErr(httpErr(http.StatusServiceUnavailable))
+		}
+		_, err := io.WriteString(out, "row\n")
+		return err
+	}
+
+	if err := h.run(context.Background(), Options{Interval: time.Second, Count: 4}); err != nil {
+		t.Fatalf("a Keystone blip ended the watch: %v", err)
+	}
+	if h.frames != 4 {
+		t.Errorf("rendered %d frames, want 4", h.frames)
+	}
+}
+
+func TestErrorAfterReauthenticationIsClassifiedByItsStatus(t *testing.T) {
+	// Reauth succeeded and the retried request still failed. gophercloud wraps
+	// that one, and it does unwrap, so the status inside decides.
+	wrap := func(inner error) error {
+		e := &gophercloud.ErrErrorAfterReauthentication{}
+		e.ErrOriginal = inner
+		return e
+	}
+	if !isAuthFailure(wrap(httpErr(http.StatusForbidden))) {
+		t.Error("a 403 after re-authentication was not treated as an auth failure")
+	}
+	if !isTransient(wrap(httpErr(http.StatusServiceUnavailable))) {
+		t.Error("a 503 after re-authentication was not treated as transient")
+	}
+}
