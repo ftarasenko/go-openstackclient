@@ -170,8 +170,18 @@ func TestWatchStopsWhenReauthenticationIsRefused(t *testing.T) {
 		t.Fatalf("the watch kept going with a credential Keystone refuses:\n%s", out)
 	}
 	// Retrying a refused credential once a second is how an operator locks
-	// their own account out while watching the screen that is doing it.
-	if got := k.tokens.Load(); got > 3 {
-		t.Errorf("attempted %d authentications after the refusal; want it to stop at once", got)
+	// their own account out while watching the screen that is doing it. Pinned
+	// to the exact count rather than a bound: the original token, and the one
+	// attempt Keystone refused. Anything more is a burst.
+	if got := k.tokens.Load(); got != 2 {
+		t.Errorf("attempted %d authentications, want exactly 2 — the original and the one refusal", got)
 	}
+	if got := k.lists.Load(); got != 2 {
+		t.Errorf("issued %d list requests, want 2 — one good frame and the one that found the refusal", got)
+	}
+	// The other place a burst could come from is a tick that fans out —
+	// `hypervisor list --placement` makes eight concurrent requests — but
+	// gophercloud collapses concurrent re-authentications into one through the
+	// reauthlock that openstack.NewClient installs (UseTokenLock), so eight
+	// simultaneous 401s still cost one refused login rather than eight.
 }
