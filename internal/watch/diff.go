@@ -133,7 +133,11 @@ func (d *Differ) previous(ordinal int, signature string) (tableState, bool) {
 // the operator sees rather than something they have to have been looking at.
 func (d *Differ) decorate(cols []string, rows [][]any, prev, state tableState) ([][]any, [][]output.CellStyle) {
 	frame := rows
-	styles := make([][]output.CellStyle, 0, len(rows)+1)
+	// Sized for the rows that are actually here. The ghost rows appended below
+	// grow it, which is the rare case and is what append is for — and the
+	// arithmetic a guessed capacity needs is a size computation CodeQL is right
+	// to object to, whatever the real bound on len() happens to be.
+	styles := make([][]output.CellStyle, 0, len(rows))
 
 	for _, key := range state.order {
 		old, existed := prev.cells[key]
