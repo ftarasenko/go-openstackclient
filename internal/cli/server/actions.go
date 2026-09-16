@@ -297,10 +297,15 @@ func parseMicroversion(v string) (major, minor int, ok bool) {
 
 // waitForMigration polls the server until its migration settles, when --wait is
 // set. Success mirrors OSC's "server migrate --wait": the server reaches ACTIVE
-// (live migration) or VERIFY_RESIZE (cold migration, awaiting confirm) with no
-// task in flight; an ERROR status is terminal. task_state gates the ACTIVE check
-// so a live migration is not reported done before nova starts it (status stays
-// ACTIVE while task_state is "migrating").
+// or PAUSED (live migration) or VERIFY_RESIZE (cold migration, awaiting
+// confirm) with no task in flight; an ERROR status is terminal — see
+// classifyMigrationState.
+//
+// "compute host drain" does not share this. It knows the host it is emptying,
+// so it can wait on the server having left it, which is exact where a status
+// match is not: ACTIVE is both where a cold migration starts and where an
+// auto-confirmed one ends. A single-server migrate has no such reference point
+// and the status is the best signal available to it.
 func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, ref, id string, f *serverMigrateFlags, w io.Writer) error {
 	if !f.wait {
 		return nil

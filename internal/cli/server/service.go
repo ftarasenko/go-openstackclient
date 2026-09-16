@@ -17,13 +17,16 @@ import (
 )
 
 // newComputeCommand builds the "compute" parent group, home of
-// "compute service ...".
+// "compute service ..." and "compute host ...".
 func newComputeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compute",
 		Short: "Compute (nova) administrative commands",
 	}
-	cmd.AddCommand(newComputeServiceCommand(a, o))
+	cmd.AddCommand(
+		newComputeServiceCommand(a, o),
+		newComputeHostCommand(a, o),
+	)
 	return cmd
 }
 
