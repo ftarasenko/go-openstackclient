@@ -51,7 +51,9 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd.AddCommand(newQoSCommand(a, o))
 	cmd.AddCommand(newBackendCommand(a, o))
 
-	return []*cobra.Command{cmd}
+	// "block storage cluster …" is a separate top-level group: upstream spells
+	// the clustered-services noun that way, not as a verb under "volume".
+	return []*cobra.Command{cmd, newBlockStorageCommand(a, o)}
 }
 
 // volumeShowFields is the curated Field/Value view for a single volume, matching
