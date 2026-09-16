@@ -354,15 +354,28 @@ func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, re
 // task_state is reachable from a table test rather than only from a live nova
 // transition.
 //
-// task_state gates the ACTIVE check: nova leaves status ACTIVE while
+// task_state gates the settled check: nova leaves the status unchanged while
 // task_state is "migrating", so a live migration would otherwise be reported
 // done before it started.
+//
+// PAUSED is a settled status, not a transient one. A live migration preserves
+// the instance's power state — nova's post_live_migration_at_destination
+// (nova/compute/manager.py) clears task_state and refreshes power_state but
+// never writes vm_state except to set ERROR — so a server that was PAUSED when
+// the migration started is still PAUSED when it finishes. Waiting for ACTIVE
+// there waits for something that never happens.
 func classifyMigrationState(ref, status, taskState string) (bool, error) {
-	switch {
-	case strings.EqualFold(status, "ERROR"):
+	if strings.EqualFold(status, "ERROR") {
 		return false, fmt.Errorf("server %q entered ERROR status during migration", ref)
-	case taskState == "" && (strings.EqualFold(status, "ACTIVE") || strings.EqualFold(status, "VERIFY_RESIZE")):
-		return true, nil
+	}
+	if taskState != "" {
+		return false, nil
+	}
+	// VERIFY_RESIZE is the cold-migration terminal state, awaiting confirm.
+	for _, settled := range []string{"ACTIVE", "PAUSED", "VERIFY_RESIZE"} {
+		if strings.EqualFold(status, settled) {
+			return true, nil
+		}
 	}
 	return false, nil
 }
