@@ -153,7 +153,7 @@ func TestRunFlavorCreate_RequestBodyAndOutput(t *testing.T) {
 	f := &flavorCreateFlags{ram: 512, disk: 1, vcpus: 1, public: true}
 
 	var buf bytes.Buffer
-	if err := runFlavorCreate(context.Background(), client, o, "m1.custom", f, &buf); err != nil {
+	if err := runFlavorCreate(context.Background(), client, o, "m1.custom", f, "", &buf); err != nil {
 		t.Fatalf("runFlavorCreate returned error: %v", err)
 	}
 
@@ -941,4 +941,368 @@ func TestRunFlavorUnset_PropertiesAndProject(t *testing.T) {
 	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
 		t.Errorf("calls = %v, want %v", calls, want)
 	}
+}
+
+// TestRunFlavorList_PrivateAccessFilter covers "flavor list --private", which
+// nova selects with is_public=false — a distinct view from both the default
+// (public plus the caller's own) and --all.
+func TestRunFlavorList_PrivateAccessFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+		th.TestFormValues(t, r, map[string]string{"is_public": "false"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavors": []}`))
+	})
+
+	client := computeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+
+	var buf bytes.Buffer
+	if err := runFlavorList(context.Background(), client, o, &flavorListFlags{private: true}, &buf); err != nil {
+		t.Fatalf("runFlavorList returned error: %v", err)
+	}
+}
+
+// TestRunFlavorList_MinDiskMinRAMAndPaging asserts the server-side filters and
+// the pagination parameters reach nova as query strings.
+func TestRunFlavorList_MinDiskMinRAMAndPaging(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+		th.TestFormValues(t, r, map[string]string{
+			"minDisk": "20",
+			"minRam":  "2048",
+			"marker":  "1",
+			"limit":   "1",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+
+	client := computeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+
+	f := &flavorListFlags{minDisk: 20, minRAM: 2048, marker: "1", limit: 1}
+	var buf bytes.Buffer
+	if err := runFlavorList(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatalf("runFlavorList returned error: %v", err)
+	}
+
+	// Nova treats limit as a page size, so the cap is enforced client-side too:
+	// the fixture holds two flavors and --limit 1 must render exactly one row.
+	if lines := strings.Count(strings.TrimSpace(buf.String()), "\n") + 1; lines != 1 {
+		t.Errorf("rendered %d rows, want 1:\n%s", lines, buf.String())
+	}
+}
+
+// TestRunFlavorShow_PrivateListsAccessProjects asserts "flavor show" pulls the
+// access list for a private flavor — the projects that may boot it live on a
+// separate endpoint and are the whole point of a private flavor.
+func TestRunFlavorShow_PrivateListsAccessProjects(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+	fakeServer.Mux.HandleFunc("/flavors/2", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+  "flavor": {
+    "id": "2",
+    "name": "m1.small",
+    "ram": 2048,
+    "disk": 20,
+    "vcpus": 1,
+    "OS-FLV-EXT-DATA:ephemeral": 0,
+    "swap": "",
+    "rxtx_factor": 1.0,
+    "os-flavor-access:is_public": false
+  }
+}`))
+	})
+	var gotAccessMethod, gotAccessPath string
+	fakeServer.Mux.HandleFunc("/flavors/2/os-flavor-access", func(w http.ResponseWriter, r *http.Request) {
+		gotAccessMethod = r.Method
+		gotAccessPath = r.URL.Path
+		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavor_access": [
+		  {"flavor_id": "2", "tenant_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"},
+		  {"flavor_id": "2", "tenant_id": "1a2b3c4d5e6f70819283a4b5c6d7e8f9"}
+		]}`))
+	})
+
+	client := computeClient(fakeServer, "2.61")
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runFlavorShow(context.Background(), client, o, "m1.small", &buf); err != nil {
+		t.Fatalf("runFlavorShow returned error: %v", err)
+	}
+
+	if gotAccessMethod != http.MethodGet {
+		t.Errorf("access request method = %q, want GET", gotAccessMethod)
+	}
+	if gotAccessPath != "/flavors/2/os-flavor-access" {
+		t.Errorf("access request path = %q, want /flavors/2/os-flavor-access", gotAccessPath)
+	}
+	out := buf.String()
+	for _, want := range []string{"Access Project IDs", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", "1a2b3c4d5e6f70819283a4b5c6d7e8f9"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// TestRunFlavorShow_PublicSkipsAccessLookup asserts a public flavor does not hit
+// the access endpoint: nova has no access list for one, and a request would 404.
+func TestRunFlavorShow_PublicSkipsAccessLookup(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorListBody))
+	})
+	fakeServer.Mux.HandleFunc("/flavors/1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(flavorGetBody))
+	})
+	// No /flavors/1/os-flavor-access handler: a request there would 404 and fail.
+
+	client := computeClient(fakeServer, "2.61")
+	o := &output.Options{Format: output.FormatTable}
+
+	var buf bytes.Buffer
+	if err := runFlavorShow(context.Background(), client, o, "1", &buf); err != nil {
+		t.Fatalf("runFlavorShow returned error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Access Project IDs") {
+		t.Errorf("output missing the Access Project IDs field:\n%s", buf.String())
+	}
+}
+
+// TestRunFlavorCreate_PropertiesAndProjectAccess covers the two follow-up calls
+// nova forces after the POST: the flavor's access list and its extra specs
+// cannot be set in the create request.
+func TestRunFlavorCreate_PropertiesAndProjectAccess(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var createBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &createBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+  "flavor": {
+    "id": "abc",
+    "name": "m1.private",
+    "ram": 512,
+    "disk": 1,
+    "vcpus": 1,
+    "OS-FLV-EXT-DATA:ephemeral": 0,
+    "swap": "",
+    "os-flavor-access:is_public": false,
+    "description": "team flavor"
+  }
+}`))
+	})
+	var accessBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors/abc/action", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &accessBody); err != nil {
+			t.Errorf("decoding access body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavor_access": [{"flavor_id": "abc", "tenant_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"}]}`))
+	})
+	var specsMethod string
+	var specsBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors/abc/os-extra_specs", func(w http.ResponseWriter, r *http.Request) {
+		specsMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &specsBody); err != nil {
+			t.Errorf("decoding extra specs body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"extra_specs": {"hw:cpu_policy": "dedicated"}}`))
+	})
+
+	client := computeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatTable}
+
+	f := &flavorCreateFlags{
+		ram: 512, disk: 1, vcpus: 1, private: true,
+		properties:     []string{"hw:cpu_policy=dedicated"},
+		project:        "engineering",
+		description:    "team flavor",
+		descriptionSet: true,
+	}
+	var buf bytes.Buffer
+	if err := runFlavorCreate(context.Background(), client, o, "m1.private", f, "0f1e2d3c4b5a69788796a5b4c3d2e1f0", &buf); err != nil {
+		t.Fatalf("runFlavorCreate returned error: %v", err)
+	}
+
+	flavorBody, ok := createBody["flavor"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body missing 'flavor' object: %#v", createBody)
+	}
+	if flavorBody["description"] != "team flavor" {
+		t.Errorf("body description = %v, want %q", flavorBody["description"], "team flavor")
+	}
+	if pub, ok := flavorBody["os-flavor-access:is_public"].(bool); !ok || pub {
+		t.Errorf("body is_public = %v, want false", flavorBody["os-flavor-access:is_public"])
+	}
+	access, ok := accessBody["addTenantAccess"].(map[string]any)
+	if !ok {
+		t.Fatalf("access body missing 'addTenantAccess' object: %#v", accessBody)
+	}
+	if access["tenant"] != "0f1e2d3c4b5a69788796a5b4c3d2e1f0" {
+		t.Errorf("addTenantAccess.tenant = %v, want the resolved project ID", access["tenant"])
+	}
+	if specsMethod != http.MethodPost {
+		t.Errorf("extra specs method = %q, want POST", specsMethod)
+	}
+	specs, ok := specsBody["extra_specs"].(map[string]any)
+	if !ok {
+		t.Fatalf("extra specs body missing 'extra_specs' object: %#v", specsBody)
+	}
+	if specs["hw:cpu_policy"] != "dedicated" {
+		t.Errorf("extra_specs[hw:cpu_policy] = %v, want dedicated", specs["hw:cpu_policy"])
+	}
+	// The create response predates the extra specs, so they are folded into the
+	// rendered flavor rather than shown as an empty Properties column.
+	if !strings.Contains(buf.String(), "hw:cpu_policy") {
+		t.Errorf("output missing the properties set after create:\n%s", buf.String())
+	}
+}
+
+// TestRunFlavorCreate_IDAutoIsOmitted asserts the novaclient "auto" alias is
+// translated rather than sent verbatim, which would name the flavor "auto".
+func TestRunFlavorCreate_IDAutoIsOmitted(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavor": {"id": "abc", "name": "m1.custom", "ram": 512, "disk": 1, "vcpus": 1, "os-flavor-access:is_public": true}}`))
+	})
+
+	client := computeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+
+	f := &flavorCreateFlags{ram: 512, disk: 1, vcpus: 1, public: true, id: "auto"}
+	var buf bytes.Buffer
+	if err := runFlavorCreate(context.Background(), client, o, "m1.custom", f, "", &buf); err != nil {
+		t.Fatalf("runFlavorCreate returned error: %v", err)
+	}
+
+	flavorBody, ok := gotBody["flavor"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body missing 'flavor' object: %#v", gotBody)
+	}
+	if id, present := flavorBody["id"]; present {
+		t.Errorf("body id = %v, want the key omitted so nova assigns a UUID", id)
+	}
+}
+
+// TestRunFlavorCreate_DescriptionRequiresMicroversion and its rxtx sibling assert
+// both version gates fail before the POST, so no flavor is created at all.
+func TestRunFlavorCreate_DescriptionRequiresMicroversion(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	// No /flavors handler: reaching nova at all is the failure this asserts.
+
+	client := computeClient(fakeServer, "2.1")
+	o := &output.Options{Format: output.FormatValue}
+
+	f := &flavorCreateFlags{ram: 512, disk: 1, vcpus: 1, public: true, description: "x", descriptionSet: true}
+	var buf bytes.Buffer
+	err := runFlavorCreate(context.Background(), client, o, "m1.custom", f, "", &buf)
+	if err == nil {
+		t.Fatal("runFlavorCreate returned nil error; want a microversion rejection")
+	}
+	if !strings.Contains(err.Error(), flavorDescriptionMicroversion) {
+		t.Errorf("error = %v, want it to name microversion %s", err, flavorDescriptionMicroversion)
+	}
+}
+
+func TestRunFlavorCreate_RxTxFactorRejectedAboveRemoval(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	// No /flavors handler, for the reason above.
+
+	// An explicit pin, not "latest": the guard is deliberately blind to "latest"
+	// because nova resolves it, and on Zed it means 2.93 — where the field still
+	// exists. See computePinnedAtOrAbove.
+	client := computeClient(fakeServer, flavorRxTxRemovedMicroversion)
+	o := &output.Options{Format: output.FormatValue}
+
+	f := &flavorCreateFlags{ram: 512, disk: 1, vcpus: 1, public: true, rxtxFactor: 2, rxtxFactorSet: true}
+	var buf bytes.Buffer
+	err := runFlavorCreate(context.Background(), client, o, "m1.custom", f, "", &buf)
+	if err == nil {
+		t.Fatal("runFlavorCreate returned nil error; want an rxtx-factor rejection")
+	}
+	if !strings.Contains(err.Error(), "rxtx-factor") {
+		t.Errorf("error = %v, want it to name --rxtx-factor", err)
+	}
+}
+
+// TestRunFlavorCreate_RxTxFactorAllowedUnderLatest is the other half of the
+// guard: koc's default microversion is "latest", which on a Zed cloud is 2.93,
+// so --rxtx-factor must still reach nova and let the cloud decide.
+func TestRunFlavorCreate_RxTxFactorAllowedUnderLatest(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/flavors", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flavor": {"id": "abc", "name": "m1.custom", "ram": 512, "disk": 1, "vcpus": 1, "rxtx_factor": 2.0, "os-flavor-access:is_public": true}}`))
+	})
+
+	client := computeClient(fakeServer, "latest")
+	o := &output.Options{Format: output.FormatValue}
+
+	f := &flavorCreateFlags{ram: 512, disk: 1, vcpus: 1, public: true, rxtxFactor: 2, rxtxFactorSet: true}
+	var buf bytes.Buffer
+	if err := runFlavorCreate(context.Background(), client, o, "m1.custom", f, "", &buf); err != nil {
+		t.Fatalf("runFlavorCreate returned error: %v", err)
+	}
+
+	flavorBody, ok := gotBody["flavor"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body missing 'flavor' object: %#v", gotBody)
+	}
+	assertJSONNum(t, flavorBody, "rxtx_factor", 2)
 }
