@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-09-14 · `koc` @ this commit (base `82afd0a`) · 565 leaf
+**Snapshot:** 2026-09-16 · `koc` @ this commit (base `175d20b`) · 568 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**515 of 844 in-scope upstream commands (61%).** Of `koc`'s 565 leaf commands,
-515 are upstream-equivalent and 50 are koc-native.
+**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 568 leaf commands,
+518 are upstream-equivalent and 50 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -105,7 +105,7 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | --- | --- | --- |
 | `openstack.compute.v2` | 73/100 (73%) | **71/88 (81%)** — `usage list/show` land outside the core denominator but are implemented |
 | `openstack.image.v2` | 16/42 (38%) | **14/15 (93%)** — only `image member get` remains |
-| `openstack.volume.v3` | 49/94 (52%) | **34/38 (89%)** — QoS, transfers and the backend pool/capability reads are outside the "core" denominator but now implemented |
+| `openstack.volume.v3` | 52/94 (55%) | **34/38 (89%)** — QoS, transfers, the backend pool/capability reads and `block storage cluster` are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
 | `openstack.network.v2` | 102/165 (62%) | **85/94 (90%)** — QoS and RBAC land outside the "core" denominator but are implemented |
 | `openstack.common` | 6/11 (55%) | 6/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show` |
@@ -234,7 +234,7 @@ covers strictly more clouds than a four-way typed switch would.
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
 
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
-`block storage cluster/log level/manageable`; ironic **inspection rules** (API
+`block storage log level/manageable`; ironic **inspection rules** (API
 1.96 — the replacement for the deleted introspection commands), chassis, port
 groups, deploy templates, runbooks, traits, history, console, shards, volume
 connectors/targets; Neutron metering, flavors, L3 conntrack helpers, local IPs,
@@ -248,8 +248,10 @@ Already using it: `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
-`false` would be dropped), `volume backend pool list` and `volume backend
-capability show` (see below), `flavor set --description` (same cause: `omitempty` on
+`false` would be dropped), `volume backend pool list`, `volume backend
+capability show` (see below) and `block storage cluster list/set/show`
+(gophercloud has no `blockstorage/v3/clusters` package at all),
+`flavor set --description` (same cause: `omitempty` on
 `flavors.UpdateOpts.Description` cannot send the explicit null nova wants to
 clear it), `network qos rule create/set/show/delete` (one raw
 path per rule type, since `qos/rules` has no `minimum_packet_rate`), `dns quota reset` (gophercloud's `dns/v2/quotas` is
@@ -404,7 +406,7 @@ never grew:
   extra call per action. Upstream's only route to the same answer is a
   `server event show` per row.
 
-One **column set** deviates: `koc volume backend pool list` shows
+Two **column sets** deviate. The first: `koc volume backend pool list` shows
 `Backend State` and the capacity figures by default, where upstream shows the
 pool `Name` alone and puts everything else behind `--long`. A list of pool
 names cannot answer "does this pool have room", which is the only reason to run
@@ -416,6 +418,30 @@ reporting free after replication produces a pair that cannot both be right.
 `koc` reports what cinder reports and does not try to reconcile it — `--long`
 and `volume backend capability show` are where the driver's own figures sit next
 to it.
+
+The second: `koc volume service list` and `koc compute service list` render
+**Disabled Reason** whenever a listed service carries one, where upstream puts
+that column behind `--long` alone. It is the read side of a write the same
+noun's `set` verb performs (`--disable-reason`), and a reason is written exactly
+when something — an operator, an HA agent, an autoevacuator — took a host out of
+service, which is when it should not take a second invocation to see. When no
+service is disabled the column would be a blank strip, so it stays out and the
+vanilla listing is unchanged; `--long` forces it on either way. Everything else
+in both listings matches upstream, `Cluster` (cinder 3.7) and `Backend State`
+(3.49) included: like upstream's, those are gated on the negotiated
+microversion rather than on `--long`, since below it cinder does not report the
+field at all.
+
+`koc block storage cluster set` deviates in **one edge case**: it requires
+`--enable` or `--disable`. Upstream's parser defaults the enable/disable pair to
+`None` and then treats anything falsy as enable, so a bare `openstack block
+storage cluster set <name>` — the shape a typo or a dropped flag takes — silently
+re-enables a cluster an operator disabled. `koc volume service set` already
+refuses that, and this follows it. The verb's `--binary` flag also deviates in
+**effect** rather than surface: upstream declares `--binary` on
+`block storage cluster show` and then drops it before the request, so it does
+nothing there; cinder accepts it as a query parameter and `koc` sends it, which
+is what makes the flag usable when one cluster name serves more than one binary.
 
 `--timing` deviates in **where it writes**, deliberately.
 `osc_lib/command/timing.py` is a cliff Lister: it prints a "URL | Seconds"
@@ -468,7 +494,7 @@ limitations"; the fix is to make the other resolvers match `server`'s behaviour.
 ## koc-native commands
 
 No upstream equivalent, by design — **50 leaves**, itemised so the total
-reconciles with the headline (565 = 515 + 50):
+reconciles with the headline (568 = 518 + 50):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -523,7 +549,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (565 leaf commands at the snapshot above)
+# 1. koc's own command tree (568 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -552,8 +578,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (515);
-2. leaf commands = headline numerator + koc-native (565 = 515 + 50);
+1. every raw row numerator summed = the headline numerator (518);
+2. leaf commands = headline numerator + koc-native (568 = 518 + 50);
 3. every raw row denominator summed = 901, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (844).
 

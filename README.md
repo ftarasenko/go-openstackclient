@@ -363,7 +363,7 @@ otherwise widened, so nothing that reads either positionally is affected.
 
 ### Live refresh (`--watch`)
 
-Every read verb — all 219 `list` and `show` leaves — takes `--watch`, which
+Every read verb — all 221 `list` and `show` leaves — takes `--watch`, which
 refreshes it in place instead of exiting:
 
 ```sh
