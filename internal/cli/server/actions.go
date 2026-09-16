@@ -297,10 +297,15 @@ func parseMicroversion(v string) (major, minor int, ok bool) {
 
 // waitForMigration polls the server until its migration settles, when --wait is
 // set. Success mirrors OSC's "server migrate --wait": the server reaches ACTIVE
-// (live migration) or VERIFY_RESIZE (cold migration, awaiting confirm) with no
-// task in flight; an ERROR status is terminal. task_state gates the ACTIVE check
-// so a live migration is not reported done before nova starts it (status stays
-// ACTIVE while task_state is "migrating").
+// or PAUSED (live migration) or VERIFY_RESIZE (cold migration, awaiting
+// confirm) with no task in flight; an ERROR status is terminal — see
+// classifyMigrationState.
+//
+// "compute host drain" does not share this. It knows the host it is emptying,
+// so it can wait on the server having left it, which is exact where a status
+// match is not: ACTIVE is both where a cold migration starts and where an
+// auto-confirmed one ends. A single-server migrate has no such reference point
+// and the status is the best signal available to it.
 func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, ref, id string, f *serverMigrateFlags, w io.Writer) error {
 	if !f.wait {
 		return nil
@@ -354,15 +359,28 @@ func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, re
 // task_state is reachable from a table test rather than only from a live nova
 // transition.
 //
-// task_state gates the ACTIVE check: nova leaves status ACTIVE while
+// task_state gates the settled check: nova leaves the status unchanged while
 // task_state is "migrating", so a live migration would otherwise be reported
 // done before it started.
+//
+// PAUSED is a settled status, not a transient one. A live migration preserves
+// the instance's power state — nova's post_live_migration_at_destination
+// (nova/compute/manager.py) clears task_state and refreshes power_state but
+// never writes vm_state except to set ERROR — so a server that was PAUSED when
+// the migration started is still PAUSED when it finishes. Waiting for ACTIVE
+// there waits for something that never happens.
 func classifyMigrationState(ref, status, taskState string) (bool, error) {
-	switch {
-	case strings.EqualFold(status, "ERROR"):
+	if strings.EqualFold(status, "ERROR") {
 		return false, fmt.Errorf("server %q entered ERROR status during migration", ref)
-	case taskState == "" && (strings.EqualFold(status, "ACTIVE") || strings.EqualFold(status, "VERIFY_RESIZE")):
-		return true, nil
+	}
+	if taskState != "" {
+		return false, nil
+	}
+	// VERIFY_RESIZE is the cold-migration terminal state, awaiting confirm.
+	for _, settled := range []string{"ACTIVE", "PAUSED", "VERIFY_RESIZE"} {
+		if strings.EqualFold(status, settled) {
+			return true, nil
+		}
 	}
 	return false, nil
 }

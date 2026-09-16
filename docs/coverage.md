@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-09-16 · `koc` @ this commit (base `175d20b`) · 568 leaf
+**Snapshot:** 2026-09-16 · `koc` @ this commit (base `752aadc`) · 570 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 568 leaf commands,
-518 are upstream-equivalent and 50 are koc-native.
+**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 570 leaf commands,
+518 are upstream-equivalent and 52 are koc-native.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -295,6 +295,19 @@ first because it is what `--help` shows.
 | `koc server migration list` | `openstack server migration list` | also as `koc migration list` (hidden) |
 | `koc network extension list` / `show` | `openstack extension list --network` / `extension show` | no |
 | `koc network trunk subport list` | `openstack network subport list` | no |
+| `koc compute host drain` / `drain --cold` | `nova host-evacuate-live` / `host-servers-migrate` (novaclient shell; no OSC entry point) | no |
+
+The last row is a deviation from `python-novaclient` rather than from OSC,
+which has no equivalent at all — see "koc-native commands". novaclient's two
+names put commands with *opposite* preconditions next to each other:
+`host-evacuate-live` needs the host up and `host-evacuate` needs it down, while
+reading as a live/not-live pair. `koc` splits on the precondition instead, which
+is the thing nova actually enforces: `compute host drain` (the host is alive,
+`--cold` chooses whether the guests stay up) and `compute host evacuate` (the
+host is dead). Each refuses the other's case naming the right verb, so picking
+wrong costs one message rather than one refusal per server. The upstream
+spellings are not accepted, since novaclient's CLI is not what a `koc` script
+would have been written against.
 
 One deviation was **removed** rather than documented: `koc loadbalancer quota
 unset` used to take no flags and clear all seven quotas, which is upstream's
@@ -493,8 +506,8 @@ limitations"; the fix is to make the other resolvers match `server`'s behaviour.
 
 ## koc-native commands
 
-No upstream equivalent, by design — **50 leaves**, itemised so the total
-reconciles with the headline (568 = 518 + 50):
+No upstream equivalent, by design — **52 leaves**, itemised so the total
+reconciles with the headline (570 = 518 + 52):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -508,6 +521,7 @@ reconciles with the headline (568 = 518 + 50):
 | 1 | `koc image member set` | accept/reject/pending on an image membership. Upstream registers `image member get`/`list` only — the status write has no entry point |
 | 1 | `koc baremetal node inventory show` | a table summary of the inventory upstream only offers as a raw `save` |
 | 1 | `koc server password show` | see below |
+| 2 | `koc compute host drain`, `koc compute host evacuate` | draining a compute host has no OSC entry point at all. `nova host-evacuate-live`, `host-servers-migrate` and `host-evacuate` exist only in `python-novaclient`'s own shell (`novaclient/v2/shell.py`), which OSC never absorbed, and all three are client-side loops rather than APIs — nova has no host-level endpoint to wrap. The first two are one `koc` verb: see "Naming deviations" |
 | 1 | `koc volume extend` | `cinder extend` by its cinderclient name. OSC folds the resize into `volume set --size`, which `koc` also accepts (and which is what the `volume_set` entry point is counted against), so this is an extra verb rather than a deviation |
 
 `server password show` is the read side of nova's `os-server-password`, i.e.
@@ -549,7 +563,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (568 leaf commands at the snapshot above)
+# 1. koc's own command tree (570 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -579,7 +593,7 @@ Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
 1. every raw row numerator summed = the headline numerator (518);
-2. leaf commands = headline numerator + koc-native (568 = 518 + 50);
+2. leaf commands = headline numerator + koc-native (570 = 518 + 52);
 3. every raw row denominator summed = 901, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (844).
 

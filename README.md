@@ -164,6 +164,8 @@ koc volume attachment create test-volume myvm --connect --initiator iqn.2026-08.
 koc network list --long
 koc resource provider show <uuid> --allocations -f json
 koc hypervisor list --gauge --sort ram --aggregate compute-hp
+koc compute host drain cmp-039 --wait --parallel 2
+koc compute host drain cmp-039 --cold --dry-run
 koc keyvrm recommendation list
 koc vault kv copy -r deployments/example/dev deployments/example/staging
 ```
@@ -574,6 +576,55 @@ Allocation figures come from placement (nova dropped these fields at microversio
 real CPU/RAM usage scraped from each host's node_exporter (`--ne-*` flags tune the
 scheme/port/suffix/concurrency/timeout). `-f json`/`csv` emit the raw numbers via
 the output layer.
+
+### Draining a compute host (`koc compute host …`)
+
+Two verbs to empty one compute host of its servers, split on the thing nova
+actually enforces — whether the host is still alive:
+
+```sh
+koc compute host drain cmp-039 --wait --parallel 2   # host is up, no downtime
+koc compute host drain cmp-039 --cold                # host is up, a reboot each
+koc compute host evacuate cmp-039 --wait             # host has failed
+```
+
+| | Source host | Guest downtime | Server statuses nova accepts |
+| --- | --- | --- | --- |
+| `drain` | up | none | `ACTIVE`, `PAUSED` |
+| `drain --cold` | up | a reboot | `ACTIVE`, `SHUTOFF` |
+| `evacuate` | **down** | it already crashed | `ACTIVE`, `SHUTOFF`, `ERROR` |
+
+`drain` moves servers off a healthy host, live or (with `--cold`) by shutting
+each one down first; `evacuate` rebuilds the servers of a host that has already
+failed, which nova refuses to do while the host is up. Each verb checks the
+service state once, up front, and refuses the other's case by name, so picking
+the wrong one costs a message rather than one refusal per server. A status a
+verb cannot move is reported as `skipped` naming the verb that can take it.
+
+There is no bulk API behind any of this — nova has no host-level endpoint — so
+each verb is a loop over the same per-server action the single-server verbs
+post, and each reports as it goes: on a terminal, a status line repainted in
+place with the elapsed time and the server currently moving; anywhere else, one
+line per state change. Progress goes to **stderr** and the result table to
+stdout, so `-f json` stays parseable.
+
+Shared flags: `--dry-run` (what would move), `--target-host` (pin the
+destination), `--max-servers` (cap how many move), `--parallel` (how many at
+once), `--wait` (follow each server off the host rather than returning once nova
+accepts the request). **Both exit non-zero if any server fails** — the table's
+`Detail` column carries nova's reason for each.
+
+A cold migration does not finish on its own: nova parks each server in
+`VERIFY_RESIZE` awaiting a confirm. `--cold` confirms as it goes, so the host is
+actually empty when it returns; `--confirm=false` leaves them pending for `koc
+server resize --confirm`/`--revert`. Confirming means waiting, so `--cold`
+implies `--wait`. On a cloud that sets nova's `resize_confirm_window`, nova may
+confirm a server first — that is reported as `auto-confirmed by nova`, not
+treated as an error.
+
+These cover `nova host-evacuate-live`, `host-servers-migrate` and
+`host-evacuate`; `openstack` has no equivalent for any of them. See
+`docs/coverage.md` → "Naming deviations" for why the first two are one verb.
 
 ### Vault KV (`koc vault kv`)
 

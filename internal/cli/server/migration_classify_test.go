@@ -32,6 +32,20 @@ func TestClassifyMigrationState(t *testing.T) {
 			taskState: "migrating",
 		},
 		{
+			// A live migration preserves the power state: nova's
+			// post_live_migration_at_destination clears task_state and never
+			// writes vm_state, so a server that was PAUSED stays PAUSED. Waiting
+			// for ACTIVE here would wait for the full --wait-timeout.
+			name:     "paused with no task in flight is done",
+			status:   "PAUSED",
+			wantDone: true,
+		},
+		{
+			name:      "paused while still migrating keeps polling",
+			status:    "PAUSED",
+			taskState: "migrating",
+		},
+		{
 			name:      "resize state keeps polling",
 			status:    "RESIZE",
 			taskState: "resize_migrating",
