@@ -404,7 +404,7 @@ never grew:
   extra call per action. Upstream's only route to the same answer is a
   `server event show` per row.
 
-One **column set** deviates: `koc volume backend pool list` shows
+Two **column sets** deviate. The first: `koc volume backend pool list` shows
 `Backend State` and the capacity figures by default, where upstream shows the
 pool `Name` alone and puts everything else behind `--long`. A list of pool
 names cannot answer "does this pool have room", which is the only reason to run
@@ -416,6 +416,19 @@ reporting free after replication produces a pair that cannot both be right.
 `koc` reports what cinder reports and does not try to reconcile it — `--long`
 and `volume backend capability show` are where the driver's own figures sit next
 to it.
+
+The second: `koc volume service list` and `koc compute service list` render
+**Disabled Reason** whenever a listed service carries one, where upstream puts
+that column behind `--long` alone. It is the read side of a write the same
+noun's `set` verb performs (`--disable-reason`), and a reason is written exactly
+when something — an operator, an HA agent, an autoevacuator — took a host out of
+service, which is when it should not take a second invocation to see. When no
+service is disabled the column would be a blank strip, so it stays out and the
+vanilla listing is unchanged; `--long` forces it on either way. Everything else
+in both listings matches upstream, `Cluster` (cinder 3.7) and `Backend State`
+(3.49) included: like upstream's, those are gated on the negotiated
+microversion rather than on `--long`, since below it cinder does not report the
+field at all.
 
 `--timing` deviates in **where it writes**, deliberately.
 `osc_lib/command/timing.py` is a cliff Lister: it prints a "URL | Seconds"

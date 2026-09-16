@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/services"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -27,7 +29,21 @@ func newServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// Microversions that gate two of the listing's columns. Both are well inside
+// the Zed cap of 3.70, and koc negotiates "latest" by default, so the common
+// path carries them; an operator who pins --os-volume-api-version below either
+// one gets the same listing upstream OSC would show there.
+const (
+	// serviceClusterMicroversion gates the cluster name (cinder 3.7 added
+	// clustered services).
+	serviceClusterMicroversion = "3.7"
+	// serviceBackendStateMicroversion gates backend_state, the driver's own
+	// up/down view of the storage behind a cinder-volume service.
+	serviceBackendStateMicroversion = "3.49"
+)
+
 type serviceListFlags struct {
+	long    bool
 	host    string
 	service string
 }
@@ -51,6 +67,7 @@ func newServiceListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.StringVar(&f.host, "host", "", "filter by service host")
 	fl.StringVar(&f.service, "service", "", "filter by service binary name (e.g. cinder-volume)")
 	return cmd
@@ -69,11 +86,92 @@ func runServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return fmt.Errorf("parsing volume service list: %w", err)
 	}
-	t := output.Table{Columns: []string{"Binary", "Host", "Zone", "Status", "State", "Updated At"}}
-	for _, s := range all {
-		t.Rows = append(t.Rows, []any{s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt})
+	// gophercloud's Service type has no backend_state field, so it is pulled
+	// raw and aligned by index (same "services" array, same order).
+	ext, err := extractServiceExt(pages)
+	if err != nil {
+		return fmt.Errorf("parsing volume service list: %w", err)
 	}
-	return o.WriteList(w, t)
+	cols := serviceColumns{
+		cluster:      volumeSupportsMicroversion(client, serviceClusterMicroversion),
+		backendState: volumeSupportsMicroversion(client, serviceBackendStateMicroversion),
+		long:         f.long,
+	}
+	return o.WriteList(w, serviceListTable(all, ext, cols))
+}
+
+// serviceExt carries the os-services response fields gophercloud's Service type
+// drops.
+type serviceExt struct {
+	BackendState string `json:"backend_state"`
+}
+
+func extractServiceExt(page pagination.Page) ([]serviceExt, error) {
+	var s struct {
+		Services []serviceExt `json:"services"`
+	}
+	sp, ok := page.(services.ServicePage)
+	if !ok {
+		return nil, fmt.Errorf("extractServiceExt: unexpected page type %T", page)
+	}
+	err := sp.ExtractInto(&s)
+	return s.Services, err
+}
+
+// serviceColumns says which of the listing's conditional columns to render.
+type serviceColumns struct {
+	cluster      bool
+	backendState bool
+	long         bool
+}
+
+// serviceListTable renders the block-storage service listing.
+//
+// Cluster and Backend State follow upstream OSC: they are gated on the
+// negotiated microversion (3.7 and 3.49), not on --long, because below those
+// versions cinder does not report the field at all and above them it always
+// does.
+//
+// Disabled Reason is upstream's only --long column. koc also shows it whenever
+// a listed service actually carries one, matching what "koc compute service
+// list" does for nova and for the same reason: it is the read side of
+// "koc volume service set --disable-reason", and a reason you cannot read back
+// without knowing to pass --long is easy to miss on a host an HA agent
+// disabled. When nothing is disabled the column would be a blank strip, so it
+// stays out and the vanilla listing is unchanged.
+func serviceListTable(list []services.Service, ext []serviceExt, cols serviceColumns) output.Table {
+	columns := []string{"Binary", "Host", "Zone", "Status", "State", "Updated At"}
+	if cols.cluster {
+		columns = append(columns, "Cluster")
+	}
+	if cols.backendState {
+		columns = append(columns, "Backend State")
+	}
+	reasons := cols.long || slices.ContainsFunc(list, func(s services.Service) bool {
+		return s.DisabledReason != ""
+	})
+	if reasons {
+		columns = append(columns, "Disabled Reason")
+	}
+	t := output.Table{Columns: columns, Rows: make([][]any, 0, len(list))}
+	for i, s := range list {
+		row := []any{s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt}
+		if cols.cluster {
+			row = append(row, s.Cluster)
+		}
+		if cols.backendState {
+			var e serviceExt
+			if i < len(ext) {
+				e = ext[i]
+			}
+			row = append(row, e.BackendState)
+		}
+		if reasons {
+			row = append(row, s.DisabledReason)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	return t
 }
 
 type serviceSetFlags struct {
