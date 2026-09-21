@@ -544,19 +544,29 @@ missing `completions/`.
 binary is unsigned, so the cask has to strip `com.apple.quarantine` from the
 staged `koc` or macOS refuses to launch it. GoReleaser emits
 `homebrew_casks.hooks.post.install` as Homebrew's `postflight do … end`, which
-Homebrew 7.0 deprecated in favour of the declarative `postflight_steps` — every
-`brew` command touching the cask printed a deprecation warning, and Homebrew
-deprecations become errors a few releases later. GoReleaser cannot emit the
-`*_steps` stanzas yet (goreleaser/goreleaser#6870, PR #6873, milestone v2.19.0),
-so `.goreleaser.yaml` writes the stanza itself through `custom_block`. Three
-things to keep in mind when touching it, all spelled out next to the block: the
-Homebrew path token has to be escaped as `{{ "{{staged_path}}" }}` because
+Homebrew 6.0.16 deprecated in favour of the declarative `postflight_steps` —
+every `brew` command touching the cask printed a deprecation warning, and
+Homebrew deprecations become errors a few releases later. GoReleaser cannot emit
+the `*_steps` stanzas yet (goreleaser/goreleaser#6870, PR #6873, milestone
+v2.19.0) and has no way to emit *both* spellings, so `.goreleaser.yaml` writes
+the stanza itself through `custom_block`: the cask probes at load time and picks
+`postflight_steps` on Homebrew >= 6.0.13, `postflight` below that, so it installs
+on every Homebrew and warns on none.
+
+The three Homebrew versions that matter, because they are three releases apart
+and the obvious probe gets it wrong: the `postflight_steps` **stanza** landed in
+6.0.0, the `run`/`on_macos` **steps** the block actually calls landed in 6.0.13,
+and `postflight` was **deprecated** in 6.0.16. So the probe asks
+`Homebrew::InstallSteps::DSL.method_defined?(:run)`, not
+`respond_to?(:postflight_steps)` — the latter is true on 6.0.0–6.0.12, where the
+block body would then die. Two more things, both spelled out next to the block:
+the Homebrew path token has to be escaped as `{{ "{{staged_path}}" }}` because
 GoReleaser runs the whole generated cask through its own template engine as a
-final pass; `custom_block` lands right after `cask "koc" do`, which is fine
-because Homebrew orders artifacts by class rather than by file position; and the
-cask now requires Homebrew >= 7.0, since an older client raises on the unknown
-stanza instead of warning. When GoReleaser ships `hooks.post.install_steps`,
-move back to it and delete the block.
+final pass (the legacy branch spells the same path `#{staged_path}`, since the
+steps DSL has no Ruby interpolation); and `custom_block` lands right after
+`cask "koc" do`, which is fine because Homebrew orders artifacts by class rather
+than by file position. `hooks.post.install_steps`, when GoReleaser ships it,
+still cannot express the fallback branch, so this block outlives it.
 
 **Builds are byte-reproducible, and it takes more than one setting.** `builds:
 mod_timestamp: {{ .CommitTimestamp }}` fixes the binary, but a tar/zip records
