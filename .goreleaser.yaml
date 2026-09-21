@@ -202,10 +202,39 @@ homebrew_casks:
     # The binary is unsigned (Go only ad-hoc-signs darwin/arm64 so it *runs*);
     # casks are quarantined on download, so strip the quarantine flag on install
     # or launch dies with "koc cannot be verified".
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr",
-              args: ["-dr", "com.apple.quarantine", "#{staged_path}/koc"]
-          end
+    #
+    # This is a raw `custom_block` rather than GoReleaser's `hooks.post.install`
+    # because that hook is emitted as Homebrew's `postflight do … end`, which
+    # Homebrew 7.0 deprecated in favour of the declarative `postflight_steps`:
+    # every `brew` command touching the cask printed
+    #   Warning: Calling `postflight` is deprecated! Use `postflight_steps` instead.
+    # and Homebrew deprecations turn into errors a few releases later. GoReleaser
+    # cannot emit the `*_steps` stanzas yet (goreleaser/goreleaser#6870, PR #6873,
+    # milestone v2.19.0) — when that lands, move this back to
+    # `hooks.post.install_steps` and delete the block.
+    #
+    # Three things about the form below:
+    #   - `custom_block` is injected right after `cask "koc" do`, so the stanza
+    #     order in the generated file is unconventional. It is still correct:
+    #     Homebrew orders artifacts by class (Binary, then PostflightSteps — see
+    #     Cask::Artifact::AbstractArtifact.sort_order), never by file position,
+    #     so this runs after the binary is staged and linked.
+    #   - `{{ "{{staged_path}}" }}` renders as the literal `{{staged_path}}`.
+    #     GoReleaser runs the whole generated cask through its template engine as
+    #     a final pass, so the Homebrew token has to survive it escaped; Homebrew
+    #     expands it in step args at install time (the steps DSL has no Ruby
+    #     interpolation — that was the point of deprecating `postflight`).
+    #   - `run` is the steps DSL's escape hatch for a command; the sandbox it
+    #     runs under already grants write access to the caskroom, which is where
+    #     `staged_path` lives, so no `writable_paths` is needed.
+    #
+    # This requires Homebrew >= 7.0: an older client raises on the unknown
+    # stanza rather than warning. `brew install` auto-updates first, so in
+    # practice only HOMEBREW_NO_AUTO_UPDATE=1 users can hit that.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/koc"]
+        end
+      end
