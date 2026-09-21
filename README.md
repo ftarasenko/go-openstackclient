@@ -54,7 +54,10 @@ brew install ftarasenko/tap/koc
 
 No `--cask` flag is needed — nothing else in the tap shares the name. The binary
 is unsigned, so the cask strips the macOS quarantine flag on install; on Apple
-Silicon Go already ad-hoc-signs the binary so it runs.
+Silicon Go already ad-hoc-signs the binary so it runs. That step is written with
+Homebrew's `postflight_steps` stanza, so the cask needs **Homebrew 7.0 or
+newer** — `brew install` auto-updates itself before it reads the cask, so only
+`HOMEBREW_NO_AUTO_UPDATE=1` users have to update by hand first.
 
 ### Shell completion
 

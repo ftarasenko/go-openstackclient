@@ -540,6 +540,24 @@ completions`**, run in its own secret-free step before GoReleaser. Locally, run
 `make completions` before `goreleaser release`/`build` or the archives will be
 missing `completions/`.
 
+**The cask's quarantine step is a `custom_block`, not a GoReleaser hook.** The
+binary is unsigned, so the cask has to strip `com.apple.quarantine` from the
+staged `koc` or macOS refuses to launch it. GoReleaser emits
+`homebrew_casks.hooks.post.install` as Homebrew's `postflight do … end`, which
+Homebrew 7.0 deprecated in favour of the declarative `postflight_steps` — every
+`brew` command touching the cask printed a deprecation warning, and Homebrew
+deprecations become errors a few releases later. GoReleaser cannot emit the
+`*_steps` stanzas yet (goreleaser/goreleaser#6870, PR #6873, milestone v2.19.0),
+so `.goreleaser.yaml` writes the stanza itself through `custom_block`. Three
+things to keep in mind when touching it, all spelled out next to the block: the
+Homebrew path token has to be escaped as `{{ "{{staged_path}}" }}` because
+GoReleaser runs the whole generated cask through its own template engine as a
+final pass; `custom_block` lands right after `cask "koc" do`, which is fine
+because Homebrew orders artifacts by class rather than by file position; and the
+cask now requires Homebrew >= 7.0, since an older client raises on the unknown
+stanza instead of warning. When GoReleaser ships `hooks.post.install_steps`,
+move back to it and delete the block.
+
 **Builds are byte-reproducible, and it takes more than one setting.** `builds:
 mod_timestamp: {{ .CommitTimestamp }}` fixes the binary, but a tar/zip records
 every *member's* mtime, so `LICENSE`, `README.md` and the generated completions
