@@ -205,36 +205,51 @@ homebrew_casks:
     #
     # This is a raw `custom_block` rather than GoReleaser's `hooks.post.install`
     # because that hook is emitted as Homebrew's `postflight do … end`, which
-    # Homebrew 7.0 deprecated in favour of the declarative `postflight_steps`:
+    # Homebrew 6.0.16 deprecated in favour of the declarative `postflight_steps`:
     # every `brew` command touching the cask printed
     #   Warning: Calling `postflight` is deprecated! Use `postflight_steps` instead.
     # and Homebrew deprecations turn into errors a few releases later. GoReleaser
     # cannot emit the `*_steps` stanzas yet (goreleaser/goreleaser#6870, PR #6873,
-    # milestone v2.19.0) — when that lands, move this back to
-    # `hooks.post.install_steps` and delete the block.
+    # milestone v2.19.0) and has no way to emit both spellings, so the cask picks
+    # one at load time and stays installable on every Homebrew that ever shipped
+    # this cask. When GoReleaser grows `hooks.post.install_steps` it still cannot
+    # express the fallback, so this block outlives that.
     #
-    # Three things about the form below:
+    # Four things about the form below:
+    #   - The probe is the *steps DSL*, not `respond_to?(:postflight_steps)`. The
+    #     stanza landed in Homebrew 6.0.0 but the `run`/`on_macos` steps it needs
+    #     only arrived in 6.0.13, so the obvious probe would pick the new branch
+    #     on 6.0.0–6.0.12 and then die inside the block.
+    #   - `{{ "{{staged_path}}" }}` renders as the literal `{{staged_path}}`.
+    #     GoReleaser runs the whole generated cask through its template engine as
+    #     a final pass, so the Homebrew token has to survive it escaped; Homebrew
+    #     expands it in step args at install time. The steps DSL has no Ruby
+    #     interpolation — that was the point of deprecating `postflight` — which
+    #     is why the two branches spell the same path differently.
+    #   - `run` is the steps DSL's escape hatch for a command; the sandbox it
+    #     runs under already grants write access to the caskroom, which is where
+    #     `staged_path` lives, so no `writable_paths` is needed.
     #   - `custom_block` is injected right after `cask "koc" do`, so the stanza
     #     order in the generated file is unconventional. It is still correct:
     #     Homebrew orders artifacts by class (Binary, then PostflightSteps — see
     #     Cask::Artifact::AbstractArtifact.sort_order), never by file position,
     #     so this runs after the binary is staged and linked.
-    #   - `{{ "{{staged_path}}" }}` renders as the literal `{{staged_path}}`.
-    #     GoReleaser runs the whole generated cask through its template engine as
-    #     a final pass, so the Homebrew token has to survive it escaped; Homebrew
-    #     expands it in step args at install time (the steps DSL has no Ruby
-    #     interpolation — that was the point of deprecating `postflight`).
-    #   - `run` is the steps DSL's escape hatch for a command; the sandbox it
-    #     runs under already grants write access to the caskroom, which is where
-    #     `staged_path` lives, so no `writable_paths` is needed.
-    #
-    # This requires Homebrew >= 7.0: an older client raises on the unknown
-    # stanza rather than warning. `brew install` auto-updates first, so in
-    # practice only HOMEBREW_NO_AUTO_UPDATE=1 users can hit that.
     custom_block: |
-      postflight_steps do
-        on_macos do
-          run "/usr/bin/xattr",
-              args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/koc"]
+      # Homebrew >= 6.0.13 takes the declarative steps; older clients keep the
+      # `postflight` block, which is only deprecated from 6.0.16 on.
+      steps_dsl = defined?(Homebrew::InstallSteps::DSL) && Homebrew::InstallSteps::DSL
+      if steps_dsl && steps_dsl.method_defined?(:run) && steps_dsl.method_defined?(:on_macos)
+        postflight_steps do
+          on_macos do
+            run "/usr/bin/xattr",
+                args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/koc"]
+          end
+        end
+      else
+        postflight do
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "#{staged_path}/koc"]
+          end
         end
       end
