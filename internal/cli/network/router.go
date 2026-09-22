@@ -9,9 +9,11 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -46,8 +48,26 @@ func routerShowFields(r *routers.Router) ([]string, []any) {
 	return fields, values
 }
 
+// routerListFlags holds the filters accepted by "router list". Upstream OSC's
+// parser (network/v2/router.py ListRouter) is the reference; --all-projects is
+// the one koc-native addition — see allProjectsNetworkList.
+type routerListFlags struct {
+	name          string
+	project       string
+	projectDomain string
+	enable        bool
+	disable       bool
+	tags          []string
+	anyTags       []string
+	notTags       []string
+	notAnyTags    []string
+	allProjects   bool
+
+	adminStateUp *bool
+}
+
 func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var name string
+	f := &routerListFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List routers",
@@ -56,20 +76,60 @@ func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			fl := cmd.Flags()
+			if err := mutuallyExclusive(fl, "enable", "disable"); err != nil {
+				return err
+			}
+			f.adminStateUp = enableDisable(fl, f.enable, f.disable)
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runRouterList(ctx, client, o, name, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, f.project, f.projectDomain)
+			if err != nil {
+				return err
+			}
+			return runRouterList(ctx, client, o, f, projectID, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "filter routers by name")
+	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "list only routers with this name")
+	fl.StringVar(&f.project, "project", "", "list only routers owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.BoolVar(&f.enable, "enable", false, "list only enabled routers (admin state up)")
+	fl.BoolVar(&f.disable, "disable", false, "list only disabled routers (admin state down)")
+	fl.StringSliceVar(&f.tags, "tags", nil, "list only routers with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only routers with any of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude routers with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude routers with any of these tags (comma-separated)")
+	allprojects.Bind(cmd, &f.allProjects, allProjectsNetworkList)
+	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
 	return cmd
 }
 
-func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	pages, err := routers.List(client, routers.ListOpts{Name: name}).AllPages(ctx)
+// allProjectsNetworkList is the --all-projects help text for the neutron list
+// verbs whose table already carries the Project column. As with port list
+// (allProjectsPortList), neutron has no cross-project switch — an admin token
+// already lists every project's resources — so the flag changes nothing on the
+// wire. It is accepted so a script that reaches for it is not rejected with a
+// usage error, which is exactly how a missing filter used to go unnoticed.
+const allProjectsNetworkList = "list across all projects (admin); an admin token already sees them all, " +
+	"so this is accepted for compatibility and changes nothing"
+
+func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *routerListFlags, projectID string, w io.Writer,
+) error {
+	opts := routers.ListOpts{
+		Name:         f.name,
+		ProjectID:    projectID,
+		AdminStateUp: f.adminStateUp,
+		Tags:         strings.Join(f.tags, ","),
+		TagsAny:      strings.Join(f.anyTags, ","),
+		NotTags:      strings.Join(f.notTags, ","),
+		NotTagsAny:   strings.Join(f.notAnyTags, ","),
+	}
+	pages, err := routers.List(client, opts).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing routers: %w", err)
 	}
@@ -113,8 +173,48 @@ func runRouterShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("getting router %s: %w", nameOrID, err)
 	}
+	interfaces, err := routerInterfaces(ctx, client, r.ID)
+	if err != nil {
+		return err
+	}
 	fields, values := routerShowFields(r)
+	fields = append(fields, "interfaces_info")
+	values = append(values, interfaces)
 	return o.WriteSingle(w, fields, values)
+}
+
+// routerInterface is one entry of router show's interfaces_info: a single fixed
+// IP of one of the router's internal ports. The field order matches upstream's
+// dict, so the rendered JSON is byte-identical to `openstack router show`.
+type routerInterface struct {
+	PortID    string `json:"port_id"`
+	IPAddress string `json:"ip_address"`
+	SubnetID  string `json:"subnet_id"`
+}
+
+// routerInterfaces derives interfaces_info the way upstream OSC's ShowRouter
+// does: neutron's router body carries no interface list, so the router's ports
+// are listed by device_id and every fixed IP of each non-gateway port becomes an
+// entry. It is one extra GET, which is what `router show` costs upstream too.
+func routerInterfaces(ctx context.Context, client *gophercloud.ServiceClient, routerID string) ([]routerInterface, error) {
+	pages, err := ports.List(client, ports.ListOpts{DeviceID: routerID}).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing ports of router %s: %w", routerID, err)
+	}
+	all, err := ports.ExtractPorts(pages)
+	if err != nil {
+		return nil, fmt.Errorf("parsing ports of router %s: %w", routerID, err)
+	}
+	out := make([]routerInterface, 0, len(all))
+	for _, p := range all {
+		if p.DeviceOwner == "network:router_gateway" {
+			continue
+		}
+		for _, ip := range p.FixedIPs {
+			out = append(out, routerInterface{PortID: p.ID, IPAddress: ip.IPAddress, SubnetID: ip.SubnetID})
+		}
+	}
+	return out, nil
 }
 
 type routerCreateFlags struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -39,7 +40,24 @@ func secGroupShowFields(g *groups.SecGroup) ([]string, []any) {
 	return fields, values
 }
 
+// secGroupListFlags holds the filters accepted by "security group list".
+// Upstream OSC (network/v2/security_group.py ListSecurityGroup) takes --project,
+// --project-domain and the tag filters; --name and --all-projects are
+// koc-native additions (see allProjectsNetworkList for the latter). --name is a
+// plain neutron query filter, so it is exact-match and server-side.
+type secGroupListFlags struct {
+	name          string
+	project       string
+	projectDomain string
+	tags          []string
+	anyTags       []string
+	notTags       []string
+	notAnyTags    []string
+	allProjects   bool
+}
+
 func newSecurityGroupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &secGroupListFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List security groups",
@@ -49,18 +67,42 @@ func newSecurityGroupListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runSecurityGroupList(ctx, client, o, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, f.project, f.projectDomain)
+			if err != nil {
+				return err
+			}
+			return runSecurityGroupList(ctx, client, o, f, projectID, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "list only security groups with this name")
+	fl.StringVar(&f.project, "project", "", "list only security groups owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringSliceVar(&f.tags, "tags", nil, "list only security groups with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only security groups with any of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude security groups with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude security groups with any of these tags (comma-separated)")
+	allprojects.Bind(cmd, &f.allProjects, allProjectsNetworkList)
+	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
 	return cmd
 }
 
-func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := groups.List(client, groups.ListOpts{}).AllPages(ctx)
+func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *secGroupListFlags, projectID string, w io.Writer,
+) error {
+	opts := groups.ListOpts{
+		Name:       f.name,
+		ProjectID:  projectID,
+		Tags:       strings.Join(f.tags, ","),
+		TagsAny:    strings.Join(f.anyTags, ","),
+		NotTags:    strings.Join(f.notTags, ","),
+		NotTagsAny: strings.Join(f.notAnyTags, ","),
+	}
+	pages, err := groups.List(client, opts).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing security groups: %w", err)
 	}
@@ -68,9 +110,9 @@ func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return fmt.Errorf("parsing security group list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Description", "Project"}, Rows: make([][]any, 0, len(all))}
+	t := output.Table{Columns: []string{"ID", "Name", "Description", "Project", "Tags"}, Rows: make([][]any, 0, len(all))}
 	for _, g := range all {
-		t.Rows = append(t.Rows, []any{g.ID, g.Name, g.Description, g.ProjectID})
+		t.Rows = append(t.Rows, []any{g.ID, g.Name, g.Description, g.ProjectID, g.Tags})
 	}
 	return o.WriteList(w, t)
 }
