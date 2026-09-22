@@ -69,7 +69,8 @@ list` was counted from the start, but only carried 4 of upstream's 17 filters
 until `055dc95`, and `subnet list` was counted while accepting no filters at all
 until the history-parity pass. `router list` accepted only `--name`, and
 `security group list` no filter at all, until the network filter-parity pass;
-and `router show` lacked upstream's `interfaces_info` until the same pass. `image list` was counted while rejecting `--all`,
+`router show` lacked upstream's `interfaces_info` and `server delete` lacked
+`--wait`/`--force` until the same pass. `image list` was counted while rejecting `--all`,
 and every designate verb was counted while only some of them accepted
 `--all-projects`, until the cross-project/name pass. When auditing a noun, diff
 its flags against the upstream parser, not just its presence in these tables.

@@ -912,8 +912,17 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	return o.WriteSingle(w, fields, values)
 }
 
+// serverDeleteFlags holds the options of "server delete". Names follow
+// upstream OSC's DeleteServer parser (compute/v2/server.py).
+type serverDeleteFlags struct {
+	allProjects bool
+	force       bool
+	wait        bool
+	waitTimeout time.Duration
+}
+
 func newServerDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var allProjects bool
+	f := &serverDeleteFlags{}
 	cmd := &cobra.Command{
 		Use:   "delete <server> [<server> ...]",
 		Short: "Delete one or more servers",
@@ -927,30 +936,64 @@ func newServerDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runServerDelete(ctx, client, args, cmd.OutOrStdout())
+			return runServerDelete(ctx, client, args, f, cmd.OutOrStdout())
 		},
 	}
-	allprojects.Bind(cmd, &allProjects, allProjectsAlwaysOn)
+	fl := cmd.Flags()
+	fl.BoolVar(&f.force, "force", false, "force-delete the server(s), bypassing nova's soft-delete reclaim window")
+	fl.BoolVar(&f.wait, "wait", false, "wait until each server is gone before returning")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, statusPollTimeout, helpWaitTimeout+" (per server)")
+	allprojects.Bind(cmd, &f.allProjects, allProjectsAlwaysOn)
 	return cmd
 }
 
-func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
+// runServerDelete deletes every ref and, with --wait, then follows each one
+// until nova stops returning it. The two phases are separate on purpose, as
+// upstream's are: nova tears the servers down concurrently, so issuing every
+// DELETE before polling any of them makes the wait roughly as long as the
+// slowest server instead of the sum of all of them.
+func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, f *serverDeleteFlags, w io.Writer) error {
+	type accepted struct{ ref, id string }
+	var pending []accepted
 	// Attempt every ref; batchdelete.Each collects failures so one bad server
 	// does not prevent the rest from being deleted, then reports all of them
 	// together.
-	return batchdelete.Each(refs, func(ref string) error {
+	err := batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveServerID(ctx, client, ref)
 		if err != nil {
 			return err
 		}
-		if err := servers.Delete(ctx, client, id).ExtractErr(); err != nil {
+		if err := deleteServer(ctx, client, id, f.force); err != nil {
 			return fmt.Errorf("deleting server %q: %w", ref, err)
 		}
-		if _, err := fmt.Fprintf(w, "Deleted server %s\n", ref); err != nil {
+		if f.wait {
+			pending = append(pending, accepted{ref: ref, id: id})
+			return nil
+		}
+		_, err = fmt.Fprintf(w, "Deleted server %s\n", ref)
+		return err
+	})
+	errs := []error{err}
+	for _, p := range pending {
+		if err := waitForServerDeleted(ctx, client, p.id, f.waitTimeout); err != nil {
+			errs = append(errs, fmt.Errorf("waiting for server %q to delete: %w", p.ref, err))
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "Deleted server %s\n", p.ref); err != nil {
 			return err
 		}
-		return nil
-	})
+	}
+	return errors.Join(errs...)
+}
+
+// deleteServer issues nova's delete, or its forceDelete action for --force. The
+// action is what upstream sends too: it is the only route past a
+// reclaim_instance_interval soft delete.
+func deleteServer(ctx context.Context, client *gophercloud.ServiceClient, id string, force bool) error {
+	if force {
+		return servers.ForceDelete(ctx, client, id).ExtractErr()
+	}
+	return servers.Delete(ctx, client, id).ExtractErr()
 }
 
 // serverSetFlags holds the mutable attributes accepted by "server set".
