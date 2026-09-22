@@ -543,6 +543,39 @@ Nova is the exception worth knowing: `server list --name` is a server-side
 `volume list`, `network list`, `port list` and `subnet list` are exact-match with
 no `--name-contains` yet — pipe through `grep` there.
 
+### User data (`--user-data`)
+
+`koc server create --user-data <file>` injects a cloud-init payload. The
+**file's bytes are the payload**: koc base64-encodes them for nova and does not
+inspect or transform the content, matching `openstack`. A path is the only
+accepted form — `-` is a filename, not stdin. `koc server show <server>
+--user-data` prints the payload back, decoded.
+
+> **Releases v0.28.0 through v0.32.1 can corrupt the payload.** Those versions
+> left the encoding to the SDK, which sent the file unencoded whenever its bytes
+> happened to parse as base64 — a file with no `#`, `:`, `-`, `=` or space whose
+> length is a multiple of four (`runcmd\nls\n`, `hostname\n`) would take that
+> branch. Nova accepts it, so nothing fails: the instance boots ACTIVE having
+> run whatever the payload decoded to. On those versions, encode the file
+> yourself and pass the encoded text, which the affected code passes through
+> unchanged:
+>
+> ```sh
+> base64 -w0 cloud-init.yaml > cloud-init.b64      # a file
+> printf '%s' "$USER_DATA" | base64 -w0 > cloud-init.b64   # a shell variable
+> koc server create --user-data cloud-init.b64 …   # v0.28.0 - v0.32.1 only
+> ```
+>
+> `base64 -w0` matters: without it GNU coreutils wraps at 76 columns, and while
+> both nova and the affected code tolerate the newlines, the unwrapped form is
+> what the encoded file is meant to be. On macOS the flag is `-b0`, or pipe
+> through `tr -d '\n'`.
+>
+> **Remove the workaround when you upgrade.** From v0.33.0 the file is encoded
+> unconditionally, so a pre-encoded file is encoded a second time and the guest
+> receives the base64 text instead of the payload. After upgrading, pass the
+> plain file.
+
 ### Microversions
 
 Each service client sets its own microversion; defaults negotiate the latest the

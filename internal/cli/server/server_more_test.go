@@ -265,7 +265,7 @@ func TestRunServerCreate_RequestBodyAndOutput(t *testing.T) {
 	f := &serverCreateFlags{image: "img-uuid", flavor: "m1.small"}
 
 	var buf bytes.Buffer
-	if err := runServerCreate(context.Background(), client, o, "web-3", f, &buf); err != nil {
+	if err := runServerCreate(context.Background(), client, o, "web-3", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -294,7 +294,7 @@ func TestRunServerCreate_FlavorRequired(t *testing.T) {
 	client := computeClient(fakeServer, "2.79")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	err := runServerCreate(context.Background(), client, o, "web-3", &serverCreateFlags{}, &buf)
+	err := runServerCreate(context.Background(), client, o, "web-3", &serverCreateFlags{}, &buf, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--flavor is required") {
 		t.Fatalf("err = %v, want --flavor is required", err)
 	}
@@ -338,7 +338,7 @@ func TestRunServerCreate_BootFromVolume(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runServerCreate(context.Background(), client, o, "koc", f, &buf); err != nil {
+	if err := runServerCreate(context.Background(), client, o, "koc", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 	if v, ok := gotServer["imageRef"]; ok && v != "" {
@@ -382,7 +382,7 @@ func TestRunServerCreate_BootFromVolumeValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			err := runServerCreate(context.Background(), nil, o, "koc", tc.f, &buf)
+			err := runServerCreate(context.Background(), nil, o, "koc", tc.f, &buf, io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want containing %q", err, tc.want)
 			}
