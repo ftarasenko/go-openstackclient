@@ -129,7 +129,7 @@ type completedPart struct {
 func (c *Client) createMultipartUpload(ctx context.Context, bucket, key, contentType string) (string, error) {
 	hdr := map[string]string{}
 	if contentType != "" {
-		hdr["Content-Type"] = contentType
+		hdr[hdrContentType] = contentType
 	}
 
 	var result struct {
@@ -319,7 +319,7 @@ func (c *Client) completeMultipartUpload(ctx context.Context, bucket, key, uploa
 		body:        bytes.NewReader(body),
 		payloadHash: hexSHA256(body),
 		size:        int64(len(body)),
-		header:      map[string]string{"Content-Type": "application/xml"},
+		header:      map[string]string{hdrContentType: "application/xml"},
 	}
 	// A completion can fail *inside* a 200 response: S3 keeps the connection
 	// open while it assembles the object and then writes an <Error> document.

@@ -26,7 +26,7 @@ func (c *Client) CopyObject(ctx context.Context, src, dst ObjectRef, versionID, 
 
 	hdr := map[string]string{"x-amz-copy-source": uriEncode(source, true)}
 	if contentType != "" {
-		hdr["Content-Type"] = contentType
+		hdr[hdrContentType] = contentType
 		// Without this S3 keeps the source's metadata and ignores the header.
 		hdr["x-amz-metadata-directive"] = "REPLACE"
 	}

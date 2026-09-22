@@ -286,7 +286,7 @@ func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.private, "private", false, "flavor is available only to the projects granted access")
 	fl.StringArrayVar(&f.properties, "property", nil, "property to set on the new flavor, as key=value (repeatable)")
 	fl.StringVar(&f.project, "project", "", "grant this project access to the new flavor (name or ID; requires --private)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", helpProjectDomain)
 	fl.StringVar(&f.description, "description", "", "flavor description (nova "+flavorDescriptionMicroversion+"+)")
 	cmd.MarkFlagsMutuallyExclusive("public", "private")
 	return cmd
@@ -465,7 +465,7 @@ func newFlavorSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.properties, "property", nil, "property to add or change, as key=value (repeatable)")
 	fl.BoolVar(&f.noProperty, "no-property", false, "remove all properties from the flavor; with --property, replace them")
 	fl.StringVar(&f.project, "project", "", "grant this project access to the flavor (name or ID; private flavors only, admin)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", helpProjectDomain)
 	fl.StringVar(&f.description, "description", "", "new flavor description; empty clears it (nova "+flavorDescriptionMicroversion+"+)")
 	return cmd
 }
@@ -610,7 +610,7 @@ func newFlavorUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringArrayVar(&f.properties, "property", nil, "property to remove, as key (repeatable)")
 	fl.StringVar(&f.project, "project", "", "revoke this project's access to the flavor (name or ID; private flavors only, admin)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 

@@ -69,7 +69,7 @@ func (c *Client) SetBucketVersioning(ctx context.Context, bucket, status string)
 		payloadHash: hexSHA256(body),
 		size:        int64(len(body)),
 		header: map[string]string{
-			"Content-Type": "application/xml",
+			hdrContentType: "application/xml",
 			"Content-MD5":  contentMD5(body),
 		},
 	}, drainBody)

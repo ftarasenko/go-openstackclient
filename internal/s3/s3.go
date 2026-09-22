@@ -46,6 +46,10 @@ const maxKeysPerPage = 1000
 // answering, and reading it all would be the bug.
 const errorBodyLimit = 64 << 10
 
+// hdrContentType is set on upload and copy and read back on head/get, in five
+// files; naming it keeps the spelling identical everywhere.
+const hdrContentType = "Content-Type"
+
 // Config holds S3 connection and credential settings.
 type Config struct {
 	// Endpoint is the S3 API base URL. A bare host ("s3.example.com") is taken
@@ -330,7 +334,7 @@ func (c *Client) CreateBucket(ctx context.Context, bucket string) error {
 		req.body = bytes.NewReader(body)
 		req.payloadHash = hexSHA256(body)
 		req.size = int64(len(body))
-		req.header = map[string]string{"Content-Type": "application/xml"}
+		req.header = map[string]string{hdrContentType: "application/xml"}
 	}
 
 	return c.do(ctx, req, drainBody)
@@ -536,7 +540,7 @@ func (c *Client) PutObject(ctx context.Context, bucket, key string, body io.Read
 	}
 	hdr := map[string]string{}
 	if contentType != "" {
-		hdr["Content-Type"] = contentType
+		hdr[hdrContentType] = contentType
 	}
 
 	var info *ObjectInfo
@@ -591,7 +595,7 @@ func objectInfoFromHeader(bucket, key string, resp *http.Response) *ObjectInfo {
 		Key:         key,
 		Size:        resp.ContentLength,
 		ETag:        strings.Trim(resp.Header.Get("ETag"), `"`),
-		ContentType: resp.Header.Get("Content-Type"),
+		ContentType: resp.Header.Get(hdrContentType),
 	}
 	if v := resp.Header.Get("Content-Length"); v != "" && info.Size < 0 {
 		// A HEAD response has no body, so Go may report ContentLength as -1

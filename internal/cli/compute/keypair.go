@@ -83,7 +83,7 @@ func newKeypairListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.user, "user", "", "list keypairs owned by this user (name or ID; nova >= 2.10, admin)")
 	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
 	fl.StringVar(&f.project, "project", "", "list keypairs of every user with a role on this project (name or ID, admin)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", helpProjectDomain)
 	return cmd
 }
 

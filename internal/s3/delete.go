@@ -92,7 +92,7 @@ func (c *Client) DeleteObjects(ctx context.Context, bucket string, targets []Del
 		payloadHash: hexSHA256(body),
 		size:        int64(len(body)),
 		header: map[string]string{
-			"Content-Type": "application/xml",
+			hdrContentType: "application/xml",
 			// AWS refuses a batch delete without it; see contentMD5.
 			"Content-MD5": contentMD5(body),
 		},

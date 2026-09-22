@@ -21,6 +21,9 @@ import (
 // endpoints record every user-visible action taken on a server (create, reboot,
 // resize, …) and — per request — the individual events that made up the action.
 
+// instanceActionsPath is the nova subresource all three raw calls below address.
+const instanceActionsPath = "os-instance-actions"
+
 // instanceAction is one entry from GET /servers/{id}/os-instance-actions.
 // updated_at appears at nova microversion 2.58.
 type instanceAction struct {
@@ -103,7 +106,7 @@ func runServerEventList(ctx context.Context, client *gophercloud.ServiceClient, 
 	if f.limit > 0 {
 		vals.Set("limit", fmt.Sprintf("%d", f.limit))
 	}
-	u := client.ServiceURL("servers", id, "os-instance-actions")
+	u := client.ServiceURL("servers", id, instanceActionsPath)
 	if q := vals.Encode(); q != "" {
 		u += "?" + q
 	}
@@ -162,7 +165,7 @@ func fetchEventResults(ctx context.Context, client *gophercloud.ServiceClient,
 				Events []actionEvent `json:"events"`
 			} `json:"instanceAction"`
 		}
-		u := client.ServiceURL("servers", serverID, "os-instance-actions", a.RequestID)
+		u := client.ServiceURL("servers", serverID, instanceActionsPath, a.RequestID)
 		r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
 		if r != nil {
 			_ = r.Body.Close()
@@ -261,7 +264,7 @@ func runServerEventShow(ctx context.Context, client *gophercloud.ServiceClient, 
 	var resp struct {
 		InstanceAction map[string]any `json:"instanceAction"`
 	}
-	u := client.ServiceURL("servers", id, "os-instance-actions", requestID)
+	u := client.ServiceURL("servers", id, instanceActionsPath, requestID)
 	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
 	if r != nil {
 		_ = r.Body.Close()
