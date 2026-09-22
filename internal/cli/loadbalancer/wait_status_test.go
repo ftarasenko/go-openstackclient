@@ -44,6 +44,15 @@ func TestGetStatus(t *testing.T) {
 			wantGone: true,
 		},
 		{
+			// A transport error carries the request URL, and an httptest server's
+			// random port can contain those digits. Reading it as "gone" made the
+			// create wait report a load balancer that had disappeared, and would
+			// make the delete wait report success while the teardown ran on.
+			name:    "a transport error whose URL contains 404 is not a 404",
+			err:     errors.New(`Get "http://127.0.0.1:40404/v2.0/lbaas/loadbalancers/lb-1": context deadline exceeded`),
+			wantErr: errors.New(`Get "http://127.0.0.1:40404/v2.0/lbaas/loadbalancers/lb-1": context deadline exceeded`),
+		},
+		{
 			name:    "a 500 is a real error",
 			err:     gophercloud.ErrUnexpectedResponseCode{Actual: 500},
 			wantErr: gophercloud.ErrUnexpectedResponseCode{Actual: 500},

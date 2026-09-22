@@ -151,5 +151,11 @@ func isNotFound(err error) bool {
 	if errors.As(err, &notFound) {
 		return notFound.Actual == 404
 	}
-	return strings.Contains(err.Error(), "404")
+	// The text fallback covers a 404 a transport wrapped out of its type, and it
+	// matches gophercloud's phrasing rather than the bare digits: an error
+	// carries the request URL, so "404" alone also matches a port or an ID that
+	// happens to contain it ("…:40404/v2.0/lbaas/loadbalancers/…"). That read a
+	// timed-out poll as a deleted load balancer — harmless on the create path,
+	// but on the delete path it reports success for a teardown still running.
+	return strings.Contains(err.Error(), "got 404")
 }

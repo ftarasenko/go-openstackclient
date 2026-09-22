@@ -458,7 +458,7 @@ func TestRunLBCreate_WaitTimeoutStillRendersTheLoadBalancer(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	defer func(prev time.Duration) { provisioningPollInterval = prev }(provisioningPollInterval)
-	provisioningPollInterval = time.Millisecond
+	provisioningPollInterval = 5 * time.Millisecond
 
 	fakeServer.Mux.HandleFunc("/v2.0/lbaas/loadbalancers/", func(w http.ResponseWriter, _ *http.Request) {
 		// Every poll reports PENDING_CREATE, so the wait can only time out.
@@ -479,7 +479,10 @@ func TestRunLBCreate_WaitTimeoutStillRendersTheLoadBalancer(t *testing.T) {
           "operating_status": "OFFLINE"}}`))
 	})
 
-	f := &lbCreateFlags{wait: true, waitTimeout: 20 * time.Millisecond}
+	// Long enough that at least one poll is guaranteed to complete and record a
+	// status, even on a loaded machine running the whole suite — the assertion
+	// below is about what the error carries, not about how fast it gives up.
+	f := &lbCreateFlags{wait: true, waitTimeout: 500 * time.Millisecond}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	err := runLBCreate(context.Background(), lbClient(fakeServer), o, "web", f,
