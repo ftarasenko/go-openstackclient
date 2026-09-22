@@ -48,7 +48,7 @@ type session struct {
 }
 
 func newSession(ctx context.Context, a *auth.Options) (*session, error) {
-	client, err := a.Authenticate(ctx)
+	client, err := a.NewSession(ctx)
 	if err != nil {
 		return nil, err
 	}

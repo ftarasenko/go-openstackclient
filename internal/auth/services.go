@@ -41,6 +41,18 @@ func (o *Options) authenticated(ctx context.Context) (*Client, error) {
 	return o.authClient, o.authErr
 }
 
+// NewSession authenticates once and hands back the Client itself, for the
+// commands that reach several services and so cannot name one derive function —
+// `limits show` (nova + cinder), `availability zone list` (nova + cinder +
+// neutron), `usage`, `quota`.
+//
+// They used to call Authenticate directly, which skips the memo above: with
+// --watch that is a fresh Keystone token request on every refresh, and it also
+// puts the whole RunE out of reach of SetAuthenticatorForTest.
+func (o *Options) NewSession(ctx context.Context) (*Client, error) {
+	return o.authenticated(ctx)
+}
+
 // NewServiceClient authenticates once (clouds.yaml / OS_* / --creds-from-*) and
 // derives a single service client via derive — one of the Client factory
 // methods below, passed as a method value, e.g.

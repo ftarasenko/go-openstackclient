@@ -34,7 +34,7 @@ func newLimitsShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := a.Authenticate(ctx)
+			client, err := a.NewSession(ctx)
 			if err != nil {
 				return err
 			}
