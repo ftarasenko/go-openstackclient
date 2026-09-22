@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -129,7 +130,7 @@ func TestRunServerCreate_HintsRideBesideTheServerObject(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "db-2", f, &buf); err != nil {
+	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "db-2", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 
@@ -171,7 +172,7 @@ func TestRunServerCreate_MalformedHintFailsBeforeRequest(t *testing.T) {
 	f := &serverCreateFlags{image: "img-uuid", flavor: "m1.small", hints: []string{"group"}}
 	var buf bytes.Buffer
 	err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"),
-		&output.Options{Format: output.FormatTable}, "db-2", f, &buf)
+		&output.Options{Format: output.FormatTable}, "db-2", f, &buf, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--hint") {
 		t.Fatalf("error = %v, want it to name --hint", err)
 	}
@@ -270,7 +271,7 @@ func TestRunServerCreate_ServerGroupResolvesAndWins(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "web-9", f, &buf); err != nil {
+	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "web-9", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 
@@ -317,7 +318,7 @@ func TestRunServerCreate_ServerGroupByIDNeedsNoLookup(t *testing.T) {
 	f := &serverCreateFlags{image: "img-uuid", flavor: "m1.small", serverGroup: serverGroupID}
 	var buf bytes.Buffer
 	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"),
-		&output.Options{Format: output.FormatTable}, "web-9", f, &buf); err != nil {
+		&output.Options{Format: output.FormatTable}, "web-9", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 	if listed {

@@ -641,7 +641,7 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := resolveServerCreateRefs(ctx, s.auth, f); err != nil {
 				return err
 			}
-			return runServerCreate(ctx, s.client, o, args[0], f, cmd.OutOrStdout())
+			return runServerCreate(ctx, s.client, o, args[0], f, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	fl := cmd.Flags()
@@ -756,23 +756,69 @@ func serverCreateBlockDevices(f *serverCreateFlags) []map[string]any {
 	return append(bdms, f.bdmSpecs...)
 }
 
-// readUserData loads the --user-data file. gophercloud base64-encodes the bytes
-// for nova unless they already decode as base64, so a pre-encoded file is
-// passed through rather than double-encoded.
-func readUserData(path string) ([]byte, error) {
+// readUserData loads the --user-data file and returns its bytes base64-encoded,
+// which is the form nova's schema wants ("format": "base64", maxLength 65535 in
+// nova/api/openstack/compute/schemas/servers.py).
+//
+// Encoding here rather than handing gophercloud the raw bytes is deliberate.
+// servers.CreateOpts base64-encodes UserData only when it does not already
+// decode as base64, and Go's decoder ignores newlines, so an ordinary file
+// whose remaining bytes all fall in the base64 alphabet with a length divisible
+// by four ("runcmd\nls\n", "hostname\n") takes the pass-through branch and is
+// sent verbatim. Nova does not catch that either — its base64 format checker is
+// oslo_serialization's b64decode, which discards characters outside the
+// alphabet instead of rejecting them — so the request succeeds and the guest is
+// served the decoded garbage rather than the file. Text that is already valid
+// base64 pins the pass-through branch, so what goes on the wire matches
+// upstream OSC, which encodes unconditionally
+// (openstackclient/compute/v2/server.py).
+//
+// An empty file encodes to "", which the caller reports and drops from the
+// request: upstream's `if user_data:` is false for that value, so OSC leaves
+// the field out entirely.
+func readUserData(path string) (string, error) {
 	//nolint:gosec // G304: operator-supplied user-data path, the point of the flag
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading --user-data %q: %w", path, err)
+		return "", fmt.Errorf("reading --user-data %q: %w", path, err)
 	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("--user-data file %q is empty", path)
-	}
-	return data, nil
+	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *serverCreateFlags, w io.Writer) error {
+// serverCreateUserData resolves --user-data to the base64 payload the request
+// carries, or "" when the flag is unset or names an empty file. An empty file
+// is not an error — it produces the same server upstream OSC would, which drops
+// the field rather than sending it — but it is announced, because a template
+// that rendered to nothing is more often a mistake than an intent.
+func serverCreateUserData(f *serverCreateFlags, warn io.Writer) (string, error) {
+	if f.userData == "" {
+		return "", nil
+	}
+	userData, err := readUserData(f.userData)
+	if err != nil {
+		return "", err
+	}
+	if userData == "" {
+		if _, err := fmt.Fprintf(warn,
+			"warning: --user-data file %q is empty; creating the server without user data\n",
+			f.userData); err != nil {
+			return "", err
+		}
+	}
+	return userData, nil
+}
+
+func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string,
+	f *serverCreateFlags, w, warn io.Writer,
+) error {
 	if err := validateServerCreate(f); err != nil {
+		return err
+	}
+	// The user-data file is read before anything is sent. A bad path is an
+	// operator typo, and reporting it only after the flavor and scheduler-hint
+	// lookups have gone out makes the typo cost two round-trips.
+	userData, err := serverCreateUserData(f, warn)
+	if err != nil {
 		return err
 	}
 	flavorRef, err := resolveFlavorRef(ctx, client, f.flavor)
@@ -802,10 +848,8 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		AvailabilityZone:   f.availabilityZone,
 		HypervisorHostname: f.hypervisorHostname,
 	}
-	if f.userData != "" {
-		if opts.UserData, err = readUserData(f.userData); err != nil {
-			return err
-		}
+	if userData != "" {
+		opts.UserData = []byte(userData)
 	}
 	if f.configDriveSet {
 		cd := f.configDrive
