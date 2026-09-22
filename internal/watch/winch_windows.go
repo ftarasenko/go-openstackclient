@@ -7,5 +7,5 @@ package watch
 // size is measured once per frame (see writerSize), so a resize is still picked
 // up — at the next refresh rather than the instant it happens.
 func winchSignals() (<-chan struct{}, func()) {
-	return nil, func() {}
+	return nil, func() { /* no handler was registered, so nothing to unregister */ }
 }

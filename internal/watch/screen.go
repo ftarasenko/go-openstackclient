@@ -87,7 +87,7 @@ func newScreen(out io.Writer, o Options) *screen {
 // they cannot type into.
 func (s *screen) enter() (func(), error) {
 	if s.plain {
-		return func() {}, nil
+		return func() { /* plain mode never claimed the terminal */ }, nil
 	}
 
 	var restoreRaw func()

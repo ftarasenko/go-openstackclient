@@ -628,7 +628,7 @@ func progressTerminal(w io.Writer) (isTTY bool, width int) {
 // ticker is never started and stop is a no-op beyond clearing.
 func (p *drainProgress) start() (stop func()) {
 	if !p.tty || p.total == 0 {
-		return func() {}
+		return func() { /* no ticker was started, and nothing was painted to clear */ }
 	}
 	done := make(chan struct{})
 	var wg sync.WaitGroup
