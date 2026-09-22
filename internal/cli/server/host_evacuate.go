@@ -75,7 +75,7 @@ microversion 2.68, so it only reaches clouds negotiating 2.29 to 2.67.`),
 			if err != nil {
 				return err
 			}
-			return runHostDrain(ctx, client, o, args[0], &f.hostDrainFlags, mode, cmd.OutOrStdout(), progress)
+			return runHostDrain(ctx, client, o, args[0], &f.hostDrainFlags, mode, drainOutput{table: cmd.OutOrStdout(), progress: progress})
 		},
 	}
 	fl := cmd.Flags()

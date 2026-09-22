@@ -251,7 +251,8 @@ func TestRunPresign(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runPresign(client, valueOpts(), "db-backups", "dump.sql.gz", "", "get", time.Hour, &buf)
+	err := runPresign(client, valueOpts(), "db-backups", "dump.sql.gz",
+		&presignFlags{method: "get", expire: time.Hour}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +268,7 @@ func TestRunPresignPut(t *testing.T) {
 	client := newMockClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	var buf bytes.Buffer
-	if err := runPresign(client, valueOpts(), "b", "k", "", "put", time.Minute, &buf); err != nil {
+	if err := runPresign(client, valueOpts(), "b", "k", &presignFlags{method: "put", expire: time.Minute}, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "put") {
@@ -279,13 +280,14 @@ func TestRunPresignRejectsBadInput(t *testing.T) {
 	client := newMockClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	var buf bytes.Buffer
-	if err := runPresign(client, valueOpts(), "b", "k", "", "delete", time.Hour, &buf); err == nil ||
+	if err := runPresign(client, valueOpts(), "b", "k", &presignFlags{method: "delete", expire: time.Hour}, &buf); err == nil ||
 		!strings.Contains(err.Error(), "get or put") {
 		t.Errorf("err = %v, want it to name the allowed methods", err)
 	}
 	// A version ID addresses an object that exists; presigning an upload to one
 	// is a contradiction.
-	if err := runPresign(client, valueOpts(), "b", "k", "v1", "put", time.Hour, &buf); err == nil {
+	if err := runPresign(client, valueOpts(), "b", "k",
+		&presignFlags{method: "put", expire: time.Hour, versionID: "v1"}, &buf); err == nil {
 		t.Error("--version-id with --method put was accepted")
 	}
 }

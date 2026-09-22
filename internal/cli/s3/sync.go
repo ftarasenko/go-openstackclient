@@ -233,6 +233,16 @@ type syncEntry struct {
 	path string
 }
 
+// syncScan is what the pass over the two sides learned: the destination's
+// index, the source keys that matched something in it, and how many entries the
+// source had at all. --delete is decided from exactly these three, so they
+// travel together.
+type syncScan struct {
+	index  map[string]syncEntry
+	seen   map[string]bool
+	source int
+}
+
 // runSync is the test seam for "sync".
 func runSync(ctx context.Context, client *s3.Client, src, dst syncEndpoint,
 	f *syncFlags, w io.Writer) error {
@@ -251,14 +261,14 @@ func runSync(ctx context.Context, client *s3.Client, src, dst syncEndpoint,
 		return err
 	}
 
-	seen := make(map[string]bool, len(index))
+	scan := syncScan{index: index, seen: make(map[string]bool, len(index))}
 	out := &syncWriter{w: w}
 	p, workCtx := newPool(ctx, f.concurrency)
-	source, transferred := 0, 0
+	transferred := 0
 
 	err = walkEndpoint(ctx, client, src, f, func(e syncEntry) error {
-		source++
-		seen[e.key] = true
+		scan.source++
+		scan.seen[e.key] = true
 		if at, ok := index[e.key]; ok && !f.needsTransfer(e, at) {
 			return nil
 		}
@@ -275,12 +285,12 @@ func runSync(ctx context.Context, client *s3.Client, src, dst syncEndpoint,
 		return fmt.Errorf("syncing %s to %s: %w", src, dst, err)
 	}
 
-	removed, err := syncDelete(ctx, client, dst, index, seen, source, f, out)
+	removed, err := syncDelete(ctx, client, dst, scan, f, out)
 	if err != nil {
 		return err
 	}
 	if transferred == 0 && removed == 0 {
-		_, err = fmt.Fprintf(w, "Already in sync: %s and %s (%d objects)\n", src, dst, source)
+		_, err = fmt.Fprintf(w, "Already in sync: %s and %s (%d objects)\n", src, dst, scan.source)
 		return err
 	}
 	return nil
@@ -472,22 +482,21 @@ func syncCopy(ctx context.Context, client *s3.Client, src, dst syncEndpoint,
 // syncDelete removes the destination entries the source did not have, and
 // reports how many it took.
 func syncDelete(ctx context.Context, client *s3.Client, dst syncEndpoint,
-	index map[string]syncEntry, seen map[string]bool, source int,
-	f *syncFlags, w io.Writer) (int, error) {
+	scan syncScan, f *syncFlags, w io.Writer) (int, error) {
 	if !f.del {
 		return 0, nil
 	}
 	// A mistyped source that listed nothing would otherwise erase the
 	// destination, and that is not a mistake anyone recovers from by re-running
 	// the command.
-	if source == 0 && !f.force {
+	if scan.source == 0 && !f.force {
 		return 0, fmt.Errorf("the source is empty, so --delete would remove all %d "+
-			"entries under %s; pass --force if that is what you meant", len(index), dst)
+			"entries under %s; pass --force if that is what you meant", len(scan.index), dst)
 	}
 
-	extra := make([]string, 0, len(index))
-	for key := range index {
-		if !seen[key] {
+	extra := make([]string, 0, len(scan.index))
+	for key := range scan.index {
+		if !scan.seen[key] {
 			extra = append(extra, key)
 		}
 	}
@@ -498,7 +507,7 @@ func syncDelete(ctx context.Context, client *s3.Client, dst syncEndpoint,
 	}
 
 	if dst.isLocal() {
-		return len(extra), deleteLocalExtras(index, extra, f, w)
+		return len(extra), deleteLocalExtras(scan.index, extra, f, w)
 	}
 	return len(extra), deleteRemoteExtras(ctx, client, dst, extra, f, w)
 }

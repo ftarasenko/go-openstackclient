@@ -135,7 +135,7 @@ func TestDrainRefusesDeadHost(t *testing.T) {
 			o := &output.Options{Format: output.FormatTable}
 			var out, progress bytes.Buffer
 			err = runHostDrain(context.Background(), client, o, "cmp-1", &f.hostDrainFlags,
-				mode, &out, &progress)
+				mode, drainOutput{table: &out, progress: &progress})
 			if err == nil {
 				t.Fatal("draining a host nova reports down must be refused")
 			}
@@ -169,7 +169,7 @@ func TestLiveDrainBody(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var out, progress bytes.Buffer
 	if err := runHostDrain(context.Background(), client, o, "cmp-1", &f.hostDrainFlags,
-		mode, &out, &progress); err != nil {
+		mode, drainOutput{table: &out, progress: &progress}); err != nil {
 		t.Fatalf("runHostDrain: %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestDrainTargetHost(t *testing.T) {
 			o := &output.Options{Format: output.FormatTable}
 			var out, progress bytes.Buffer
 			if err := runHostDrain(context.Background(), client, o, "cmp-1", &f.hostDrainFlags,
-				mode, &out, &progress); err != nil {
+				mode, drainOutput{table: &out, progress: &progress}); err != nil {
 				t.Fatalf("runHostDrain: %v", err)
 			}
 			body, ok := rec.body(idWeb1)[tc.action].(map[string]any)
@@ -304,7 +304,7 @@ func runCold(t *testing.T, fx *coldFixture, f *hostDrainVerbFlags) (out, progres
 		t.Fatalf("drainModeFor: %v", merr)
 	}
 	o := &output.Options{Format: output.FormatTable}
-	err = runHostDrain(context.Background(), client, o, "cmp-1", &f.hostDrainFlags, mode, &out, &progress)
+	err = runHostDrain(context.Background(), client, o, "cmp-1", &f.hostDrainFlags, mode, drainOutput{table: &out, progress: &progress})
 	return out, progress, err
 }
 

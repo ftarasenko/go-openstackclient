@@ -160,9 +160,18 @@ type drainPlan struct {
 	migrate []int
 }
 
+// drainOutput is where a drain's two streams go: the result table to stdout, so
+// a piped run stays parseable, and the running narration to stderr, so the
+// operator still sees what is moving. They travel together because every step
+// below writes to one or the other.
+type drainOutput struct {
+	table    io.Writer
+	progress io.Writer
+}
+
 // runHostDrain is the engine behind all three verbs.
 func runHostDrain(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	host string, f *hostDrainFlags, mode *drainMode, w, progress io.Writer,
+	host string, f *hostDrainFlags, mode *drainMode, out drainOutput,
 ) error {
 	if mode.precheck != nil {
 		if err := mode.precheck(ctx, client, host); err != nil {
@@ -174,25 +183,25 @@ func runHostDrain(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		return err
 	}
 	if len(list) == 0 {
-		return emptyHostResult(ctx, client, host, o, w, progress)
+		return emptyHostResult(ctx, client, host, o, out)
 	}
 	plan := planDrain(list, f.maxServers, mode)
 
 	if f.dryRun {
-		if err := o.WriteList(w, drainTable(plan.results)); err != nil {
+		if err := o.WriteList(out.table, drainTable(plan.results)); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintf(progress, "Dry run: %d of %d servers on host %s would be moved by %s\n",
+		_, err := fmt.Fprintf(out.progress, "Dry run: %d of %d servers on host %s would be moved by %s\n",
 			len(plan.migrate), len(plan.results), host, mode.name)
 		return err
 	}
 
-	pr := newDrainProgress(progress, host, len(plan.migrate))
+	pr := newDrainProgress(out.progress, host, len(plan.migrate))
 	stop := pr.start()
 	runDrain(ctx, client, host, plan, f, mode, pr)
 	stop()
 
-	if err := o.WriteList(w, drainTable(plan.results)); err != nil {
+	if err := o.WriteList(out.table, drainTable(plan.results)); err != nil {
 		return err
 	}
 	return pr.summarize(plan, f, mode, host)
@@ -232,15 +241,15 @@ func hostServers(ctx context.Context, client *gophercloud.ServiceClient, host st
 // never produce — novaclient raises 404 here via its --strict path. So the host
 // is confirmed against os-services before the empty result is accepted.
 func emptyHostResult(ctx context.Context, client *gophercloud.ServiceClient, host string,
-	o *output.Options, w, progress io.Writer,
+	o *output.Options, out drainOutput,
 ) error {
 	if _, found, ok := computeServiceOn(ctx, client, host); ok && !found {
 		return unknownHostError(host)
 	}
-	if err := o.WriteList(w, drainTable(nil)); err != nil {
+	if err := o.WriteList(out.table, drainTable(nil)); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(progress, "Host %s has no servers; nothing to move\n", host)
+	_, err := fmt.Fprintf(out.progress, "Host %s has no servers; nothing to move\n", host)
 	return err
 }
 

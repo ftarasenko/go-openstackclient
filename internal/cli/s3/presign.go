@@ -13,6 +13,13 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/s3"
 )
 
+// presignFlags holds the options accepted by "presign".
+type presignFlags struct {
+	expire    time.Duration
+	method    string
+	versionID string
+}
+
 const presignLong = `Print a URL that reads (or writes) one object, without a key.
 
 The credential moves from the Authorization header into the query string, so the
@@ -41,11 +48,7 @@ const presignExample = `  # A link good for an hour
   koc s3 presign db-backups/incoming.sql.gz --method put --expire 30m`
 
 func newPresignCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
-	var (
-		expire time.Duration
-		method string
-		verID  string
-	)
+	pf := &presignFlags{}
 	cmd := &cobra.Command{
 		Use:     "presign <bucket>/<key>",
 		Short:   "Print a presigned URL for an object",
@@ -65,34 +68,34 @@ func newPresignCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.
 			if err != nil {
 				return err
 			}
-			return runPresign(client, o, bucket, key, verID, method, expire, cmd.OutOrStdout())
+			return runPresign(client, o, bucket, key, pf, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.DurationVar(&expire, "expire", time.Hour, "how long the URL stays valid (maximum 168h)")
-	fl.StringVar(&method, "method", "get", "what the URL does: get or put")
-	fl.StringVar(&verID, "version-id", "", "presign this version of the object instead of the current one")
+	fl.DurationVar(&pf.expire, "expire", time.Hour, "how long the URL stays valid (maximum 168h)")
+	fl.StringVar(&pf.method, "method", "get", "what the URL does: get or put")
+	fl.StringVar(&pf.versionID, "version-id", "", "presign this version of the object instead of the current one")
 	return cmd
 }
 
 // runPresign is the test seam for "presign". It takes no context: presigning
 // makes no request.
-func runPresign(client *s3.Client, o *output.Options, bucket, key, versionID, method string,
-	expire time.Duration, w io.Writer) error {
+func runPresign(client *s3.Client, o *output.Options, bucket, key string,
+	f *presignFlags, w io.Writer) error {
 	var (
 		url string
 		err error
 	)
-	switch method {
+	switch f.method {
 	case "get", "GET":
-		url, err = client.PresignGetObject(bucket, key, versionID, expire)
+		url, err = client.PresignGetObject(bucket, key, f.versionID, f.expire)
 	case "put", "PUT":
-		if versionID != "" {
+		if f.versionID != "" {
 			return errors.New("--version-id addresses an existing object; it cannot be combined with --method put")
 		}
-		url, err = client.PresignPutObject(bucket, key, expire)
+		url, err = client.PresignPutObject(bucket, key, f.expire)
 	default:
-		return fmt.Errorf("--method must be get or put, got %q", method)
+		return fmt.Errorf("--method must be get or put, got %q", f.method)
 	}
 	if err != nil {
 		return fmt.Errorf("presigning %s/%s: %w", bucket, key, err)
@@ -100,5 +103,5 @@ func runPresign(client *s3.Client, o *output.Options, bucket, key, versionID, me
 
 	return o.WriteSingle(w,
 		[]string{"URL", "Method", "Expires"},
-		[]any{url, method, expire.String()})
+		[]any{url, f.method, f.expire.String()})
 }

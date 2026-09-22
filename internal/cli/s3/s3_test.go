@@ -100,7 +100,7 @@ func TestRunObjectShow(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runObjectShow(context.Background(), client, &output.Options{Format: output.FormatJSON},
-		"db-backups", "e2e-mariadb.sql.gz.sha256", "", false, &buf)
+		"db-backups", "e2e-mariadb.sql.gz.sha256", &objectShowFlags{}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestRunObjectShow(t *testing.T) {
 		}
 	}
 
-	err = runObjectShow(context.Background(), client, valueOpts(), "db-backups", "missing", "", false, &buf)
+	err = runObjectShow(context.Background(), client, valueOpts(), "db-backups", "missing", &objectShowFlags{}, &buf)
 	if err == nil || !strings.Contains(err.Error(), `no object "missing" in bucket "db-backups"`) {
 		t.Errorf("err = %v, want a friendly not-found message", err)
 	}

@@ -130,7 +130,7 @@ func TestRunHostDrain(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var out, progress bytes.Buffer
 	mode := liveDrainMode(map[string]any{"block_migration": "auto", "host": nil})
-	if err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, &out, &progress); err != nil {
+	if err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, drainOutput{table: &out, progress: &progress}); err != nil {
 		t.Fatalf("runHostDrain: %v", err)
 	}
 
@@ -175,7 +175,7 @@ func TestRunHostDrain_MaxServers(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var out, progress bytes.Buffer
 	mode := liveDrainMode(map[string]any{})
-	if err := runHostDrain(context.Background(), client, o, "cmp-1", f, mode, &out, &progress); err != nil {
+	if err := runHostDrain(context.Background(), client, o, "cmp-1", f, mode, drainOutput{table: &out, progress: &progress}); err != nil {
 		t.Fatalf("runHostDrain: %v", err)
 	}
 	if rec.count() != 1 {
@@ -208,7 +208,7 @@ func TestRunHostDrain_FailureExitsNonZero(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var out, progress bytes.Buffer
 	mode := liveDrainMode(map[string]any{})
-	err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, &out, &progress)
+	err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, drainOutput{table: &out, progress: &progress})
 	if err == nil {
 		t.Fatal("a failed migration must fail the command")
 	}
@@ -253,7 +253,7 @@ func TestRunHostDrain_UnknownHost(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	mode := liveDrainMode(map[string]any{})
 	var out, progress bytes.Buffer
-	err := runHostDrain(context.Background(), client, o, "cmp-typo", drainFlags(), mode, &out, &progress)
+	err := runHostDrain(context.Background(), client, o, "cmp-typo", drainFlags(), mode, drainOutput{table: &out, progress: &progress})
 	if err == nil {
 		t.Fatal("a host nova does not have must be an error, not an empty drain")
 	}
@@ -265,7 +265,7 @@ func TestRunHostDrain_UnknownHost(t *testing.T) {
 	// the drain's own precheck passes — is a clean no-op.
 	out.Reset()
 	progress.Reset()
-	if err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, &out, &progress); err != nil {
+	if err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, drainOutput{table: &out, progress: &progress}); err != nil {
 		t.Fatalf("an empty but real host must not fail: %v", err)
 	}
 	if !strings.Contains(progress.String(), "nothing to move") {
@@ -289,7 +289,7 @@ func TestRunHostDrain_DryRun(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 	var out, progress bytes.Buffer
 	mode := liveDrainMode(map[string]any{})
-	if err := runHostDrain(context.Background(), client, o, "cmp-1", f, mode, &out, &progress); err != nil {
+	if err := runHostDrain(context.Background(), client, o, "cmp-1", f, mode, drainOutput{table: &out, progress: &progress}); err != nil {
 		t.Fatalf("runHostDrain: %v", err)
 	}
 	if !strings.Contains(out.String(), drainPlanned) {
@@ -330,7 +330,7 @@ func TestRunHostDrain_Parallel(t *testing.T) {
 	mode := liveDrainMode(map[string]any{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runHostDrain(context.Background(), client, o, "cmp-1", f, mode, &out, &progress)
+		done <- runHostDrain(context.Background(), client, o, "cmp-1", f, mode, drainOutput{table: &out, progress: &progress})
 	}()
 	select {
 	case err := <-done:

@@ -52,7 +52,7 @@ func TestHostEvacuateRefusesLiveHost(t *testing.T) {
 		t.Fatalf("evacuateDrainMode: %v", err)
 	}
 	var out, progress bytes.Buffer
-	err = runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, &out, &progress)
+	err = runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, drainOutput{table: &out, progress: &progress})
 	if err == nil {
 		t.Fatal("evacuating a host that is still up must be refused")
 	}
@@ -80,7 +80,7 @@ func TestHostEvacuateDownHost(t *testing.T) {
 		t.Fatalf("evacuateDrainMode: %v", err)
 	}
 	var out, progress bytes.Buffer
-	if err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, &out, &progress); err != nil {
+	if err := runHostDrain(context.Background(), client, o, "cmp-1", drainFlags(), mode, drainOutput{table: &out, progress: &progress}); err != nil {
 		t.Fatalf("runHostDrain: %v", err)
 	}
 	// ACTIVE, SHUTOFF and ERROR are evacuable; PAUSED is not.

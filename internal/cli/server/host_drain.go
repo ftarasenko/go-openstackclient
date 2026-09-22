@@ -151,7 +151,7 @@ migration, which is not the same as the host being empty.`),
 			if err != nil {
 				return err
 			}
-			return runHostDrain(ctx, client, o, args[0], &f.hostDrainFlags, mode, cmd.OutOrStdout(), progress)
+			return runHostDrain(ctx, client, o, args[0], &f.hostDrainFlags, mode, drainOutput{table: cmd.OutOrStdout(), progress: progress})
 		},
 	}
 	fl := cmd.Flags()

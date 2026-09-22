@@ -36,6 +36,12 @@ type objectListFlags struct {
 	filter      keyFilter
 }
 
+// objectShowFlags holds the options accepted by "object show".
+type objectShowFlags struct {
+	versionID string
+	human     bool
+}
+
 const objectListLong = `List the objects in a bucket.
 
 Sizes are exact bytes so they stay usable in scripts and in --format value/csv;
@@ -191,8 +197,7 @@ transferred.
 (Garage does not).`
 
 func newObjectShowCommand(a *auth.Options, o *output.Options, f *connFlags) *cobra.Command {
-	var versionID string
-	var human bool
+	sf := &objectShowFlags{}
 	cmd := &cobra.Command{
 		Use:   "show <bucket>/<key>",
 		Short: "Show an object's metadata",
@@ -211,18 +216,18 @@ func newObjectShowCommand(a *auth.Options, o *output.Options, f *connFlags) *cob
 			if err != nil {
 				return err
 			}
-			return runObjectShow(ctx, client, o, bucket, key, versionID, human, cmd.OutOrStdout())
+			return runObjectShow(ctx, client, o, bucket, key, sf, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&versionID, "version-id", "", "address this version of the object instead of the current one")
-	cmd.Flags().BoolVar(&human, "human", false, "render the size for a reader instead of exact bytes")
+	cmd.Flags().StringVar(&sf.versionID, "version-id", "", "address this version of the object instead of the current one")
+	cmd.Flags().BoolVar(&sf.human, "human", false, "render the size for a reader instead of exact bytes")
 	return cmd
 }
 
 // runObjectShow is the test seam for "object show".
 func runObjectShow(ctx context.Context, client *s3.Client, o *output.Options,
-	bucket, key, versionID string, human bool, w io.Writer) error {
-	info, err := client.HeadObject(ctx, bucket, key, versionID)
+	bucket, key string, f *objectShowFlags, w io.Writer) error {
+	info, err := client.HeadObject(ctx, bucket, key, f.versionID)
 	if err != nil {
 		if s3.IsNotFound(err) {
 			return fmt.Errorf("no object %q in bucket %q", key, bucket)
@@ -231,7 +236,7 @@ func runObjectShow(ctx context.Context, client *s3.Client, o *output.Options,
 	}
 
 	size := any(info.Size)
-	if human {
+	if f.human {
 		size = output.HumanBytes(info.Size)
 	}
 	fields := []string{"Bucket", "Key", "Size", "Last Modified", "ETag", "Content Type"}
