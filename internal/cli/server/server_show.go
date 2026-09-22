@@ -95,6 +95,14 @@ func powerStateLabel(v any) any {
 		n = int(t)
 	case int:
 		n = t
+	case json.Number:
+		// gophercloud v2.15.0 decodes numbers into any with UseNumber(), so
+		// nova's power_state arrives as a json.Number rather than a float64.
+		i, err := t.Int64()
+		if err != nil {
+			return v
+		}
+		n = int(i)
 	default:
 		return v
 	}
@@ -237,6 +245,10 @@ func scalarString(v any) string {
 		return strconv.FormatBool(t)
 	case float64:
 		return strconv.FormatFloat(t, 'f', -1, 64)
+	case json.Number:
+		// Already the literal the server sent (gophercloud v2.15.0 decodes with
+		// UseNumber()), so it needs no reformatting to avoid a trailing ".0".
+		return t.String()
 	default:
 		b, _ := json.Marshal(t)
 		return string(b)
