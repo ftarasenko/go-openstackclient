@@ -118,6 +118,7 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 		if err != nil {
 			return ao, eo, nil, fmt.Errorf("loading cloud %q from clouds.yaml: %w", o.Cloud, err)
 		}
+		reconcileCloudDomains(&ao)
 	} else {
 		// Build the auth options from OS_* / flags directly rather than via
 		// gophercloud's AuthOptionsFromEnv, which only understands OS_DOMAIN_NAME
@@ -137,6 +138,45 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 	o.applyAuthOverrides(&ao)
 	o.applyEndpointOverrides(&eo)
 	return ao, eo, baseTLS, nil
+}
+
+// reconcileCloudDomains restores the domain coalescing clouds.Parse used to do
+// for itself, for a clouds.yaml that names only one of the two domains.
+//
+// Keystone qualifies two different things by domain: the *user* being
+// authenticated, and the *project* being scoped to. gophercloud v2.14.0 and
+// earlier folded them together — AuthOptions.DomainName fell back through
+// user_domain_name, project_domain_name, domain_name, and Scope was left nil
+// for gophercloud to derive from TenantName and that one domain. v2.15.0 split
+// them: DomainName no longer falls back to project_domain_name, and Parse
+// returns an explicit Scope carrying the project's domain. A clouds.yaml that
+// sets only one of the pair therefore loses the other half:
+//
+//   - only project_domain_name → the user is unqualified, and Keystone rejects
+//     the password grant as ambiguous;
+//   - only user_domain_name → the project-by-name scope is unqualified, and
+//     Keystone cannot tell which project of that name is meant.
+//
+// Single-domain clouds — the common case, and what the fleet runs — write only
+// one of the two and mean it for both. So each half falls back to the other,
+// which is what v2.14.0 did and what upstream OSC does. An explicit --os-*-domain
+// flag or OS_*_DOMAIN_* variable still wins: applyDomainScope runs after this and
+// overwrites both.
+//
+// Inert against gophercloud v2.14.0, which returns a nil Scope here.
+func reconcileCloudDomains(ao *gophercloud.AuthOptions) {
+	// A system- or trust-scoped token is not domain-qualified at all, and a
+	// project-by-ID scope needs no domain, so there is nothing to reconcile.
+	if ao.Scope == nil || ao.Scope.System || ao.Scope.TrustID != "" {
+		return
+	}
+	if ao.DomainID == "" && ao.DomainName == "" {
+		ao.DomainID, ao.DomainName = ao.Scope.DomainID, ao.Scope.DomainName
+	}
+	if ao.Scope.ProjectName != "" && ao.Scope.ProjectID == "" &&
+		ao.Scope.DomainID == "" && ao.Scope.DomainName == "" {
+		ao.Scope.DomainID, ao.Scope.DomainName = ao.DomainID, ao.DomainName
+	}
 }
 
 // applyAuthOverrides layers explicitly-set auth flags over whatever the
