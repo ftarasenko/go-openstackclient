@@ -346,6 +346,13 @@ func numericValue(v any) (float64, bool) {
 		return float64(n), true
 	case float64:
 		return n, true
+	case json.Number:
+		// gophercloud decodes JSON numbers into any with UseNumber() (v2.15.0),
+		// so a cell that used to arrive as float64 is now a json.Number. Without
+		// this case it would fall through to the string branch's named-type
+		// mismatch and sort as text.
+		f, err := n.Float64()
+		return f, err == nil
 	case string:
 		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
 		return f, err == nil && strings.TrimSpace(n) != ""

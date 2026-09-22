@@ -392,6 +392,16 @@ separate entry.
   floating-IP actions, glance activate/deactivate). Fall back to raw
   `ServiceClient.Get/Post/Put/Delete` with the correct microversion, **isolated
   behind a small helper**, and note it in a comment so it's easy to replace.
+- **`servers.CreateOpts.UserData` guesses at the encoding.** It base64-encodes
+  the bytes only when they do not already decode as base64, and Go's decoder
+  ignores newlines — so an ordinary file whose remaining bytes are all in the
+  base64 alphabet with a length divisible by four (`runcmd\nls\n`,
+  `hostname\n`) is sent verbatim, nova's lenient `format: base64` check accepts
+  it, and the guest is served the decoded garbage. **Encode before handing the
+  value over** (`readUserData` in `server/server.go`), which pins the
+  pass-through branch and matches upstream OSC. `RebuildOpts` has no `UserData`
+  field at all — it still models the personality files nova removed at 2.57 — so
+  rebuild splices the field in via `serverRebuildOptsExt`.
 - **Provision-state / async transitions** (ironic): after deploy/manage/inspect,
   `--wait` polls `provision_state` keyed off `target_provision_state` clearing —
   see `baremetal/node_provision.go`.

@@ -504,8 +504,31 @@ func runServerResize(ctx context.Context, client *gophercloud.ServiceClient, ref
 
 // rebuild ----------------------------------------------------------------------
 
+// rebuildUserDataMicroversion is the nova microversion that added user_data to
+// the rebuild request, as a nullable string: a base64 payload replaces the
+// server's user data, JSON null clears it (rebuild_v257 in
+// nova/api/openstack/compute/schemas/servers.py). Zed's nova caps at 2.93, so
+// this reaches the whole supported fleet.
+//
+// Upstream OSC gates its own --user-data/--no-user-data on 2.54 while its help
+// text says 2.57; 2.54 is the microversion that added key_name, and nova's
+// schema rejects user_data below 2.57 as an unexpected property. koc follows
+// nova.
+const rebuildUserDataMicroversion = "2.57"
+
+type serverRebuildFlags struct {
+	image string
+	name  string
+
+	// userData is a path, like "server create --user-data"; noUserData is
+	// upstream's spelling of "clear whatever the server has". cobra keeps them
+	// mutually exclusive, mirroring OSC's argparse group.
+	userData   string
+	noUserData bool
+}
+
 func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var image, name string
+	f := &serverRebuildFlags{}
 	cmd := &cobra.Command{
 		Use:   "rebuild <server>",
 		Short: "Rebuild a server from an image",
@@ -514,7 +537,7 @@ func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			if image == "" {
+			if f.image == "" {
 				return fmt.Errorf("--image is required")
 			}
 			ctx := cmd.Context()
@@ -522,25 +545,101 @@ func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			return runServerRebuild(ctx, client, o, args[0], image, name, cmd.OutOrStdout())
+			return runServerRebuild(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&image, "image", "", "image ID to rebuild from (required; pass an ID)")
-	fl.StringVar(&name, "name", "", "rename the server as part of the rebuild")
+	fl.StringVar(&f.image, "image", "", "image ID to rebuild from (required; pass an ID)")
+	fl.StringVar(&f.name, "name", "", "rename the server as part of the rebuild")
+	fl.StringVar(&f.userData, "user-data", "",
+		"path to a cloud-init/user-data file to replace the server's own (nova 2.57 or later)")
+	fl.BoolVar(&f.noUserData, "no-user-data", false,
+		"clear the server's existing user data (nova 2.57 or later)")
+	cmd.MarkFlagsMutuallyExclusive("user-data", "no-user-data")
 	return cmd
 }
 
+// serverRebuildOptsExt carries the one rebuild field gophercloud's
+// servers.RebuildOpts cannot express: user_data. That struct predates
+// microversion 2.57 — it still models the personality files 2.57 removed — so
+// the field is spliced into the body here, the way serverCreateOptsExt splices
+// nova 2.74's host into a create.
+type serverRebuildOptsExt struct {
+	servers.RebuildOptsBuilder
+
+	// UserData is the base64 payload to set; nil leaves user_data out of the
+	// request, which is what keeps the server's current value. ClearUserData
+	// sends JSON null instead, nova's reset.
+	UserData      *string
+	ClearUserData bool
+}
+
+func (opts serverRebuildOptsExt) ToServerRebuildMap() (map[string]any, error) {
+	body, err := opts.RebuildOptsBuilder.ToServerRebuildMap()
+	if err != nil {
+		return nil, err
+	}
+	rebuild, ok := body["rebuild"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected rebuild request body: %T", body["rebuild"])
+	}
+	switch {
+	case opts.ClearUserData:
+		rebuild["user_data"] = nil
+	case opts.UserData != nil:
+		rebuild["user_data"] = *opts.UserData
+	}
+	return body, nil
+}
+
+// newServerRebuildOpts builds the rebuild body, refusing the user-data flags
+// when the client is pinned below the microversion that added the field. The
+// file is read here, before the server reference is resolved, so a bad path
+// costs no round-trip.
+func newServerRebuildOpts(client *gophercloud.ServiceClient, f *serverRebuildFlags) (servers.RebuildOptsBuilder, error) {
+	// RebuildOpts.Name is tagged omitempty, so an unset --name leaves the body
+	// exactly as it was before that flag existed and nova keeps the current name.
+	base := servers.RebuildOpts{ImageRef: f.image, Name: f.name}
+	if f.userData == "" && !f.noUserData {
+		return base, nil
+	}
+	flag := "--user-data"
+	if f.noUserData {
+		flag = "--no-user-data"
+	}
+	if !computeSupportsMicroversion(client, rebuildUserDataMicroversion) {
+		return nil, fmt.Errorf("%s requires nova microversion %s or later; this client is pinned to %s",
+			flag, rebuildUserDataMicroversion, client.Microversion)
+	}
+	if f.noUserData {
+		return serverRebuildOptsExt{RebuildOptsBuilder: base, ClearUserData: true}, nil
+	}
+	userData, err := readUserData(f.userData)
+	if err != nil {
+		return nil, err
+	}
+	if userData == "" {
+		// Unlike create, an empty file here is unambiguous: the operator asked
+		// for the server's user data to be replaced, and replacing it with
+		// nothing is what --no-user-data spells. Sending "" would leave the
+		// server with an empty-but-present value instead.
+		return nil, fmt.Errorf("--user-data file %q is empty; use --no-user-data to clear the server's user data", f.userData)
+	}
+	return serverRebuildOptsExt{RebuildOptsBuilder: base, UserData: &userData}, nil
+}
+
 func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref, image, name string, w io.Writer,
+	ref string, f *serverRebuildFlags, w io.Writer,
 ) error {
+	opts, err := newServerRebuildOpts(client, f)
+	if err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	// RebuildOpts.Name is tagged omitempty, so an unset --name leaves the body
-	// exactly as it was before this flag existed and nova keeps the current name.
-	s, err := servers.Rebuild(ctx, client, id, servers.RebuildOpts{ImageRef: image, Name: name}).Extract()
+	s, err := servers.Rebuild(ctx, client, id, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("rebuilding server %q: %w", ref, err)
 	}

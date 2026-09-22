@@ -519,6 +519,15 @@ func TestCompareCells_NumericAndString(t *testing.T) {
 		{"number vs word", 10, "ACTIVE", -1},
 		{"nil sorts first", nil, "a", -1},
 		{"empty string is not a number", "", "1", -1},
+		// gophercloud v2.15.0 decodes JSON numbers into any with UseNumber(), so
+		// a cell that used to be a float64 is now a json.Number. It is a named
+		// string type, so without its own case it would sort as text and put
+		// "10" before "9".
+		{"json.Number", json.Number("9"), json.Number("10"), -1},
+		{"json.Number descending", json.Number("10"), json.Number("9"), 1},
+		{"json.Number against float64", json.Number("9"), 10.0, -1},
+		{"json.Number against int", json.Number("10"), 9, 1},
+		{"equal json.Numbers", json.Number("5"), json.Number("5"), 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

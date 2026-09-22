@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -196,7 +197,7 @@ func TestRunServerCreate_PlacementBlockDevicesAndUserData(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "io-writer", f, &buf); err != nil {
+	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "io-writer", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 
@@ -287,7 +288,7 @@ func TestRunServerCreate_HostAndBootIndexZero(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "pinned", f, &buf); err != nil {
+	if err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "pinned", f, &buf, io.Discard); err != nil {
 		t.Fatalf("runServerCreate: %v", err)
 	}
 	if got := gotServer["host"]; got != "compute-7" {
@@ -322,24 +323,6 @@ func TestValidateServerCreate_HostConflict(t *testing.T) {
 		if err := validateServerCreate(f); err != nil {
 			t.Errorf("validateServerCreate(%+v) = %v, want nil", f, err)
 		}
-	}
-}
-
-// TestReadUserData covers the two ways the flag can be wrong. An empty file is
-// rejected rather than sent: nova accepts it and the guest then boots with no
-// cloud-init payload at all, which is the failure this flag exists to avoid.
-func TestReadUserData(t *testing.T) {
-	dir := t.TempDir()
-	empty := filepath.Join(dir, "empty")
-	if err := os.WriteFile(empty, nil, 0o600); err != nil {
-		t.Fatalf("writing fixture: %v", err)
-	}
-	if _, err := readUserData(empty); err == nil || !strings.Contains(err.Error(), "is empty") {
-		t.Errorf("readUserData(empty) err = %v, want the empty-file rejection", err)
-	}
-	if _, err := readUserData(filepath.Join(dir, "absent")); err == nil ||
-		!strings.Contains(err.Error(), "reading --user-data") {
-		t.Errorf("readUserData(absent) err = %v, want a read failure", err)
 	}
 }
 
@@ -386,7 +369,7 @@ func TestRunServerCreate_Wait(t *testing.T) {
 			f := &serverCreateFlags{flavor: "m1.small", image: "img", wait: true, waitTimeout: 5 * time.Second}
 			o := &output.Options{Format: output.FormatTable}
 			var buf bytes.Buffer
-			err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "waited", f, &buf)
+			err := runServerCreate(context.Background(), computeClient(fakeServer, "2.93"), o, "waited", f, &buf, io.Discard)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
