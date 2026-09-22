@@ -11,7 +11,7 @@ export GOFLAGS     := -mod=vendor
 # CI cross-compile matrix stay in sync with the release matrix.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
-.PHONY: all build static test race cover crossbuild vet lint fmt tidy vendor completions size clean
+.PHONY: all build static test race cover sonar crossbuild vet lint fmt tidy vendor completions size clean
 
 all: build
 
@@ -38,6 +38,26 @@ race:
 cover:
 	GOPROXY=off go test -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | tail -1
+
+## sonar: run the SonarQube scan (NETWORK + a server token; deliberately outside
+## the offline per-commit gate — see AGENTS.md "SonarQube").
+##
+## The two prerequisites below are the whole point of this target, because both
+## were forgotten by hand and both fail silently:
+##   - `cover` first, so the profile matches the tree being scanned. A stale
+##     coverage.out does not error; it reports the new code as untested.
+##   - -Dsonar.projectVersion, so the new-code period means "since the last
+##     release". Omit it and every scan analyses the same version, the baseline
+##     freezes at whatever it was, and old findings keep counting as new.
+## Host and token come from the environment and must never be committed.
+sonar: cover
+	@test -n "$(SONAR_HOST_URL)" || { echo "SONAR_HOST_URL is unset" >&2; exit 1; }
+	@test -n "$(SONAR_TOKEN)"    || { echo "SONAR_TOKEN is unset" >&2; exit 1; }
+	podman run --rm \
+		-e SONAR_HOST_URL -e SONAR_TOKEN \
+		-v "$(CURDIR):/usr/src" \
+		docker.io/sonarsource/sonar-scanner-cli:latest \
+		-Dsonar.projectVersion="$$(git describe --tags --abbrev=0)"
 
 ## crossbuild: compile every release target (build-only, offline) so a build-tag
 ## or syscall mistake is caught here instead of at release time.
