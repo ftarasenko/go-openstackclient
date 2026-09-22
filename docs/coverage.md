@@ -67,7 +67,10 @@ Counts are **leaf commands, not flags**. A command can be present and still lag
 upstream's option surface, so a flag-parity pass changes no number here: `port
 list` was counted from the start, but only carried 4 of upstream's 17 filters
 until `055dc95`, and `subnet list` was counted while accepting no filters at all
-until the history-parity pass. `image list` was counted while rejecting `--all`,
+until the history-parity pass. `router list` accepted only `--name`, and
+`security group list` no filter at all, until the network filter-parity pass;
+`router show` lacked upstream's `interfaces_info` and `server delete` lacked
+`--wait`/`--force` until the same pass. `image list` was counted while rejecting `--all`,
 and every designate verb was counted while only some of them accepted
 `--all-projects`, until the cross-project/name pass. When auditing a noun, diff
 its flags against the upstream parser, not just its presence in these tables.
@@ -80,8 +83,9 @@ command that omits one is a regression rather than a known gap:
   / `--all-stores` / `--target-all-projects`. Every command in this tree that
   upstream gives one of these now has it; `ALL_PROJECTS` in the environment
   defaults `--all-projects` on the compute and block-storage verbs upstream reads
-  it for (`internal/cli/allprojects`). `network port list` carries one upstream
-  does not define at all — see "koc-native commands".
+  it for (`internal/cli/allprojects`). `network port list`, `router list` and
+  `security group list` carry one upstream does not define at all — see
+  "koc-native commands".
 - **`--name`** — both as a list filter and as the *create* spelling. Upstream
   python-designateclient and python-octaviaclient name a new resource with
   `--name` and take no positional for it, where koc grew the positional first;
@@ -556,6 +560,16 @@ a job — the `Project ID` column, without which a multi-project result's rows a
 indistinguishable (designate's `zone list` inserts the same column for the same
 reason). It defaults from `ALL_PROJECTS` like the compute and block-storage
 verbs, and is mutually exclusive with `--project`.
+
+`router list --all-projects` and `security group list --all-projects` are the
+same flag with nothing left to do: both tables already carry the Project
+column, so it changes neither the request nor the output. It exists because a
+script that reached for it got a usage error (exit 2) instead of a listing, and
+a caller that falls back on failure then silently acts on nothing. Same
+`ALL_PROJECTS` default, same exclusion with `--project`. `security group list
+--name` is koc-native too — upstream's parser has `--project` and the tag
+filters but no name filter — and is neutron's exact-match `name` query, so it
+filters server-side instead of leaving every caller to do it client-side.
 
 ## Updating this document
 

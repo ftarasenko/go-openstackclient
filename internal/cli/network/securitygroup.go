@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/rules"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -39,7 +42,28 @@ func secGroupShowFields(g *groups.SecGroup) ([]string, []any) {
 	return fields, values
 }
 
+// secGroupListFlags holds the filters accepted by "security group list".
+// Upstream OSC (network/v2/security_group.py ListSecurityGroup) takes --project,
+// --project-domain and the tag filters; --name and --all-projects are
+// koc-native additions (see allProjectsNetworkList for the latter). --name is a
+// plain neutron query filter, so it is exact-match and server-side.
+type secGroupListFlags struct {
+	name          string
+	project       string
+	projectDomain string
+	tags          []string
+	anyTags       []string
+	notTags       []string
+	notAnyTags    []string
+	share         bool
+	noShare       bool
+	allProjects   bool
+
+	shared *bool
+}
+
 func newSecurityGroupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &secGroupListFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List security groups",
@@ -48,31 +72,113 @@ func newSecurityGroupListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			fl := cmd.Flags()
+			if err := mutuallyExclusive(fl, flagShare, flagNoShare); err != nil {
+				return err
+			}
+			f.shared = enableDisable(fl, f.share, f.noShare, flagShare, flagNoShare)
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runSecurityGroupList(ctx, client, o, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, f.project, f.projectDomain)
+			if err != nil {
+				return err
+			}
+			return runSecurityGroupList(ctx, client, o, f, projectID, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "list only security groups with this name")
+	fl.StringVar(&f.project, "project", "", "list only security groups owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.StringSliceVar(&f.tags, "tags", nil, "list only security groups with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only security groups with any of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude security groups with all of these tags (comma-separated)")
+	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude security groups with any of these tags (comma-separated)")
+	fl.BoolVar(&f.share, flagShare, false, "list only security groups shared between projects")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "list only security groups not shared between projects")
+	allprojects.Bind(cmd, &f.allProjects, allProjectsNetworkList)
+	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
 	return cmd
 }
 
-func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := groups.List(client, groups.ListOpts{}).AllPages(ctx)
-	if err != nil {
-		return fmt.Errorf("listing security groups: %w", err)
+// SecGroupSharedAttr is neutron's `shared` attribute of a security group (the
+// security-groups-shared-filtering extension), which gophercloud's SecGroup
+// does not model. A pointer, so a cloud without the extension renders an empty
+// cell rather than a misleading False.
+type SecGroupSharedAttr struct {
+	Shared *bool `json:"shared"`
+}
+
+// secGroupListRow is a SecGroup plus its shared attribute. Both are anonymous
+// embeds so gophercloud's ExtractIntoSlicePtr decodes each separately —
+// SecGroup's own UnmarshalJSON would otherwise swallow the extension field. The embed is
+// exported because gophercloud reflects into each embedded struct, and
+// reflect cannot read an unexported one (it panics).
+type secGroupListRow struct {
+	groups.SecGroup
+	SecGroupSharedAttr
+}
+
+func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	f *secGroupListFlags, projectID string, w io.Writer,
+) error {
+	opts := groups.ListOpts{
+		Name:       f.name,
+		ProjectID:  projectID,
+		Tags:       strings.Join(f.tags, ","),
+		TagsAny:    strings.Join(f.anyTags, ","),
+		NotTags:    strings.Join(f.notTags, ","),
+		NotTagsAny: strings.Join(f.notAnyTags, ","),
 	}
-	all, err := groups.ExtractGroups(pages)
+	all, err := listSecGroups(ctx, client, opts, f.shared)
 	if err != nil {
-		return fmt.Errorf("parsing security group list: %w", err)
+		return err
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Description", "Project"}, Rows: make([][]any, 0, len(all))}
+	t := output.Table{
+		Columns: []string{"ID", "Name", "Description", "Project", "Tags", "Shared"},
+		Rows:    make([][]any, 0, len(all)),
+	}
 	for _, g := range all {
-		t.Rows = append(t.Rows, []any{g.ID, g.Name, g.Description, g.ProjectID})
+		t.Rows = append(t.Rows, []any{g.ID, g.Name, g.Description, g.ProjectID, g.Tags, derefOrNil(g.Shared)})
 	}
 	return o.WriteList(w, t)
+}
+
+// listSecGroups is groups.List with a `shared` filter. gophercloud's List takes
+// the concrete ListOpts (no builder interface) and has no shared field, and
+// there is no ExtractGroupsInto, so the pager is built here over the same URL
+// and page type. Replace it once gophercloud models the attribute.
+func listSecGroups(ctx context.Context, client *gophercloud.ServiceClient, opts groups.ListOpts, shared *bool) ([]secGroupListRow, error) {
+	q, err := gophercloud.BuildQueryString(&opts)
+	if err != nil {
+		return nil, fmt.Errorf("building security group query: %w", err)
+	}
+	params := q.Query()
+	if shared != nil {
+		params.Set("shared", strconv.FormatBool(*shared))
+	}
+	u := client.ServiceURL("security-groups")
+	if len(params) > 0 {
+		u += "?" + params.Encode()
+	}
+	pages, err := pagination.NewPager(client, u, func(r pagination.PageResult) pagination.Page {
+		return groups.SecGroupPage{LinkedPageBase: pagination.LinkedPageBase{PageResult: r}}
+	}).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing security groups: %w", err)
+	}
+	page, ok := pages.(groups.SecGroupPage)
+	if !ok {
+		return nil, fmt.Errorf("parsing security group list: unexpected page type %T", pages)
+	}
+	var all []secGroupListRow
+	if err := page.ExtractIntoSlicePtr(&all, "security_groups"); err != nil {
+		return nil, fmt.Errorf("parsing security group list: %w", err)
+	}
+	return all, nil
 }
 
 func newSecurityGroupShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

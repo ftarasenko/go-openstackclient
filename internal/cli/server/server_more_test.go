@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
@@ -436,7 +438,7 @@ func TestRunServerDelete_MultipleServers(t *testing.T) {
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerDelete(context.Background(), client, []string{serverUUID, other}, &buf); err != nil {
+	if err := runServerDelete(context.Background(), client, []string{serverUUID, other}, &serverDeleteFlags{}, &buf); err != nil {
 		t.Fatalf("runServerDelete: %v", err)
 	}
 	if deleted[serverUUID] != http.MethodDelete || deleted[other] != http.MethodDelete {
@@ -445,6 +447,109 @@ func TestRunServerDelete_MultipleServers(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "Deleted server "+serverUUID) || !strings.Contains(out, "Deleted server "+other) {
 		t.Errorf("output missing delete confirmations:\n%s", out)
+	}
+}
+
+// --wait follows each server until nova answers 404, so a cleanup script can
+// delete the server's ports and networks next without its own poll loop. Every
+// DELETE is sent before any polling starts, and the confirmation is printed only
+// once the server is actually gone.
+func TestRunServerDelete_WaitPollsUntilGone(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	defer func(prev time.Duration) { statusPollInterval = prev }(statusPollInterval)
+	statusPollInterval = time.Millisecond
+
+	const other = "22222222-2222-2222-2222-222222222222"
+	var events []string
+	gets := map[string]int{}
+	for _, id := range []string{serverUUID, other} {
+		fakeServer.Mux.HandleFunc("/servers/"+id, func(w http.ResponseWriter, r *http.Request) {
+			events = append(events, r.Method+" "+id)
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			gets[id]++
+			if gets[id] < 3 {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"server":{"id":%q,"status":"ACTIVE"}}`, id)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+	}
+
+	var buf bytes.Buffer
+	f := &serverDeleteFlags{wait: true, waitTimeout: time.Second}
+	if err := runServerDelete(context.Background(), computeClient(fakeServer, "2.79"), []string{serverUUID, other}, f, &buf); err != nil {
+		t.Fatalf("runServerDelete --wait: %v", err)
+	}
+	if len(events) < 2 || events[0] != "DELETE "+serverUUID || events[1] != "DELETE "+other {
+		t.Errorf("both DELETEs must precede polling; requests = %v", events)
+	}
+	if gets[serverUUID] != 3 || gets[other] != 3 {
+		t.Errorf("GET counts = %v, want 3 each (two ACTIVE, then 404)", gets)
+	}
+	want := "Deleted server " + serverUUID + "\nDeleted server " + other + "\n"
+	if got := buf.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// A soft delete never reaches 404 inside any sensible timeout, so --wait says
+// so immediately instead of spinning out --wait-timeout.
+func TestRunServerDelete_WaitFailsFastOnSoftDelete(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	defer func(prev time.Duration) { statusPollInterval = prev }(statusPollInterval)
+	statusPollInterval = time.Millisecond
+
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"server":{"id":%q,"status":"SOFT_DELETED"}}`, serverUUID)
+	})
+
+	var buf bytes.Buffer
+	f := &serverDeleteFlags{wait: true, waitTimeout: time.Minute}
+	err := runServerDelete(context.Background(), computeClient(fakeServer, "2.79"), []string{serverUUID}, f, &buf)
+	if err == nil || !strings.Contains(err.Error(), "SOFT_DELETED") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("error = %v, want a SOFT_DELETED error pointing at --force", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a server that is not gone must not be reported deleted:\n%s", buf.String())
+	}
+}
+
+// --force sends nova's forceDelete action instead of the plain DELETE, and only
+// that — it must not issue both.
+func TestRunServerDelete_ForceSendsForceDeleteAction(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var methods []string
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(_ http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+	})
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"forceDelete": ""}`)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	var buf bytes.Buffer
+	if err := runServerDelete(context.Background(), computeClient(fakeServer, "2.79"), []string{serverUUID}, &serverDeleteFlags{force: true}, &buf); err != nil {
+		t.Fatalf("runServerDelete --force: %v", err)
+	}
+	if len(methods) != 0 {
+		t.Errorf("--force must not also send a plain DELETE; saw %v", methods)
+	}
+	if !strings.Contains(buf.String(), "Deleted server "+serverUUID) {
+		t.Errorf("output missing confirmation:\n%s", buf.String())
 	}
 }
 

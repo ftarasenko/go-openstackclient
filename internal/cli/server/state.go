@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -414,6 +416,53 @@ func waitForServerStatuses(ctx context.Context, client *gophercloud.ServiceClien
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for status %q%s: %w", wanted, lastStatus(last), ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitForServerDeleted polls until nova answers 404 for the server, which is
+// the only signal that its ports and volumes have been released — the point a
+// cleanup script deleting the server's network next is waiting for.
+//
+// SOFT_DELETED fails fast rather than running out the timeout: with nova's
+// reclaim_instance_interval set, a plain delete parks the server there and the
+// real delete happens only when the reclaim window lapses, well past any
+// sensible --wait-timeout. ERROR is deliberately not a failure here, unlike the
+// status waits above: deleting a server that is already in ERROR is the common
+// case, and it stays ERROR until it disappears.
+func waitForServerDeleted(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = statusPollTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(statusPollInterval)
+	defer ticker.Stop()
+
+	var last string
+	for {
+		s, err := servers.Get(ctx, client, id).Extract()
+		switch {
+		case gophercloud.ResponseCodeIs(err, http.StatusNotFound):
+			return nil
+		case err != nil && ctx.Err() != nil:
+			return fmt.Errorf("waiting for deletion%s: %w", lastStatus(last), ctx.Err())
+		case err != nil:
+			return err
+		}
+		last = s.Status
+		switch s.Status {
+		case "DELETED":
+			return nil
+		case "SOFT_DELETED":
+			return errors.New("server is SOFT_DELETED: nova defers the real delete until its reclaim " +
+				"interval lapses; use --force to delete it now")
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for deletion%s: %w", lastStatus(last), ctx.Err())
 		case <-ticker.C:
 		}
 	}

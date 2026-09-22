@@ -3,6 +3,7 @@ package network
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -547,7 +548,7 @@ func TestRunRouterList_RequestAndOutput(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runRouterList(context.Background(), client, o, "", &buf); err != nil {
+	if err := runRouterList(context.Background(), client, o, &routerListFlags{}, "", &buf); err != nil {
 		t.Fatalf("runRouterList: %v", err)
 	}
 	for _, want := range []string{"rtr-1", "r", "ACTIVE", "UP"} {
@@ -566,6 +567,11 @@ func TestRunRouterShow_RequestAndOutput(t *testing.T) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"router":{"id":"rtr-1","name":"r","status":"ACTIVE"}}`)
 	})
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		th.TestFormValues(t, r, map[string]string{"device_id": "rtr-1"})
+		writeJSON(t, w, http.StatusOK, `{"ports":[]}`)
+	})
 
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
@@ -575,6 +581,164 @@ func TestRunRouterShow_RequestAndOutput(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "rtr-1") {
 		t.Errorf("output missing id:\n%s", buf.String())
+	}
+}
+
+// Neutron's router body has no interface list, so upstream's `router show`
+// builds interfaces_info from the router's ports: one entry per fixed IP of
+// every port except the external gateway. Scripts read it to find what is still
+// attached before `router delete`, so the shape and key order have to match.
+func TestRunRouterShow_InterfacesInfo(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	emptyLookup(t, fakeServer, "/routers", "routers")
+	fakeServer.Mux.HandleFunc("/routers/rtr-1", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"router":{"id":"rtr-1","name":"r","status":"ACTIVE"}}`)
+	})
+	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+		th.TestFormValues(t, r, map[string]string{"device_id": "rtr-1"})
+		writeJSON(t, w, http.StatusOK, `{"ports":[
+		  {"id":"gw-port","device_owner":"network:router_gateway",
+		   "fixed_ips":[{"subnet_id":"ext-sub","ip_address":"203.0.113.10"}]},
+		  {"id":"if-port","device_owner":"network:router_interface",
+		   "fixed_ips":[{"subnet_id":"sub-a","ip_address":"192.0.2.1"},
+		                {"subnet_id":"sub-b","ip_address":"2001:db8::1"}]}
+		]}`)
+	})
+
+	o := &output.Options{Format: output.FormatValue, Columns: []string{"interfaces_info"}}
+	var buf bytes.Buffer
+	if err := runRouterShow(context.Background(), networkClient(fakeServer), o, "rtr-1", &buf); err != nil {
+		t.Fatalf("runRouterShow: %v", err)
+	}
+	want := `[{"port_id":"if-port","ip_address":"192.0.2.1","subnet_id":"sub-a"},` +
+		`{"port_id":"if-port","ip_address":"2001:db8::1","subnet_id":"sub-b"}]` + "\n"
+	if got := buf.String(); got != want {
+		t.Errorf("interfaces_info =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// "router list" accepted only --name, so an `openstack router list --project X`
+// invocation died on a usage error. Every filter must reach the query string.
+func TestRunRouterList_SendsEveryFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		th.TestFormValues(t, r, map[string]string{
+			"name":           "r",
+			"project_id":     "p1",
+			"admin_state_up": "false",
+			"tags":           "a,b",
+			"tags-any":       "c",
+			"not-tags":       "d",
+			"not-tags-any":   "e",
+		})
+		writeJSON(t, w, http.StatusOK, `{"routers":[{"id":"rtr-1","name":"r","project_id":"p1"}]}`)
+	})
+
+	down := false
+	f := &routerListFlags{
+		name: "r", adminStateUp: &down,
+		tags: []string{"a", "b"}, anyTags: []string{"c"}, notTags: []string{"d"}, notAnyTags: []string{"e"},
+	}
+	o := &output.Options{Format: output.FormatValue}
+	var buf bytes.Buffer
+	if err := runRouterList(context.Background(), networkClient(fakeServer), o, f, "p1", &buf); err != nil {
+		t.Fatalf("runRouterList: %v", err)
+	}
+	if !strings.Contains(buf.String(), "rtr-1") {
+		t.Errorf("router list output missing rtr-1:\n%s", buf.String())
+	}
+}
+
+// Upstream adds Distributed and HA only when neutron returned them (they are
+// admin-only by policy), and --long adds Routes, External gateway info,
+// Availability zones (only when the extension reports them) and Tags.
+func TestRunRouterList_LongAndOptionalColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		long    bool
+		columns string
+	}{
+		{
+			name:    "non-admin, short",
+			body:    `{"id":"rtr-1","name":"r","status":"ACTIVE","admin_state_up":true,"project_id":"p1"}`,
+			columns: "ID Name Status State Project",
+		},
+		{
+			name: "admin, short",
+			body: `{"id":"rtr-1","name":"r","status":"ACTIVE","admin_state_up":true,"project_id":"p1",
+			        "distributed":false,"ha":true}`,
+			columns: "ID Name Status State Project Distributed HA",
+		},
+		{
+			name:    "non-admin, long, no AZ extension",
+			body:    `{"id":"rtr-1","name":"r","status":"ACTIVE","admin_state_up":true,"project_id":"p1","tags":["x"]}`,
+			long:    true,
+			columns: "ID Name Status State Project Routes External gateway info Tags",
+		},
+		{
+			name: "admin, long, AZ extension",
+			body: `{"id":"rtr-1","name":"r","status":"ACTIVE","admin_state_up":true,"project_id":"p1",
+			        "distributed":true,"ha":false,"availability_zones":["nova"],"tags":[]}`,
+			long:    true,
+			columns: "ID Name Status State Project Distributed HA Routes External gateway info Availability zones Tags",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(t, w, http.StatusOK, `{"routers":[`+tc.body+`]}`)
+			})
+
+			o := &output.Options{Format: output.FormatCSV}
+			var buf bytes.Buffer
+			if err := runRouterList(context.Background(), networkClient(fakeServer), o, &routerListFlags{long: tc.long}, "", &buf); err != nil {
+				t.Fatalf("runRouterList: %v", err)
+			}
+			header, _, _ := strings.Cut(buf.String(), "\n")
+			if got := strings.ReplaceAll(strings.ReplaceAll(header, `"`, ""), ",", " "); got != tc.columns {
+				t.Errorf("columns = %q, want %q", got, tc.columns)
+			}
+		})
+	}
+}
+
+// --agent lists the agent's l3-routers subresource, which takes no query
+// filters, so the list filters are applied client-side.
+func TestRunRouterList_AgentFiltersClientSide(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/agents/agent-1/l3-routers", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		if r.URL.RawQuery != "" {
+			t.Errorf("l3-routers takes no filters; got query %q", r.URL.RawQuery)
+		}
+		writeJSON(t, w, http.StatusOK, `{"routers":[
+		  {"id":"keep","name":"r","admin_state_up":true,"project_id":"p1","tags":["a","b"]},
+		  {"id":"wrong-project","name":"r","admin_state_up":true,"project_id":"p2","tags":["a","b"]},
+		  {"id":"disabled","name":"r","admin_state_up":false,"project_id":"p1","tags":["a","b"]},
+		  {"id":"missing-tag","name":"r","admin_state_up":true,"project_id":"p1","tags":["a"]},
+		  {"id":"excluded-tag","name":"r","admin_state_up":true,"project_id":"p1","tags":["a","b","z"]},
+		  {"id":"other-name","name":"s","admin_state_up":true,"project_id":"p1","tags":["a","b"]}
+		]}`)
+	})
+
+	up := true
+	f := &routerListFlags{agent: "agent-1", name: "r", adminStateUp: &up, tags: []string{"a", "b"}, notAnyTags: []string{"z"}}
+	o := &output.Options{Format: output.FormatValue, Columns: []string{"ID"}}
+	var buf bytes.Buffer
+	if err := runRouterList(context.Background(), networkClient(fakeServer), o, f, "p1", &buf); err != nil {
+		t.Fatalf("runRouterList --agent: %v", err)
+	}
+	if got := buf.String(); got != "keep\n" {
+		t.Errorf("--agent output = %q, want only \"keep\"", got)
 	}
 }
 
@@ -927,13 +1091,80 @@ func TestRunSecurityGroupList_RequestAndOutput(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runSecurityGroupList(context.Background(), client, o, &buf); err != nil {
+	if err := runSecurityGroupList(context.Background(), client, o, &secGroupListFlags{}, "", &buf); err != nil {
 		t.Fatalf("runSecurityGroupList: %v", err)
 	}
 	for _, want := range []string{"sg-1", "default", "desc"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("security group list output missing %q\n%s", want, buf.String())
 		}
+	}
+}
+
+// "security group list" took no filters at all, so callers listed everything
+// and filtered client-side. Every filter must reach the query string.
+func TestRunSecurityGroupList_SendsEveryFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		th.TestFormValues(t, r, map[string]string{
+			"name":         "web",
+			"project_id":   "p1",
+			"tags":         "a",
+			"tags-any":     "b",
+			"not-tags":     "c",
+			"not-tags-any": "d",
+		})
+		writeJSON(t, w, http.StatusOK, `{"security_groups":[{"id":"sg-1","name":"web","project_id":"p1","tags":["a"]}]}`)
+	})
+
+	f := &secGroupListFlags{
+		name: "web", tags: []string{"a"}, anyTags: []string{"b"}, notTags: []string{"c"}, notAnyTags: []string{"d"},
+	}
+	o := &output.Options{Format: output.FormatValue}
+	var buf bytes.Buffer
+	if err := runSecurityGroupList(context.Background(), networkClient(fakeServer), o, f, "p1", &buf); err != nil {
+		t.Fatalf("runSecurityGroupList: %v", err)
+	}
+	if got, want := buf.String(), "sg-1\tweb\t\tp1\ta\t\n"; got != want {
+		t.Errorf("security group list = %q, want %q", got, want)
+	}
+}
+
+// --share/--no-share become neutron's `shared` query filter, and the Shared
+// column shows the attribute when the security-groups-shared-filtering
+// extension returns it.
+func TestRunSecurityGroupList_Share(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		shared bool
+		query  string
+	}{
+		{name: "share", shared: true, query: "true"},
+		{name: "no-share", shared: false, query: "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+
+			fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, r *http.Request) {
+				th.TestFormValues(t, r, map[string]string{"shared": tc.query, "name": "web"})
+				writeJSON(t, w, http.StatusOK, fmt.Sprintf(
+					`{"security_groups":[{"id":"sg-1","name":"web","project_id":"p1","shared":%t}]}`, tc.shared))
+			})
+
+			f := &secGroupListFlags{name: "web", shared: &tc.shared}
+			o := &output.Options{Format: output.FormatValue, Columns: []string{"ID", "Shared"}}
+			var buf bytes.Buffer
+			if err := runSecurityGroupList(context.Background(), networkClient(fakeServer), o, f, "", &buf); err != nil {
+				t.Fatalf("runSecurityGroupList: %v", err)
+			}
+			if got, want := buf.String(), fmt.Sprintf("sg-1\t%t\n", tc.shared); got != want {
+				t.Errorf("output = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

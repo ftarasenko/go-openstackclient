@@ -1006,6 +1006,15 @@ items are deferred and worth noting:
   `Project ID` column, without which the rows of a multi-project result cannot be
   told apart. It also honours `ALL_PROJECTS` and is refused together with
   `--project`, which narrows to one project.
+- **`router list` / `security group list --all-projects` is a no-op.** Same
+  neutron reasoning as `port list`, but both tables already show the Project
+  column, so the flag is accepted only so a script carrying it gets a listing
+  rather than a usage error. Use `--project` to narrow to one project.
+- **`server delete --wait` fails fast on `SOFT_DELETED`.** With nova's
+  `reclaim_instance_interval` set, a plain delete parks the server until the
+  window lapses — past any sensible `--wait-timeout` — and it keeps its ports
+  meanwhile. koc reports that at once instead of timing out; `--force` deletes
+  it immediately, as upstream's does.
 
 ## KeyStack documentation caveat
 
