@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/extract"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -99,7 +100,7 @@ func runQuotaShow(ctx context.Context, s *session, o *output.Options, project st
 		if err != nil {
 			return err
 		}
-		q, err := networkquotas.Get(ctx, client, project).Extract()
+		q, err := extract.One(networkquotas.Get(ctx, client, project).Extract())
 		if err != nil {
 			return fmt.Errorf("showing network quotas for project %q: %w", project, err)
 		}
@@ -111,7 +112,7 @@ func runQuotaShow(ctx context.Context, s *session, o *output.Options, project st
 
 func getComputeQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*computequotas.QuotaSet, error) {
 	if !useDefault {
-		qs, err := computequotas.Get(ctx, client, project).Extract()
+		qs, err := extract.One(computequotas.Get(ctx, client, project).Extract())
 		if err != nil {
 			return nil, fmt.Errorf("showing compute quotas for project %q: %w", project, err)
 		}
@@ -140,7 +141,7 @@ func getVolumeQuota(ctx context.Context, client *gophercloud.ServiceClient, proj
 		get = volumequotas.GetDefaults
 		what = "default volume quotas"
 	}
-	qs, err := get(ctx, client, project).Extract()
+	qs, err := extract.One(get(ctx, client, project).Extract())
 	if err != nil {
 		return nil, fmt.Errorf("showing %s for project %q: %w", what, project, err)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/extract"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -85,7 +86,7 @@ func showAbsoluteLimits(ctx context.Context, client *auth.Client, o *output.Opti
 	if err != nil {
 		return err
 	}
-	cl, err := computelimits.Get(ctx, compute, computelimits.GetOpts{TenantID: projectID}).Extract()
+	cl, err := extract.One(computelimits.Get(ctx, compute, computelimits.GetOpts{TenantID: projectID}).Extract())
 	if err != nil {
 		return fmt.Errorf("getting compute limits: %w", err)
 	}
@@ -95,7 +96,7 @@ func showAbsoluteLimits(ctx context.Context, client *auth.Client, o *output.Opti
 	if err != nil {
 		return err
 	}
-	vl, err := volumelimits.Get(ctx, volume).Extract()
+	vl, err := extract.One(volumelimits.Get(ctx, volume).Extract())
 	if err != nil {
 		return fmt.Errorf("getting volume limits: %w", err)
 	}

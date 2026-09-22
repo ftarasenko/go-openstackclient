@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/extract"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -226,7 +227,7 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			ServerGroups:       ptr(flagServerGroups, &f.serverGroups),
 			ServerGroupMembers: ptr(flagServerGroupMembers, &f.serverGroupMembers),
 		}
-		qs, err := computequotas.Update(ctx, client, project, opts).Extract()
+		qs, err := extract.One(computequotas.Update(ctx, client, project, opts).Extract())
 		if err != nil {
 			return fmt.Errorf("setting compute quotas for project %q: %w", project, err)
 		}
@@ -250,7 +251,7 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			Groups:             ptr(flagVolumeGroups, &f.volumeGroups),
 			Force:              f.force,
 		}
-		qs, err := volumequotas.Update(ctx, client, project, opts).Extract()
+		qs, err := extract.One(volumequotas.Update(ctx, client, project, opts).Extract())
 		if err != nil {
 			return partialError(applied, "volume", project, err)
 		}
@@ -276,7 +277,7 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			RBACPolicy:        ptr(flagRBACPolicies, &f.rbacPolicies),
 			Trunk:             ptr(flagTrunks, &f.trunks),
 		}
-		q, err := networkquotas.Update(ctx, client, project, opts).Extract()
+		q, err := extract.One(networkquotas.Update(ctx, client, project, opts).Extract())
 		if err != nil {
 			return partialError(applied, "network", project, err)
 		}
