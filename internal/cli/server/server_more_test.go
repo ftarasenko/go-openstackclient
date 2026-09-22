@@ -711,7 +711,8 @@ func TestRunServerRebuild_RequestAndOutput(t *testing.T) {
 	client := computeClient(fakeServer, "2.79")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerRebuild(context.Background(), client, o, serverUUID, "img-new", "", &buf); err != nil {
+	f := &serverRebuildFlags{image: "img-new"}
+	if err := runServerRebuild(context.Background(), client, o, serverUUID, f, &buf); err != nil {
 		t.Fatalf("runServerRebuild: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -735,7 +736,8 @@ func TestRunServerRebuild_RequestAndOutput(t *testing.T) {
 
 	// ... and a given --name must reach nova in the same action body.
 	var renamed bytes.Buffer
-	if err := runServerRebuild(context.Background(), client, o, serverUUID, "img-new", "web-2", &renamed); err != nil {
+	renameFlags := &serverRebuildFlags{image: "img-new", name: "web-2"}
+	if err := runServerRebuild(context.Background(), client, o, serverUUID, renameFlags, &renamed); err != nil {
 		t.Fatalf("runServerRebuild with --name: %v", err)
 	}
 	rebuild, _ = gotBody["rebuild"].(map[string]any)

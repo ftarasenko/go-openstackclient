@@ -545,11 +545,13 @@ no `--name-contains` yet — pipe through `grep` there.
 
 ### User data (`--user-data`)
 
-`koc server create --user-data <file>` injects a cloud-init payload. The
-**file's bytes are the payload**: koc base64-encodes them for nova and does not
-inspect or transform the content, matching `openstack`. A path is the only
-accepted form — `-` is a filename, not stdin. `koc server show <server>
---user-data` prints the payload back, decoded.
+`koc server create --user-data <file>` injects a cloud-init payload, and
+`koc server rebuild --user-data <file>` / `--no-user-data` replace or clear the
+one a server already has (nova microversion 2.57 or later, so every supported
+cloud). In all three the **file's bytes are the payload**: koc base64-encodes
+them for nova and does not inspect or transform the content, matching
+`openstack`. A path is the only accepted form — `-` is a filename, not stdin.
+`koc server show <server> --user-data` prints the payload back, decoded.
 
 > **Releases v0.28.0 through v0.32.1 can corrupt the payload.** Those versions
 > left the encoding to the SDK, which sent the file unencoded whenever its bytes

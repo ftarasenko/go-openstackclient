@@ -1,9 +1,10 @@
 # `--user-data` parity with upstream `openstack`
 
-**Status: P1 implemented.** The encoding fix, the empty-file handling and the
-early read landed with the tests in "Tests" below. The analysis is kept as the
-record of why the behaviour is what it is — the workaround for the affected
-releases (v0.28.0 - v0.32.1) is in README "User data (`--user-data`)".
+**Status: P1 and P2 implemented.** The encoding fix, the empty-file handling,
+the early read and the two `server rebuild` flags landed with the tests in
+"Tests" below; P3 was not taken. The analysis is kept as the record of why the
+behaviour is what it is — the workaround for the affected releases (v0.28.0 -
+v0.32.1) is in README "User data (`--user-data`)".
 
 Scope: how a user-data file reaches nova on `server create`, measured against
 `python-openstackclient` 8.2.0 and nova 26.3.0 (Zed, the floor from AGENTS.md
