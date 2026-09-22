@@ -7,9 +7,9 @@
 // standard library already has the primitives for. The same trade-off was made
 // for internal/vault and internal/kube.
 //
-// Only what koc needs is implemented: ListBuckets, ListObjectsV2, HeadObject,
-// GetObject and a single-part PutObject. There is no multipart upload, no
-// bucket/key administration and no presigning.
+// Only what koc needs is implemented: bucket and object listing, head/get/put,
+// multipart upload, server-side copy, batch delete, versioning and presigning.
+// There is no ACL, lifecycle, replication or policy support.
 package s3
 
 import (
