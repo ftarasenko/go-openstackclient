@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/spf13/cobra"
@@ -61,6 +62,8 @@ type routerListFlags struct {
 	anyTags       []string
 	notTags       []string
 	notAnyTags    []string
+	agent         string
+	long          bool
 	allProjects   bool
 
 	adminStateUp *bool
@@ -103,6 +106,8 @@ func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only routers with any of these tags (comma-separated)")
 	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude routers with all of these tags (comma-separated)")
 	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude routers with any of these tags (comma-separated)")
+	fl.StringVar(&f.agent, "agent", "", "list only routers hosted by this L3 agent (ID only)")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	allprojects.Bind(cmd, &f.allProjects, allProjectsNetworkList)
 	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
 	return cmd
@@ -117,6 +122,48 @@ func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 const allProjectsNetworkList = "list across all projects (admin); an admin token already sees them all, " +
 	"so this is accepted for compatibility and changes nothing"
 
+// routerExtAttrs carries the router attributes whose *presence* decides a list
+// column. gophercloud's Router models distributed as a plain bool and omits ha
+// and availability_zones, but neutron sends distributed/ha only to an admin
+// (policy) and availability_zones only with the router_availability_zone
+// extension — upstream adds the Distributed/HA/Availability zones columns only
+// when the attribute came back, so absence has to stay distinguishable.
+type routerExtAttrs struct {
+	Distributed       *bool     `json:"distributed"`
+	HA                *bool     `json:"ha"`
+	AvailabilityZones *[]string `json:"availability_zones"`
+}
+
+// routerListRow pairs a router with its routerExtAttrs. The page is decoded
+// twice rather than into one struct embedding both, because the two would
+// share the `distributed` key and Router's own UnmarshalJSON would swallow the
+// rest.
+type routerListRow struct {
+	routers.Router
+	ext routerExtAttrs
+}
+
+// extractRouterRows decodes one routers body into rows. extract is the
+// page/result's slice extractor, called once per target.
+func extractRouterRows(extract func(v any) error) ([]routerListRow, error) {
+	var base []routers.Router
+	var ext []routerExtAttrs
+	if err := extract(&base); err != nil {
+		return nil, err
+	}
+	if err := extract(&ext); err != nil {
+		return nil, err
+	}
+	rows := make([]routerListRow, len(base))
+	for i := range base {
+		rows[i].Router = base[i]
+		if i < len(ext) {
+			rows[i].ext = ext[i]
+		}
+	}
+	return rows, nil
+}
+
 func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *routerListFlags, projectID string, w io.Writer,
 ) error {
@@ -129,19 +176,117 @@ func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		NotTags:      strings.Join(f.notTags, ","),
 		NotTagsAny:   strings.Join(f.notAnyTags, ","),
 	}
+	if f.agent != "" {
+		// The agent's l3-routers subresource takes no query filters (upstream
+		// notes the same), so every filter is re-applied client-side.
+		res := agents.ListL3Routers(ctx, client, f.agent)
+		hosted, err := extractRouterRows(func(v any) error { return res.ExtractIntoSlicePtr(v, "routers") })
+		if err != nil {
+			return fmt.Errorf("listing routers hosted by agent %s: %w", f.agent, err)
+		}
+		all := make([]routerListRow, 0, len(hosted))
+		for _, r := range hosted {
+			if routerMatches(r.Router, opts) {
+				all = append(all, r)
+			}
+		}
+		return o.WriteList(w, routerListTable(all, f.long))
+	}
 	pages, err := routers.List(client, opts).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing routers: %w", err)
 	}
-	all, err := routers.ExtractRouters(pages)
+	all, err := extractRouterRows(func(v any) error { return routers.ExtractRoutersInto(pages, v) })
 	if err != nil {
 		return fmt.Errorf("parsing router list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Status", "State", "Project"}, Rows: make([][]any, 0, len(all))}
+	return o.WriteList(w, routerListTable(all, f.long))
+}
+
+// routerListTable lays out upstream's columns: the five fixed ones, then
+// Distributed and HA when any router carried them, then --long's Routes,
+// External gateway info, Availability zones (when the extension reported them)
+// and Tags.
+func routerListTable(all []routerListRow, long bool) output.Table {
+	var distributed, ha, azs bool
 	for _, r := range all {
-		t.Rows = append(t.Rows, []any{r.ID, r.Name, r.Status, adminState(r.AdminStateUp), r.ProjectID})
+		distributed = distributed || r.ext.Distributed != nil
+		ha = ha || r.ext.HA != nil
+		azs = azs || r.ext.AvailabilityZones != nil
 	}
-	return o.WriteList(w, t)
+	cols := []string{"ID", "Name", "Status", "State", "Project"}
+	if distributed {
+		cols = append(cols, "Distributed")
+	}
+	if ha {
+		cols = append(cols, "HA")
+	}
+	if long {
+		cols = append(cols, "Routes", "External gateway info")
+		if azs {
+			cols = append(cols, "Availability zones")
+		}
+		cols = append(cols, "Tags")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
+	for _, r := range all {
+		row := []any{r.ID, r.Name, r.Status, adminState(r.AdminStateUp), r.ProjectID}
+		if distributed {
+			row = append(row, derefOrNil(r.ext.Distributed))
+		}
+		if ha {
+			row = append(row, derefOrNil(r.ext.HA))
+		}
+		if long {
+			row = append(row, r.Routes, r.GatewayInfo)
+			if azs {
+				row = append(row, derefOrNil(r.ext.AvailabilityZones))
+			}
+			row = append(row, r.Tags)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	return t
+}
+
+// derefOrNil renders an absent optional attribute as an empty cell rather than
+// as the type's zero value, which would read as a real false/empty list.
+func derefOrNil[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// routerMatches applies the router list filters to one router, for the
+// --agent path where neutron cannot. Tag semantics follow neutron's: tags =
+// all of, tags-any = any of, not-tags = not all of, not-tags-any = none of.
+func routerMatches(r routers.Router, opts routers.ListOpts) bool {
+	switch {
+	case opts.Name != "" && r.Name != opts.Name,
+		opts.ProjectID != "" && r.ProjectID != opts.ProjectID,
+		opts.AdminStateUp != nil && r.AdminStateUp != *opts.AdminStateUp:
+		return false
+	}
+	hasAll := func(csv string) bool {
+		for _, t := range strings.Split(csv, ",") {
+			if !slices.Contains(r.Tags, t) {
+				return false
+			}
+		}
+		return true
+	}
+	hasAny := func(csv string) bool {
+		return slices.ContainsFunc(strings.Split(csv, ","), func(t string) bool { return slices.Contains(r.Tags, t) })
+	}
+	switch {
+	case opts.Tags != "" && !hasAll(opts.Tags),
+		opts.TagsAny != "" && !hasAny(opts.TagsAny),
+		opts.NotTags != "" && hasAll(opts.NotTags),
+		opts.NotTagsAny != "" && hasAny(opts.NotTagsAny):
+		return false
+	}
+	return true
 }
 
 func newRouterShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
