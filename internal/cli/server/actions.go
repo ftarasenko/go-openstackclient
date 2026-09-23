@@ -11,6 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/remoteconsoles"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/secgroups"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/volumeattach"
 	"github.com/spf13/cobra"
@@ -1062,14 +1063,21 @@ func serverActionNegotiated(ctx context.Context, client *gophercloud.ServiceClie
 	return err
 }
 
+// serverAddServerGroupFlags holds "server add server-group" options.
+type serverAddServerGroupFlags struct {
+	wait        bool
+	waitTimeout time.Duration
+}
+
 // newServerAddServerGroupCommand implements "server add server-group <server>
-// <server-group-id>" — the KeyStack dynamic-server-group extension (KCP-703),
+// <server-group>" — the KeyStack dynamic-server-group extension (KCP-703),
 // which adds a running server to a server group via the addServerGroup action.
 // Vanilla nova has no such action and rejects it with HTTP 400.
 func newServerAddServerGroupCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &serverAddServerGroupFlags{}
 	cmd := &cobra.Command{
-		Use:   "server-group <server> <server-group-id>",
-		Short: "Add a server to a server group (KeyStack dynamic server groups)",
+		Use:   "server-group <server> <server-group>",
+		Short: "Add a server to a server group, migrating it if the policy requires (KeyStack dynamic server groups)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -1080,25 +1088,98 @@ func newServerAddServerGroupCommand(a *auth.Options, o *output.Options) *cobra.C
 			if err != nil {
 				return err
 			}
-			return runServerAddServerGroup(ctx, client, args[0], args[1], cmd.OutOrStdout())
+			return runServerAddServerGroup(ctx, client, args[0], args[1], f, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.BoolVar(&f.wait, "wait", false, "wait for any policy-driven migration to finish and confirm the server is a group member")
+	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, migratePollTimeout, helpWaitTimeout)
 	return cmd
 }
 
-func runServerAddServerGroup(ctx context.Context, client *gophercloud.ServiceClient, ref, groupID string, w io.Writer) error {
+func runServerAddServerGroup(ctx context.Context, client *gophercloud.ServiceClient, ref, groupRef string, f *serverAddServerGroupFlags, w io.Writer) error {
 	id, err := resolveServerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	// nova's schema requires a UUID, so a name must be resolved client-side.
+	groupID, err := resolveServerGroupID(ctx, client, groupRef)
 	if err != nil {
 		return err
 	}
 	body := map[string]any{"addServerGroup": map[string]any{"server_group_id": groupID}}
 	if err := serverActionNegotiated(ctx, client, id, body); err != nil {
-		return keystackExtErr(fmt.Errorf("adding server %q to server group %q: %w", ref, groupID, err), "dynamic server groups (addServerGroup)")
+		return keystackExtErr(fmt.Errorf("adding server %q to server group %q: %w", ref, groupRef, err), "dynamic server groups (addServerGroup)")
 	}
-	if _, err := fmt.Fprintf(w, "Added server %s to server group %s\n", ref, groupID); err != nil {
+	if f.wait {
+		if err := waitForServerGroupAdd(ctx, client, ref, id, groupID, f.waitTimeout); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Added server %s to server group %s\n", ref, groupRef); err != nil {
 		return err
 	}
 	return nil
+}
+
+// waitForServerGroupAdd waits out the migration addServerGroup may start.
+// nova sets task_state=migrating before answering 202 and casts the live
+// migration to conductor, so the call returns while the server is still
+// moving. A conductor-side failure drops the server from the group again,
+// which is why success is judged by membership, not by task_state clearing.
+func waitForServerGroupAdd(ctx context.Context, client *gophercloud.ServiceClient, ref, id, groupID string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = migratePollTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(statusPollInterval)
+	defer ticker.Stop()
+
+	var getErrors int
+	for {
+		var s struct {
+			Status    string `json:"status"`
+			TaskState string `json:"OS-EXT-STS:task_state"`
+		}
+		if err := servers.Get(ctx, client, id).ExtractInto(&s); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("waiting for server %q to join server group: %w", ref, ctx.Err())
+			}
+			getErrors++
+			if getErrors > maxConsecutiveGetErrors {
+				return fmt.Errorf("polling server %q: %w", ref, err)
+			}
+		} else {
+			getErrors = 0
+			if strings.EqualFold(s.Status, "ERROR") {
+				return fmt.Errorf("server %q entered ERROR status while joining server group", ref)
+			}
+			if s.TaskState == "" {
+				return checkServerGroupMember(ctx, client, ref, id, groupID)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for server %q to join server group: %w", ref, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// checkServerGroupMember confirms nova kept the server in the group.
+func checkServerGroupMember(ctx context.Context, client *gophercloud.ServiceClient, ref, id, groupID string) error {
+	g, err := servergroups.Get(ctx, client, groupID).Extract()
+	if err != nil {
+		return fmt.Errorf("reading server group %q: %w", groupID, err)
+	}
+	for _, m := range g.Members {
+		if m == id {
+			return nil
+		}
+	}
+	return fmt.Errorf("server %q is not a member of server group %q: the policy-driven migration failed (see \"server event list %s\")", ref, groupID, ref)
 }
 
 // newServerRemoveServerGroupCommand implements "server remove server-group

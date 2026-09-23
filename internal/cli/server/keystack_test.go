@@ -3,10 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
@@ -29,7 +31,7 @@ func TestRunServerAddServerGroup(t *testing.T) {
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerAddServerGroup(context.Background(), client, serverUUID, "grp-9", &buf); err != nil {
+	if err := runServerAddServerGroup(context.Background(), client, serverUUID, serverGroupID, &serverAddServerGroupFlags{}, &buf); err != nil {
 		t.Fatalf("runServerAddServerGroup: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -39,11 +41,139 @@ func TestRunServerAddServerGroup(t *testing.T) {
 	if !ok {
 		t.Fatalf("body missing addServerGroup object: %v", gotBody)
 	}
-	if action["server_group_id"] != "grp-9" {
-		t.Errorf("server_group_id = %v, want grp-9", action["server_group_id"])
+	if action["server_group_id"] != serverGroupID {
+		t.Errorf("server_group_id = %v, want %s", action["server_group_id"], serverGroupID)
 	}
-	if !strings.Contains(buf.String(), "Added server "+serverUUID+" to server group grp-9") {
+	if !strings.Contains(buf.String(), "Added server "+serverUUID+" to server group "+serverGroupID) {
 		t.Errorf("output = %q", buf.String())
+	}
+}
+
+// TestRunServerAddServerGroup_ResolvesName covers the name→ID lookup: nova's
+// addServerGroup schema requires a UUID, so koc resolves a group name first.
+func TestRunServerAddServerGroup_ResolvesName(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/os-server-groups", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server_groups":[{"id":"` + serverGroupID + `","name":"web"},{"id":"other","name":"db"}]}`))
+	})
+	var gotBody map[string]any
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, r *http.Request) {
+		gotBody = decodeBody(t, r)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := computeClient(fakeServer, "2.79")
+	var buf bytes.Buffer
+	if err := runServerAddServerGroup(context.Background(), client, serverUUID, "web", &serverAddServerGroupFlags{}, &buf); err != nil {
+		t.Fatalf("runServerAddServerGroup: %v", err)
+	}
+	action, _ := gotBody["addServerGroup"].(map[string]any)
+	if action["server_group_id"] != serverGroupID {
+		t.Errorf("server_group_id = %v, want %s", action["server_group_id"], serverGroupID)
+	}
+	if !strings.Contains(buf.String(), "to server group web") {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+// addServerGroupWaitFixture serves the action, a server that reports
+// task_state=migrating on the first read and settles on the second, and the
+// group with the given members.
+func addServerGroupWaitFixture(t *testing.T, fakeServer th.FakeServer, settledStatus string, members []string) *int {
+	t.Helper()
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/action", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	gets := 0
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		gets++
+		task := `"migrating"`
+		status := "ACTIVE"
+		if gets > 1 {
+			task, status = "null", settledStatus
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":{"id":"` + serverUUID + `","status":"` + status + `","OS-EXT-STS:task_state":` + task + `}}`))
+	})
+	fakeServer.Mux.HandleFunc("/os-server-groups/"+serverGroupID, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		quoted := make([]string, len(members))
+		for i, m := range members {
+			quoted[i] = `"` + m + `"`
+		}
+		_, _ = w.Write([]byte(`{"server_group":{"id":"` + serverGroupID + `","name":"web","policy":"anti-affinity","members":[` + strings.Join(quoted, ",") + `]}}`))
+	})
+	return &gets
+}
+
+func fastStatusPoll(t *testing.T) {
+	t.Helper()
+	prev := statusPollInterval
+	statusPollInterval = time.Millisecond
+	t.Cleanup(func() { statusPollInterval = prev })
+}
+
+// TestRunServerAddServerGroup_WaitMember covers --wait: poll through the
+// policy-driven migration, then confirm membership before reporting success.
+func TestRunServerAddServerGroup_WaitMember(t *testing.T) {
+	fastStatusPoll(t)
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	gets := addServerGroupWaitFixture(t, fakeServer, "ACTIVE", []string{"x", serverUUID})
+
+	client := computeClient(fakeServer, "2.79")
+	var buf bytes.Buffer
+	f := &serverAddServerGroupFlags{wait: true, waitTimeout: time.Minute}
+	if err := runServerAddServerGroup(context.Background(), client, serverUUID, serverGroupID, f, &buf); err != nil {
+		t.Fatalf("runServerAddServerGroup: %v", err)
+	}
+	if *gets != 2 {
+		t.Errorf("server GETs = %d, want 2 (migrating, then settled)", *gets)
+	}
+	if !strings.Contains(buf.String(), "Added server") {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+// TestRunServerAddServerGroup_WaitDropped covers the conductor failure path:
+// nova removes the server from the group, so --wait must fail even though
+// task_state cleared.
+func TestRunServerAddServerGroup_WaitDropped(t *testing.T) {
+	fastStatusPoll(t)
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	addServerGroupWaitFixture(t, fakeServer, "ACTIVE", nil)
+
+	client := computeClient(fakeServer, "2.79")
+	var buf bytes.Buffer
+	f := &serverAddServerGroupFlags{wait: true, waitTimeout: time.Minute}
+	err := runServerAddServerGroup(context.Background(), client, serverUUID, serverGroupID, f, &buf)
+	if err == nil || !strings.Contains(err.Error(), "is not a member") {
+		t.Fatalf("err = %v, want not-a-member", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("output on failure = %q, want none", buf.String())
+	}
+}
+
+// TestRunServerAddServerGroup_WaitError covers a migration that leaves the
+// server in ERROR.
+func TestRunServerAddServerGroup_WaitError(t *testing.T) {
+	fastStatusPoll(t)
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	addServerGroupWaitFixture(t, fakeServer, "ERROR", []string{serverUUID})
+
+	client := computeClient(fakeServer, "2.79")
+	f := &serverAddServerGroupFlags{wait: true, waitTimeout: time.Minute}
+	err := runServerAddServerGroup(context.Background(), client, serverUUID, serverGroupID, f, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "ERROR") {
+		t.Fatalf("err = %v, want ERROR status failure", err)
 	}
 }
 
