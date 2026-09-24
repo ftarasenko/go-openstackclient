@@ -117,6 +117,11 @@ func runImageRemoveProject(ctx context.Context, client *gophercloud.ServiceClien
 // resolveProjectRef turns a project name or ID into a project ID via the
 // identity service derived from the shared session.
 func resolveProjectRef(ctx context.Context, session *auth.Client, ref string) (string, error) {
+	return resolveProjectRefInDomain(ctx, session, ref, "")
+}
+
+// resolveProjectRefInDomain is resolveProjectRef narrowed by --project-domain.
+func resolveProjectRefInDomain(ctx context.Context, session *auth.Client, ref, domain string) (string, error) {
 	if ref == "" || resolve.IsUUID(ref) {
 		return ref, nil
 	}
@@ -124,7 +129,7 @@ func resolveProjectRef(ctx context.Context, session *auth.Client, ref string) (s
 	if err != nil {
 		return "", err
 	}
-	return resolve.ProjectID(ctx, identityClient, ref)
+	return resolve.ProjectIDInDomain(ctx, identityClient, ref, domain)
 }
 
 func memberFields(m *members.Member) ([]string, []any) {

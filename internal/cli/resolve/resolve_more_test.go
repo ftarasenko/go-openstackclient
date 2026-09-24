@@ -41,6 +41,10 @@ func TestResolvers_ListByName(t *testing.T) {
 			kind: "user", path: "/users", client: projectFakeClient, call: UserID,
 			body: `{"users":[{"id":"user-1","name":"alice"}]}`, ref: "alice", wantID: "user-1",
 		},
+		{
+			kind: "volume", path: "/volumes/detail", client: volumeFakeClient, call: VolumeID,
+			body: `{"volumes":[{"id":"vol-1","name":"data"}]}`, ref: "data", wantID: "vol-1",
+		},
 	}
 
 	for _, tt := range tests {

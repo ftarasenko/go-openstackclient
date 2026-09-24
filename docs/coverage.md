@@ -72,7 +72,12 @@ until the history-parity pass. `router list` accepted only `--name`, and
 `router show` lacked upstream's `interfaces_info` and `server delete` lacked
 `--wait`/`--force` until the same pass. `image list` was counted while rejecting `--all`,
 and every designate verb was counted while only some of them accepted
-`--all-projects`, until the cross-project/name pass. When auditing a noun, diff
+`--all-projects`, until the cross-project/name pass. `image create` lacked
+upstream's `raw`/`bare` format defaults, piped-stdin data, `--size`,
+`--protected`, `--community`/`--shared`, `--project`, `--import`, `--progress`
+and `--volume`, and left a queued record behind on a failed upload, until the
+image-create parity pass; `--sign-key-path`/`--sign-cert-id` are still missing.
+When auditing a noun, diff
 its flags against the upstream parser, not just its presence in these tables.
 
 Two flag families have been diffed exhaustively across the whole tree, so a new

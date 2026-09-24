@@ -45,7 +45,7 @@ func TestRunImageCreate_VisibilityIDAndTags(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runImageCreate(context.Background(), imageClient(fakeServer), o, "cirros", f, &buf); err != nil {
+	if err := runImageCreate(context.Background(), imageClient(fakeServer), o, "cirros", f, nil, &buf); err != nil {
 		t.Fatalf("runImageCreate error: %v", err)
 	}
 	if gotMethod != http.MethodPost {

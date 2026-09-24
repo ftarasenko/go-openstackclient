@@ -248,6 +248,12 @@ func computeFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
 	return sc
 }
 
+func volumeFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
+	sc := fakeclient.ServiceClient(fakeServer)
+	sc.Type = "block-storage"
+	return sc
+}
+
 func netFakeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
 	sc := fakeclient.ServiceClient(fakeServer)
 	sc.Type = "network"

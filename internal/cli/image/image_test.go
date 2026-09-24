@@ -408,7 +408,7 @@ func TestRunImageCreate_RequestBody(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runImageCreate(context.Background(), client, o, "myimage", f, &buf); err != nil {
+	if err := runImageCreate(context.Background(), client, o, "myimage", f, nil, &buf); err != nil {
 		t.Fatalf("runImageCreate returned error: %v", err)
 	}
 

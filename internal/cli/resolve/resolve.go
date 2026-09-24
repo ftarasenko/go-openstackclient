@@ -17,6 +17,7 @@ import (
 	"regexp"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/domains"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
@@ -119,6 +120,18 @@ func ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref
 		cachePut(key, id)
 	}
 	return id, nil
+}
+
+// VolumeID resolves a cinder volume name (or ID) to a volume ID using the given
+// volume service client.
+func VolumeID(ctx context.Context, volumeClient *gophercloud.ServiceClient, ref string) (string, error) {
+	return byName(ctx, "volume", "", ref, func(ctx context.Context) ([]volumes.Volume, error) {
+		pages, err := volumes.List(volumeClient, volumes.ListOpts{Name: ref}).AllPages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return volumes.ExtractVolumes(pages)
+	}, func(v volumes.Volume) string { return v.ID })
 }
 
 // DomainID resolves a keystone domain name (or ID) to a domain ID using the
