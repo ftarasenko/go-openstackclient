@@ -22,6 +22,10 @@ const (
 	netFlagProviderType      = "provider-network-type"
 	netFlagProviderPhysNet   = "provider-physical-network"
 	netFlagProviderSegment   = "provider-segment"
+	netFlagPVLAN             = "pvlan"
+	netFlagNoPVLAN           = "no-pvlan"
+	netFlagQinQVLAN          = "qinq-vlan"
+	netFlagNoQinQVLAN        = "no-qinq-vlan"
 
 	netAttrRouterExternal  = "router:external"
 	netAttrSegmentationID  = "provider:segmentation_id"
@@ -30,12 +34,20 @@ const (
 	netAttrQoSPolicyID     = "qos_policy_id"
 	netAttrDNSDomain       = "dns_domain"
 	netAttrVLANTransparent = "vlan_transparent"
+	netAttrPVLAN           = "pvlan"
+	// netAttrQinQ is neutron's wire name for --qinq-vlan. Upstream OSC 10.3.0
+	// sends "vlan_qinq" (openstacksdk maps is_vlan_qinq to that key), but
+	// neutron-lib's qinq definition (api/definitions/qinq.py QINQ_FIELD) and
+	// neutron itself (db/qinq_db.py, the 2025.1 release note) name the attribute
+	// "qinq", and neutron answers an unknown body attribute with a 400 — so koc
+	// sends what the server accepts.
+	netAttrQinQ = "qinq"
 )
 
 // NetExtAttrs carries the network extension attributes gophercloud's
 // networks.Network does not model: qos_policy_id (qos), dns_domain
 // (dns-integration), is_default (auto-allocated-topology),
-// port_security_enabled (port-security), vlan_transparent,
+// port_security_enabled (port-security), vlan_transparent, pvlan, qinq,
 // availability_zones and the address-scope pair. The booleans are pointers so
 // a cloud without the extension renders an empty cell rather than "false".
 // Exported and flat for the same reason as MTUExt.
@@ -45,6 +57,8 @@ type NetExtAttrs struct {
 	IsDefault           *bool    `json:"is_default"`
 	PortSecurityEnabled *bool    `json:"port_security_enabled"`
 	VLANTransparent     *bool    `json:"vlan_transparent"`
+	PVLAN               *bool    `json:"pvlan"`
+	QinQ                *bool    `json:"qinq"`
 	AvailabilityZones   []string `json:"availability_zones"`
 	IPv4AddressScope    string   `json:"ipv4_address_scope"`
 	IPv6AddressScope    string   `json:"ipv6_address_scope"`
@@ -95,6 +109,15 @@ func networkCreateAttrs(ctx context.Context, client *gophercloud.ServiceClient, 
 	attrs = setOptional(attrs, netAttrPortSecurity, pairBool(f.enablePortSecurity, f.disablePortSecurity))
 	attrs = setOptional(attrs, netAttrIsDefault, pairBool(f.defaultNet, f.noDefault))
 	attrs = setOptional(attrs, netAttrVLANTransparent, pairBool(f.transparentVLAN, f.noTransparentVLAN))
+	attrs = setOptional(attrs, netAttrQinQ, pairBool(f.qinqVLAN, f.noQinQVLAN))
+	attrs = setOptional(attrs, netAttrPVLAN, pairBool(f.pvlan, f.noPVLAN))
+	if attrs[netAttrVLANTransparent] == true && attrs[netAttrQinQ] == true {
+		return nil, fmt.Errorf("--%s and --%s cannot both be enabled for the network", netFlagTransparentVLAN, netFlagQinQVLAN)
+	}
+	// Upstream checks this before merging --extra-property on create, after it on set.
+	if err := checkPVLANPortSecurity(attrs); err != nil {
+		return nil, err
+	}
 	if f.qosPolicy != "" {
 		qosID, err := resolveQoSPolicyID(ctx, client, f.qosPolicy)
 		if err != nil {
@@ -159,12 +182,26 @@ func networkSetAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *
 	if flags.Changed(flagDNSDomain) {
 		attrs = mergeAttrs(attrs, map[string]any{netAttrDNSDomain: f.dnsDomain})
 	}
+	attrs = setOptional(attrs, netAttrPVLAN, enableDisable(flags, f.pvlan, f.noPVLAN, netFlagPVLAN, netFlagNoPVLAN))
 	attrs = mergeAttrs(attrs, providerAttrs(f.providerType, f.providerPhysNet, f.providerSegment))
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
 		return nil, err
 	}
-	return mergeAttrs(attrs, extra), nil
+	attrs = mergeAttrs(attrs, extra)
+	if err := checkPVLANPortSecurity(attrs); err != nil {
+		return nil, err
+	}
+	return attrs, nil
+}
+
+// checkPVLANPortSecurity is upstream's "--disable-port-security and --pvlan
+// can not be used together" (network.py, create and set).
+func checkPVLANPortSecurity(attrs map[string]any) error {
+	if attrs[netAttrPortSecurity] == false && attrs[netAttrPVLAN] == true {
+		return fmt.Errorf("--%s and --%s cannot be used together", flagDisablePortSecurity, netFlagPVLAN)
+	}
+	return nil
 }
 
 // getNetwork fetches one network with every extension attribute koc renders.
@@ -189,7 +226,7 @@ func updateNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if req.changed {
 		n = &networkExt{}
 		if err := networks.Update(ctx, client, id, withNetworkUpdateAttrs(req.opts, req.attrs)).ExtractInto(n); err != nil {
-			return fmt.Errorf("updating network %s: %w", ref, err)
+			return explainMissingExtension(ctx, client, fmt.Errorf("updating network %s: %w", ref, err), req.attrs)
 		}
 	} else if n, err = getNetwork(ctx, client, id); err != nil {
 		return fmt.Errorf("getting network %s: %w", ref, err)

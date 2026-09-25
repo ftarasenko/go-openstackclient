@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
@@ -56,14 +57,14 @@ type networkExt struct {
 }
 
 // networkShowFields renders the attributes upstream's "network show" prints,
-// under the same keys (is_vlan_transparent is the SDK's name for
-// vlan_transparent).
+// under the same keys (is_vlan_transparent and is_vlan_qinq are the SDK's
+// names for vlan_transparent and qinq).
 func networkShowFields(n *networkExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "status", "admin_state_up", "shared", "router:external",
 		"is_default", "mtu", "subnets", fieldProviderNetworkType,
 		fieldProviderPhysicalNetwork, netAttrSegmentationID, netAttrPortSecurity,
-		netAttrQoSPolicyID, netAttrDNSDomain, "is_vlan_transparent",
+		netAttrQoSPolicyID, netAttrDNSDomain, "is_vlan_transparent", "is_vlan_qinq", netAttrPVLAN,
 		"ipv4_address_scope", "ipv6_address_scope",
 		"availability_zone_hints", "availability_zones", "description",
 		"project_id", "tags", "revision_number", "created_at", "updated_at",
@@ -72,7 +73,7 @@ func networkShowFields(n *networkExt) ([]string, []any) {
 		n.ID, n.Name, n.Status, n.AdminStateUp, n.Shared, n.External,
 		n.IsDefault, n.MTU, n.Subnets, n.NetworkType,
 		n.PhysicalNetwork, n.SegmentationID, n.PortSecurityEnabled,
-		n.QoSPolicyID, n.DNSDomain, n.VLANTransparent,
+		n.QoSPolicyID, n.DNSDomain, n.VLANTransparent, n.QinQ, n.PVLAN,
 		n.IPv4AddressScope, n.IPv6AddressScope,
 		n.AvailabilityZoneHints, n.AvailabilityZones, n.Description,
 		n.ProjectID, n.Tags, n.RevisionNumber, n.CreatedAt, n.UpdatedAt,
@@ -125,9 +126,12 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.providerPhysicalNetwork, netFlagProviderPhysNet, "", "list networks on this provider physical network")
 	fl.StringVar(&f.providerSegment, netFlagProviderSegment, "", "list networks with this provider segmentation ID")
 	fl.StringVar(&f.agent, "agent", "", "list only networks hosted by this DHCP agent (ID only; other filters are ignored, as upstream)")
+	fl.BoolVar(&f.pvlan, netFlagPVLAN, false, "list only networks with private VLAN enabled (requires the pvlan extension)")
+	fl.BoolVar(&f.noPVLAN, netFlagNoPVLAN, false, "list only networks with private VLAN disabled (requires the pvlan extension)")
 	bindTagFilterFlags(fl, &f.tagFilterFlags, "networks")
 	cmd.MarkFlagsMutuallyExclusive(netFlagExternal, netFlagInternal)
 	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
+	cmd.MarkFlagsMutuallyExclusive(netFlagPVLAN, netFlagNoPVLAN)
 	return cmd
 }
 
@@ -150,7 +154,9 @@ type networkListFlags struct {
 	providerPhysicalNetwork string
 	providerSegment         string
 
-	agent string
+	agent   string
+	pvlan   bool
+	noPVLAN bool
 	tagFilterFlags
 
 	shared     *bool
@@ -205,6 +211,17 @@ func (opts providerListOptsExt) ToNetworkListQuery() (string, error) {
 	return (&url.URL{RawQuery: params.Encode()}).String(), nil
 }
 
+// networkListQueryExt appends filters networks.ListOpts does not model.
+type networkListQueryExt struct {
+	networks.ListOptsBuilder
+	extra url.Values
+}
+
+func (opts networkListQueryExt) ToNetworkListQuery() (string, error) {
+	q, err := opts.ListOptsBuilder.ToNetworkListQuery()
+	return withQueryValues(q, err, opts.extra)
+}
+
 func (f *networkListFlags) hasProviderFilter() bool {
 	return f.providerNetworkType != "" || f.providerPhysicalNetwork != "" || f.providerSegment != ""
 }
@@ -235,9 +252,20 @@ func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 			SegmentationID:  f.providerSegment,
 		}
 	}
+	// pvlan is a server-side filter (is_filter in neutron-lib's pvlan
+	// definition). Upstream passes it to openstacksdk, which has no query
+	// mapping for it and filters the fetched list client-side instead; the
+	// server-side filter returns the same networks without fetching the rest,
+	// and a cloud without the extension rejects it (named below) rather than
+	// answering with an empty list.
+	var filterAttrs map[string]any
+	if pv := pairBool(f.pvlan, f.noPVLAN); pv != nil {
+		opts = networkListQueryExt{ListOptsBuilder: opts, extra: url.Values{netAttrPVLAN: {strconv.FormatBool(*pv)}}}
+		filterAttrs = map[string]any{netAttrPVLAN: *pv}
+	}
 	pages, err := networks.List(client, opts).AllPages(ctx)
 	if err != nil {
-		return fmt.Errorf("listing networks: %w", err)
+		return explainMissingExtension(ctx, client, fmt.Errorf("listing networks: %w", err), filterAttrs)
 	}
 	var all []networkExt
 	if err := networks.ExtractNetworksInto(pages, &all); err != nil {
@@ -329,7 +357,9 @@ func runNetworkShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 
 // networkCreateFlags mirrors upstream CreateNetwork (network/v2/network.py).
 // Each on/off pair is mutually exclusive, as upstream's argparse groups are.
-// --pvlan/--no-pvlan and --qinq-vlan/--no-qinq-vlan are post-Zed and left out.
+// --pvlan/--no-pvlan and --qinq-vlan/--no-qinq-vlan are post-Zed: their help
+// names the extension, and a cloud without it gets the extension named in the
+// error (explainMissingExtension).
 type networkCreateFlags struct {
 	enable              bool
 	disable             bool
@@ -343,6 +373,10 @@ type networkCreateFlags struct {
 	disablePortSecurity bool
 	transparentVLAN     bool
 	noTransparentVLAN   bool
+	qinqVLAN            bool
+	noQinQVLAN          bool
+	pvlan               bool
+	noPVLAN             bool
 	mtu                 int
 	providerType        string
 	providerPhysNet     string
@@ -393,6 +427,11 @@ func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security by default for ports on this network")
 	fl.BoolVar(&f.transparentVLAN, netFlagTransparentVLAN, false, "make the network VLAN transparent")
 	fl.BoolVar(&f.noTransparentVLAN, netFlagNoTransparentVLAN, false, "do not make the network VLAN transparent")
+	fl.BoolVar(&f.qinqVLAN, netFlagQinQVLAN, false,
+		"enable VLAN QinQ (S-tag ethertype 0x88a8) for the network (requires the qinq extension)")
+	fl.BoolVar(&f.noQinQVLAN, netFlagNoQinQVLAN, false, "disable VLAN QinQ for the network (requires the qinq extension)")
+	fl.BoolVar(&f.pvlan, netFlagPVLAN, false, "enable private VLAN for the network (requires the pvlan extension)")
+	fl.BoolVar(&f.noPVLAN, netFlagNoPVLAN, false, "disable private VLAN for the network (requires the pvlan extension)")
 	fl.IntVar(&f.mtu, "mtu", 0, "maximum transmission unit for the network")
 	fl.StringVar(&f.providerType, netFlagProviderType, "", "physical network type (flat, vlan, vxlan, ...)")
 	fl.StringVar(&f.providerPhysNet, netFlagProviderPhysNet, "", "name of the physical network")
@@ -412,6 +451,8 @@ func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		{flagDefault, flagNoDefault},
 		{flagEnablePortSecurity, flagDisablePortSecurity},
 		{netFlagTransparentVLAN, netFlagNoTransparentVLAN},
+		{netFlagQinQVLAN, netFlagNoQinQVLAN},
+		{netFlagPVLAN, netFlagNoPVLAN},
 	} {
 		cmd.MarkFlagsMutuallyExclusive(pair[0], pair[1])
 	}
@@ -487,7 +528,7 @@ func runNetworkCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 
 	var n networkExt
 	if err := networks.Create(ctx, client, withNetworkCreateAttrs(builder, attrs)).ExtractInto(&n); err != nil {
-		return fmt.Errorf("creating network: %w", err)
+		return explainMissingExtension(ctx, client, fmt.Errorf("creating network: %w", err), attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if n.Tags, err = applyTagsForSet(ctx, client, tagResourceNetworks, n.ID, n.Tags, &f.tagWriteFlags); err != nil {
@@ -534,7 +575,8 @@ func runNetworkDelete(ctx context.Context, client *gophercloud.ServiceClient, na
 }
 
 // networkSetFlags mirrors upstream SetNetwork. --pvlan/--no-pvlan are
-// post-Zed and left out.
+// post-Zed; --qinq-vlan is create-only upstream (and allow_put is false in
+// neutron-lib's qinq definition), so set has no QinQ pair.
 type networkSetFlags struct {
 	name                string
 	description         string
@@ -551,6 +593,8 @@ type networkSetFlags struct {
 	disablePortSecurity bool
 	qosPolicy           string
 	noQoSPolicy         bool
+	pvlan               bool
+	noPVLAN             bool
 	dnsDomain           string
 	providerType        string
 	providerPhysNet     string
@@ -593,6 +637,8 @@ func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security by default for ports on this network")
 	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the network (name or ID)")
 	fl.BoolVar(&f.noQoSPolicy, flagNoQoSPolicy, false, "detach the network's QoS policy")
+	fl.BoolVar(&f.pvlan, netFlagPVLAN, false, "enable private VLAN for the network (requires the pvlan extension)")
+	fl.BoolVar(&f.noPVLAN, netFlagNoPVLAN, false, "disable private VLAN for the network (requires the pvlan extension)")
 	fl.StringVar(&f.dnsDomain, flagDNSDomain, "", "DNS domain for the network (requires the dns-integration extension)")
 	fl.StringVar(&f.providerType, netFlagProviderType, "", "physical network type (flat, vlan, vxlan, ...)")
 	fl.StringVar(&f.providerPhysNet, netFlagProviderPhysNet, "", "name of the physical network")
@@ -605,6 +651,7 @@ func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		{flagDefault, flagNoDefault},
 		{flagEnablePortSecurity, flagDisablePortSecurity},
 		{flagQoSPolicy, flagNoQoSPolicy},
+		{netFlagPVLAN, netFlagNoPVLAN},
 	} {
 		cmd.MarkFlagsMutuallyExclusive(pair[0], pair[1])
 	}

@@ -37,7 +37,69 @@ const (
 	subnetFlagGateway             = "gateway"
 	subnetFlagNoGateway           = "no-gateway"
 	subnetFlagName                = "name"
+	subnetFlagLeakRoutes          = "leak-routes"
+	subnetFlagNoLeakRoutes        = "no-leak-routes"
+
+	subnetAttrLeakRoutes      = "leak_routes"
+	subnetAttrDNSPublishFixed = "dns_publish_fixed_ip"
+	subnetAttrServiceTypes    = "service_types"
 )
+
+// SubnetLeakExt carries ovn-bgp's leak_routes, which subnets.Subnet does not
+// model. A pointer, so a cloud without the extension renders an empty cell
+// rather than "false". Exported for the same reason as MTUExt.
+type SubnetLeakExt struct {
+	LeakRoutes *bool `json:"leak_routes"`
+}
+
+// subnetExt is a Subnet decorated with the extension attributes koc renders.
+type subnetExt struct {
+	subnets.Subnet
+	SubnetLeakExt
+}
+
+// extractSubnet decodes a subnet GET/POST/PUT result into a subnetExt.
+func extractSubnet(r interface {
+	ExtractIntoStructPtr(to any, label string) error
+},
+) (*subnetExt, error) {
+	var s subnetExt
+	if err := r.ExtractIntoStructPtr(&s, "subnet"); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// withExplainKeys returns attrs plus the named attributes the typed opts carry,
+// for explainMissingExtension, which only looks at which keys a body sent.
+func withExplainKeys(attrs map[string]any, keys ...string) map[string]any {
+	if len(keys) == 0 {
+		return attrs
+	}
+	out := make(map[string]any, len(attrs)+len(keys))
+	for k, v := range attrs {
+		out[k] = v
+	}
+	for _, k := range keys {
+		if _, ok := out[k]; !ok {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// subnetTypedExtKeys names the extension attributes a subnet request carries
+// in its typed opts rather than in the attrs map.
+func subnetTypedExtKeys(dnsPublish *bool, serviceTypes bool) []string {
+	var keys []string
+	if dnsPublish != nil {
+		keys = append(keys, subnetAttrDNSPublishFixed)
+	}
+	if serviceTypes {
+		keys = append(keys, subnetAttrServiceTypes)
+	}
+	return keys
+}
 
 func newSubnetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -54,19 +116,19 @@ func newSubnetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func subnetShowFields(s *subnets.Subnet) ([]string, []any) {
+func subnetShowFields(s *subnetExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "network_id", "cidr", "ip_version", "gateway_ip",
-		"enable_dhcp", "dns_nameservers", "dns_publish_fixed_ip", "allocation_pools",
-		"host_routes", "service_types", "ipv6_address_mode", "ipv6_ra_mode",
-		"subnetpool_id", "segment_id", "description", "project_id", "tags",
+		"enable_dhcp", "dns_nameservers", subnetAttrDNSPublishFixed, "allocation_pools",
+		"host_routes", subnetAttrServiceTypes, "ipv6_address_mode", "ipv6_ra_mode",
+		"subnetpool_id", "segment_id", subnetAttrLeakRoutes, "description", "project_id", "tags",
 		"revision_number", "created_at", "updated_at",
 	}
 	values := []any{
 		s.ID, s.Name, s.NetworkID, s.CIDR, s.IPVersion, s.GatewayIP,
 		s.EnableDHCP, s.DNSNameservers, s.DNSPublishFixedIP, s.AllocationPools,
 		s.HostRoutes, s.ServiceTypes, s.IPv6AddressMode, s.IPv6RAMode,
-		s.SubnetPoolID, s.SegmentID, s.Description, s.ProjectID, s.Tags,
+		s.SubnetPoolID, s.SegmentID, s.LeakRoutes, s.Description, s.ProjectID, s.Tags,
 		s.RevisionNumber, s.CreatedAt, s.UpdatedAt,
 	}
 	return fields, values
@@ -273,7 +335,7 @@ func runSubnetShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	s, err := subnets.Get(ctx, client, id).Extract()
+	s, err := extractSubnet(subnets.Get(ctx, client, id))
 	if err != nil {
 		return fmt.Errorf("getting subnet %s: %w", nameOrID, err)
 	}
@@ -376,9 +438,10 @@ func runSubnetCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	s, err := subnets.Create(ctx, client, withSubnetCreateAttrs(opts, attrs)).Extract()
+	s, err := extractSubnet(subnets.Create(ctx, client, withSubnetCreateAttrs(opts, attrs)))
 	if err != nil {
-		return fmt.Errorf("creating subnet: %w", err)
+		explain := withExplainKeys(attrs, subnetTypedExtKeys(opts.DNSPublishFixedIP, len(opts.ServiceTypes) > 0)...)
+		return explainMissingExtension(ctx, client, fmt.Errorf("creating subnet: %w", err), explain)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if s.Tags, err = applyTagsForSet(ctx, client, tagResourceSubnets, s.ID, s.Tags, &f.tagWriteFlags); err != nil {
@@ -520,8 +583,9 @@ func runSubnetDelete(ctx context.Context, client *gophercloud.ServiceClient, nam
 // subnetSetFlags mirrors upstream SetSubnet. The list flags --dns-nameserver,
 // --allocation-pool, --host-route and --service-type ADD to what the subnet
 // already carries; their --no-* partner clears the list first, so giving both
-// overwrites it (--service-type has no --no-* partner upstream). --leak-routes
-// is left out: it needs the ovn-bgp extension, which is newer than Zed.
+// overwrites it (--service-type has no --no-* partner upstream).
+// --leak-routes/--no-leak-routes need the ovn-bgp extension, newer than Zed;
+// they are set-only, as upstream (allow_post is false in neutron-lib's ovn_bgp).
 type subnetSetFlags struct {
 	name                string
 	description         string
@@ -538,6 +602,8 @@ type subnetSetFlags struct {
 	noDHCP              bool
 	dnsPublishFixedIP   bool
 	noDNSPublishFixedIP bool
+	leakRoutes          bool
+	noLeakRoutes        bool
 	networkSegment      string
 	extraProperty       []string
 	tagWriteFlags
@@ -592,6 +658,10 @@ func newSubnetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.noDHCP, flagNoDHCP, false, "disable DHCP")
 	fl.BoolVar(&f.dnsPublishFixedIP, subnetFlagDNSPublishFixedIP, false, "publish fixed IPs in DNS")
 	fl.BoolVar(&f.noDNSPublishFixedIP, subnetFlagNoDNSPublishFixedIP, false, "do not publish fixed IPs in DNS")
+	fl.BoolVar(&f.leakRoutes, subnetFlagLeakRoutes, false,
+		"leak the subnet's routes to the underlay BGP fabric (requires the ovn-bgp extension)")
+	fl.BoolVar(&f.noLeakRoutes, subnetFlagNoLeakRoutes, false,
+		"do not leak the subnet's routes to the underlay BGP fabric (requires the ovn-bgp extension)")
 	fl.StringVar(&f.networkSegment, subnetFlagNetworkSegment, "",
 		"network segment to associate (name or ID; only while the subnet has none)")
 	bindExtraPropertyFlag(fl, &f.extraProperty)
@@ -599,6 +669,7 @@ func newSubnetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive(flagDHCP, flagNoDHCP)
 	cmd.MarkFlagsMutuallyExclusive(subnetFlagGateway, subnetFlagNoGateway)
 	cmd.MarkFlagsMutuallyExclusive(subnetFlagDNSPublishFixedIP, subnetFlagNoDNSPublishFixedIP)
+	cmd.MarkFlagsMutuallyExclusive(subnetFlagLeakRoutes, subnetFlagNoLeakRoutes)
 	return cmd
 }
 
@@ -607,20 +678,24 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	var current *subnets.Subnet
+	var (
+		current *subnetExt
+		base    *subnets.Subnet
+	)
 	if f.needsCurrent() {
-		if current, err = subnets.Get(ctx, client, id).Extract(); err != nil {
+		if current, err = extractSubnet(subnets.Get(ctx, client, id)); err != nil {
 			return fmt.Errorf("reading subnet %s before set: %w", nameOrID, err)
 		}
+		base = &current.Subnet
 	}
-	opts, attrs, changed, err := buildSubnetSetUpdate(ctx, client, f, flags, current)
+	opts, attrs, changed, err := buildSubnetSetUpdate(ctx, client, f, flags, base)
 	if err != nil {
 		return err
 	}
 	if !changed && !f.given() {
 		return fmt.Errorf("subnet set requires at least one attribute flag")
 	}
-	var s *subnets.Subnet
+	var s *subnetExt
 	switch {
 	case changed:
 		if current != nil {
@@ -629,15 +704,16 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 			revision := current.RevisionNumber
 			opts.RevisionNumber = &revision
 		}
-		if s, err = subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs)).Extract(); err != nil {
-			return fmt.Errorf("updating subnet %s: %w", nameOrID, err)
+		if s, err = extractSubnet(subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs))); err != nil {
+			explain := withExplainKeys(attrs, subnetTypedExtKeys(opts.DNSPublishFixedIP, opts.ServiceTypes != nil)...)
+			return explainMissingExtension(ctx, client, fmt.Errorf("updating subnet %s: %w", nameOrID, err), explain)
 		}
 	case current != nil:
 		s = current
 	default:
 		// Tags are the only change: upstream skips the PUT, so read the subnet
 		// for its current tags instead.
-		if s, err = subnets.Get(ctx, client, id).Extract(); err != nil {
+		if s, err = extractSubnet(subnets.Get(ctx, client, id)); err != nil {
 			return fmt.Errorf("getting subnet %s: %w", nameOrID, err)
 		}
 	}
@@ -672,6 +748,7 @@ func buildSubnetSetUpdate(ctx context.Context, client *gophercloud.ServiceClient
 		opts.SegmentID = &segID
 		changed = true
 	}
+	attrs = setOptional(attrs, subnetAttrLeakRoutes, pairBool(f.leakRoutes, f.noLeakRoutes))
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
 		return opts, nil, false, err

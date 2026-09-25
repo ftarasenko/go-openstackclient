@@ -82,7 +82,7 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	current, err := subnets.Get(ctx, client, id).Extract()
+	current, err := extractSubnet(subnets.Get(ctx, client, id))
 	if err != nil {
 		return fmt.Errorf("reading subnet %s before unset: %w", nameOrID, err)
 	}
@@ -91,7 +91,7 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if f.changesAttrs() {
 		revision := current.RevisionNumber
 		opts := subnets.UpdateOpts{RevisionNumber: &revision}
-		attrs, err := subnetUnsetLists(f, current, &opts)
+		attrs, err := subnetUnsetLists(f, &current.Subnet, &opts)
 		if err != nil {
 			return err
 		}
@@ -107,8 +107,9 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 			return err
 		}
 		attrs = mergeAttrs(attrs, extra)
-		if s, err = subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs)).Extract(); err != nil {
-			return fmt.Errorf("updating subnet %s: %w", nameOrID, err)
+		if s, err = extractSubnet(subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs))); err != nil {
+			explain := withExplainKeys(attrs, subnetTypedExtKeys(nil, opts.ServiceTypes != nil)...)
+			return explainMissingExtension(ctx, client, fmt.Errorf("updating subnet %s: %w", nameOrID, err), explain)
 		}
 	}
 	// Tags are a sub-resource; a tags-only unset sends no subnet PUT, as upstream.
