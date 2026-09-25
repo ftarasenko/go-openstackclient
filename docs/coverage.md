@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-09-16 · `koc` @ this commit (base `752aadc`) · 570 leaf
+**Snapshot:** 2026-09-25 · `koc` @ this commit (base `5cc80b1`) · 570 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -14,12 +14,12 @@ the gap list in the same commit.
 
 | Baseline | Version | How it was obtained |
 | --- | --- | --- |
-| `python-openstackclient` | 10.2.1 | PyPI sdist → `python_openstackclient.egg-info/entry_points.txt` |
+| `python-openstackclient` | 10.3.0 | PyPI sdist → `python_openstackclient.egg-info/entry_points.txt` |
 | `python-ironicclient` (OSC plugin) | 6.2.0 | PyPI sdist → `entry_points.txt` |
 | `python-designateclient` (OSC plugin) | 7.0.0 | PyPI sdist → `entry_points.txt` |
 | `python-octaviaclient` (OSC plugin) | 3.14.0 | PyPI sdist → `entry_points.txt` (82 commands under `[openstack.load_balancer.v2]`) |
 | `osc-placement` (OSC plugin) | 4.9.0 | PyPI sdist → `entry_points.txt` |
-| `gophercloud/v2` | v2.13.0 | module zip from `proxy.golang.org` (matches the `vendor/` pin) |
+| `gophercloud/v2` | v2.15.0 | module zip from `proxy.golang.org` (matches the `vendor/` pin) |
 | `python-ironic-inspector-client` (OSC plugin) | 5.4.0 | PyPI sdist → `entry_points.txt` (13 commands under `baremetal introspection`) |
 
 Entry points are the authoritative command list — `openstack`'s own docs lag the
@@ -28,8 +28,20 @@ PyPI is the source of record.
 
 ## Headline
 
-**518 of 844 in-scope upstream commands (61%).** Of `koc`'s 570 leaf commands,
-518 are upstream-equivalent and 52 are koc-native.
+**520 of 847 in-scope upstream commands (61%).** Of `koc`'s 570 leaf commands,
+520 are upstream-equivalent and 50 are koc-native.
+
+Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
+namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
+points. `koc` already had all three, so the denominator grew by 3 and the
+numerator by 2 — `add` and `remove` move from "koc-native" to
+upstream-equivalent, and `list`, previously credited through the naming
+deviation to upstream's `network subport list`, now matches by name (one leaf
+cannot be counted twice, so `network subport list` becomes an ordinary gap).
+The same entry-point file also carries five neutron plugin namespaces that no
+earlier snapshot counted anywhere; they are now an explicit not-targeted row
+(see below). Measured flag by flag against the same parsers, the network
+surface is tracked in `docs/proposals/network-parity.md`.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -105,8 +117,9 @@ command that omits one is a regression rather than a known gap:
 command tree, which is what keeps this claim true.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
-`image.v1` are excluded as legacy) plus the five plugins above. 901 commands
-including Swift + Manila; 844 excluding them, since `koc` targets neither.
+`image.v1` are excluded as legacy) plus the five plugins above. 1004 commands
+including Swift, Manila and the neutron plugin namespaces; 847 excluding them,
+since `koc` targets none of the three.
 
 ## vs python-openstackclient (core)
 
@@ -116,10 +129,11 @@ including Swift + Manila; 844 excluding them, since `koc` targets neither.
 | `openstack.image.v2` | 16/42 (38%) | **14/15 (93%)** — only `image member get` remains |
 | `openstack.volume.v3` | 52/94 (55%) | **34/38 (89%)** — QoS, transfers, the backend pool/capability reads and `block storage cluster` are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
-| `openstack.network.v2` | 102/165 (62%) | **85/94 (90%)** — QoS and RBAC land outside the "core" denominator but are implemented |
+| `openstack.network.v2` | 104/168 (62%) | **87/97 (90%)** — QoS and RBAC land outside the "core" denominator but are implemented |
 | `openstack.common` | 6/11 (55%) | 6/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
+| `openstack.network.v2.{bgpvpn,dynamic_routing,fwaas,taas,vpnaas}` | 0/100 | not targeted — BGPVPN (22), dynamic routing (18), FWaaS (20), TaaS (15), VPNaaS (25). Registered in OSC's own entry points; gophercloud v2.15.0 has typed packages for all five should a cloud need them |
 
 "Core" excludes, per namespace: compute — `compute agent`, `host`, `usage`,
 `server share list/show`, `server dump` (12); identity — federation/IdP/mapping/
@@ -150,14 +164,14 @@ points, not common ones, and are counted in the compute row.
 
 ## vs gophercloud v2
 
-`koc` imports **93 of 218** gophercloud service packages. Within services `koc`
+`koc` imports **94 of 220** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
 | --- | --- |
-| `networking` | 23/50 |
+| `networking` | 24/50 |
 | `identity` | 11/27 |
-| `compute` | 15/20 |
+| `compute` | 15/21 |
 | `blockstorage` | 11/24 |
 | `baremetal` | 5/9 |
 | `image` | 5/5 |
@@ -166,10 +180,10 @@ already ships:
 | `loadbalancer` | 10/13 |
 | `baremetalintrospection` | 1/3 |
 
-Ten services gophercloud supports have **zero** `koc` surface:
+Eleven services gophercloud supports have **zero** `koc` surface:
 `sharedfilesystems` (14 pkgs), `orchestration` (7), `containerinfra` (6),
 `db` (6), `objectstorage` (5), `keymanager` (4), `messaging` (3), `workflow` (3),
-`metric` (1), `container` (1).
+`metric` (1), `container` (1), `reservation` (1).
 
 ## Minimum supported cloud
 
@@ -227,7 +241,7 @@ nil-update would ship a command that shares upstream's name and does something
 different — the deviation this project removed for `loadbalancer quota unset`.
 It returns when security-group tag support does.
 
-### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.13.0)
+### Tier 2 — one `make tidy` (package exists upstream at the pinned v2.15.0)
 
 **Empty — Tier 2 is fully implemented.** The last batch vendored
 `networking/v2/extensions/{layer3/extraroutes,layer3/portforwarding,networkipavailabilities,rbacpolicies,segments,qos/policies,qos/ruletypes}`
@@ -303,7 +317,6 @@ first because it is what `--help` shows.
 | `koc recordset set` | `openstack recordset set` (designate CLI: `update`) | yes — `update` cobra alias |
 | `koc server migration list` | `openstack server migration list` | also as `koc migration list` (hidden) |
 | `koc network extension list` / `show` | `openstack extension list --network` / `extension show` | no |
-| `koc network trunk subport list` | `openstack network subport list` | no |
 | `koc compute host drain` / `drain --cold` | `nova host-evacuate-live` / `host-servers-migrate` (novaclient shell; no OSC entry point) | no |
 
 The last row is a deviation from `python-novaclient` rather than from OSC,
@@ -515,8 +528,8 @@ limitations"; the fix is to make the other resolvers match `server`'s behaviour.
 
 ## koc-native commands
 
-No upstream equivalent, by design — **52 leaves**, itemised so the total
-reconciles with the headline (570 = 518 + 52):
+No upstream equivalent, by design — **50 leaves**, itemised so the total
+reconciles with the headline (570 = 520 + 50):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -525,7 +538,6 @@ reconciles with the headline (570 = 518 + 52):
 | 15 | `koc s3 bucket list/create/delete/show/set`, `koc s3 object list/show/delete`, `koc s3 du`, `koc s3 download/upload`, `koc s3 copy/move`, `koc s3 presign`, `koc s3 sync` | S3 is not an OpenStack service. Upstream's object-store commands speak **Swift**, which is a different API and is counted separately as not targeted (`openstack.object_store.v1`, 0/17); these talk to the LCM cluster's Garage, which holds GitLab's object storage and the `backup-db` pipeline's MariaDB dumps |
 | 2 | `koc dns pool list/show` | designate's API and its Python SDK both expose `/v2/pools`, but `python-designateclient` registers no `openstack` command for it. Reads only — pool *writes* are a `designate-manage`/config operation on the servers |
 | 2 | `koc server add/remove server-group` | KeyStack dynamic server groups |
-| 2 | `koc network trunk subport add`/`remove` | upstream folds these into `network trunk set`/`unset --subport` flags rather than giving them verbs (`network subport list` does exist and is counted — see "Naming deviations") |
 | 2 | `koc server console log show`, `koc server console url show` | the `koc` spellings of upstream `console log/url show`; the upstream form is the primary one and carries the count, so these two are extras |
 | 1 | `koc image member set` | accept/reject/pending on an image membership. Upstream registers `image member get`/`list` only — the status write has no entry point |
 | 1 | `koc baremetal node inventory show` | a table summary of the inventory upstream only offers as a raw `save` |
@@ -601,7 +613,7 @@ awk '/^\[/{s=$0} /^[a-z0-9_]+ *=/{if (s ~ /^\[openstack\./) print s"\t"$1}' \
 # osc-placement, python-ironic-inspector-client
 
 # 3. gophercloud surface vs what koc imports
-curl -sSo gc.zip https://proxy.golang.org/github.com/gophercloud/gophercloud/v2/@v/v2.13.0.zip
+curl -sSo gc.zip https://proxy.golang.org/github.com/gophercloud/gophercloud/v2/@v/v2.15.0.zip
 unzip -Z1 gc.zip | grep -E 'openstack/.*\.go$' | sed 's|/[^/]*\.go$||' | sort -u
 grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
   --include='*.go' internal cmd | sort -u
@@ -611,18 +623,18 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (518);
-2. leaf commands = headline numerator + koc-native (570 = 518 + 52);
-3. every raw row denominator summed = 901, and minus the two not-targeted rows
-   (swift 17 + manila 40) = the in-scope denominator (844).
+1. every raw row numerator summed = the headline numerator (520);
+2. leaf commands = headline numerator + koc-native (570 = 520 + 50);
+3. every raw row denominator summed = 1004, and minus the three not-targeted rows
+   (swift 17 + manila 40 + neutron plugins 100) = the in-scope denominator (847).
 
 A row whose numerator is asserted rather than diffed will break (1) or (2). If
 either fails, the mechanical diff is right and the row is wrong — fix the row.
 Two adjustments are legitimate and must be applied by hand after the diff:
 **naming deviations**, where a `koc` leaf matches an upstream entry point under a
 different spelling (currently `baremetal node power reboot` → `baremetal node
-reboot`, `network extension list/show` → `extension list/show`, `network trunk
-subport list` → `network subport list`), and the **core columns**, where a command
+reboot`, `network extension list/show` → `extension list/show`), and the **core
+columns**, where a command
 excluded from the denominator must also leave the numerator.
 
 Normalise both sides to underscore form (`floating ip create` →
