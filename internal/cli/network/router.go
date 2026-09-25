@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -53,17 +54,37 @@ func routerShowFields(r *routers.Router) ([]string, []any) {
 // routerDetailFields is routerShowFields plus the attributes upstream's
 // ShowRouter also prints that gophercloud's Router does not model: ha (shown
 // only when neutron sent it, as upstream hides it when None — it is
-// admin-only by policy), availability_zone_hints, availability_zones and
-// flavor_id. The router verbs this file owns render through it; the extraroute
-// verbs in extensions.go keep the plain field set.
+// admin-only by policy), availability_zone_hints, availability_zones,
+// flavor_id and enable_ndp_proxy (always, empty on a cloud without
+// l3-ext-ndp-proxy, as upstream), then evpn_vni only when set (upstream hides
+// it when None) and the post-Zed default-route BFD/ECMP switches only when
+// neutron sent them — upstream's SDK does not model those two, so on a cloud
+// without the extensions nothing changes. The router verbs this file owns
+// render through it; the extraroute verbs in extensions.go keep the plain
+// field set.
 func routerDetailFields(r *routers.Router, ext routerExtAttrs) ([]string, []any) {
 	fields, values := routerShowFields(r)
 	if ext.HA != nil {
 		fields = append(fields, "ha")
 		values = append(values, *ext.HA)
 	}
-	fields = append(fields, "availability_zone_hints", "availability_zones", "flavor_id")
-	values = append(values, r.AvailabilityZoneHints, derefOrNil(ext.AvailabilityZones), derefOrNil(ext.FlavorID))
+	fields = append(fields, "availability_zone_hints", "availability_zones", "flavor_id", "enable_ndp_proxy")
+	values = append(values, r.AvailabilityZoneHints, derefOrNil(ext.AvailabilityZones), derefOrNil(ext.FlavorID),
+		derefOrNil(ext.EnableNDPProxy))
+	for _, opt := range []struct {
+		name  string
+		value any
+		set   bool
+	}{
+		{"enable_default_route_bfd", derefOrNil(ext.EnableDefaultRouteBFD), ext.EnableDefaultRouteBFD != nil},
+		{"enable_default_route_ecmp", derefOrNil(ext.EnableDefaultRouteECMP), ext.EnableDefaultRouteECMP != nil},
+		{"evpn_vni", derefOrNil(ext.EVPNVNI), ext.EVPNVNI != nil},
+	} {
+		if opt.set {
+			fields = append(fields, opt.name)
+			values = append(values, opt.value)
+		}
+	}
 	return fields, values
 }
 
@@ -163,11 +184,20 @@ const allProjectsNetworkList = "list across all projects (admin); an admin token
 // (policy) and availability_zones only with the router_availability_zone
 // extension — upstream adds the Distributed/HA/Availability zones columns only
 // when the attribute came back, so absence has to stay distinguishable.
+//
+// The post-Zed attributes ride along for router show: each is a pointer so a
+// cloud without its extension renders the field empty (or not at all) rather
+// than as a zero value.
 type routerExtAttrs struct {
 	Distributed       *bool     `json:"distributed"`
 	HA                *bool     `json:"ha"`
 	AvailabilityZones *[]string `json:"availability_zones"`
 	FlavorID          *string   `json:"flavor_id"`
+
+	EnableNDPProxy         *bool `json:"enable_ndp_proxy"`
+	EnableDefaultRouteBFD  *bool `json:"enable_default_route_bfd"`
+	EnableDefaultRouteECMP *bool `json:"enable_default_route_ecmp"`
+	EVPNVNI                *int  `json:"evpn_vni"`
 }
 
 // routerListRow pairs a router with its routerExtAttrs. The page is decoded
@@ -407,7 +437,125 @@ const (
 	flagRouterFlavor          = "flavor"
 	flagRouterFlavorID        = "flavor-id"
 	flagRouterRoute           = "route"
+
+	// post-Zed router flags (neutron 2023.1 onwards; see attrExtensions)
+	flagRouterEnableNDPProxy  = "enable-ndp-proxy"
+	flagRouterDisableNDPProxy = "disable-ndp-proxy"
+	flagRouterEnableBFD       = "enable-default-route-bfd"
+	flagRouterDisableBFD      = "disable-default-route-bfd"
+	flagRouterEnableECMP      = "enable-default-route-ecmp"
+	flagRouterDisableECMP     = "disable-default-route-ecmp"
+	flagRouterEVPNVNI         = "evpn-vni"
+	flagRouterAutoEVPNVNI     = "auto-evpn-vni"
+	flagRouterAdvertiseHost   = "advertise-host"
 )
+
+// routerMultihomingAlias is the extension upstream's
+// _command_check_bfd_ecmp_supported demands before sending either
+// default-route switch; neutron-lib lists it as a required extension of both.
+const routerMultihomingAlias = "external-gateway-multihoming"
+
+// routerPostZedFlags are the post-Zed switches create and set share. Each pair
+// lands in the body only when one half was given.
+type routerPostZedFlags struct {
+	enableNDPProxy  bool
+	disableNDPProxy bool
+	enableBFD       bool
+	disableBFD      bool
+	enableECMP      bool
+	disableECMP     bool
+}
+
+// bindRouterPostZedFlags registers the NDP-proxy and default-route BFD/ECMP
+// pairs. Upstream lets the later of --enable-/--disable-default-route-* win;
+// koc refuses the pair together, as it does every other on/off pair.
+func bindRouterPostZedFlags(cmd *cobra.Command, f *routerPostZedFlags, ndpNote string) {
+	fl := cmd.Flags()
+	fl.BoolVar(&f.enableNDPProxy, flagRouterEnableNDPProxy, false,
+		"enable IPv6 NDP proxy on the external gateway"+ndpNote+" (requires the l3-ext-ndp-proxy extension)")
+	fl.BoolVar(&f.disableNDPProxy, flagRouterDisableNDPProxy, false,
+		"disable IPv6 NDP proxy on the external gateway (requires the l3-ext-ndp-proxy extension)")
+	fl.BoolVar(&f.enableBFD, flagRouterEnableBFD, false,
+		"enable BFD sessions for the default routes inferred from the gateway subnets "+
+			"(requires the enable-default-route-bfd extension)")
+	fl.BoolVar(&f.disableBFD, flagRouterDisableBFD, false,
+		"disable BFD sessions for the gateway's default routes (requires the enable-default-route-bfd extension)")
+	fl.BoolVar(&f.enableECMP, flagRouterEnableECMP, false,
+		"add ECMP default routes when several gateway ports offer one (requires the enable-default-route-ecmp extension)")
+	fl.BoolVar(&f.disableECMP, flagRouterDisableECMP, false,
+		"add a default route for the first gateway port only (requires the enable-default-route-ecmp extension)")
+	cmd.MarkFlagsMutuallyExclusive(flagRouterEnableNDPProxy, flagRouterDisableNDPProxy)
+	cmd.MarkFlagsMutuallyExclusive(flagRouterEnableBFD, flagRouterDisableBFD)
+	cmd.MarkFlagsMutuallyExclusive(flagRouterEnableECMP, flagRouterDisableECMP)
+}
+
+// bfdECMPAttrs returns the default-route BFD/ECMP attributes, which upstream
+// collects in _get_attrs — before --extra-property, so that still wins.
+func (f *routerPostZedFlags) bfdECMPAttrs() map[string]any {
+	var attrs map[string]any
+	if v := onOff(f.enableBFD, f.disableBFD); v != nil {
+		attrs = mergeAttrs(attrs, map[string]any{"enable_default_route_bfd": *v})
+	}
+	if v := onOff(f.enableECMP, f.disableECMP); v != nil {
+		attrs = mergeAttrs(attrs, map[string]any{"enable_default_route_ecmp": *v})
+	}
+	return attrs
+}
+
+// ndpProxyAttrs returns enable_ndp_proxy, which upstream sets after
+// --extra-property, so it wins over an extra property of the same name.
+func (f *routerPostZedFlags) ndpProxyAttrs() map[string]any {
+	if v := onOff(f.enableNDPProxy, f.disableNDPProxy); v != nil {
+		return map[string]any{"enable_ndp_proxy": *v}
+	}
+	return nil
+}
+
+// onOff resolves a pair cobra already keeps from being given together: true,
+// false, or nil when neither was set.
+func onOff(on, off bool) *bool {
+	switch {
+	case on:
+		return boolPtr(true)
+	case off:
+		return boolPtr(false)
+	}
+	return nil
+}
+
+// checkBFDECMPSupported mirrors upstream's _command_check_bfd_ecmp_supported:
+// a default-route BFD/ECMP attribute in the final body (from a flag or an
+// --extra-property) is refused before anything is sent unless neutron has the
+// external-gateway-multihoming extension.
+func checkBFDECMPSupported(ctx context.Context, client *gophercloud.ServiceClient, attrs map[string]any) error {
+	_, bfd := attrs["enable_default_route_bfd"]
+	_, ecmp := attrs["enable_default_route_ecmp"]
+	if !bfd && !ecmp {
+		return nil
+	}
+	exts, err := listNetworkExtensions(ctx, client)
+	if err != nil {
+		return fmt.Errorf("checking for the %s extension: %w", routerMultihomingAlias, err)
+	}
+	if !slices.ContainsFunc(exts, func(e networkExtension) bool { return e.Alias == routerMultihomingAlias }) {
+		return fmt.Errorf("the %s extension is not enabled in this cloud's neutron, so --%s and --%s cannot be used",
+			routerMultihomingAlias, flagRouterEnableBFD, flagRouterEnableECMP)
+	}
+	return nil
+}
+
+// parseEVPNVNI mirrors upstream's _parse_evpn_vni: --evpn-vni takes a positive
+// integer; 0 is what --auto-evpn-vni sends.
+func parseEVPNVNI(value string) (int, error) {
+	vni, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("--%s %q is not a valid VNI (use a positive integer)", flagRouterEVPNVNI, value)
+	}
+	if vni <= 0 {
+		return 0, fmt.Errorf("--%s: VNI must be a positive integer", flagRouterEVPNVNI)
+	}
+	return vni, nil
+}
 
 type routerCreateFlags struct {
 	enable          bool
@@ -430,12 +578,18 @@ type routerCreateFlags struct {
 	// projectID is --project resolved by RunE, so the seam needs no identity client.
 	projectID     string
 	extraProperty []string
+	// evpnVNI is --evpn-vni as typed ("" when not given), parsed by the seam
+	// so a non-integer gets upstream's message; autoEVPNVNI sends 0.
+	evpnVNI     string
+	autoEVPNVNI bool
+	routerPostZedFlags
 	tagWriteFlags
 }
 
 // newRouterCreateCommand builds "router create". Upstream's CreateRouter is
-// the reference; its post-Zed flags (--enable/--disable-ndp-proxy, the
-// default-route BFD/ECMP pairs, --evpn-vni/--auto-evpn-vni) are left out, and
+// the reference, including its post-Zed flags (--enable/--disable-ndp-proxy,
+// the default-route BFD/ECMP pairs, --evpn-vni/--auto-evpn-vni), which a Zed
+// cloud answers with a 400 that explainMissingExtension names.
 // --external-gateway takes one network — several need the
 // external-gateway-multihoming extension, which Zed does not have.
 func newRouterCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -480,6 +634,12 @@ func newRouterCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	_ = fl.MarkHidden(flagRouterFlavorID)
 	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
 	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindRouterPostZedFlags(cmd, &f.routerPostZedFlags, ", needs --external-gateway")
+	fl.StringVar(&f.evpnVNI, flagRouterEVPNVNI, "",
+		"associate the router with the EVPN of this VNI, a positive integer (requires the evpn extension)")
+	fl.BoolVar(&f.autoEVPNVNI, flagRouterAutoEVPNVNI, false,
+		"associate the router with an EVPN on an auto-assigned VNI (requires the evpn extension)")
+	cmd.MarkFlagsMutuallyExclusive(flagRouterEVPNVNI, flagRouterAutoEVPNVNI)
 	bindExtraPropertyFlag(fl, &f.extraProperty)
 	bindTagCreateFlags(cmd, &f.tagWriteFlags, "router")
 	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
@@ -495,6 +655,9 @@ func runRouterCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if f.externalGateway == "" && (f.enableSNAT || f.disableSNAT || len(f.fixedIPs) > 0 || f.qosPolicy != "") {
 		return fmt.Errorf("--%s, --%s, --%s and --%s need --%s",
 			flagEnableSNAT, flagDisableSNAT, flagFixedIP, flagQoSPolicy, flagRouterExternalGateway)
+	}
+	if f.externalGateway == "" && f.enableNDPProxy {
+		return fmt.Errorf("--%s needs --%s", flagRouterEnableNDPProxy, flagRouterExternalGateway)
 	}
 	opts := routers.CreateOpts{
 		Name:                  name,
@@ -518,9 +681,12 @@ func runRouterCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
+	if err := checkBFDECMPSupported(ctx, client, attrs); err != nil {
+		return err
+	}
 	r, ext, err := extractRouterDetail(routers.Create(ctx, client, withRouterCreateAttrs(opts, attrs)).Result)
 	if err != nil {
-		return fmt.Errorf("creating router: %w", err)
+		return explainMissingExtension(ctx, client, fmt.Errorf("creating router: %w", err), attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if r.Tags, err = applyTagsForSet(ctx, client, tagResourceRouters, r.ID, r.Tags, &f.tagWriteFlags); err != nil {
@@ -558,7 +724,10 @@ func buildCreateGatewayInfo(ctx context.Context, client *gophercloud.ServiceClie
 }
 
 // routerCreateAttrs collects the create attributes routers.CreateOpts lacks —
-// ha and flavor_id — then --extra-property, last so it wins.
+// ha, flavor_id, the default-route BFD/ECMP switches and evpn_vni — then
+// --extra-property, then enable_ndp_proxy, in upstream's order: its
+// take_action sets the NDP proxy after the extra properties, so that one flag
+// wins over them.
 func routerCreateAttrs(f *routerCreateFlags) (map[string]any, error) {
 	var attrs map[string]any
 	switch {
@@ -574,11 +743,22 @@ func routerCreateAttrs(f *routerCreateFlags) (map[string]any, error) {
 	if flavorID != "" {
 		attrs = mergeAttrs(attrs, map[string]any{"flavor_id": flavorID})
 	}
+	attrs = mergeAttrs(attrs, f.bfdECMPAttrs())
+	switch {
+	case f.autoEVPNVNI:
+		attrs = mergeAttrs(attrs, map[string]any{"evpn_vni": 0})
+	case f.evpnVNI != "":
+		vni, err := parseEVPNVNI(f.evpnVNI)
+		if err != nil {
+			return nil, err
+		}
+		attrs = mergeAttrs(attrs, map[string]any{"evpn_vni": vni})
+	}
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
 		return nil, err
 	}
-	return mergeAttrs(attrs, extra), nil
+	return mergeAttrs(mergeAttrs(attrs, extra), f.ndpProxyAttrs()), nil
 }
 
 // routerFlavorID picks the flavor to send. Upstream resolves both --flavor and
@@ -652,11 +832,14 @@ type routerSetFlags struct {
 	route         []string
 	noRoute       bool
 	extraProperty []string
+	routerPostZedFlags
 	tagWriteFlags
 }
 
-// newRouterSetCommand builds "router set". As on create, upstream's post-Zed
-// flags are left out and --external-gateway takes one network.
+// newRouterSetCommand builds "router set". As on create, --external-gateway
+// takes one network; the post-Zed NDP-proxy and default-route BFD/ECMP pairs
+// are upstream's (evpn_vni is create-only in neutron — allow_put is false —
+// so set has no --evpn-vni).
 func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &routerSetFlags{}
 	cmd := &cobra.Command{
@@ -694,6 +877,7 @@ func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.route, flagRouterRoute, nil,
 		"static route as destination=<cidr>,gateway=<ip> (repeatable; appends unless --no-route is also given)")
 	fl.BoolVar(&f.noRoute, "no-route", false, "clear the router's static routes (with --route, replaces them instead)")
+	bindRouterPostZedFlags(cmd, &f.routerPostZedFlags, "")
 	bindExtraPropertyFlag(fl, &f.extraProperty)
 	bindTagSetFlags(fl, &f.tagWriteFlags, "router")
 	cmd.MarkFlagsMutuallyExclusive(flagEnableSNAT, flagDisableSNAT)
@@ -715,6 +899,9 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
+	if err := checkBFDECMPSupported(ctx, client, attrs); err != nil {
+		return err
+	}
 	changed := opts != (routers.UpdateOpts{}) || len(attrs) > 0
 	if !changed && !f.given() {
 		return fmt.Errorf("router set requires at least one attribute flag")
@@ -724,8 +911,10 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 }
 
 // buildRouterUpdate turns the set flags into the typed update plus the
-// attributes UpdateOpts lacks (ha, and external_gateway_info as a map so
-// --no-qos-policy can send null), with --extra-property merged last.
+// attributes UpdateOpts lacks (ha, the default-route BFD/ECMP switches, and
+// external_gateway_info as a map so --no-qos-policy can send null), then
+// --extra-property, then enable_ndp_proxy — upstream's order, which lets the
+// NDP-proxy flag win over an extra property.
 func buildRouterUpdate(ctx context.Context, client *gophercloud.ServiceClient,
 	nameOrID, id string, f *routerSetFlags, flags flagSet,
 ) (routers.UpdateOpts, map[string]any, error) {
@@ -751,11 +940,12 @@ func buildRouterUpdate(ctx context.Context, client *gophercloud.ServiceClient,
 	if opts.Routes, err = buildRoutes(ctx, client, nameOrID, id, f); err != nil {
 		return opts, nil, err
 	}
+	attrs = mergeAttrs(attrs, f.bfdECMPAttrs())
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
 		return opts, nil, err
 	}
-	return opts, mergeAttrs(attrs, extra), nil
+	return opts, mergeAttrs(mergeAttrs(attrs, extra), f.ndpProxyAttrs()), nil
 }
 
 // routerUpdate is one prepared router PUT: the typed options, the extra
@@ -785,7 +975,11 @@ func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	r, ext, err := extractRouterDetail(res)
 	if err != nil {
-		return fmt.Errorf("%s router %s: %w", action, ref, err)
+		err = fmt.Errorf("%s router %s: %w", action, ref, err)
+		if u.changed {
+			err = explainMissingExtension(ctx, client, err, u.attrs)
+		}
+		return err
 	}
 	if r.Tags, err = applyTags(ctx, client, tagResourceRouters, id, r.Tags, tags); err != nil {
 		return err
@@ -1086,22 +1280,7 @@ func newRouterAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		Use:   "add",
 		Short: "Add a resource to a router",
 	}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "subnet <router> <subnet>",
-		Short: "Add a subnet to a router (create an internal interface)",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := o.Validate(); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
-			if err != nil {
-				return err
-			}
-			return runRouterAddSubnet(ctx, client, args[0], args[1], cmd.OutOrStdout())
-		},
-	})
+	cmd.AddCommand(newRouterAddSubnetCommand(a, o))
 	cmd.AddCommand(&cobra.Command{
 		Use:   "port <router> <port>",
 		Short: "Add a port to a router (attach an internal interface)",
@@ -1123,7 +1302,54 @@ func newRouterAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func runRouterAddSubnet(ctx context.Context, client *gophercloud.ServiceClient, routerArg, subnetArg string, w io.Writer) error {
+// newRouterAddSubnetCommand builds "router add subnet <router> <subnet>".
+func newRouterAddSubnetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var advertiseHost bool
+	cmd := &cobra.Command{
+		Use:   "subnet <router> <subnet>",
+		Short: "Add a subnet to a router (create an internal interface)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newNetworkClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runRouterAddSubnet(ctx, client, args[0], args[1], advertiseHost, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().BoolVar(&advertiseHost, flagRouterAdvertiseHost, false,
+		"advertise the subnet's prefixes as host routes within the router's EVPN VNI, EVPN routers only "+
+			"(requires the evpn extension)")
+	return cmd
+}
+
+// routerAddInterfaceExt adds top-level attributes to an add_router_interface
+// body, which — unlike the router's own — is not wrapped in a resource key, so
+// bodyExt does not fit. advertise_host (evpn) is the one such attribute.
+type routerAddInterfaceExt struct {
+	routers.AddInterfaceOpts
+	extra map[string]any
+}
+
+// ToRouterAddInterfaceMap builds the typed body and merges extra over it.
+func (e routerAddInterfaceExt) ToRouterAddInterfaceMap() (map[string]any, error) {
+	body, err := e.AddInterfaceOpts.ToRouterAddInterfaceMap()
+	if err != nil {
+		return nil, err
+	}
+	return mergeAttrs(body, e.extra), nil
+}
+
+// runRouterAddSubnet attaches a subnet. As in openstacksdk's
+// add_interface_to_router, advertise_host is sent only when true, so without
+// --advertise-host the request a Zed cloud sees is unchanged.
+func runRouterAddSubnet(ctx context.Context, client *gophercloud.ServiceClient, routerArg, subnetArg string,
+	advertiseHost bool, w io.Writer,
+) error {
 	routerID, err := resolveRouterID(ctx, client, routerArg)
 	if err != nil {
 		return err
@@ -1132,8 +1358,14 @@ func runRouterAddSubnet(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	if _, err := routers.AddInterface(ctx, client, routerID, routers.AddInterfaceOpts{SubnetID: subnetID}).Extract(); err != nil {
-		return fmt.Errorf("adding subnet %s to router %s: %w", subnetArg, routerArg, err)
+	var extra map[string]any
+	if advertiseHost {
+		extra = map[string]any{"advertise_host": true}
+	}
+	body := routerAddInterfaceExt{AddInterfaceOpts: routers.AddInterfaceOpts{SubnetID: subnetID}, extra: extra}
+	if _, err := routers.AddInterface(ctx, client, routerID, body).Extract(); err != nil {
+		return explainMissingExtension(ctx, client,
+			fmt.Errorf("adding subnet %s to router %s: %w", subnetArg, routerArg, err), extra)
 	}
 	if _, err := fmt.Fprintf(w, "Added interface for subnet %s to router %s\n", subnetArg, routerArg); err != nil {
 		return err
