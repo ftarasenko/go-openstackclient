@@ -16,6 +16,12 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file.
+const (
+	flagPoolPrefix = "pool-prefix"
+	nounSubnetPool = "subnet pool"
+)
+
 // newSubnetPoolCommand builds "subnet pool ...". It is a child of the existing
 // "subnet" noun, matching upstream's two-word `openstack subnet pool ...`.
 //
@@ -44,7 +50,7 @@ func newSubnetPoolCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // resolveSubnetPoolID resolves a subnet pool name or ID to an ID, following the
 // shared neutron name-or-ID policy (see helpers.go pickID).
 func resolveSubnetPoolID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "subnet pool", nameOrID, func(c *gophercloud.ServiceClient) ([]subnetpools.SubnetPool, error) {
+	return resolveByName(client, nounSubnetPool, nameOrID, func(c *gophercloud.ServiceClient) ([]subnetpools.SubnetPool, error) {
 		pages, err := subnetpools.List(c, subnetpools.ListOpts{Name: nameOrID}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -242,7 +248,7 @@ type subnetPoolWriteFlags struct {
 
 func (f *subnetPoolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	fl := cmd.Flags()
-	fl.StringSliceVar(&f.prefixes, "pool-prefix", nil, "prefix to add to the pool, e.g. 10.0.0.0/8 (repeatable)")
+	fl.StringSliceVar(&f.prefixes, flagPoolPrefix, nil, "prefix to add to the pool, e.g. 10.0.0.0/8 (repeatable)")
 	fl.IntVar(&f.defaultPrefixLen, "default-prefix-length", 0, "default prefix length allocated from this pool")
 	fl.IntVar(&f.minPrefixLen, "min-prefix-length", 0, "smallest prefix length allocatable from this pool")
 	fl.IntVar(&f.maxPrefixLen, "max-prefix-length", 0, "largest prefix length allocatable from this pool")
@@ -255,7 +261,7 @@ func (f *subnetPoolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	if isCreate {
 		fl.StringVar(&f.project, flagProject, "", "owning project (name or ID)")
 		fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
-		bindTagCreateFlags(cmd, &f.tagWriteFlags, "subnet pool")
+		bindTagCreateFlags(cmd, &f.tagWriteFlags, nounSubnetPool)
 		// --share is create-only: neutron's subnetpool PUT has no "shared"
 		// attribute (gophercloud's UpdateOpts has no field for it either), so
 		// offering it on "set" would silently do nothing. Sharing an existing pool
@@ -266,7 +272,7 @@ func (f *subnetPoolWriteFlags) register(cmd *cobra.Command, isCreate bool) {
 	}
 	fl.StringVar(&f.name, "name", "", "new subnet pool name")
 	fl.BoolVar(&f.noAddressScope, flagSubnetPoolNoAddressScope, false, "detach the pool from its address scope")
-	bindTagSetFlags(fl, &f.tagWriteFlags, "subnet pool")
+	bindTagSetFlags(fl, &f.tagWriteFlags, nounSubnetPool)
 	cmd.MarkFlagsMutuallyExclusive(flagAddressScope, flagSubnetPoolNoAddressScope)
 }
 
@@ -412,7 +418,7 @@ func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	touched = touched || len(attrs) > 0 || changed.Changed(flagAddressScope) || changed.Changed("pool-prefix")
+	touched = touched || len(attrs) > 0 || changed.Changed(flagAddressScope) || changed.Changed(flagPoolPrefix)
 	if !touched && !f.given() {
 		return fmt.Errorf("nothing to set: pass at least one attribute flag")
 	}
@@ -429,7 +435,7 @@ func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 		}
 		opts.AddressScopeID = &scopeID
 	}
-	if changed.Changed("pool-prefix") {
+	if changed.Changed(flagPoolPrefix) {
 		current, err := subnetpools.Get(ctx, client, id).Extract()
 		if err != nil {
 			return fmt.Errorf("reading subnet pool %q before set: %w", ref, err)
@@ -511,7 +517,7 @@ func newSubnetPoolUnsetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			return runSubnetPoolUnset(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
-	bindTagUnsetFlags(cmd, f, "subnet pool")
+	bindTagUnsetFlags(cmd, f, nounSubnetPool)
 	return cmd
 }
 

@@ -271,7 +271,7 @@ func newSecurityGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
 	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
 	bindExtraPropertyFlag(fl, &f.extraProperty)
-	bindTagCreateFlags(cmd, &f.tagWriteFlags, "security group")
+	bindTagCreateFlags(cmd, &f.tagWriteFlags, nounSecurityGroup)
 	cmd.MarkFlagsMutuallyExclusive(flagSGStateful, flagSGStateless)
 	return cmd
 }
@@ -375,7 +375,7 @@ func newSecurityGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl.BoolVar(&f.stateful, flagSGStateful, false, "make the security group stateful")
 	fl.BoolVar(&f.stateless, flagSGStateless, false, "make the security group stateless")
 	bindExtraPropertyFlag(fl, &f.extraProperty)
-	bindTagSetFlags(fl, &f.tagWriteFlags, "security group")
+	bindTagSetFlags(fl, &f.tagWriteFlags, nounSecurityGroup)
 	cmd.MarkFlagsMutuallyExclusive(flagSGStateful, flagSGStateless)
 	return cmd
 }
@@ -437,7 +437,7 @@ func newSecurityGroupUnsetCommand(a *auth.Options, o *output.Options) *cobra.Com
 			return runSecurityGroupUnset(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
-	bindTagUnsetFlags(cmd, f, "security group")
+	bindTagUnsetFlags(cmd, f, nounSecurityGroup)
 	return cmd
 }
 

@@ -387,6 +387,8 @@ func runBGPVPNCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 // purge flag of each list (--no-* on set, --all-* on unset), and --vni and
 // --local-pref, which even unset sends as a value.
 type bgpvpnUpdateFlags struct {
+	// unset is the verb the flags were bound for: on unset a list flag removes.
+	unset               bool
 	name                string
 	routeTargets        []string
 	importTargets       []string
@@ -419,7 +421,7 @@ func (f *bgpvpnUpdateFlags) lists() []bgpvpnListAttr {
 }
 
 func newBGPVPNSetCommand(a *auth.Options, o *output.Options, unset bool) *cobra.Command {
-	f := &bgpvpnUpdateFlags{}
+	f := &bgpvpnUpdateFlags{unset: unset}
 	verb, short, purge := "set", "Set BGP VPN properties", "no-"
 	addHelp := "add a route target to the import/export list (repeatable)"
 	if unset {
@@ -439,7 +441,7 @@ func newBGPVPNSetCommand(a *auth.Options, o *output.Options, unset bool) *cobra.
 			if err != nil {
 				return err
 			}
-			return runBGPVPNUpdate(ctx, client, o, args[0], f, unset, cmd.Flags(), cmd.OutOrStdout())
+			return runBGPVPNUpdate(ctx, client, o, args[0], f, cmd.Flags(), cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
@@ -465,17 +467,17 @@ func newBGPVPNSetCommand(a *auth.Options, o *output.Options, unset bool) *cobra.
 // it is now — read only when a list flag is given and not every list is being
 // purged, exactly as upstream decides it.
 func runBGPVPNUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref string, f *bgpvpnUpdateFlags, unset bool, flags flagSet, w io.Writer,
+	ref string, f *bgpvpnUpdateFlags, flags flagSet, w io.Writer,
 ) error {
 	id, err := resolveBGPVPNID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	body, err := buildBGPVPNUpdateBody(ctx, client, id, f, unset, flags)
+	body, err := buildBGPVPNUpdateBody(ctx, client, id, f, flags)
 	if err != nil {
 		return err
 	}
-	verb := map[bool]string{false: "set", true: "unset"}[unset]
+	verb := map[bool]string{false: "set", true: "unset"}[f.unset]
 	if len(body) == 0 {
 		return fmt.Errorf("bgpvpn %s requires at least one attribute flag", verb)
 	}
@@ -488,8 +490,9 @@ func runBGPVPNUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *
 }
 
 func buildBGPVPNUpdateBody(ctx context.Context, client *gophercloud.ServiceClient, id string,
-	f *bgpvpnUpdateFlags, unset bool, flags flagSet,
+	f *bgpvpnUpdateFlags, flags flagSet,
 ) (bgpvpnBody, error) {
+	unset := f.unset
 	lists := f.lists()
 	allPurged, anyGiven := true, false
 	for _, l := range lists {

@@ -300,7 +300,7 @@ func TestRunRBACList_ColumnsMatchUpstream(t *testing.T) {
 	} {
 		var buf bytes.Buffer
 		if err := runRBACList(context.Background(), networkClient(fakeServer), &output.Options{Format: output.FormatCSV},
-			"", "", "", tc.long, &buf); err != nil {
+			rbacListFilter{long: tc.long}, &buf); err != nil {
 			t.Fatalf("runRBACList: %v", err)
 		}
 		if got := csvHeader(buf.String()); got != tc.want {
@@ -400,7 +400,7 @@ func TestRunSegmentList_ColumnsMatchUpstream(t *testing.T) {
 	} {
 		var buf bytes.Buffer
 		if err := runSegmentList(context.Background(), networkClient(fakeServer), &output.Options{Format: output.FormatCSV},
-			"", "", "", tc.long, &buf); err != nil {
+			segmentListFilter{long: tc.long}, &buf); err != nil {
 			t.Fatalf("runSegmentList: %v", err)
 		}
 		if got := csvHeader(buf.String()); got != tc.want {

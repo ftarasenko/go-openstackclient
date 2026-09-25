@@ -906,8 +906,8 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if !changed && !f.given() {
 		return fmt.Errorf("router set requires at least one attribute flag")
 	}
-	return updateRouter(ctx, client, o, nameOrID, id, routerUpdate{opts: opts, attrs: attrs, changed: changed, action: "updating"},
-		applyTagsForSet, &f.tagWriteFlags, w)
+	u := routerUpdate{opts: opts, attrs: attrs, changed: changed, action: "updating", tags: tagEdit{applyTagsForSet, &f.tagWriteFlags}}
+	return updateRouter(ctx, client, o, nameOrID, id, u, w)
 }
 
 // buildRouterUpdate turns the set flags into the typed update plus the
@@ -949,22 +949,21 @@ func buildRouterUpdate(ctx context.Context, client *gophercloud.ServiceClient,
 }
 
 // routerUpdate is one prepared router PUT: the typed options, the extra
-// attributes merged over them, whether anything is to be sent at all, and the
-// verb phrase an error names ("updating router r1: …").
+// attributes merged over them, whether anything is to be sent at all, the
+// verb phrase an error names ("updating router r1: …"), and the tag change.
 type routerUpdate struct {
 	opts    routers.UpdateOpts
 	attrs   map[string]any
 	changed bool
 	action  string
+	tags    tagEdit
 }
 
 // updateRouter is the shared tail of set and unset: PUT the attributes when
 // any were given (upstream skips the update when only tags change, reading
 // the router instead), then apply the tag change, then render the router.
 func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
-	u routerUpdate,
-	applyTags func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error),
-	tags *tagWriteFlags, w io.Writer,
+	u routerUpdate, w io.Writer,
 ) error {
 	var res gophercloud.Result
 	action := u.action
@@ -981,7 +980,7 @@ func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		}
 		return err
 	}
-	if r.Tags, err = applyTags(ctx, client, tagResourceRouters, id, r.Tags, tags); err != nil {
+	if r.Tags, err = u.tags.run(ctx, client, tagResourceRouters, id, r.Tags); err != nil {
 		return err
 	}
 	return writeRouterDetail(o, w, r, ext)
@@ -1210,8 +1209,11 @@ func runRouterUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if f.externalGateway {
 		action = "clearing external gateway on"
 	}
-	u := routerUpdate{opts: opts, attrs: attrs, changed: opts != (routers.UpdateOpts{}) || len(attrs) > 0, action: action}
-	return updateRouter(ctx, client, o, nameOrID, id, u, applyTagsForUnset, &f.tagWriteFlags, w)
+	u := routerUpdate{
+		opts: opts, attrs: attrs, changed: opts != (routers.UpdateOpts{}) || len(attrs) > 0, action: action,
+		tags: tagEdit{applyTagsForUnset, &f.tagWriteFlags},
+	}
+	return updateRouter(ctx, client, o, nameOrID, id, u, w)
 }
 
 func buildRouterUnset(ctx context.Context, client *gophercloud.ServiceClient,

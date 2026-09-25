@@ -152,7 +152,7 @@ func resolveAddressGroupID(ctx context.Context, client *gophercloud.ServiceClien
 }
 
 func resolveSecGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "security group", nameOrID, func(c *gophercloud.ServiceClient) ([]groups.SecGroup, error) {
+	return resolveByName(client, nounSecurityGroup, nameOrID, func(c *gophercloud.ServiceClient) ([]groups.SecGroup, error) {
 		pages, err := groups.List(c, groups.ListOpts{Name: nameOrID}).AllPages(ctx)
 		if err != nil {
 			return nil, err

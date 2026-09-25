@@ -32,7 +32,7 @@ func TestRunRBACList_SendsFilters(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
 	err := runRBACList(context.Background(), networkClient(fakeServer), o,
-		"access_as_shared", "network", "99999999-9999-9999-9999-999999999999", false, &out)
+		rbacListFilter{action: "access_as_shared", objectType: "network", targetProject: "99999999-9999-9999-9999-999999999999"}, &out)
 	if err != nil {
 		t.Fatalf("runRBACList returned error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestRunRBACList_ErrorOnNon2xx(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runRBACList(context.Background(), networkClient(fakeServer), o, "", "", "", false, &out); err == nil {
+	if err := runRBACList(context.Background(), networkClient(fakeServer), o, rbacListFilter{}, &out); err == nil {
 		t.Fatal("expected an error from a 500 response")
 	}
 }
@@ -195,7 +195,8 @@ func TestRunSegmentList_FiltersByNetworkAndType(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	err := runSegmentList(context.Background(), networkClient(fakeServer), o, "public", "vlan", "physnet1", false, &out)
+	err := runSegmentList(context.Background(), networkClient(fakeServer), o,
+		segmentListFilter{network: "public", networkType: "vlan", physicalNetwork: "physnet1"}, &out)
 	if err != nil {
 		t.Fatalf("runSegmentList returned error: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestRunSegmentList_NoNetworkFilterSkipsResolution(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, "", "", "", false, &out); err != nil {
+	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, segmentListFilter{}, &out); err != nil {
 		t.Fatalf("runSegmentList returned error: %v", err)
 	}
 }
@@ -240,7 +241,7 @@ func TestRunSegmentList_ErrorOnMalformedBody(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, "", "", "", false, &out); err == nil {
+	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, segmentListFilter{}, &out); err == nil {
 		t.Fatal("expected an error from a malformed response body")
 	}
 }

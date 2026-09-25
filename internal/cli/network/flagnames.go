@@ -34,6 +34,8 @@ const (
 const (
 	fieldProviderNetworkType     = "provider:network_type"
 	fieldProviderPhysicalNetwork = "provider:physical_network"
+	fieldBindingHostID           = "binding:host_id"
+	nounSecurityGroup            = "security group"
 )
 
 // Flag names shared by the network parity pass (docs/proposals/network-parity.md).

@@ -301,7 +301,7 @@ func (opts portListOpts) ToPortListQuery() (string, error) {
 	q, err := opts.ListOpts.ToPortListQuery()
 	extra := url.Values{}
 	for key, v := range map[string]string{
-		"binding:host_id": opts.hostID, "pvlan_type": opts.pvlanType, "pvlan_community": opts.pvlanCommunity,
+		fieldBindingHostID: opts.hostID, "pvlan_type": opts.pvlanType, "pvlan_community": opts.pvlanCommunity,
 	} {
 		if v != "" {
 			extra.Set(key, v)
@@ -1099,7 +1099,7 @@ func portCreateAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *
 		return nil, err
 	}
 	if f.host != "" {
-		attrs["binding:host_id"] = f.host
+		attrs[fieldBindingHostID] = f.host
 	}
 	if len(f.bindingProfile) > 0 {
 		profile, err := parseBindingProfile(f.bindingProfile)
@@ -1215,30 +1215,37 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, names
 	})
 }
 
+// portUpdate is one prepared port PUT. current, when the verb already read the
+// port, spares a second GET on the tags-only path.
+type portUpdate struct {
+	opts    ports.UpdateOpts
+	attrs   map[string]any
+	changed bool
+	current *portExt
+	tags    tagEdit
+}
+
 // updatePort is the shared tail of set and unset: PUT the attributes when any
 // were given (upstream skips the update when only tags change), then apply the
-// tag change, then render what the port now looks like. current, when the verb
-// already read the port, spares a second GET on the tags-only path.
+// tag change, then render what the port now looks like.
 func updatePort(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
-	opts ports.UpdateOpts, attrs map[string]any, changed bool, current *portExt,
-	applyTags func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error),
-	tags *tagWriteFlags, w io.Writer,
+	u portUpdate, w io.Writer,
 ) error {
 	var err error
-	p := current
+	p := u.current
 	switch {
-	case changed:
+	case u.changed:
 		p = &portExt{}
-		if err := ports.Update(ctx, client, id, withPortUpdateAttrs(opts, attrs)).ExtractInto(p); err != nil {
+		if err := ports.Update(ctx, client, id, withPortUpdateAttrs(u.opts, u.attrs)).ExtractInto(p); err != nil {
 			return explainMissingExtension(ctx, client, fmt.Errorf("updating port %s: %w", ref, err),
-				portExplainAttrs(attrs, portUpdateTypedExtAttrs(opts)...))
+				portExplainAttrs(u.attrs, portUpdateTypedExtAttrs(u.opts)...))
 		}
 	case p == nil:
 		if p, err = getPort(ctx, client, id); err != nil {
 			return fmt.Errorf("getting port %s: %w", ref, err)
 		}
 	}
-	if p.Tags, err = applyTags(ctx, client, tagResourcePorts, id, p.Tags, tags); err != nil {
+	if p.Tags, err = u.tags.run(ctx, client, tagResourcePorts, id, p.Tags); err != nil {
 		return err
 	}
 	fields, values := portShowFields(p)
@@ -1517,7 +1524,8 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		revision := snap.port.RevisionNumber
 		opts.RevisionNumber = &revision
 	}
-	return updatePort(ctx, client, o, nameOrID, id, opts, attrs, changed, snap.port, applyTagsForSet, &f.tagWriteFlags, w)
+	u := portUpdate{opts: opts, attrs: attrs, changed: changed, current: snap.port, tags: tagEdit{applyTagsForSet, &f.tagWriteFlags}}
+	return updatePort(ctx, client, o, nameOrID, id, u, w)
 }
 
 // portSetScalarOpts builds the plain attributes ports.UpdateOpts models.
@@ -1562,7 +1570,7 @@ func portSetAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *por
 		return nil, err
 	}
 	if flags.Changed(flagPortHost) {
-		attrs["binding:host_id"] = f.host
+		attrs[fieldBindingHostID] = f.host
 	}
 	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
 		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {

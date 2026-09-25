@@ -675,8 +675,8 @@ func runNetworkSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if !changed && !f.given() {
 		return fmt.Errorf("network set requires at least one attribute flag")
 	}
-	req := networkUpdate{opts: opts, attrs: attrs, changed: changed, applyTags: applyTagsForSet}
-	return updateNetwork(ctx, client, o, nameOrID, id, req, &f.tagWriteFlags, w)
+	req := networkUpdate{opts: opts, attrs: attrs, changed: changed, tags: tagEdit{applyTagsForSet, &f.tagWriteFlags}}
+	return updateNetwork(ctx, client, o, nameOrID, id, req, w)
 }
 
 // flagSet is the small surface of *pflag.FlagSet used by the set/unset seams,
@@ -734,6 +734,6 @@ func runNetworkUnset(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if !changed && !f.given() {
 		return fmt.Errorf("network unset requires at least one attribute flag")
 	}
-	req := networkUpdate{opts: opts, attrs: attrs, changed: changed, applyTags: applyTagsForUnset}
-	return updateNetwork(ctx, client, o, nameOrID, id, req, &f.tagWriteFlags, w)
+	req := networkUpdate{opts: opts, attrs: attrs, changed: changed, tags: tagEdit{applyTagsForUnset, &f.tagWriteFlags}}
+	return updateNetwork(ctx, client, o, nameOrID, id, req, w)
 }

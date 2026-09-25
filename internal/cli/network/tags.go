@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// Literals repeated within this file.
+const (
+	repeatableSuffix = " (repeatable)"
+)
+
 // Neutron tags are a sub-resource (PUT /v2.0/<collection>/<id>/tags), never a
 // body attribute: a create cannot carry them and an update ignores them. So
 // every tag-aware write verb is "write the resource, then replace its tag set",
@@ -76,7 +81,7 @@ type tagWriteFlags struct {
 // --no-tag, mutually exclusive (add_tag_option_to_parser_for_create).
 func bindTagCreateFlags(cmd *cobra.Command, f *tagWriteFlags, noun string) {
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.tags, flagTag, nil, "tag to add to the "+noun+" (repeatable)")
+	fl.StringArrayVar(&f.tags, flagTag, nil, "tag to add to the "+noun+repeatableSuffix)
 	fl.BoolVar(&f.noTag, flagNoTag, false, "create the "+noun+" with no tags")
 	cmd.MarkFlagsMutuallyExclusive(flagTag, flagNoTag)
 }
@@ -85,7 +90,7 @@ func bindTagCreateFlags(cmd *cobra.Command, f *tagWriteFlags, noun string) {
 // --no-tag clears the current tags first, so "--no-tag --tag x" overwrites
 // the whole set with {x} (add_tag_option_to_parser_for_set).
 func bindTagSetFlags(fl *pflag.FlagSet, f *tagWriteFlags, noun string) {
-	fl.StringArrayVar(&f.tags, flagTag, nil, "tag to add to the "+noun+" (repeatable)")
+	fl.StringArrayVar(&f.tags, flagTag, nil, "tag to add to the "+noun+repeatableSuffix)
 	fl.BoolVar(&f.noTag, flagNoTag, false,
 		"clear the "+noun+"'s tags; combine with --tag to overwrite them")
 }
@@ -94,7 +99,7 @@ func bindTagSetFlags(fl *pflag.FlagSet, f *tagWriteFlags, noun string) {
 // --all-tag, mutually exclusive (add_tag_option_to_parser_for_unset).
 func bindTagUnsetFlags(cmd *cobra.Command, f *tagWriteFlags, noun string) {
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.tags, flagTag, nil, "tag to remove from the "+noun+" (repeatable)")
+	fl.StringArrayVar(&f.tags, flagTag, nil, "tag to remove from the "+noun+repeatableSuffix)
 	fl.BoolVar(&f.allTag, flagAllTag, false, "remove every tag from the "+noun)
 	cmd.MarkFlagsMutuallyExclusive(flagTag, flagAllTag)
 }
@@ -151,6 +156,20 @@ func replaceTags(ctx context.Context, client *gophercloud.ServiceClient, resourc
 		return nil, fmt.Errorf("setting tags on %s %s: %w", resourceType, id, err)
 	}
 	return got, nil
+}
+
+// tagApplier is applyTagsForSet or applyTagsForUnset.
+type tagApplier func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error)
+
+// tagEdit is the tag half of a set/unset tail: the helper to apply and the
+// flags it reads.
+type tagEdit struct {
+	apply tagApplier
+	flags *tagWriteFlags
+}
+
+func (t tagEdit) run(ctx context.Context, client *gophercloud.ServiceClient, resourceType, id string, current []string) ([]string, error) {
+	return t.apply(ctx, client, resourceType, id, current, t.flags)
 }
 
 // applyTagsForSet is replaceTags(forSet) — the tail of every create/set verb.

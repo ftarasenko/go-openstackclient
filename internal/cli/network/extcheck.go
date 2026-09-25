@@ -57,7 +57,7 @@ var attrExtensions = map[string]string{
 	"device_profile":            "port-device-profile",
 	"dns_publish_fixed_ip":      "subnet-dns-publish-fixed-ip",
 	"service_types":             "subnet-service-types",
-	"binding:host_id":           "binding",
+	fieldBindingHostID:          "binding",
 	"binding:profile":           "binding",
 	"binding:vnic_type":         "binding",
 	// Synthetic keys, which no request body carries: a port write adds them to

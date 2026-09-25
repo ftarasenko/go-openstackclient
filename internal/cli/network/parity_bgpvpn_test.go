@@ -131,7 +131,7 @@ func TestRunBGPVPNSet_MergesWithTheCurrentLists(t *testing.T) {
 		purgeImportTargets: true, routeDistinguishers: []string{"64512:9"},
 	}
 	var buf bytes.Buffer
-	if err := runBGPVPNUpdate(context.Background(), networkClient(fakeServer), csvOut(), vpnID, f, false,
+	if err := runBGPVPNUpdate(context.Background(), networkClient(fakeServer), csvOut(), vpnID, f,
 		fakeFlags{"name": true, "local-pref": true}, &buf); err != nil {
 		t.Fatalf("runBGPVPNUpdate: %v", err)
 	}
@@ -153,11 +153,11 @@ func TestRunBGPVPNUnset_RemovesAndPurges(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, bgpvpnBodyJSON)
 	})
 	f := &bgpvpnUpdateFlags{
-		vni: 12, routeTargets: []string{"64512:1"}, purgeExportTargets: true,
+		unset: true, vni: 12, routeTargets: []string{"64512:1"}, purgeExportTargets: true,
 		routeDistinguishers: []string{"64512:9", "64512:77"},
 	}
 	var buf bytes.Buffer
-	if err := runBGPVPNUpdate(context.Background(), networkClient(fakeServer), csvOut(), vpnID, f, true,
+	if err := runBGPVPNUpdate(context.Background(), networkClient(fakeServer), csvOut(), vpnID, f,
 		fakeFlags{"vni": true}, &buf); err != nil {
 		t.Fatalf("runBGPVPNUpdate(unset): %v", err)
 	}
@@ -179,10 +179,10 @@ func TestRunBGPVPNSet_PurgeAllSkipsTheReadAndEmptyIsRefused(t *testing.T) {
 		purgeExportTargets: true, purgeRDs: true,
 	}
 	var buf bytes.Buffer
-	if err := runBGPVPNUpdate(context.Background(), client, csvOut(), vpnID, f, false, fakeFlags{}, &buf); err != nil {
+	if err := runBGPVPNUpdate(context.Background(), client, csvOut(), vpnID, f, fakeFlags{}, &buf); err != nil {
 		t.Fatalf("runBGPVPNUpdate: %v", err)
 	}
-	if err := runBGPVPNUpdate(context.Background(), client, csvOut(), vpnID, &bgpvpnUpdateFlags{}, false, fakeFlags{}, &buf); err == nil {
+	if err := runBGPVPNUpdate(context.Background(), client, csvOut(), vpnID, &bgpvpnUpdateFlags{}, fakeFlags{}, &buf); err == nil {
 		t.Fatal("bgpvpn set with no flags succeeded")
 	}
 }
@@ -297,7 +297,7 @@ func TestRunBGPVPNNetworkAssoc_Verbs(t *testing.T) {
 	ctx := context.Background()
 
 	var buf bytes.Buffer
-	if err := runBGPVPNNetworkAssocCreate(ctx, client, csvOut(), vpnID, vpnNetID, vpnProjID, &buf); err != nil {
+	if err := runBGPVPNNetworkAssocCreate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnNetID}, vpnProjID, &buf); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if want := "Field,Value\nid," + vpnAssoc + "\nnetwork_id," + vpnNetID + "\nproject_id," + vpnProjID + "\n"; buf.String() != want {
@@ -363,11 +363,11 @@ func TestRunBGPVPNRouterAssoc_AdvertiseSemantics(t *testing.T) {
 
 	// Upstream always sends the attribute, false unless a flag says otherwise.
 	wantBody = `{"router_association":{"router_id":"` + vpnRtrID + `","project_id":"` + vpnProjID + `","advertise_extra_routes":false}}`
-	if err := runBGPVPNRouterAssocCreate(ctx, client, csvOut(), vpnID, vpnRtrID, vpnProjID, bgpvpnAdvertiseFlags{}, &buf); err != nil {
+	if err := runBGPVPNRouterAssocCreate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnRtrID}, vpnProjID, bgpvpnAdvertiseFlags{}, &buf); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	wantBody = `{"router_association":{"router_id":"` + vpnRtrID + `","advertise_extra_routes":true}}`
-	if err := runBGPVPNRouterAssocCreate(ctx, client, csvOut(), vpnID, vpnRtrID, "", bgpvpnAdvertiseFlags{advertise: true}, &buf); err != nil {
+	if err := runBGPVPNRouterAssocCreate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnRtrID}, "", bgpvpnAdvertiseFlags{advertise: true}, &buf); err != nil {
 		t.Fatalf("create --advertise_extra_routes: %v", err)
 	}
 	for _, tc := range []struct {
@@ -382,7 +382,7 @@ func TestRunBGPVPNRouterAssoc_AdvertiseSemantics(t *testing.T) {
 		{bgpvpnAdvertiseFlags{}, false, false},
 	} {
 		wantBody = `{"router_association":{"advertise_extra_routes":` + map[bool]string{true: "true", false: "false"}[tc.want] + `}}`
-		if err := runBGPVPNRouterAssocUpdate(ctx, client, csvOut(), vpnID, vpnAssoc, tc.adv, tc.unset, &buf); err != nil {
+		if err := runBGPVPNRouterAssocUpdate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnAssoc}, tc.adv, tc.unset, &buf); err != nil {
 			t.Fatalf("update %+v unset=%v: %v", tc.adv, tc.unset, err)
 		}
 	}
@@ -435,7 +435,7 @@ func TestRunBGPVPNPortAssocCreate_BuildsRoutes(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	if err := runBGPVPNPortAssocCreate(context.Background(), networkClient(fakeServer), csvOut(),
-		vpnID, vpnPortID, vpnProjID, f, &buf); err != nil {
+		bgpvpnAssocRef{vpnID, vpnPortID}, vpnProjID, f, &buf); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	want := "Field,Value\nadvertise_fixed_ips,true\nbgpvpn_routes," + vpnID2 + " (50)\nid," + vpnAssoc +
@@ -455,12 +455,12 @@ func TestRunBGPVPNPortAssocCreate_EmptyRoutesAndBadSpecs(t *testing.T) {
 	})
 	client := networkClient(fakeServer)
 	var buf bytes.Buffer
-	if err := runBGPVPNPortAssocCreate(context.Background(), client, csvOut(), vpnID, vpnPortID, "", &bgpvpnPortAssocFlags{}, &buf); err != nil {
+	if err := runBGPVPNPortAssocCreate(context.Background(), client, csvOut(), bgpvpnAssocRef{vpnID, vpnPortID}, "", &bgpvpnPortAssocFlags{}, &buf); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	for _, spec := range []string{"192.0.2.0/24", "prefix=192.0.2.0/24,local_pref=x", "prefix=192.0.2.0/24,weight=1", "local_pref=1"} {
 		f := &bgpvpnPortAssocFlags{prefixRoutes: []string{spec}}
-		if err := runBGPVPNPortAssocCreate(context.Background(), client, csvOut(), vpnID, vpnPortID, "", f, &buf); err == nil {
+		if err := runBGPVPNPortAssocCreate(context.Background(), client, csvOut(), bgpvpnAssocRef{vpnID, vpnPortID}, "", f, &buf); err == nil {
 			t.Errorf("--prefix-route %q accepted", spec)
 		}
 	}
@@ -495,7 +495,7 @@ func TestRunBGPVPNPortAssocSetUnset_EditTheCurrentRoutes(t *testing.T) {
 		prefixRoutes: []string{"prefix=192.0.2.0/24,local_pref=7", "prefix=203.0.113.0/24"},
 		bgpvpnRoutes: []string{"bgpvpn=" + vpnID3},
 	}
-	if err := runBGPVPNPortAssocUpdate(ctx, client, csvOut(), vpnID, vpnAssoc, set, false, &buf); err != nil {
+	if err := runBGPVPNPortAssocUpdate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnAssoc}, set, false, &buf); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	if !reflect.DeepEqual(methods, []string{http.MethodGet, http.MethodPut}) {
@@ -504,7 +504,7 @@ func TestRunBGPVPNPortAssocSetUnset_EditTheCurrentRoutes(t *testing.T) {
 
 	// set --no-prefix-route --no-bgpvpn-route empties the routes.
 	wantBody = `{"port_association":{"routes":[]}}`
-	if err := runBGPVPNPortAssocUpdate(ctx, client, csvOut(), vpnID, vpnAssoc,
+	if err := runBGPVPNPortAssocUpdate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnAssoc},
 		&bgpvpnPortAssocFlags{purgePrefix: true, purgeBGPVPN: true}, false, &buf); err != nil {
 		t.Fatalf("set --no-*: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestRunBGPVPNPortAssocSetUnset_EditTheCurrentRoutes(t *testing.T) {
 		prefixRoutes: []string{"198.51.100.0/24"},
 		bgpvpnRoutes: []string{vpnID2},
 	}
-	if err := runBGPVPNPortAssocUpdate(ctx, client, csvOut(), vpnID, vpnAssoc, unset, true, &buf); err != nil {
+	if err := runBGPVPNPortAssocUpdate(ctx, client, csvOut(), bgpvpnAssocRef{vpnID, vpnAssoc}, unset, true, &buf); err != nil {
 		t.Fatalf("unset: %v", err)
 	}
 }

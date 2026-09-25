@@ -267,7 +267,7 @@ func newBGPVPNPortAssocCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	pf := &bgpvpnPortAssocFlags{}
 	create := newBGPVPNAssocCreateCommand(a, o, kind, cf,
 		func(ctx context.Context, client *gophercloud.ServiceClient, bgpvpnRef, portRef string, _ flagSet, w io.Writer) error {
-			return runBGPVPNPortAssocCreate(ctx, client, o, bgpvpnRef, portRef, cf.projectID, pf, w)
+			return runBGPVPNPortAssocCreate(ctx, client, o, bgpvpnAssocRef{bgpvpnRef, portRef}, cf.projectID, pf, w)
 		})
 	bindBGPVPNPortAssocFlags(create, pf, "create")
 	return newBGPVPNAssocParent(kind,
@@ -283,13 +283,13 @@ func newBGPVPNPortAssocCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runBGPVPNPortAssocCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	bgpvpnRef, portRef, projectID string, f *bgpvpnPortAssocFlags, w io.Writer,
+	ref bgpvpnAssocRef, projectID string, f *bgpvpnPortAssocFlags, w io.Writer,
 ) error {
-	bgpvpnID, err := resolveBGPVPNID(ctx, client, bgpvpnRef)
+	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
 	}
-	portID, err := resolvePortID(ctx, client, portRef)
+	portID, err := resolvePortID(ctx, client, ref.target)
 	if err != nil {
 		return err
 	}
@@ -327,7 +327,7 @@ func newBGPVPNPortAssocSetCommand(a *auth.Options, o *output.Options, unset bool
 			if err != nil {
 				return err
 			}
-			return runBGPVPNPortAssocUpdate(ctx, client, o, args[1], args[0], f, unset, cmd.OutOrStdout())
+			return runBGPVPNPortAssocUpdate(ctx, client, o, bgpvpnAssocRef{args[1], args[0]}, f, unset, cmd.OutOrStdout())
 		},
 	}
 	bindBGPVPNPortAssocFlags(cmd, f, verb)
@@ -337,9 +337,10 @@ func newBGPVPNPortAssocSetCommand(a *auth.Options, o *output.Options, unset bool
 // runBGPVPNPortAssocUpdate reads the association first, as upstream does:
 // neutron replaces the routes list whole, so the edit is computed client-side.
 func runBGPVPNPortAssocUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	bgpvpnRef, id string, f *bgpvpnPortAssocFlags, unset bool, w io.Writer,
+	ref bgpvpnAssocRef, f *bgpvpnPortAssocFlags, unset bool, w io.Writer,
 ) error {
-	bgpvpnID, err := resolveBGPVPNID(ctx, client, bgpvpnRef)
+	id := ref.target
+	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
 	}

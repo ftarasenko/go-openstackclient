@@ -16,6 +16,11 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file.
+const (
+	colFirewallPolicy = "Firewall Policy"
+)
+
 const (
 	flagFWSourceIP    = "source-ip-address"
 	flagFWDestIP      = "destination-ip-address"
@@ -254,7 +259,7 @@ func fwRuleSummary(r *fwRule) string {
 func fwRuleShowFields(r *fwRule) ([]string, []any) {
 	return []string{
 		"Action", "Description", "Destination Firewall Group ID", "Destination IP Address",
-		"Destination Port", "Enabled", "Firewall Policy", "ID", "IP Version", "Name", "Project",
+		"Destination Port", "Enabled", colFirewallPolicy, "ID", "IP Version", "Name", "Project",
 		"Protocol", "Shared", "Source Firewall Group ID", "Source IP Address", "Source Port", "Summary",
 	}, []any{
 		r.Action, r.Description, r.DestinationFirewallGroupID, r.DestinationIPAddress,
@@ -401,10 +406,10 @@ func runFirewallRuleList(ctx context.Context, client *gophercloud.ServiceClient,
 // fwRuleListTable renders upstream's columns: Summary replaces the address,
 // port and action detail by default, and --long spells it out instead.
 func fwRuleListTable(all []fwRule, long bool) output.Table {
-	cols := []string{"ID", "Name", "Enabled", "Summary", "Firewall Policy"}
+	cols := []string{"ID", "Name", "Enabled", "Summary", colFirewallPolicy}
 	if long {
 		cols = []string{
-			"ID", "Name", "Enabled", "Description", "Firewall Policy", "IP Version", "Action",
+			"ID", "Name", "Enabled", "Description", colFirewallPolicy, "IP Version", "Action",
 			"Protocol", "Source IP Address", "Source Port", "Destination IP Address", "Destination Port",
 			"Shared", "Project", "Source Firewall Group ID", "Destination Firewall Group ID",
 		}

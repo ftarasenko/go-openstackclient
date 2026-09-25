@@ -129,7 +129,8 @@ func runPortUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		return err
 	}
 	changed = changed || len(attrs) > 0
-	return updatePort(ctx, client, o, nameOrID, id, opts, attrs, changed, current, applyTagsForUnset, &f.tagWriteFlags, w)
+	u := portUpdate{opts: opts, attrs: attrs, changed: changed, current: current, tags: tagEdit{applyTagsForUnset, &f.tagWriteFlags}}
+	return updatePort(ctx, client, o, nameOrID, id, u, w)
 }
 
 // portUnsetLists removes the entries each list flag names. As upstream
@@ -159,7 +160,7 @@ func portUnsetLists(ctx context.Context, client *gophercloud.ServiceClient, f *p
 			return false, err
 		}
 		kept, err := removeEachMatch(current.SecurityGroups, removeIDs, f.securityGroup,
-			func(have, want string) bool { return have == want }, "security group")
+			func(have, want string) bool { return have == want }, nounSecurityGroup)
 		if err != nil {
 			return false, err
 		}
@@ -234,7 +235,7 @@ func portUnsetAttrs(f *portUnsetFlags, current *portExt) (map[string]any, error)
 		attrs["binding:profile"] = profile
 	}
 	if f.host {
-		attrs["binding:host_id"] = ""
+		attrs[fieldBindingHostID] = ""
 	}
 	if f.qosPolicy {
 		attrs["qos_policy_id"] = nil

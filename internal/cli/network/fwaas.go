@@ -17,6 +17,12 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file.
+const (
+	flagFWIngressPolicy = "ingress-firewall-policy"
+	flagFWEgressPolicy  = "egress-firewall-policy"
+)
+
 // FWaaS v2 (upstream network/v2/fwaas/{group,policy,rule}.py): "firewall group",
 // "firewall group policy" and "firewall group rule". Every call goes through the
 // fwaas_v2 plugin's URL tree, so each seam routes its error through
@@ -207,9 +213,9 @@ type fwGroupFlags struct {
 func bindFWGroupCommonFlags(cmd *cobra.Command, f *fwGroupFlags) {
 	fl := cmd.Flags()
 	fl.StringVar(&f.description, flagDescription, "", "description of the firewall group")
-	fl.StringVar(&f.ingress, "ingress-firewall-policy", "", "ingress firewall policy (name or ID)")
+	fl.StringVar(&f.ingress, flagFWIngressPolicy, "", "ingress firewall policy (name or ID)")
 	fl.BoolVar(&f.noIngress, "no-ingress-firewall-policy", false, "detach the ingress firewall policy")
-	fl.StringVar(&f.egress, "egress-firewall-policy", "", "egress firewall policy (name or ID)")
+	fl.StringVar(&f.egress, flagFWEgressPolicy, "", "egress firewall policy (name or ID)")
 	fl.BoolVar(&f.noEgress, "no-egress-firewall-policy", false, "detach the egress firewall policy")
 	fl.BoolVar(&f.share, flagFWShare, false, "share the firewall group with all projects")
 	fl.BoolVar(&f.noShare, flagFWNoShare, false, "restrict the firewall group to its project")
@@ -217,8 +223,8 @@ func bindFWGroupCommonFlags(cmd *cobra.Command, f *fwGroupFlags) {
 	fl.BoolVar(&f.disable, "disable", false, "disable the firewall group")
 	fl.StringArrayVar(&f.ports, flagFWPort, nil, "port to apply the firewall group to (name or ID, repeatable)")
 	fl.BoolVar(&f.noPort, flagFWNoPort, false, "detach every port from the firewall group")
-	cmd.MarkFlagsMutuallyExclusive("ingress-firewall-policy", "no-ingress-firewall-policy")
-	cmd.MarkFlagsMutuallyExclusive("egress-firewall-policy", "no-egress-firewall-policy")
+	cmd.MarkFlagsMutuallyExclusive(flagFWIngressPolicy, "no-ingress-firewall-policy")
+	cmd.MarkFlagsMutuallyExclusive(flagFWEgressPolicy, "no-egress-firewall-policy")
 	cmd.MarkFlagsMutuallyExclusive(flagFWShare, flagFWNoShare)
 	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 }
@@ -551,8 +557,8 @@ func newFirewallGroupUnsetCommand(a *auth.Options, o *output.Options) *cobra.Com
 	fl := cmd.Flags()
 	fl.StringArrayVar(&f.ports, flagFWPort, nil, "port to remove from the firewall group (name or ID, repeatable)")
 	fl.BoolVar(&f.allPort, "all-port", false, "remove every port from the firewall group")
-	fl.BoolVar(&f.ingress, "ingress-firewall-policy", false, "detach the ingress firewall policy")
-	fl.BoolVar(&f.egress, "egress-firewall-policy", false, "detach the egress firewall policy")
+	fl.BoolVar(&f.ingress, flagFWIngressPolicy, false, "detach the ingress firewall policy")
+	fl.BoolVar(&f.egress, flagFWEgressPolicy, false, "detach the egress firewall policy")
 	fl.BoolVar(&f.share, flagFWShare, false, `(deprecated, use "firewall group set --no-share") restrict the firewall group to its project`)
 	fl.BoolVar(&f.enable, "enable", false, `(deprecated, use "firewall group set --disable") disable the firewall group`)
 	cmd.MarkFlagsMutuallyExclusive(flagFWPort, "all-port")

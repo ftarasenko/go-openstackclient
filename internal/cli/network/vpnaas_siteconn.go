@@ -56,7 +56,7 @@ func vpnDPD(d siteconnections.DPD) any {
 // sorted).
 func ipsecSiteConnectionShowFields(s *siteconnections.Connection) ([]string, []any) {
 	return []string{
-		"Authentication Algorithm", "DPD", "Description", "ID", "IKE Policy",
+		colAuthAlgorithm, "DPD", "Description", "ID", "IKE Policy",
 		"IPSec Policy", "Initiator", "Local Endpoint Group ID", "Local ID", "MTU",
 		"Name", "Peer Address", "Peer CIDRs", "Peer Endpoint Group ID", "Peer ID",
 		"Pre-shared Key", "Project", "Route Mode", "State", "Status", "VPN Service",
@@ -77,7 +77,7 @@ func runIPsecSiteConnectionList(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return fmt.Errorf("parsing IPsec site connection list: %w", err)
 	}
-	cols := []string{"ID", "Name", "Peer Address", "Authentication Algorithm", "Status"}
+	cols := []string{"ID", "Name", "Peer Address", colAuthAlgorithm, "Status"}
 	if long {
 		cols = append(cols, "Project", "Peer CIDRs", "VPN Service", "IPSec Policy", "IKE Policy", "MTU",
 			"Initiator", "State", "Description", "Pre-shared Key", "Route Mode", "Local ID", "Peer ID",

@@ -16,6 +16,12 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file.
+const (
+	flagFixedIPAddress = "fixed-ip-address"
+	nounFloatingIP     = "floating IP"
+)
+
 // newFloatingIPCommand builds the "ip" child of the "floating" parent, giving
 // the two-word OSC command "floating ip ...".
 func newFloatingIPCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -90,7 +96,7 @@ func resolveFloatingIPID(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return "", fmt.Errorf("parsing floating IP lookup for %q: %w", addrOrID, err)
 	}
-	return pickID(addrOrID, len(all), func(i int) string { return all[i].ID }, "floating IP")
+	return pickID(addrOrID, len(all), func(i int) string { return all[i].ID }, nounFloatingIP)
 }
 
 // floatingIPListFlags mirrors upstream ListFloatingIP
@@ -138,7 +144,7 @@ func newFloatingIPListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	fl.StringArrayVar(&f.networks, "network", nil, "list only floating IPs allocated from this network (name or ID, repeatable)")
 	fl.StringArrayVar(&f.ports, "port", nil, "list only floating IPs associated with this port (name or ID, repeatable)")
 	fl.StringArrayVar(&f.routers, "router", nil, "list only floating IPs attached to this router (name or ID, repeatable)")
-	fl.StringVar(&f.fixedIPAddress, "fixed-ip-address", "", "list only floating IPs bound to this fixed IP address")
+	fl.StringVar(&f.fixedIPAddress, flagFixedIPAddress, "", "list only floating IPs bound to this fixed IP address")
 	fl.StringVar(&f.floatingIPAddress, "floating-ip-address", "", "list only this floating IP address")
 	fl.StringVar(&f.status, "status", "", "list only floating IPs in this status (ACTIVE, DOWN)")
 	fl.StringVar(&f.project, flagProject, "", "list only floating IPs owned by this project (name or ID)")
@@ -291,14 +297,14 @@ func newFloatingIPCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl.StringVar(&f.subnet, "subnet", "", "subnet on which to allocate the floating IP (name or ID)")
 	fl.StringVar(&f.description, flagDescription, "", "description for the floating IP")
 	fl.StringVar(&f.port, "port", "", "port to associate the floating IP with at creation (name or ID)")
-	fl.StringVar(&f.fixedIPAddr, "fixed-ip-address", "", "fixed IP of the associated port to bind the floating IP to")
+	fl.StringVar(&f.fixedIPAddr, flagFixedIPAddress, "", "fixed IP of the associated port to bind the floating IP to")
 	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the floating IP (name or ID)")
 	fl.StringVar(&f.dnsDomain, flagDNSDomain, "", "DNS domain for the floating IP (requires the dns-integration extension)")
 	fl.StringVar(&f.dnsName, flagDNSName, "", "DNS name for the floating IP (requires the dns-integration extension)")
 	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
 	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
 	bindExtraPropertyFlag(fl, &f.extraProperty)
-	bindTagCreateFlags(cmd, &f.tagWriteFlags, "floating IP")
+	bindTagCreateFlags(cmd, &f.tagWriteFlags, nounFloatingIP)
 	return cmd
 }
 
@@ -426,12 +432,12 @@ func newFloatingIPSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.port, "port", "", "port to associate with the floating IP (name or ID)")
-	fl.StringVar(&f.fixedIPAddr, "fixed-ip-address", "", "fixed IP of the port to associate")
+	fl.StringVar(&f.fixedIPAddr, flagFixedIPAddress, "", "fixed IP of the port to associate")
 	fl.StringVar(&f.description, flagDescription, "", "new description for the floating IP")
 	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the floating IP (name or ID)")
 	fl.BoolVar(&f.noQoSPolicy, flagNoQoSPolicy, false, "detach the floating IP's QoS policy")
 	bindExtraPropertyFlag(fl, &f.extraProperty)
-	bindTagSetFlags(fl, &f.tagWriteFlags, "floating IP")
+	bindTagSetFlags(fl, &f.tagWriteFlags, nounFloatingIP)
 	cmd.MarkFlagsMutuallyExclusive(flagQoSPolicy, flagNoQoSPolicy)
 	return cmd
 }
@@ -477,30 +483,37 @@ func runFloatingIPSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if !changed && !f.given() {
 		return fmt.Errorf("floating ip set requires at least one attribute flag")
 	}
-	return updateFloatingIP(ctx, client, o, addrOrID, id, opts, attrs, changed, applyTagsForSet, &f.tagWriteFlags, w)
+	u := floatingIPUpdate{opts: opts, attrs: attrs, changed: changed, tags: tagEdit{applyTagsForSet, &f.tagWriteFlags}}
+	return updateFloatingIP(ctx, client, o, addrOrID, id, u, w)
+}
+
+// floatingIPUpdate is one prepared floating IP PUT.
+type floatingIPUpdate struct {
+	opts    floatingips.UpdateOpts
+	attrs   map[string]any
+	changed bool
+	tags    tagEdit
 }
 
 // updateFloatingIP is the shared tail of set and unset: PUT the attributes when
 // any were given (upstream skips the update when only tags change), then apply
 // the tag change, then render what the floating IP now looks like.
 func updateFloatingIP(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
-	opts floatingips.UpdateOpts, attrs map[string]any, changed bool,
-	applyTags func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error),
-	tags *tagWriteFlags, w io.Writer,
+	u floatingIPUpdate, w io.Writer,
 ) error {
 	var (
 		fip *floatingIPExt
 		err error
 	)
-	if changed {
+	if u.changed {
 		fip = &floatingIPExt{}
-		if err := floatingips.Update(ctx, client, id, withFloatingIPUpdateAttrs(opts, attrs)).ExtractInto(fip); err != nil {
-			return explainMissingExtension(ctx, client, fmt.Errorf("updating floating IP %s: %w", ref, err), attrs)
+		if err := floatingips.Update(ctx, client, id, withFloatingIPUpdateAttrs(u.opts, u.attrs)).ExtractInto(fip); err != nil {
+			return explainMissingExtension(ctx, client, fmt.Errorf("updating floating IP %s: %w", ref, err), u.attrs)
 		}
 	} else if fip, err = getFloatingIP(ctx, client, id); err != nil {
 		return fmt.Errorf("getting floating IP %s: %w", ref, err)
 	}
-	if fip.Tags, err = applyTags(ctx, client, tagResourceFloatingIPs, id, fip.Tags, tags); err != nil {
+	if fip.Tags, err = u.tags.run(ctx, client, tagResourceFloatingIPs, id, fip.Tags); err != nil {
 		return err
 	}
 	fields, values := floatingIPShowFields(fip)
@@ -539,7 +552,7 @@ func newFloatingIPUnsetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	// and so sends the given value; koc clears the named attribute (null), as
 	// every other upstream unset verb does.
 	bindExtraPropertyUnsetFlag(fl, &f.extraProperty)
-	bindTagUnsetFlags(cmd, &f.tagWriteFlags, "floating IP")
+	bindTagUnsetFlags(cmd, &f.tagWriteFlags, nounFloatingIP)
 	return cmd
 }
 
@@ -567,5 +580,6 @@ func runFloatingIPUnset(ctx context.Context, client *gophercloud.ServiceClient, 
 	if !changed && !f.given() {
 		return fmt.Errorf("floating ip unset requires at least one attribute flag")
 	}
-	return updateFloatingIP(ctx, client, o, addrOrID, id, opts, attrs, changed, applyTagsForUnset, &f.tagWriteFlags, w)
+	u := floatingIPUpdate{opts: opts, attrs: attrs, changed: changed, tags: tagEdit{applyTagsForUnset, &f.tagWriteFlags}}
+	return updateFloatingIP(ctx, client, o, addrOrID, id, u, w)
 }

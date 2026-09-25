@@ -615,6 +615,12 @@ const (
 	flagQoSIngress   = "ingress"
 	flagQoSEgress    = "egress"
 	flagQoSAny       = "any"
+
+	flagQoSMaxKBps       = "max-kbps"
+	flagQoSMaxBurstKbits = "max-burst-kbits"
+	flagQoSMinKBps       = "min-kbps"
+	flagQoSMinKpps       = "min-kpps"
+	flagQoSDSCPMark      = "dscp-mark"
 )
 
 type qosRuleFlags struct {
@@ -636,11 +642,11 @@ type qosRuleFlags struct {
 
 func (f *qosRuleFlags) register(cmd *cobra.Command) {
 	fl := cmd.Flags()
-	fl.IntVar(&f.maxKBps, "max-kbps", 0, "maximum bandwidth in kbps (bandwidth-limit)")
-	fl.IntVar(&f.maxBurstKbits, "max-burst-kbits", 0, "maximum burst size in kilobits (bandwidth-limit)")
-	fl.IntVar(&f.minKBps, "min-kbps", 0, "guaranteed bandwidth in kbps (minimum-bandwidth)")
-	fl.IntVar(&f.minKpps, "min-kpps", 0, "guaranteed packet rate in kpps (minimum-packet-rate)")
-	fl.IntVar(&f.dscpMark, "dscp-mark", 0, "DSCP mark value (dscp-marking)")
+	fl.IntVar(&f.maxKBps, flagQoSMaxKBps, 0, "maximum bandwidth in kbps (bandwidth-limit)")
+	fl.IntVar(&f.maxBurstKbits, flagQoSMaxBurstKbits, 0, "maximum burst size in kilobits (bandwidth-limit)")
+	fl.IntVar(&f.minKBps, flagQoSMinKBps, 0, "guaranteed bandwidth in kbps (minimum-bandwidth)")
+	fl.IntVar(&f.minKpps, flagQoSMinKpps, 0, "guaranteed packet rate in kpps (minimum-packet-rate)")
+	fl.IntVar(&f.dscpMark, flagQoSDSCPMark, 0, "DSCP mark value (dscp-marking)")
 	fl.StringVar(&f.direction, flagQoSDirection, "", "traffic direction: egress, ingress or any")
 	fl.BoolVar(&f.ingress, flagQoSIngress, false, "ingress traffic, from the project's point of view")
 	fl.BoolVar(&f.egress, flagQoSEgress, false, "egress traffic, from the project's point of view")
@@ -680,11 +686,11 @@ var qosRuleParamFlags = []struct {
 	flags []string
 }{
 	{"direction", []string{flagQoSDirection, flagQoSIngress, flagQoSEgress, flagQoSAny}},
-	{"dscp_mark", []string{"dscp-mark"}},
-	{"max_burst_kbps", []string{"max-burst-kbits"}},
-	{"max_kbps", []string{"max-kbps"}},
-	{"min_kbps", []string{"min-kbps"}},
-	{"min_kpps", []string{"min-kpps"}},
+	{"dscp_mark", []string{flagQoSDSCPMark}},
+	{"max_burst_kbps", []string{flagQoSMaxBurstKbits}},
+	{"max_kbps", []string{flagQoSMaxKBps}},
+	{"min_kbps", []string{flagQoSMinKBps}},
+	{"min_kpps", []string{flagQoSMinKpps}},
 }
 
 // qosRuleParamSet is one rule type's row of upstream's MANDATORY_PARAMETERS /
@@ -774,16 +780,16 @@ func (f *qosRuleFlags) body(k qosRuleKind) (map[string]any, error) {
 	}
 	switch k.apiType {
 	case "bandwidth_limit":
-		set("max-kbps", "max_kbps", f.maxKBps)
-		set("max-burst-kbits", "max_burst_kbps", f.maxBurstKbits)
+		set(flagQoSMaxKBps, "max_kbps", f.maxKBps)
+		set(flagQoSMaxBurstKbits, "max_burst_kbps", f.maxBurstKbits)
 		setDirection()
 	case "dscp_marking":
-		set("dscp-mark", "dscp_mark", f.dscpMark)
+		set(flagQoSDSCPMark, "dscp_mark", f.dscpMark)
 	case "minimum_bandwidth":
-		set("min-kbps", "min_kbps", f.minKBps)
+		set(flagQoSMinKBps, "min_kbps", f.minKBps)
 		setDirection()
 	case "minimum_packet_rate":
-		set("min-kpps", "min_kpps", f.minKpps)
+		set(flagQoSMinKpps, "min_kpps", f.minKpps)
 		setDirection()
 	}
 	extra, err := parseExtraProperties(f.extraProperty, false)

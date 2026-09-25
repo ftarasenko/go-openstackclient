@@ -217,7 +217,7 @@ func getNetwork(ctx context.Context, client *gophercloud.ServiceClient, id strin
 // any were given (upstream skips the update when only tags change, and so
 // does this), then apply the tag change, then render the network.
 func updateNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
-	req networkUpdate, tags *tagWriteFlags, w io.Writer,
+	req networkUpdate, w io.Writer,
 ) error {
 	var (
 		n   *networkExt
@@ -231,7 +231,7 @@ func updateNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	} else if n, err = getNetwork(ctx, client, id); err != nil {
 		return fmt.Errorf("getting network %s: %w", ref, err)
 	}
-	if n.Tags, err = req.applyTags(ctx, client, tagResourceNetworks, id, n.Tags, tags); err != nil {
+	if n.Tags, err = req.tags.run(ctx, client, tagResourceNetworks, id, n.Tags); err != nil {
 		return err
 	}
 	fields, values := networkShowFields(n)
@@ -239,10 +239,10 @@ func updateNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 }
 
 // networkUpdate is one set/unset request: the typed opts, the extra body
-// attributes, whether a PUT is needed at all, and which tag helper to apply.
+// attributes, whether a PUT is needed at all, and the tag change.
 type networkUpdate struct {
-	opts      networks.UpdateOpts
-	attrs     map[string]any
-	changed   bool
-	applyTags func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error)
+	opts    networks.UpdateOpts
+	attrs   map[string]any
+	changed bool
+	tags    tagEdit
 }

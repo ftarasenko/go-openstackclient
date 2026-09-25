@@ -17,6 +17,11 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file.
+const (
+	flagBGPRemoteAS = "remote-as"
+)
+
 // "bgp peer ..." mirrors upstream network/v2/dynamic_routing/bgp_peer.py.
 
 const bgpAuthTypeNone = "none"
@@ -91,13 +96,13 @@ func newBGPPeerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.peerIP, "peer-ip", "", "peer IP address")
-	fl.StringVar(&f.remoteAS, "remote-as", "", fmt.Sprintf("peer AS number (integer in [%d, %d])", bgpMinAS, bgpMaxAS))
+	fl.StringVar(&f.remoteAS, flagBGPRemoteAS, "", fmt.Sprintf("peer AS number (integer in [%d, %d])", bgpMinAS, bgpMaxAS))
 	fl.StringVar(&f.authType, "auth-type", bgpAuthTypeNone, "authentication algorithm (none, md5)")
 	fl.StringVar(&f.password, bgpFlagPassword, "", "authentication password (requires --auth-type md5)")
 	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
 	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
 	_ = cmd.MarkFlagRequired("peer-ip")
-	_ = cmd.MarkFlagRequired("remote-as")
+	_ = cmd.MarkFlagRequired(flagBGPRemoteAS)
 	return cmd
 }
 
@@ -117,7 +122,7 @@ func bgpPeerCreateAttrs(name string, f *bgpPeerCreateFlags, flags flagSet) (map[
 	case authType == bgpAuthTypeNone && hasPassword:
 		return nil, fmt.Errorf("--password requires --auth-type md5")
 	}
-	remoteAS, err := parseASNumber("remote-as", f.remoteAS)
+	remoteAS, err := parseASNumber(flagBGPRemoteAS, f.remoteAS)
 	if err != nil {
 		return nil, err
 	}

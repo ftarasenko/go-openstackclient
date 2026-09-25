@@ -203,9 +203,15 @@ func newRBACCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// rbacListFilter is "network rbac list"'s flags; targetProject is resolved to
+// an ID before the seam sees it.
+type rbacListFilter struct {
+	action, objectType, targetProject string
+	long                              bool
+}
+
 func newRBACListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var action, objectType, targetProject string
-	var long bool
+	var f rbacListFilter
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List network RBAC policies",
@@ -221,18 +227,18 @@ func newRBACListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			// Upstream resolves the target project without a domain and passes
 			// the "*" wildcard through untouched.
-			targetID, err := resolveRBACTargetProject(ctx, session, targetProject, "")
-			if err != nil {
+			resolved := f
+			if resolved.targetProject, err = resolveRBACTargetProject(ctx, session, f.targetProject, ""); err != nil {
 				return err
 			}
-			return runRBACList(ctx, c, o, action, objectType, targetID, long, cmd.OutOrStdout())
+			return runRBACList(ctx, c, o, resolved, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&action, "action", "", "filter by action: access_as_external or access_as_shared")
-	fl.StringVar(&objectType, "type", "", "filter by object type, e.g. network or qos_policy")
-	fl.StringVar(&targetProject, flagTargetProject, "", "filter by the project the policy grants access to (name or ID)")
-	fl.BoolVar(&long, "long", false, "list additional fields in output")
+	fl.StringVar(&f.action, "action", "", "filter by action: access_as_external or access_as_shared")
+	fl.StringVar(&f.objectType, "type", "", "filter by object type, e.g. network or qos_policy")
+	fl.StringVar(&f.targetProject, flagTargetProject, "", "filter by the project the policy grants access to (name or ID)")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
 
@@ -249,12 +255,12 @@ func resolveRBACTargetProject(ctx context.Context, session *auth.Client, ref, do
 // the action under --long. koc also shows the target project under --long,
 // which upstream's list never does.
 func runRBACList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	action, objectType, targetProject string, long bool, w io.Writer,
+	f rbacListFilter, w io.Writer,
 ) error {
 	opts := rbacpolicies.ListOpts{
-		Action:       rbacpolicies.PolicyAction(action),
-		ObjectType:   objectType,
-		TargetTenant: targetProject,
+		Action:       rbacpolicies.PolicyAction(f.action),
+		ObjectType:   f.objectType,
+		TargetTenant: f.targetProject,
 	}
 	pages, err := rbacpolicies.List(client, opts).AllPages(ctx)
 	if err != nil {
@@ -265,13 +271,13 @@ func runRBACList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		return fmt.Errorf("parsing the network RBAC policy list: %w", err)
 	}
 	cols := []string{"ID", "Object Type", "Object ID"}
-	if long {
+	if f.long {
 		cols = append(cols, "Action", "Target Project")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
 		row := []any{p.ID, p.ObjectType, p.ObjectID}
-		if long {
+		if f.long {
 			row = append(row, p.Action, p.TargetTenant)
 		}
 		t.Rows = append(t.Rows, row)
@@ -559,9 +565,14 @@ func newSegmentCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// segmentListFilter is "network segment list"'s flags.
+type segmentListFilter struct {
+	network, networkType, physicalNetwork string
+	long                                  bool
+}
+
 func newSegmentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var network, networkType, physicalNetwork string
-	var long bool
+	var f segmentListFilter
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List network segments",
@@ -574,25 +585,25 @@ func newSegmentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runSegmentList(cmd.Context(), c, o, network, networkType, physicalNetwork, long, cmd.OutOrStdout())
+			return runSegmentList(cmd.Context(), c, o, f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&network, "network", "", "filter by network (name or ID)")
-	fl.StringVar(&networkType, flagNetworkType, "", "filter by network type, e.g. vlan or vxlan")
-	fl.StringVar(&physicalNetwork, "physical-network", "", "filter by physical network")
-	fl.BoolVar(&long, "long", false, "list additional fields in output")
+	fl.StringVar(&f.network, "network", "", "filter by network (name or ID)")
+	fl.StringVar(&f.networkType, flagNetworkType, "", "filter by network type, e.g. vlan or vxlan")
+	fl.StringVar(&f.physicalNetwork, "physical-network", "", "filter by physical network")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
 
 // runSegmentList renders upstream's columns; --long adds the physical network.
 // --network-type and --physical-network are koc-only filters.
 func runSegmentList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	network, networkType, physicalNetwork string, long bool, w io.Writer,
+	f segmentListFilter, w io.Writer,
 ) error {
-	opts := segments.ListOpts{NetworkType: networkType, PhysicalNetwork: physicalNetwork}
-	if network != "" {
-		id, err := resolveNetworkID(ctx, client, network)
+	opts := segments.ListOpts{NetworkType: f.networkType, PhysicalNetwork: f.physicalNetwork}
+	if f.network != "" {
+		id, err := resolveNetworkID(ctx, client, f.network)
 		if err != nil {
 			return err
 		}
@@ -607,13 +618,13 @@ func runSegmentList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		return fmt.Errorf("parsing the network segment list: %w", err)
 	}
 	cols := []string{"ID", "Name", "Network", "Network Type", "Segment"}
-	if long {
+	if f.long {
 		cols = append(cols, "Physical Network")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, seg := range all {
 		row := []any{seg.ID, seg.Name, seg.NetworkID, seg.NetworkType, seg.SegmentationID}
-		if long {
+		if f.long {
 			row = append(row, seg.PhysicalNetwork)
 		}
 		t.Rows = append(t.Rows, row)

@@ -14,6 +14,15 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file; the column names are shared with
+// vpnaas_siteconn.go.
+const (
+	colAuthAlgorithm       = "Authentication Algorithm"
+	colEncryptionAlgorithm = "Encryption Algorithm"
+	colPFS                 = "Perfect Forward Secrecy (PFS)"
+	policySuffix           = " policy"
+)
+
 // Choice lists from upstream vpnaas/ikepolicy.py and ipsecpolicy.py (the two
 // files carry identical algorithm and PFS lists).
 var (
@@ -74,7 +83,7 @@ func ipsecPolicyChoices() []*vpnChoice {
 // "IKE" or "IPsec".
 func bindVPNPolicyCommon(cmd *cobra.Command, f *vpnPolicyFlags, noun string) {
 	fl := cmd.Flags()
-	fl.StringVar(&f.description, flagDescription, "", "description of the "+noun+" policy")
+	fl.StringVar(&f.description, flagDescription, "", "description of the "+noun+policySuffix)
 	fl.StringArrayVar(&f.lifetime, "lifetime", nil,
 		noun+" lifetime as units=<units>,value=<value> (units: seconds; value: integer >= 60)")
 	bindVPNChoices(cmd, f.choices)
@@ -127,7 +136,7 @@ func newVPNPolicyCreateCommand(a *auth.Options, o *output.Options, noun string, 
 	f := &vpnPolicyFlags{choices: choices}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
-		Short: "Create an " + noun + " policy",
+		Short: "Create an " + noun + policySuffix,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -172,7 +181,7 @@ func newVPNPolicySetCommand(a *auth.Options, o *output.Options, noun, use string
 		},
 	}
 	bindVPNPolicyCommon(cmd, f, noun)
-	cmd.Flags().StringVar(&f.name, "name", "", "new name for the "+noun+" policy")
+	cmd.Flags().StringVar(&f.name, "name", "", "new name for the "+noun+policySuffix)
 	return cmd
 }
 
@@ -202,8 +211,8 @@ func resolveIKEPolicyID(ctx context.Context, client *gophercloud.ServiceClient, 
 
 func ikePolicyShowFields(p *ikepolicies.Policy) ([]string, []any) {
 	return []string{
-		"Authentication Algorithm", "Description", "Encryption Algorithm", "ID",
-		"IKE Version", "Lifetime", "Name", "Perfect Forward Secrecy (PFS)",
+		colAuthAlgorithm, "Description", colEncryptionAlgorithm, "ID",
+		"IKE Version", "Lifetime", "Name", colPFS,
 		"Phase1 Negotiation Mode", "Project",
 	}, []any{
 		p.AuthAlgorithm, p.Description, p.EncryptionAlgorithm, p.ID,
@@ -221,7 +230,7 @@ func runIKEPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return fmt.Errorf("parsing IKE policy list: %w", err)
 	}
-	cols := []string{"ID", "Name", "Authentication Algorithm", "Encryption Algorithm", "IKE Version", "Perfect Forward Secrecy (PFS)"}
+	cols := []string{"ID", "Name", colAuthAlgorithm, colEncryptionAlgorithm, "IKE Version", colPFS}
 	if long {
 		cols = append(cols, "Description", "Phase1 Negotiation Mode", "Project", "Lifetime")
 	}
@@ -316,8 +325,8 @@ func resolveIPsecPolicyID(ctx context.Context, client *gophercloud.ServiceClient
 
 func ipsecPolicyShowFields(p *ipsecpolicies.Policy) ([]string, []any) {
 	return []string{
-		"Authentication Algorithm", "Description", "Encapsulation Mode", "Encryption Algorithm",
-		"ID", "Lifetime", "Name", "Perfect Forward Secrecy (PFS)", "Project", "Transform Protocol",
+		colAuthAlgorithm, "Description", "Encapsulation Mode", colEncryptionAlgorithm,
+		"ID", "Lifetime", "Name", colPFS, "Project", "Transform Protocol",
 	}, []any{
 		p.AuthAlgorithm, p.Description, p.EncapsulationMode, p.EncryptionAlgorithm,
 		p.ID, vpnLifetime(p.Lifetime.Units, p.Lifetime.Value), p.Name, p.PFS, p.ProjectID, p.TransformProtocol,
@@ -333,9 +342,9 @@ func runIPsecPolicyList(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return fmt.Errorf("parsing IPsec policy list: %w", err)
 	}
-	cols := []string{"ID", "Name", "Authentication Algorithm", "Encapsulation Mode", "Transform Protocol", "Encryption Algorithm"}
+	cols := []string{"ID", "Name", colAuthAlgorithm, "Encapsulation Mode", "Transform Protocol", colEncryptionAlgorithm}
 	if long {
-		cols = append(cols, "Perfect Forward Secrecy (PFS)", "Description", "Project", "Lifetime")
+		cols = append(cols, colPFS, "Description", "Project", "Lifetime")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {

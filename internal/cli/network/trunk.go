@@ -16,6 +16,12 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// Literals repeated within this file.
+const (
+	flagSegmentationType = "segmentation-type"
+	flagSegmentationID   = "segmentation-id"
+)
+
 // newTrunkCommand builds "network trunk ...", nested under the "network" noun to
 // match upstream's `openstack network trunk ...`.
 //
@@ -355,9 +361,9 @@ func parseSubportSpec(spec string) (trunkSubport, string, error) {
 		switch k {
 		case "port":
 			portRef = v
-		case "segmentation-type", "segmentation_type":
+		case flagSegmentationType, "segmentation_type":
 			sp.SegmentationType = v
-		case "segmentation-id", "segmentation_id":
+		case flagSegmentationID, "segmentation_id":
 			id, cerr := strconv.Atoi(strings.TrimSpace(v))
 			if cerr != nil {
 				return sp, "", fmt.Errorf("parsing --subport %q: segmentation-id %q is not a number", spec, v)
@@ -653,7 +659,7 @@ func newTrunkSubportAddCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			fl := cmd.Flags()
-			segGiven := fl.Changed("segmentation-type") || fl.Changed("segmentation-id")
+			segGiven := fl.Changed(flagSegmentationType) || fl.Changed(flagSegmentationID)
 			if err := checkSubportAddShape(len(args) == 2, len(f.specs) > 0, segGiven); err != nil {
 				return err
 			}
@@ -672,8 +678,8 @@ func newTrunkSubportAddCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	fl := cmd.Flags()
 	fl.StringArrayVar(&f.specs, "subport", nil,
 		"sub-port to add: port=<port>[,segmentation-type=<type>][,segmentation-id=<id>] (repeatable; instead of <port>)")
-	fl.StringVar(&f.segType, "segmentation-type", "", "segmentation type of <port>, e.g. vlan")
-	fl.IntVar(&f.segID, "segmentation-id", 0, "segmentation ID of <port>")
+	fl.StringVar(&f.segType, flagSegmentationType, "", "segmentation type of <port>, e.g. vlan")
+	fl.IntVar(&f.segID, flagSegmentationID, 0, "segmentation ID of <port>")
 	return cmd
 }
 

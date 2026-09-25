@@ -50,6 +50,14 @@ func newBGPVPNAssocParent(kind bgpvpnAssocKind, verbs ...*cobra.Command) *cobra.
 	return parent
 }
 
+// bgpvpnAssocRef names an association's two ends as given on the command
+// line: the BGP VPN, and the resource to associate (create) or the association
+// ID (set/unset).
+type bgpvpnAssocRef struct {
+	bgpvpn string
+	target string
+}
+
 // bgpvpnAssocCreateFlags carries the create verbs' --project pair.
 type bgpvpnAssocCreateFlags struct {
 	project       string
@@ -192,7 +200,7 @@ func newBGPVPNNetworkAssocCommand(a *auth.Options, o *output.Options) *cobra.Com
 	cf := &bgpvpnAssocCreateFlags{}
 	create := newBGPVPNAssocCreateCommand(a, o, kind, cf,
 		func(ctx context.Context, client *gophercloud.ServiceClient, bgpvpnRef, networkRef string, _ flagSet, w io.Writer) error {
-			return runBGPVPNNetworkAssocCreate(ctx, client, o, bgpvpnRef, networkRef, cf.projectID, w)
+			return runBGPVPNNetworkAssocCreate(ctx, client, o, bgpvpnAssocRef{bgpvpnRef, networkRef}, cf.projectID, w)
 		})
 	return newBGPVPNAssocParent(kind,
 		create,
@@ -209,13 +217,13 @@ func writeBGPVPNNetworkAssoc(o *output.Options, w io.Writer, n *bgpvpns.NetworkA
 }
 
 func runBGPVPNNetworkAssocCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	bgpvpnRef, networkRef, projectID string, w io.Writer,
+	ref bgpvpnAssocRef, projectID string, w io.Writer,
 ) error {
-	bgpvpnID, err := resolveBGPVPNID(ctx, client, bgpvpnRef)
+	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
 	}
-	networkID, err := resolveNetworkID(ctx, client, networkRef)
+	networkID, err := resolveNetworkID(ctx, client, ref.target)
 	if err != nil {
 		return err
 	}
@@ -330,7 +338,7 @@ func newBGPVPNRouterAssocCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	adv := &bgpvpnAdvertiseFlags{}
 	create := newBGPVPNAssocCreateCommand(a, o, kind, cf,
 		func(ctx context.Context, client *gophercloud.ServiceClient, bgpvpnRef, routerRef string, _ flagSet, w io.Writer) error {
-			return runBGPVPNRouterAssocCreate(ctx, client, o, bgpvpnRef, routerRef, cf.projectID, *adv, w)
+			return runBGPVPNRouterAssocCreate(ctx, client, o, bgpvpnAssocRef{bgpvpnRef, routerRef}, cf.projectID, *adv, w)
 		})
 	bindAdvertiseExtraRoutes(create, adv, "create")
 	return newBGPVPNAssocParent(kind,
@@ -352,13 +360,13 @@ func writeBGPVPNRouterAssoc(o *output.Options, w io.Writer, r *bgpvpns.RouterAss
 }
 
 func runBGPVPNRouterAssocCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	bgpvpnRef, routerRef, projectID string, adv bgpvpnAdvertiseFlags, w io.Writer,
+	ref bgpvpnAssocRef, projectID string, adv bgpvpnAdvertiseFlags, w io.Writer,
 ) error {
-	bgpvpnID, err := resolveBGPVPNID(ctx, client, bgpvpnRef)
+	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
 	}
-	routerID, err := resolveRouterID(ctx, client, routerRef)
+	routerID, err := resolveRouterID(ctx, client, ref.target)
 	if err != nil {
 		return err
 	}
@@ -392,7 +400,7 @@ func newBGPVPNRouterAssocSetCommand(a *auth.Options, o *output.Options, unset bo
 			if err != nil {
 				return err
 			}
-			return runBGPVPNRouterAssocUpdate(ctx, client, o, args[1], args[0], *adv, unset, cmd.OutOrStdout())
+			return runBGPVPNRouterAssocUpdate(ctx, client, o, bgpvpnAssocRef{args[1], args[0]}, *adv, unset, cmd.OutOrStdout())
 		},
 	}
 	bindAdvertiseExtraRoutes(cmd, adv, verb)
@@ -400,17 +408,17 @@ func newBGPVPNRouterAssocSetCommand(a *auth.Options, o *output.Options, unset bo
 }
 
 func runBGPVPNRouterAssocUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	bgpvpnRef, id string, adv bgpvpnAdvertiseFlags, unset bool, w io.Writer,
+	ref bgpvpnAssocRef, adv bgpvpnAdvertiseFlags, unset bool, w io.Writer,
 ) error {
-	bgpvpnID, err := resolveBGPVPNID(ctx, client, bgpvpnRef)
+	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
 	}
-	r, err := bgpvpns.UpdateRouterAssociation(ctx, client, bgpvpnID, id, bgpvpns.UpdateRouterAssociationOpts{
+	r, err := bgpvpns.UpdateRouterAssociation(ctx, client, bgpvpnID, ref.target, bgpvpns.UpdateRouterAssociationOpts{
 		AdvertiseExtraRoutes: routerAdvertiseExtraRoutes(adv, unset),
 	}).Extract()
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("updating router association %s: %w", id, err))
+		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("updating router association %s: %w", ref.target, err))
 	}
 	return writeBGPVPNRouterAssoc(o, w, r)
 }
