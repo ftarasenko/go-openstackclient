@@ -7,6 +7,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -24,6 +25,9 @@ func newAgentCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newAgentShowCommand(a, o))
 	cmd.AddCommand(newAgentDeleteCommand(a, o))
 	cmd.AddCommand(newAgentSetCommand(a, o))
+	cmd.AddCommand(newAgentAddCommand(a, o))
+	cmd.AddCommand(newAgentRemoveCommand(a, o))
+	cmd.AddCommand(newAgentRouterCommand(a, o))
 	return cmd
 }
 
@@ -44,6 +48,39 @@ func agentShowFields(ag *agents.Agent) ([]string, []any) {
 type agentListFlags struct {
 	agentType string
 	host      string
+	network   string
+	router    string
+	long      bool
+}
+
+// agentTypeNames maps upstream's --agent-type choices to the agent_type value
+// neutron stores and filters on: the API matches the full string ("L3 agent"),
+// so sending the short name matched nothing. A value outside the table is sent
+// verbatim, which lets the full name be given directly too.
+var agentTypeNames = map[string]string{
+	"bgp":                    "BGP dynamic routing agent",
+	"dhcp":                   "DHCP agent",
+	"open-vswitch":           "Open vSwitch agent",
+	"linux-bridge":           "Linux bridge agent",
+	"ofa":                    "OFA driver agent",
+	"l3":                     "L3 agent",
+	"loadbalancer":           "Loadbalancer agent",
+	"metering":               "Metering agent",
+	"metadata":               "Metadata agent",
+	"macvtap":                "Macvtap agent",
+	"nic":                    "NIC Switch agent",
+	"baremetal":              "Baremetal Node",
+	"ovn-controller":         "OVN Controller agent",
+	"ovn-controller-gateway": "OVN Controller Gateway agent",
+	"ovn-metadata":           "OVN Metadata agent",
+	"ovn-agent":              "OVN Neutron agent",
+}
+
+func agentTypeFilter(t string) string {
+	if full, ok := agentTypeNames[t]; ok {
+		return full
+	}
+	return t
 }
 
 func newAgentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -56,6 +93,9 @@ func newAgentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			if err := mutuallyExclusive(cmd.Flags(), "network", "router"); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, err := newNetworkClient(ctx, a)
 			if err != nil {
@@ -65,13 +105,32 @@ func newAgentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.agentType, "agent-type", "", "filter by agent type (e.g. l3, dhcp, open-vswitch)")
+	fl.StringVar(&f.agentType, "agent-type", "",
+		"filter by agent type (bgp, dhcp, open-vswitch, linux-bridge, ofa, l3, loadbalancer, metering, "+
+			"metadata, macvtap, nic, baremetal, ovn-controller, ovn-controller-gateway, ovn-metadata, ovn-agent)")
 	fl.StringVar(&f.host, "host", "", "filter by agent host")
+	// As upstream, --network and --router list a different collection, which
+	// takes no filters: --agent-type and --host do not apply to them.
+	fl.StringVar(&f.network, "network", "", "list the DHCP agents hosting this network (name or ID)")
+	fl.StringVar(&f.router, "router", "", "list the L3 agents hosting this router (name or ID)")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output (HA State, with --router)")
 	return cmd
 }
 
+var agentListColumns = []string{"ID", "Agent Type", "Host", "Availability Zone", "Alive", "State", "Binary"}
+
+func agentListRow(ag *agents.Agent) []any {
+	return []any{ag.ID, ag.AgentType, ag.Host, ag.AvailabilityZone, aliveString(ag.Alive), adminState(ag.AdminStateUp), ag.Binary}
+}
+
 func runAgentList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *agentListFlags, w io.Writer) error {
-	opts := agents.ListOpts{AgentType: f.agentType, Host: f.host}
+	switch {
+	case f.network != "":
+		return runAgentListByNetwork(ctx, client, o, f.network, w)
+	case f.router != "":
+		return runAgentListByRouter(ctx, client, o, f.router, f.long, w)
+	}
+	opts := agents.ListOpts{AgentType: agentTypeFilter(f.agentType), Host: f.host}
 	pages, err := agents.List(client, opts).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing network agents: %w", err)
@@ -80,9 +139,72 @@ func runAgentList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return fmt.Errorf("parsing network agent list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Agent Type", "Host", "Availability Zone", "Alive", "State", "Binary"}, Rows: make([][]any, 0, len(all))}
+	return writeAgentRows(o, w, all)
+}
+
+func writeAgentRows(o *output.Options, w io.Writer, all []agents.Agent) error {
+	t := output.Table{Columns: agentListColumns, Rows: make([][]any, 0, len(all))}
+	for i := range all {
+		t.Rows = append(t.Rows, agentListRow(&all[i]))
+	}
+	return o.WriteList(w, t)
+}
+
+func runAgentListByNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
+	netID, err := resolveNetworkID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	all, err := listNetworkDHCPAgents(ctx, client, netID)
+	if err != nil {
+		return fmt.Errorf("listing DHCP agents hosting network %q: %w", ref, err)
+	}
+	return writeAgentRows(o, w, all)
+}
+
+// listNetworkDHCPAgents reads GET /networks/{id}/dhcp-agents. gophercloud only
+// models the other direction (agents.ListDHCPNetworks: the networks one agent
+// hosts), so this is a raw call; swap it for a typed one if gophercloud grows it.
+func listNetworkDHCPAgents(ctx context.Context, client *gophercloud.ServiceClient, networkID string) ([]agents.Agent, error) {
+	var body struct {
+		Agents []agents.Agent `json:"agents"`
+	}
+	resp, err := client.Get(ctx, client.ServiceURL("networks", networkID, "dhcp-agents"), &body, nil)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+		return nil, err
+	}
+	return body.Agents, nil
+}
+
+func runAgentListByRouter(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	ref string, long bool, w io.Writer,
+) error {
+	routerID, err := resolveRouterID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	pages, err := routers.ListL3Agents(client, routerID).AllPages(ctx)
+	if err != nil {
+		return fmt.Errorf("listing L3 agents hosting router %q: %w", ref, err)
+	}
+	all, err := routers.ExtractL3Agents(pages)
+	if err != nil {
+		return fmt.Errorf("parsing L3 agent list: %w", err)
+	}
+	cols := agentListColumns
+	if long {
+		cols = append(append([]string{}, cols...), "HA State")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, ag := range all {
-		t.Rows = append(t.Rows, []any{ag.ID, ag.AgentType, ag.Host, ag.AvailabilityZone, aliveString(ag.Alive), adminState(ag.AdminStateUp), ag.Binary})
+		row := []any{ag.ID, ag.AgentType, ag.Host, ag.AvailabilityZone, aliveString(ag.Alive), adminState(ag.AdminStateUp), ag.Binary}
+		if long {
+			row = append(row, ag.HAState)
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }
@@ -156,8 +278,9 @@ func runAgentDelete(ctx context.Context, client *gophercloud.ServiceClient, ids 
 }
 
 type agentSetFlags struct {
-	enable  bool
-	disable bool
+	description string
+	enable      bool
+	disable     bool
 }
 
 func newAgentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -179,6 +302,7 @@ func newAgentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
+	fl.StringVar(&f.description, flagDescription, "", "set the agent description")
 	fl.BoolVar(&f.enable, "enable", false, "enable the agent (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the agent (admin state down)")
 	return cmd
@@ -188,11 +312,15 @@ func runAgentSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
 		return err
 	}
-	state := enableDisable(flags, f.enable, f.disable)
-	if state == nil {
-		return fmt.Errorf("agent set requires --enable or --disable")
+	opts := agents.UpdateOpts{AdminStateUp: enableDisable(flags, f.enable, f.disable)}
+	if flags.Changed(flagDescription) {
+		desc := f.description
+		opts.Description = &desc
 	}
-	ag, err := agents.Update(ctx, client, id, agents.UpdateOpts{AdminStateUp: state}).Extract()
+	if opts.AdminStateUp == nil && opts.Description == nil {
+		return fmt.Errorf("agent set requires --description, --enable or --disable")
+	}
+	ag, err := agents.Update(ctx, client, id, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("updating network agent %s: %w", id, err)
 	}

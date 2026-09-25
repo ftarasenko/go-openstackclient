@@ -98,3 +98,13 @@ func withSecGroupRuleCreateAttrs(b interface {
 }, extra map[string]any) secGroupRuleCreateExt {
 	return secGroupRuleCreateExt{bodyExt{build: b.ToSecGroupRuleCreateMap, key: "security_group_rule", extra: extra}}
 }
+
+type trunkCreateExt struct{ bodyExt }
+
+func (e trunkCreateExt) ToTrunkCreateMap() (map[string]any, error) { return e.body() }
+
+func withTrunkCreateAttrs(b interface {
+	ToTrunkCreateMap() (map[string]any, error)
+}, extra map[string]any) trunkCreateExt {
+	return trunkCreateExt{bodyExt{build: b.ToTrunkCreateMap, key: "trunk", extra: extra}}
+}

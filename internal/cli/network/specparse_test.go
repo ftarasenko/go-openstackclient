@@ -38,13 +38,14 @@ func TestParseSubportSpec(t *testing.T) {
 		{name: "non-numeric segmentation id", spec: "port=p1,segmentation-type=vlan,segmentation-id=x",
 			wantErr: "is not a number"},
 		{name: "missing port", spec: "segmentation-type=vlan,segmentation-id=7",
-			wantErr: "requires port, segmentation-type and a non-zero segmentation-id"},
-		{name: "missing type", spec: "port=p1,segmentation-id=7",
-			wantErr: "requires port, segmentation-type and a non-zero segmentation-id"},
-		// Neutron has no VLAN 0, so a zero ID is the "not given" signal rather
-		// than a value; it must fail validation like an absent key.
-		{name: "zero segmentation id", spec: "port=p1,segmentation-type=vlan,segmentation-id=0",
-			wantErr: "requires port, segmentation-type and a non-zero segmentation-id"},
+			wantErr: "requires port"},
+		// Upstream requires only the port (optional_keys=segmentation-id,
+		// segmentation-type): inherit takes no ID, and neutron may apply its own
+		// rules when neither is given.
+		{name: "port only", spec: "port=p1", wantPort: "p1"},
+		{name: "inherit without an id", spec: "port=p1,segmentation-type=inherit",
+			wantPort: "p1", wantType: "inherit"},
+		{name: "missing type", spec: "port=p1,segmentation-id=7", wantPort: "p1", wantID: 7},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

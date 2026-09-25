@@ -785,8 +785,8 @@ func TestRunTrunkSubportAdd_InvalidSpecIsRejectedBeforeAnyRequest(t *testing.T) 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runTrunkSubportAdd(context.Background(), networkClient(fakeServer), o, "t1",
-		[]string{"port=sub-1,segmentation-type=vlan"}, &out)
-	if err == nil || !strings.Contains(err.Error(), "requires port, segmentation-type") {
+		[]string{"port=sub-1,segmentation-type=vlan,segmentation-id=x"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "is not a number") {
 		t.Fatalf("expected a validation error, got %v", err)
 	}
 }
