@@ -642,7 +642,7 @@ func TestRunRouterList_SendsEveryFilter(t *testing.T) {
 	down := false
 	f := &routerListFlags{
 		name: "r", adminStateUp: &down,
-		tags: []string{"a", "b"}, anyTags: []string{"c"}, notTags: []string{"d"}, notAnyTags: []string{"e"},
+		tagFilterFlags: tagFilterFlags{tags: []string{"a", "b"}, anyTags: []string{"c"}, notTags: []string{"d"}, notAnyTags: []string{"e"}},
 	}
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
@@ -731,7 +731,7 @@ func TestRunRouterList_AgentFiltersClientSide(t *testing.T) {
 	})
 
 	up := true
-	f := &routerListFlags{agent: "agent-1", name: "r", adminStateUp: &up, tags: []string{"a", "b"}, notAnyTags: []string{"z"}}
+	f := &routerListFlags{agent: "agent-1", name: "r", adminStateUp: &up, tagFilterFlags: tagFilterFlags{tags: []string{"a", "b"}, notAnyTags: []string{"z"}}}
 	o := &output.Options{Format: output.FormatValue, Columns: []string{"ID"}}
 	var buf bytes.Buffer
 	if err := runRouterList(context.Background(), networkClient(fakeServer), o, f, "p1", &buf); err != nil {

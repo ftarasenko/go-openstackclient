@@ -29,6 +29,26 @@ func withNetworkUpdateAttrs(b interface {
 	return networkUpdateExt{bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}}
 }
 
+type routerCreateExt struct{ bodyExt }
+
+func (e routerCreateExt) ToRouterCreateMap() (map[string]any, error) { return e.body() }
+
+func withRouterCreateAttrs(b interface {
+	ToRouterCreateMap() (map[string]any, error)
+}, extra map[string]any) routerCreateExt {
+	return routerCreateExt{bodyExt{build: b.ToRouterCreateMap, key: "router", extra: extra}}
+}
+
+type routerUpdateExt struct{ bodyExt }
+
+func (e routerUpdateExt) ToRouterUpdateMap() (map[string]any, error) { return e.body() }
+
+func withRouterUpdateAttrs(b interface {
+	ToRouterUpdateMap() (map[string]any, error)
+}, extra map[string]any) routerUpdateExt {
+	return routerUpdateExt{bodyExt{build: b.ToRouterUpdateMap, key: "router", extra: extra}}
+}
+
 type floatingIPCreateExt struct{ bodyExt }
 
 func (e floatingIPCreateExt) ToFloatingIPCreateMap() (map[string]any, error) { return e.body() }
