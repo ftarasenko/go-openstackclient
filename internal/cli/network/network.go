@@ -56,6 +56,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 		newIPAvailabilityCommand(a, o),
 	}
 	cmds = append(cmds, newAddressCommands(a, o)...)
+	cmds = append(cmds, newBGPVPNCommands(a, o)...)
 	return cmds
 }
 
