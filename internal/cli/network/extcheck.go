@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -111,4 +112,40 @@ func explainMissingExtension(ctx context.Context, client *gophercloud.ServiceCli
 	slices.Sort(missing)
 	return fmt.Errorf("%w\nthis cloud's neutron does not enable the extension(s) the request needs: %s",
 		err, strings.Join(missing, "; "))
+}
+
+// Extension aliases of the neutron plugin services (neutron-lib 5.0.1
+// api/definitions ALIAS). A plugin that is not loaded has no URL tree at all,
+// so every call on it answers 404 — indistinguishable from "no such resource"
+// unless the error says otherwise.
+const (
+	extVPNaaS             = "vpnaas"
+	extVPNEndpointGroups  = "vpn-endpoint-groups"
+	extFWaaSv2            = "fwaas_v2"
+	extBGPVPN             = "bgpvpn"
+	extBGPVPNRoutesCtl    = "bgpvpn-routes-control"
+	extBGP                = "bgp"
+	extBGPDRAgentSchedule = "bgp_dragent_scheduler"
+	extTapMirror          = "tap-mirror"
+)
+
+// explainMissingService annotates a 404 from a plugin service's endpoint: when
+// the cloud's extension list lacks alias, the service is not deployed, and the
+// error says so instead of reading as a missing resource. Any other error, a
+// 404 on a cloud that has the extension (a genuinely missing resource), or a
+// failure to list extensions returns err unchanged.
+func explainMissingService(ctx context.Context, client *gophercloud.ServiceClient, err error, alias string) error {
+	if err == nil || !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	exts, lerr := listNetworkExtensions(ctx, client)
+	if lerr != nil {
+		return err
+	}
+	for _, e := range exts {
+		if e.Alias == alias {
+			return err
+		}
+	}
+	return fmt.Errorf("%w\nthis cloud's neutron does not enable the %s extension; the service is not deployed here", err, alias)
 }
