@@ -24,8 +24,12 @@ OUTPUT = {'--format', '--column', '--noindent', '--prefix', '--max-width', '--fi
 
 app = mock.MagicMock()
 app.client_manager.is_network_endpoint_enabled.return_value = True
+# openstack.network.v2 plus the neutron plugin namespaces OSC absorbed from
+# python-neutronclient (openstack.network.v2.vpnaas, .fwaas, .bgpvpn,
+# .dynamic_routing, .taas).
+GROUPS = sorted(g for g in entry_points().groups if g == 'openstack.network.v2' or g.startswith('openstack.network.v2.'))
 rows = []
-for ep in sorted(entry_points(group='openstack.network.v2'), key=lambda e: e.name):
+for ep in sorted((ep for g in GROUPS for ep in entry_points(group=g)), key=lambda e: e.name):
     parser = ep.load()(app, None).get_parser('openstack ' + ep.name.replace('_', ' '))
     opts = []
     for action in parser._actions:
@@ -43,7 +47,7 @@ print(f'''package network
 // {version("python-openstackclient")}'s own argparse parsers. DO NOT EDIT by hand: re-run it when the
 // baseline moves.
 //
-// upstreamNetworkFlags maps each openstack.network.v2 command to its long
+// upstreamNetworkFlags maps each openstack.network.v2* command to its long
 // options. Each inner slice is one option's aliases; koc satisfies the option
 // when it registers any of them. Pagination (--limit/--marker/--max-items) and
 // cliff's shell-formatter --variable are left out.

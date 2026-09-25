@@ -28,7 +28,7 @@ PyPI is the source of record.
 
 ## Headline
 
-**530 of 847 in-scope upstream commands (63%).** Of `koc`'s 580 leaf commands,
+**530 of 947 in-scope upstream commands (56%).** Of `koc`'s 580 leaf commands,
 530 are upstream-equivalent and 50 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
@@ -40,9 +40,10 @@ deviation to upstream's `network subport list`, now matches by name (one leaf
 cannot be counted twice, so `network subport list` became an ordinary gap, since
 closed).
 The same entry-point file also carries five neutron plugin namespaces that no
-earlier snapshot counted anywhere; they are now an explicit not-targeted row
-(see below). Measured flag by flag against the same parsers, the network
-surface is tracked in `docs/proposals/network-parity.md`.
+earlier snapshot counted anywhere; they are now in scope (100 commands, which is
+most of the drop from 63% to 56% — the denominator moved, not the numerator).
+Measured flag by flag against the same parsers, the network surface is tracked
+in `docs/proposals/network-parity.md`.
 
 The denominator grew by 13 against the 2026-08-07 snapshot without a single
 command changing: `python-ironic-inspector-client` is now a **baseline** rather
@@ -131,9 +132,10 @@ neutron's `qinq` (neutron-lib `QINQ_FIELD`, neutron's `db/qinq_db.py`), where
 upstream 10.3.0 sends `vlan_qinq`, which neutron does not define.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
-`image.v1` are excluded as legacy) plus the five plugins above. 1004 commands
-including Swift, Manila and the neutron plugin namespaces; 847 excluding them,
-since `koc` targets none of the three.
+`image.v1` are excluded as legacy) plus the five plugins above, and since the
+network plugin pass the five neutron plugin namespaces OSC registers itself
+(VPNaaS, FWaaS, BGPVPN, dynamic routing, TaaS). 1004 commands including Swift
+and Manila; 947 excluding them, since `koc` targets neither.
 
 ## vs python-openstackclient (core)
 
@@ -147,7 +149,11 @@ since `koc` targets none of the three.
 | `openstack.common` | 6/11 (55%) | 6/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
-| `openstack.network.v2.{bgpvpn,dynamic_routing,fwaas,taas,vpnaas}` | 0/100 | not targeted — BGPVPN (22), dynamic routing (18), FWaaS (20), TaaS (15), VPNaaS (25). Registered in OSC's own entry points; gophercloud v2.15.0 has typed packages for all five should a cloud need them |
+| `openstack.network.v2.vpnaas` | 0/25 | 0/25 — VPN services, IKE/IPsec policies, endpoint groups, IPsec site connections |
+| `openstack.network.v2.fwaas` | 0/20 | 0/20 — firewall groups, policies, rules |
+| `openstack.network.v2.bgpvpn` | 0/22 | 0/22 — BGP VPNs and their network/port/router associations |
+| `openstack.network.v2.dynamic_routing` | 0/18 | 0/18 — BGP speakers, peers, dragent scheduling |
+| `openstack.network.v2.taas` | 0/15 | 0/5 — tap mirrors; tap services and flows (10) have no gophercloud package and are outside the core denominator |
 
 "Core" excludes, per namespace: compute — `compute agent`, `host`, `usage`,
 `server share list/show`, `server dump` (12); identity — federation/IdP/mapping/
@@ -155,7 +161,8 @@ service provider, OAuth1 + EC2 credentials, trusts, limits, policies,
 credentials, endpoint groups, access rules (68); image — metadefs, cached images,
 tasks (27); network — QoS, metering, flavors, segment ranges, L3 conntrack
 helpers, local IPs, RBAC, NDP proxies, auto-allocated topology, default SG
-rules/statefulness (71); volume — `block storage *`, consistency groups, volume
+rules/statefulness (71); network plugins — TaaS tap services and flows (10, no
+gophercloud package); volume — `block storage *`, consistency groups, volume
 groups, QoS, messages, backend capability/pools, `volume host failover/set`,
 transfers (56). Nothing is excluded from `openstack.common`. A command that is
 excluded from the denominator is excluded from the numerator too even when `koc`
@@ -640,8 +647,8 @@ tables worth reading. Three identities must hold at every snapshot:
 
 1. every raw row numerator summed = the headline numerator (530);
 2. leaf commands = headline numerator + koc-native (580 = 530 + 50);
-3. every raw row denominator summed = 1004, and minus the three not-targeted rows
-   (swift 17 + manila 40 + neutron plugins 100) = the in-scope denominator (847).
+3. every raw row denominator summed = 1004, and minus the two not-targeted rows
+   (swift 17 + manila 40) = the in-scope denominator (947).
 
 A row whose numerator is asserted rather than diffed will break (1) or (2). If
 either fails, the mechanical diff is right and the row is wrong — fix the row.
