@@ -314,8 +314,12 @@ there is. Both dialects ship.
   with upstream-OSC fallback. Keep that note when adding flags; if KeyStack later
   proves to differ, KeyStack wins and cite the doc URL in a comment.
 - **name→ID**: resolvers pass UUIDs through untouched, list-by-name for exactly
-  one match, and error on multiple; a zero-match currently falls back to the
-  literal ref (documented trade-off in README "Known limitations").
+  one match, and error on multiple. A zero-match **errors** (`no <kind> found
+  for "<ref>"`, upstream's behaviour) in `server`, `volume` and `network`; the
+  remaining packages still fall back to the literal ref (README "Known
+  limitations") and should move to the strict form when touched — new resolvers
+  are always strict. In network tests, `echoLookup` answers a name lookup with
+  one match whose ID is the ref.
 - **Output** is the single source of truth for formatting — extend
   `internal/output`, don't format inline.
 - **Credential sources** (koc-specific, no OSC equivalent; mutually exclusive):
