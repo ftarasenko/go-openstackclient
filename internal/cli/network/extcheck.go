@@ -55,6 +55,14 @@ var attrExtensions = map[string]string{
 	"device_profile":            "port-device-profile",
 	"dns_publish_fixed_ip":      "subnet-dns-publish-fixed-ip",
 	"service_types":             "subnet-service-types",
+	"binding:host_id":           "binding",
+	"binding:profile":           "binding",
+	"binding:vnic_type":         "binding",
+	// Synthetic keys, which no request body carries: a port write adds them to
+	// the map it explains (portExplainAttrs) where the extension depends on the
+	// attribute's value or on the resource, not on the attribute name alone.
+	"numa_affinity_policy=socket": "port-numa-affinity-policy-socket",
+	"port.dns_domain":             "dns-domain-ports",
 }
 
 // explainMissingExtension annotates a failed neutron write whose body carried

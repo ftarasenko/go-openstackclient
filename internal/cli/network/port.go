@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/spf13/cobra"
 
@@ -35,7 +36,29 @@ const (
 	flagPortEnableUplink     = "enable-uplink-status-propagation"
 	flagPortDisableUplink    = "disable-uplink-status-propagation"
 	flagPortDataPlaneStatus  = "data-plane-status"
+
+	// post-Zed / driver-specific attributes (upstream port.py
+	// _add_updatable_args, CreatePort, UnsetPort, ListPort)
+	flagPortTrusted             = "trusted"
+	flagPortNotTrusted          = "not-trusted"
+	flagPortHint                = "hint"
+	flagPortHints               = "hints"
+	flagPortNUMARequired        = "numa-policy-required"
+	flagPortNUMAPreferred       = "numa-policy-preferred"
+	flagPortNUMASocket          = "numa-policy-socket"
+	flagPortNUMALegacy          = "numa-policy-legacy"
+	flagPortNUMAPolicy          = "numa-policy"
+	flagPortDeviceProfile       = "device-profile"
+	flagPortHardwareOffloadType = "hardware-offload-type"
+	flagPortPVLANType           = "pvlan-type"
+	flagPortPVLANCommunity      = "pvlan-community"
+	flagPortPVLAN               = "pvlan"
+	flagPortNoPVLAN             = "no-pvlan"
 )
+
+// portPVLANTypes are upstream's --pvlan-type choices (neutron-lib
+// services/pvlan/constants.py PVLAN_TYPES).
+var portPVLANTypes = []string{"promiscuous", "isolated", "community"}
 
 // portVNICTypes are the --vnic-type values upstream accepts (port.py
 // _add_updatable_args choices); every one predates Zed.
@@ -100,7 +123,9 @@ func portShowFields(p *portExt) ([]string, []any) {
 		"allowed_address_pairs", "port_security_enabled",
 		"binding_host_id", "binding_profile", "binding_vif_details", "binding_vif_type", "binding_vnic_type",
 		"data_plane_status", "dns_assignment", "dns_domain", "dns_name", "extra_dhcp_opts",
-		"propagate_uplink_status", "qos_network_policy_id", "qos_policy_id", "revision_number",
+		"propagate_uplink_status", "qos_network_policy_id", "qos_policy_id",
+		"device_profile", "hardware_offload_type", "hints", "ip_allocation", "numa_affinity_policy",
+		"pvlan_type", "pvlan_community", "resource_request", "trusted", "revision_number",
 		"description", "project_id", "tags", "created_at", "updated_at",
 	}
 	values := []any{
@@ -109,10 +134,22 @@ func portShowFields(p *portExt) ([]string, []any) {
 		formatAddressPairs(p.AllowedAddressPairs), optionalBool(p.PortSecurityEnabled),
 		p.BindingHostID, mapOrNil(p.BindingProfile), mapOrNil(p.BindingVIFDetails), p.BindingVIFType, p.BindingVNICType,
 		p.DataPlaneStatus, listOrNil(p.DNSAssignment), p.DNSDomain, p.DNSName, listOrNil(p.ExtraDHCPOpts),
-		p.PropagateUplinkStatus, p.QoSNetworkPolicyID, p.QoSPolicyID, p.RevisionNumber,
+		p.PropagateUplinkStatus, p.QoSNetworkPolicyID, p.QoSPolicyID,
+		p.DeviceProfile, p.HardwareOffloadType, mapOrNil(p.Hints), p.IPAllocation, p.NUMAAffinityPolicy,
+		optionalString(p.PVLANType), optionalString(p.PVLANCommunity), mapOrNil(p.ResourceRequest),
+		optionalBool(p.Trusted), p.RevisionNumber,
 		p.Description, p.ProjectID, p.Tags, p.CreatedAt, p.UpdatedAt,
 	}
 	return fields, values
+}
+
+// optionalString renders an extension string that may be null: empty when
+// neutron sent null (or the extension is absent) rather than a quoted "".
+func optionalString(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
 }
 
 // optionalBool renders an extension boolean: nil (empty) when the deployment
@@ -156,7 +193,28 @@ type portListFlags struct {
 	fixedIP       []string
 	long          bool
 	allProjects   bool
+	// --pvlan-type/--pvlan-community are server-side filters; --pvlan/--no-pvlan
+	// filter the result client-side on pvlan_type, as upstream does.
+	pvlanType      string
+	pvlanCommunity string
+	pvlan          bool
+	noPVLAN        bool
 	tagFilterFlags
+}
+
+// pvlanColumns reports whether any PVLAN filter was given, which is when
+// upstream adds the PVLAN Type and PVLAN Community columns.
+func (f *portListFlags) pvlanColumns() bool {
+	return f.pvlan || f.noPVLAN || f.pvlanType != "" || f.pvlanCommunity != ""
+}
+
+// keepPVLAN applies --pvlan/--no-pvlan: a port counts as PVLAN-enabled when
+// neutron reports a pvlan_type for it.
+func (f *portListFlags) keepPVLAN(list []portExt) []portExt {
+	if !f.pvlan && !f.noPVLAN {
+		return list
+	}
+	return slices.DeleteFunc(list, func(p portExt) bool { return (p.PVLANType != nil) != f.pvlan })
 }
 
 // portListDeps supplies the secondary service clients `port list` may need:
@@ -202,12 +260,18 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "list only ports in this security group (name or ID, repeatable)")
 	// OSC form: --fixed-ip subnet=<subnet>,ip-address=<ip>,ip-substring=<substr>; repeatable.
 	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "filter by fixed IP: subnet=/ip-address=/ip-substring= pairs; repeatable")
+	fl.StringVar(&f.pvlanType, flagPortPVLANType, "", "list only ports with this PVLAN type (requires the pvlan extension)")
+	fl.StringVar(&f.pvlanCommunity, flagPortPVLANCommunity, "",
+		"list only ports in this PVLAN community (requires the pvlan extension)")
+	fl.BoolVar(&f.pvlan, flagPortPVLAN, false, "list only ports with PVLAN enabled (requires the pvlan extension)")
+	fl.BoolVar(&f.noPVLAN, flagPortNoPVLAN, false, "list only ports with PVLAN disabled (requires the pvlan extension)")
 	bindTagFilterFlags(fl, &f.tagFilterFlags, "ports")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	allprojects.Bind(cmd, &f.allProjects, allProjectsPortList)
 	// Upstream OSC models these three as one device filter; they all set device_id.
 	cmd.MarkFlagsMutuallyExclusive("router", "server", "device-id")
 	cmd.MarkFlagsMutuallyExclusive(flagProject, "all-projects")
+	cmd.MarkFlagsMutuallyExclusive(flagPortPVLAN, flagPortNoPVLAN)
 	return cmd
 }
 
@@ -224,18 +288,26 @@ const allProjectsPortList = "list ports across all projects (admin); an admin to
 	"so this only adds the Project ID column"
 
 // portListOpts adds the query parameters neutron accepts but gophercloud's
-// ports.ListOpts does not model — binding:host_id, behind --host.
+// ports.ListOpts does not model — binding:host_id behind --host, and the pvlan
+// extension's pvlan_type/pvlan_community.
 type portListOpts struct {
 	ports.ListOpts
-	hostID string
+	hostID         string
+	pvlanType      string
+	pvlanCommunity string
 }
 
 func (opts portListOpts) ToPortListQuery() (string, error) {
 	q, err := opts.ListOpts.ToPortListQuery()
-	if opts.hostID == "" {
-		return q, err
+	extra := url.Values{}
+	for key, v := range map[string]string{
+		"binding:host_id": opts.hostID, "pvlan_type": opts.pvlanType, "pvlan_community": opts.pvlanCommunity,
+	} {
+		if v != "" {
+			extra.Set(key, v)
+		}
 	}
-	return withQueryValues(q, err, url.Values{"binding:host_id": {opts.hostID}})
+	return withQueryValues(q, err, extra)
 }
 
 // portExt is a Port decorated with the extension attributes gophercloud does
@@ -277,6 +349,17 @@ type PortAttrsExt struct {
 	ExtraDHCPOpts      []map[string]any `json:"extra_dhcp_opts"`
 	QoSNetworkPolicyID string           `json:"qos_network_policy_id"`
 	QoSPolicyID        string           `json:"qos_policy_id"`
+	// post-Zed and driver-specific extensions; each is absent (zero) on a
+	// cloud that does not run its extension.
+	DeviceProfile       string         `json:"device_profile"`
+	HardwareOffloadType string         `json:"hardware_offload_type"`
+	Hints               map[string]any `json:"hints"`
+	IPAllocation        string         `json:"ip_allocation"`
+	NUMAAffinityPolicy  string         `json:"numa_affinity_policy"`
+	PVLANType           *string        `json:"pvlan_type"`
+	PVLANCommunity      *string        `json:"pvlan_community"`
+	ResourceRequest     map[string]any `json:"resource_request"`
+	Trusted             *bool          `json:"trusted"`
 }
 
 // TrunkDetailsExt carries the trunk_details attribute. It stays exported
@@ -394,7 +477,9 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			MACAddress:  f.macAddress,
 			Status:      status,
 		},
-		hostID: f.host,
+		hostID:         f.host,
+		pvlanType:      f.pvlanType,
+		pvlanCommunity: f.pvlanCommunity,
 	}
 	f.apply(&opts.Tags, &opts.TagsAny, &opts.NotTags, &opts.NotTagsAny)
 	if err := resolvePortDeviceFilters(ctx, client, f, deps, &opts); err != nil {
@@ -417,14 +502,27 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	// A listing narrowed to one project is single-project whatever the flag says,
 	// so it keeps the upstream columns — this matters because --all-projects also
 	// defaults from ALL_PROJECTS in the environment.
-	return o.WriteList(w, portListTable(all, f.long, f.allProjects && f.project == ""))
+	all = f.keepPVLAN(all)
+	return o.WriteList(w, portListTable(all, portListColumns{
+		long: f.long, allProjects: f.allProjects && f.project == "", pvlan: f.pvlanColumns(),
+	}))
+}
+
+// portListColumns selects the optional column groups of `port list`.
+type portListColumns struct {
+	long, allProjects, pvlan bool
 }
 
 // portListTable renders the list. A cross-project listing gains a Project ID
 // column, because without it the rows of a multi-project result are
-// indistinguishable — the same reason designate's `zone list` inserts one.
-func portListTable(list []portExt, long, allProjects bool) output.Table {
+// indistinguishable — the same reason designate's `zone list` inserts one. A
+// PVLAN-filtered listing gains upstream's PVLAN Type and PVLAN Community.
+func portListTable(list []portExt, c portListColumns) output.Table {
+	long, allProjects := c.long, c.allProjects
 	cols := []string{"ID", "Name", "MAC Address", "Fixed IP Addresses", "Status"}
+	if c.pvlan {
+		cols = append(cols, "PVLAN Type", "PVLAN Community")
+	}
 	if long {
 		cols = append(cols, "Security Groups", "Device Owner", "Tags", "Trunk subports")
 	}
@@ -435,6 +533,9 @@ func portListTable(list []portExt, long, allProjects bool) output.Table {
 	for i := range list {
 		p := &list[i]
 		row := []any{p.ID, p.Name, p.MACAddress, formatFixedIPs(p.FixedIPs), p.Status}
+		if c.pvlan {
+			row = append(row, optionalString(p.PVLANType), optionalString(p.PVLANCommunity))
+		}
 		if long {
 			row = append(row, p.SecurityGroups, p.DeviceOwner, p.Tags, p.TrunkDetails.SubPorts)
 		}
@@ -517,6 +618,260 @@ type portAttrFlags struct {
 	disableUplink   bool
 	bindingProfile  []string
 	extraProperty   []string
+	portPostZedFlags
+}
+
+// portPostZedFlags are the post-Zed / driver-specific attributes create and
+// set share (upstream _add_updatable_args): each needs a neutron extension a
+// Zed cloud may not run, which the help text names.
+type portPostZedFlags struct {
+	trusted        bool
+	notTrusted     bool
+	numaRequired   bool
+	numaPreferred  bool
+	numaSocket     bool
+	numaLegacy     bool
+	hint           []string
+	pvlanType      string
+	pvlanCommunity string
+}
+
+func bindPortPostZedFlags(cmd *cobra.Command, f *portPostZedFlags) {
+	fl := cmd.Flags()
+	fl.BoolVar(&f.trusted, flagPortTrusted, false,
+		"mark the port trusted; neutron passes this on in binding:profile (requires the port-trusted-vif extension)")
+	fl.BoolVar(&f.notTrusted, flagPortNotTrusted, false,
+		"mark the port not trusted (requires the port-trusted-vif extension)")
+	fl.BoolVar(&f.numaRequired, flagPortNUMARequired, false,
+		"schedule the port with NUMA affinity policy required (requires the port-numa-affinity-policy extension)")
+	fl.BoolVar(&f.numaPreferred, flagPortNUMAPreferred, false,
+		"schedule the port with NUMA affinity policy preferred (requires the port-numa-affinity-policy extension)")
+	fl.BoolVar(&f.numaSocket, flagPortNUMASocket, false,
+		"schedule the port with NUMA affinity policy socket (requires the port-numa-affinity-policy-socket extension)")
+	fl.BoolVar(&f.numaLegacy, flagPortNUMALegacy, false,
+		"schedule the port with NUMA affinity policy legacy (requires the port-numa-affinity-policy extension)")
+	fl.StringArrayVar(&f.hint, flagPortHint, nil,
+		"port hint as ovs-tx-steering=thread|hash (needs port-hint-ovs-tx-steering) or as neutron's hints JSON; "+
+			"repeatable (requires the port-hints extension)")
+	fl.StringVar(&f.pvlanType, flagPortPVLANType, "",
+		"private VLAN type of the port ("+strings.Join(portPVLANTypes, ", ")+") (requires the pvlan extension)")
+	fl.StringVar(&f.pvlanCommunity, flagPortPVLANCommunity, "",
+		"private VLAN community of the port; required with --pvlan-type community (requires the pvlan extension)")
+	cmd.MarkFlagsMutuallyExclusive(flagPortTrusted, flagPortNotTrusted)
+	cmd.MarkFlagsMutuallyExclusive(flagPortNUMARequired, flagPortNUMAPreferred, flagPortNUMASocket, flagPortNUMALegacy)
+}
+
+// attrs adds the post-Zed attributes to attrs, in upstream _get_attrs /
+// take_action terms: --pvlan-community is sent whenever given (so an empty
+// value goes out), the others only when set. --hint is validated, its alias
+// expanded, and its extensions checked before anything is sent, as upstream
+// does.
+func (f *portPostZedFlags) attrs(ctx context.Context, client *gophercloud.ServiceClient, flags flagSet, attrs map[string]any) error {
+	if policy := f.numaPolicy(); policy != "" {
+		attrs["numa_affinity_policy"] = policy
+	}
+	switch {
+	case f.trusted:
+		attrs["trusted"] = true
+	case f.notTrusted:
+		attrs["trusted"] = false
+	}
+	if flags.Changed(flagPortPVLANType) {
+		if !slices.Contains(portPVLANTypes, f.pvlanType) {
+			return fmt.Errorf("invalid --%s %q: want one of %s", flagPortPVLANType, f.pvlanType, strings.Join(portPVLANTypes, ", "))
+		}
+		attrs["pvlan_type"] = f.pvlanType
+	}
+	if flags.Changed(flagPortPVLANCommunity) {
+		attrs["pvlan_community"] = f.pvlanCommunity
+	}
+	if len(f.hint) == 0 {
+		return nil
+	}
+	hints, err := parsePortHints(f.hint)
+	if err != nil || hints == nil {
+		return err
+	}
+	if err := requirePortHintExtensions(ctx, client); err != nil {
+		return err
+	}
+	attrs["hints"] = hints
+	return nil
+}
+
+// numaPolicy is upstream's if/elif chain over the (mutually exclusive) NUMA
+// flags.
+func (f *portPostZedFlags) numaPolicy() string {
+	switch {
+	case f.numaRequired:
+		return "required"
+	case f.numaPreferred:
+		return "preferred"
+	case f.numaSocket:
+		return "socket"
+	case f.numaLegacy:
+		return "legacy"
+	default:
+		return ""
+	}
+}
+
+// parsePortHints merges the --hint values the way upstream's JSONKeyValueAction
+// does — a JSON object is merged in, anything else is split once at '=' — then
+// applies upstream's _validate_port_hints and _expand_port_hint_aliases: the
+// merged hints must be exactly one ovs-tx-steering alias or its fully
+// specified JSON form, and the alias is expanded into the nested hints
+// attribute. An empty result (a bare '{}') sends nothing, as upstream's
+// "if parsed_args.hint" skips it.
+func parsePortHints(specs []string) (map[string]any, error) {
+	merged := map[string]any{}
+	for _, spec := range specs {
+		if obj, ok := decodeJSONObject(spec); ok {
+			maps.Copy(merged, obj)
+			continue
+		}
+		k, v, found := strings.Cut(spec, "=")
+		if !found {
+			return nil, fmt.Errorf("--%s %q: expected <alias>=<value> or a JSON object", flagPortHint, spec)
+		}
+		merged[k] = v
+	}
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	steering, ok := portHintTxSteering(merged)
+	if !ok {
+		return nil, fmt.Errorf("invalid --%s: want ovs-tx-steering=thread, ovs-tx-steering=hash, "+
+			`or {"openvswitch":{"other_config":{"tx-steering":"thread|hash"}}}`, flagPortHint)
+	}
+	return map[string]any{"openvswitch": map[string]any{"other_config": map[string]any{"tx-steering": steering}}}, nil
+}
+
+// portHintTxSteering recognises the four hint forms upstream accepts and
+// returns their tx-steering value.
+func portHintTxSteering(hints map[string]any) (string, bool) {
+	valid := func(v any) (string, bool) {
+		s, ok := v.(string)
+		return s, ok && (s == "thread" || s == "hash")
+	}
+	only := func(m map[string]any, key string) (any, bool) {
+		v, ok := m[key]
+		return v, ok && len(m) == 1
+	}
+	if v, ok := only(hints, "ovs-tx-steering"); ok {
+		return valid(v)
+	}
+	ovs, ok := only(hints, "openvswitch")
+	if !ok {
+		return "", false
+	}
+	ovsMap, ok := ovs.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	other, ok := only(ovsMap, "other_config")
+	if !ok {
+		return "", false
+	}
+	otherMap, ok := other.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	steering, ok := only(otherMap, "tx-steering")
+	if !ok {
+		return "", false
+	}
+	return valid(steering)
+}
+
+// requirePortHintExtensions is upstream's find_extension pre-check: hints need
+// port-hints, and a tx-steering hint — the only kind parsePortHints lets
+// through — also port-hint-ovs-tx-steering. A cloud without either refuses the
+// write before it is sent.
+func requirePortHintExtensions(ctx context.Context, client *gophercloud.ServiceClient) error {
+	for _, alias := range []string{"port-hints", "port-hint-ovs-tx-steering"} {
+		if _, err := getNetworkExtension(ctx, client, alias); err != nil {
+			return fmt.Errorf("--%s is not supported by this cloud's neutron (extension %s): %w", flagPortHint, alias, err)
+		}
+	}
+	return nil
+}
+
+// validatePVLANPort is upstream's _validate_pvlan_port, run on the flag
+// attributes before --extra-property is merged: PVLAN attributes cannot go with
+// disabled port security, and a community port needs its community.
+func validatePVLANPort(attrs map[string]any) error {
+	if hasPVLANAttrs(attrs) && attrs["port_security_enabled"] == false {
+		return fmt.Errorf("PVLAN attributes cannot be set when port security is disabled")
+	}
+	if attrs["pvlan_type"] == "community" && !truthy(attrs["pvlan_community"]) {
+		return fmt.Errorf("--%s is required when --%s is 'community'", flagPortPVLANCommunity, flagPortPVLANType)
+	}
+	return nil
+}
+
+// hasPVLANAttrs mirrors upstream's `attrs.get('pvlan_type') or
+// attrs.get('pvlan_community')`.
+func hasPVLANAttrs(attrs map[string]any) bool {
+	return truthy(attrs["pvlan_type"]) || truthy(attrs["pvlan_community"])
+}
+
+// truthy is Python truthiness for the values an attrs map can hold.
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case string:
+		return x != ""
+	default:
+		return true
+	}
+}
+
+// requirePVLANNetwork is upstream's _validate_pvlan_network_port: a port can
+// carry PVLAN attributes only on a network with pvlan enabled. It reads the
+// network only when the final attributes (after --extra-property) carry one.
+func requirePVLANNetwork(ctx context.Context, client *gophercloud.ServiceClient, attrs map[string]any, networkID string) error {
+	if !hasPVLANAttrs(attrs) {
+		return nil
+	}
+	var n struct {
+		PVLAN bool `json:"pvlan"`
+	}
+	if err := networks.Get(ctx, client, networkID).ExtractInto(&n); err != nil {
+		return fmt.Errorf("reading network %s for the PVLAN check: %w", networkID, err)
+	}
+	if !n.PVLAN {
+		return fmt.Errorf("PVLAN attributes cannot be set on a port whose network does not have PVLAN enabled")
+	}
+	return nil
+}
+
+// portExplainAttrs is what explainMissingExtension is given for a port write:
+// the attributes the body adapter merges in, plus the extension attributes
+// gophercloud's typed opts carry (named in typed), plus the synthetic keys
+// attrExtensions uses where the extension depends on the value or on the
+// resource rather than on the attribute name alone.
+func portExplainAttrs(attrs map[string]any, typed ...string) map[string]any {
+	out := maps.Clone(attrs)
+	if out == nil {
+		out = map[string]any{}
+	}
+	for _, name := range typed {
+		out[name] = true
+	}
+	if out["numa_affinity_policy"] == "socket" {
+		out["numa_affinity_policy=socket"] = true
+	}
+	// dns_domain on a port is the dns-domain-ports extension, not the
+	// dns-integration one the attribute means on a network.
+	if v, ok := out["dns_domain"]; ok {
+		delete(out, "dns_domain")
+		out["port.dns_domain"] = v
+	}
+	return out
 }
 
 func bindPortAttrFlags(cmd *cobra.Command, f *portAttrFlags) {
@@ -531,6 +886,7 @@ func bindPortAttrFlags(cmd *cobra.Command, f *portAttrFlags) {
 	fl.BoolVar(&f.disableUplink, flagPortDisableUplink, false, "disable uplink status propagation")
 	bindExtraPropertyFlag(fl, &f.extraProperty)
 	cmd.MarkFlagsMutuallyExclusive(flagPortEnableUplink, flagPortDisableUplink)
+	bindPortPostZedFlags(cmd, &f.portPostZedFlags)
 }
 
 // attrs returns the shared extension attributes, never nil so a caller can add
@@ -564,6 +920,9 @@ func (f *portAttrFlags) attrs(ctx context.Context, client *gophercloud.ServiceCl
 		}
 		attrs["extra_dhcp_opts"] = opts
 	}
+	if err := f.portPostZedFlags.attrs(ctx, client, flags, attrs); err != nil {
+		return nil, err
+	}
 	return attrs, nil
 }
 
@@ -589,6 +948,9 @@ type portCreateFlags struct {
 	disable             bool
 	project             string
 	projectDomain       string
+	// create-only post-Zed attributes (neutron allows neither on PUT)
+	deviceProfile       string
+	hardwareOffloadType string
 	// projectID is --project resolved by RunE, so the seam needs no identity client.
 	projectID string
 	portAttrFlags
@@ -639,6 +1001,11 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		"binding:profile data as <key>=<value> or a JSON object (repeatable)")
 	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
 	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	fl.StringVar(&f.deviceProfile, flagPortDeviceProfile, "",
+		"device profile for the port (requires the port-device-profile extension)")
+	fl.StringVar(&f.hardwareOffloadType, flagPortHardwareOffloadType, "",
+		"hardware offload type the port requests from the network backend, e.g. switchdev "+
+			"(requires the port-hardware-offload-type extension)")
 	bindPortAttrFlags(cmd, &f.portAttrFlags)
 	bindTagCreateFlags(cmd, &f.tagWriteFlags, "port")
 	cmd.MarkFlagsMutuallyExclusive(flagFixedIP, flagPortNoFixedIP)
@@ -657,9 +1024,13 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
+	if err := requirePVLANNetwork(ctx, client, attrs, opts.NetworkID); err != nil {
+		return err
+	}
 	var p portExt
 	if err := ports.Create(ctx, client, withPortCreateAttrs(opts, attrs)).ExtractInto(&p); err != nil {
-		return fmt.Errorf("creating port: %w", err)
+		return explainMissingExtension(ctx, client, fmt.Errorf("creating port: %w", err),
+			portExplainAttrs(attrs, portCreateTypedExtAttrs(opts)...))
 	}
 	// Tags are a sub-resource a create cannot carry on every deployment, so
 	// they are set afterwards, as upstream does without the
@@ -746,11 +1117,51 @@ func portCreateAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *
 		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {
 		attrs["port_security_enabled"] = *secure
 	}
+	if f.deviceProfile != "" {
+		attrs["device_profile"] = f.deviceProfile
+	}
+	if f.hardwareOffloadType != "" {
+		attrs["hardware_offload_type"] = f.hardwareOffloadType
+	}
+	if err := validatePVLANPort(attrs); err != nil {
+		return nil, err
+	}
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
 		return nil, err
 	}
 	return mergeAttrs(attrs, extra), nil
+}
+
+// portCreateTypedExtAttrs names the extension attributes a create carries in
+// gophercloud's typed opts, which the attrs map never sees.
+func portCreateTypedExtAttrs(opts ports.CreateOpts) []string {
+	var names []string
+	if opts.PropagateUplinkStatus != nil {
+		names = append(names, "propagate_uplink_status")
+	}
+	if opts.SecurityGroups != nil {
+		names = append(names, "security_groups")
+	}
+	if len(opts.AllowedAddressPairs) > 0 {
+		names = append(names, "allowed_address_pairs")
+	}
+	return names
+}
+
+// portUpdateTypedExtAttrs is the same for an update.
+func portUpdateTypedExtAttrs(opts ports.UpdateOpts) []string {
+	var names []string
+	if opts.PropagateUplinkStatus != nil {
+		names = append(names, "propagate_uplink_status")
+	}
+	if opts.SecurityGroups != nil {
+		names = append(names, "security_groups")
+	}
+	if opts.AllowedAddressPairs != nil {
+		names = append(names, "allowed_address_pairs")
+	}
+	return names
 }
 
 func buildFixedIPs(ctx context.Context, client *gophercloud.ServiceClient, specs []string) ([]ports.IP, error) {
@@ -819,7 +1230,8 @@ func updatePort(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	case changed:
 		p = &portExt{}
 		if err := ports.Update(ctx, client, id, withPortUpdateAttrs(opts, attrs)).ExtractInto(p); err != nil {
-			return fmt.Errorf("updating port %s: %w", ref, err)
+			return explainMissingExtension(ctx, client, fmt.Errorf("updating port %s: %w", ref, err),
+				portExplainAttrs(attrs, portUpdateTypedExtAttrs(opts)...))
 		}
 	case p == nil:
 		if p, err = getPort(ctx, client, id); err != nil {
@@ -1089,6 +1501,16 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if !changed && !f.given() {
 		return fmt.Errorf("port set requires at least one attribute flag")
 	}
+	if hasPVLANAttrs(attrs) {
+		// upstream checks the port's own network, so the port is read for it
+		p, err := snap.get()
+		if err != nil {
+			return err
+		}
+		if err := requirePVLANNetwork(ctx, client, attrs, p.NetworkID); err != nil {
+			return err
+		}
+	}
 	// A list computed from what was just read is pinned to that revision, so a
 	// concurrent change is rejected rather than overwritten (as in port unset).
 	if snap.port != nil {
@@ -1152,6 +1574,9 @@ func portSetAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *por
 			return nil, fmt.Errorf("invalid --%s %q: want ACTIVE or DOWN", flagPortDataPlaneStatus, f.dataPlaneStatus)
 		}
 		attrs["data_plane_status"] = status
+	}
+	if err := validatePVLANPort(attrs); err != nil {
+		return nil, err
 	}
 	return attrs, nil
 }
