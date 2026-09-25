@@ -12,7 +12,27 @@ takes no filter at all.
 `gophercloud/v2` **v2.15.0** (the `go.mod` pin; `coverage.md` still cites
 v2.13.0 — the networking package set is identical between the two).
 
-## Summary
+## Status (2026-09-25)
+
+Steps 1–6 of §5 have shipped on this branch, and step 8 (the post-Zed flags) is
+in progress:
+
+| Step | Commit(s) | Result |
+| --- | --- | --- |
+| 1–2 foundation + floating IP | `da62b6b` | tag helpers, `--extra-property`, body-merge adapters, `attributestags` vendored; `floating ip list --project` and the rest of the floating-IP surface |
+| 4–5 per-noun flags | `5cc80b1` network · `1e00ae6` security groups · `112e15d` router · `0b2ec2b` QoS/RBAC/segments/port forwarding/address scopes+groups · `b4e68e9` subnet + subnet pool · `5e3cee9` port | every N1–N9 row of §2b |
+| 3 core commands | `1e00ae6`, `58aecab`, `b4e68e9` | all 10 of §3a — core is **97/97** |
+| 6 shape deviations | `58aecab`, `0b2ec2b`, `b4e68e9`, `5cc80b1` | every row of §4 |
+| foundation fixes | `352526a` | If-Match kept through the adapters; missing-extension errors named |
+| column parity | `53c44aa` | `ip availability list`, `network qos rule list` |
+| 8 post-Zed flags | in progress | §2c |
+
+Command surface: **114/168** raw (core 97/97), up from 104/168. Flag surface:
+every upstream option of every implemented command is registered except the §2c
+set still in flight — `internal/cli/network/upstream_flags_test.go` walks the
+cobra tree against all of them. §6 below is the second audit: what is left.
+
+## Summary (as measured before the pass)
 
 | | Count |
 | --- | --- |
@@ -231,7 +251,123 @@ To keep this from regressing, extend `internal/cli/network/flagparity_test.go`
 against the cobra tree, the way `server/flagparity_test.go` does for compute —
 so a future "counted as covered" command cannot silently lack its filters.
 
-## Appendix A — per-command flag gap
+## 6. Second audit — what is left after the pass (2026-09-25)
+
+Measured on the merged tree against the same 10.3.0 parsers, plus two new
+checks: every list verb's headers against upstream's own `take_action` run on a
+mocked client (`$SP/np/cols.py`), and the behaviour notes from each batch.
+
+### 6a. Flags
+
+Nothing outside §2c. The regression test is the gate from here on.
+
+### 6b. List columns
+
+Upstream and koc headers now agree for every implemented list verb, default and
+`--long`, with these exceptions:
+
+| Command | Difference | Proposal |
+| --- | --- | --- |
+| `router list --long` | lacks upstream's `Availability zones` | add (after the post-Zed router batch lands, same file) |
+| `network rbac list --long`, `network trunk list --long`, `subnet list --long`, `subnet pool list --long` | koc appends one or two extra columns after upstream's (Target Project; Sub Ports, Project; Subnet Pool; Project) | keep: they sit after upstream's columns, so positional `-f value`/`csv` consumers are unaffected; record them in `coverage.md` next to the other koc-native flags |
+
+### 6c. Missing commands — 54, all Tier 3 (no gophercloud package)
+
+Every one is plain REST CRUD, so each noun is one raw helper plus thin verbs in
+the `qos.go` style. Extension aliases and dates are from neutron-lib 5.0.1
+(`UPDATED_TIMESTAMP`); paths from openstacksdk.
+
+| Noun | Cmds | API | Extension | On Zed? | Proposal |
+| --- | --- | --- | --- | --- | --- |
+| `network segment range` | 5 | `/network_segment_ranges` | `network-segment-range` (2018) | ✓ | **next**: admins carve VLAN/VNI pools with it |
+| `network auto allocated topology create/delete` | 2 | `/auto-allocated-topology/{project}` | `auto-allocated-topology` (2016) | ✓ | **next**: `--or-show`, `--check-resources` are the whole surface |
+| `network flavor` + `network flavor profile` + add/remove profile | 12 | `/flavors`, `/service_profiles`, `/flavors/{id}/service_profiles` | `flavors` (2015) | ✓ | next; also unlocks name lookup for `router create --flavor` |
+| `network meter` + `network meter rule` | 8 | `/metering/metering-labels`, `/metering/metering-label-rules` | `metering` (2013) | ✓ | after flavors |
+| `local ip` + `local ip association` | 8 | `/local_ips`, `/local_ips/{id}/port_associations` | `local_ip` (2021, Yoga) | ✓ | after metering |
+| `router ndp proxy` | 5 | `/ndp_proxies` | `l3-ndp-proxy` (2021, Yoga) | ✓ | with the router ndp-proxy flags |
+| `network l3 conntrack helper` | 5 | `/routers/{id}/conntrack_helpers` | `l3-conntrack-helper` (2019) | ✓ | after local IP |
+| `default security group rule` | 4 | `/default-security-group-rules` | neutron 2023.2 (defined in neutron, not neutron-lib) | ✗ | last; name the missing extension via `explainMissingExtension` |
+| `security group default statefulness` | 5 | `/security-groups-default-statefulness` | `security-groups-default-statefulness` (2026) | ✗ | last, same |
+
+Every row except the last two works on Zed, so 45 of the 54 are reachable by the
+whole fleet. At roughly one noun per commit, raw coverage goes 114 → 168/168.
+
+### 6d. The neutron plugin namespaces — 100 commands
+
+`python-openstackclient` 10.3.0 registers them in its own entry points (they were
+absorbed from python-neutronclient), so they are upstream `openstack network …`
+surface too. Unlike §6c, gophercloud already has typed packages for almost all of
+it:
+
+| Namespace | Cmds | gophercloud v2.15.0 | Gap |
+| --- | --- | --- | --- |
+| `vpnaas` (VPN service, IKE/IPsec policy, endpoint group, site connection) | 25 | `vpnaas/{services,ikepolicies,ipsecpolicies,endpointgroups,siteconnections}` — full CRUD | none |
+| `fwaas` (firewall group, policy, rule, add/remove rule) | 20 | `fwaas_v2/{groups,policies,rules}` incl. `InsertRule`/`RemoveRule` | none |
+| `bgpvpn` (+ network/port/router associations) | 22 | `bgpvpns` incl. all three association kinds | none |
+| `dynamic_routing` (BGP speaker, peer, dragent) | 18 | `bgp/{speakers,peers}` incl. add/remove peer and network, advertised routes; dragent scheduling in `agents` (`ScheduleBGPSpeaker`, `RemoveBGPSpeaker`, `ListDRAgentHostingBGPSpeakers`) | none |
+| `taas` (tap service, flow, mirror) | 15 | `taas/tapmirrors` only | tap service + tap flow (10) need raw |
+
+**Proposal:** treat these as Tier 2 (one `make tidy` each, no raw fallback) *if*
+a KeyStack deployment runs the service; otherwise keep them in the
+"not targeted" row where `coverage.md` now lists them. The decision is a
+deployment fact, not a code one — `koc network extension list` on each cloud
+(`vpnaas`, `fwaas_v2`, `bgpvpn`, `bgp`, `taas`) answers it. VPNaaS and FWaaS are
+the likeliest to be deployed and the cheapest (45 commands, zero raw code).
+
+### 6e. Behaviour — deviations the batches recorded
+
+Same command, same flags, different result. Each is small; grouped by how much
+it matters:
+
+**Fix (correctness):**
+
+1. **Zero-match name lookup.** Every neutron resolver falls back to the literal
+   reference when nothing matches by name, so `koc network delete typo` sends
+   `DELETE /v2.0/networks/typo` and surfaces neutron's 404 (`coverage.md` "Known
+   limitations"). Upstream's `find_*` tries `GET /{coll}/{ref}`, then a name
+   list, then errors "No Network found for typo". Proposal: give
+   `resolveByName` that exact order and error on zero matches — one change in
+   `helpers.go`, every noun inherits it. It also removes the needless name-list
+   GET the older resolvers make for a UUID (the newer ones already short-circuit).
+2. **`ip availability list` sends no `ip_version` by default**; upstream sends
+   `ip_version=4` unless told otherwise, so an IPv4+IPv6 network is listed once
+   upstream and twice by koc. Proposal: default `--ip-version` to 4, as upstream.
+3. **`port unset --fixed-ip/--security-group/--allowed-address` partial match.**
+   koc removes anything matching and succeeds when nothing does; upstream wants an
+   exact entry and errors "Port does not contain …" (subnet unset already does
+   this). Proposal: exact match + error, as subnet unset.
+4. **`network qos rule create/set` flag validation.** Upstream rejects a flag
+   that does not belong to the rule type (`--max-kbps` on `dscp-marking`) and a
+   missing required one; koc ignores the stray flag and lets neutron 400 on the
+   missing one. Proposal: port upstream's per-type required/optional table.
+
+**Fix (name resolution upstream does and koc does not):**
+
+5. `network rbac create <object>` by name (upstream resolves per `--type`).
+6. `floating ip port forwarding … <floating-ip>` by address (upstream accepts
+   address or ID; koc takes ID).
+7. `--internal-protocol-port`/`--external-protocol-port` accepting `N:M`
+   (upstream's spelling of a range; koc has separate `*-range` flags — keep both).
+
+**Keep and document (deliberate):**
+
+8. set/unset print the resource afterwards and error when given no flag;
+   upstream prints nothing and silently no-ops. koc's form is scriptable
+   (`-f value -c id`) and catches typos — keep, list under "Naming deviations".
+9. `security group rule list --long` is a documented no-op without upstream's
+   deprecation warning (a stderr line would garble `--watch`).
+10. `rule list --ethertype` is sent as a filter — upstream 10.3.0 parses it and
+    never sends it (an upstream bug).
+11. `network agent add/remove network` return the error upstream builds and then
+    drops (upstream exits 0 on failure).
+12. `port create` sets tags with a second call rather than in the POST when the
+    `tag-ports-during-bulk-creation` extension exists — one extra request, same
+    result.
+
+Suggested order: 1 (one file, removes a documented limitation), 2–4, then §6c
+top to bottom, then 5–7; §6d when a deployment asks for it.
+
+## Appendix A — per-command flag gap (as measured before the pass)
 
 Excludes tag flags, `--project-domain`, `--extra-property`, pagination and
 `--variable` (see §2a). "koc-only" lists flags upstream does not define.
