@@ -58,6 +58,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmds = append(cmds, newAddressCommands(a, o)...)
 	cmds = append(cmds, newBGPVPNCommands(a, o)...)
 	cmds = append(cmds, newVPNCommands(a, o)...)
+	cmds = append(cmds, newFirewallCommands(a, o)...)
 	return cmds
 }
 
