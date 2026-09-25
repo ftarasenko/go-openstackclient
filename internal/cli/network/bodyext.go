@@ -19,14 +19,18 @@ func withNetworkCreateAttrs(b interface {
 	return networkCreateExt{bodyExt{build: b.ToNetworkCreateMap, key: "network", extra: extra}}
 }
 
-type networkUpdateExt struct{ bodyExt }
+type networkUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e networkUpdateExt) ToNetworkUpdateMap() (map[string]any, error) { return e.body() }
 
 func withNetworkUpdateAttrs(b interface {
 	ToNetworkUpdateMap() (map[string]any, error)
 }, extra map[string]any) networkUpdateExt {
-	return networkUpdateExt{bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}}
+	return networkUpdateExt{bodyExt: bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type subnetCreateExt struct{ bodyExt }
@@ -39,14 +43,18 @@ func withSubnetCreateAttrs(b interface {
 	return subnetCreateExt{bodyExt{build: b.ToSubnetCreateMap, key: "subnet", extra: extra}}
 }
 
-type subnetUpdateExt struct{ bodyExt }
+type subnetUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e subnetUpdateExt) ToSubnetUpdateMap() (map[string]any, error) { return e.body() }
 
 func withSubnetUpdateAttrs(b interface {
 	ToSubnetUpdateMap() (map[string]any, error)
 }, extra map[string]any) subnetUpdateExt {
-	return subnetUpdateExt{bodyExt{build: b.ToSubnetUpdateMap, key: "subnet", extra: extra}}
+	return subnetUpdateExt{bodyExt: bodyExt{build: b.ToSubnetUpdateMap, key: "subnet", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type portCreateExt struct{ bodyExt }
@@ -59,14 +67,18 @@ func withPortCreateAttrs(b interface {
 	return portCreateExt{bodyExt{build: b.ToPortCreateMap, key: "port", extra: extra}}
 }
 
-type portUpdateExt struct{ bodyExt }
+type portUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e portUpdateExt) ToPortUpdateMap() (map[string]any, error) { return e.body() }
 
 func withPortUpdateAttrs(b interface {
 	ToPortUpdateMap() (map[string]any, error)
 }, extra map[string]any) portUpdateExt {
-	return portUpdateExt{bodyExt{build: b.ToPortUpdateMap, key: "port", extra: extra}}
+	return portUpdateExt{bodyExt: bodyExt{build: b.ToPortUpdateMap, key: "port", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type routerCreateExt struct{ bodyExt }
@@ -79,14 +91,18 @@ func withRouterCreateAttrs(b interface {
 	return routerCreateExt{bodyExt{build: b.ToRouterCreateMap, key: "router", extra: extra}}
 }
 
-type routerUpdateExt struct{ bodyExt }
+type routerUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e routerUpdateExt) ToRouterUpdateMap() (map[string]any, error) { return e.body() }
 
 func withRouterUpdateAttrs(b interface {
 	ToRouterUpdateMap() (map[string]any, error)
 }, extra map[string]any) routerUpdateExt {
-	return routerUpdateExt{bodyExt{build: b.ToRouterUpdateMap, key: "router", extra: extra}}
+	return routerUpdateExt{bodyExt: bodyExt{build: b.ToRouterUpdateMap, key: "router", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type floatingIPCreateExt struct{ bodyExt }
@@ -99,14 +115,18 @@ func withFloatingIPCreateAttrs(b interface {
 	return floatingIPCreateExt{bodyExt{build: b.ToFloatingIPCreateMap, key: "floatingip", extra: extra}}
 }
 
-type floatingIPUpdateExt struct{ bodyExt }
+type floatingIPUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e floatingIPUpdateExt) ToFloatingIPUpdateMap() (map[string]any, error) { return e.body() }
 
 func withFloatingIPUpdateAttrs(b interface {
 	ToFloatingIPUpdateMap() (map[string]any, error)
 }, extra map[string]any) floatingIPUpdateExt {
-	return floatingIPUpdateExt{bodyExt{build: b.ToFloatingIPUpdateMap, key: "floatingip", extra: extra}}
+	return floatingIPUpdateExt{bodyExt: bodyExt{build: b.ToFloatingIPUpdateMap, key: "floatingip", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type secGroupCreateExt struct{ bodyExt }
@@ -119,14 +139,18 @@ func withSecGroupCreateAttrs(b interface {
 	return secGroupCreateExt{bodyExt{build: b.ToSecGroupCreateMap, key: "security_group", extra: extra}}
 }
 
-type secGroupUpdateExt struct{ bodyExt }
+type secGroupUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e secGroupUpdateExt) ToSecGroupUpdateMap() (map[string]any, error) { return e.body() }
 
 func withSecGroupUpdateAttrs(b interface {
 	ToSecGroupUpdateMap() (map[string]any, error)
 }, extra map[string]any) secGroupUpdateExt {
-	return secGroupUpdateExt{bodyExt{build: b.ToSecGroupUpdateMap, key: "security_group", extra: extra}}
+	return secGroupUpdateExt{bodyExt: bodyExt{build: b.ToSecGroupUpdateMap, key: "security_group", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type secGroupRuleCreateExt struct{ bodyExt }
@@ -149,14 +173,18 @@ func withSubnetPoolCreateAttrs(b interface {
 	return subnetPoolCreateExt{bodyExt{build: b.ToSubnetPoolCreateMap, key: "subnetpool", extra: extra}}
 }
 
-type subnetPoolUpdateExt struct{ bodyExt }
+type subnetPoolUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e subnetPoolUpdateExt) ToSubnetPoolUpdateMap() (map[string]any, error) { return e.body() }
 
 func withSubnetPoolUpdateAttrs(b interface {
 	ToSubnetPoolUpdateMap() (map[string]any, error)
 }, extra map[string]any) subnetPoolUpdateExt {
-	return subnetPoolUpdateExt{bodyExt{build: b.ToSubnetPoolUpdateMap, key: "subnetpool", extra: extra}}
+	return subnetPoolUpdateExt{bodyExt: bodyExt{build: b.ToSubnetPoolUpdateMap, key: "subnetpool", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type addressScopeCreateExt struct{ bodyExt }
@@ -169,14 +197,18 @@ func withAddressScopeCreateAttrs(b interface {
 	return addressScopeCreateExt{bodyExt{build: b.ToAddressScopeCreateMap, key: "address_scope", extra: extra}}
 }
 
-type addressScopeUpdateExt struct{ bodyExt }
+type addressScopeUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e addressScopeUpdateExt) ToAddressScopeUpdateMap() (map[string]any, error) { return e.body() }
 
 func withAddressScopeUpdateAttrs(b interface {
 	ToAddressScopeUpdateMap() (map[string]any, error)
 }, extra map[string]any) addressScopeUpdateExt {
-	return addressScopeUpdateExt{bodyExt{build: b.ToAddressScopeUpdateMap, key: "address_scope", extra: extra}}
+	return addressScopeUpdateExt{bodyExt: bodyExt{build: b.ToAddressScopeUpdateMap, key: "address_scope", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type addressGroupCreateExt struct{ bodyExt }
@@ -189,14 +221,18 @@ func withAddressGroupCreateAttrs(b interface {
 	return addressGroupCreateExt{bodyExt{build: b.ToAddressGroupCreateMap, key: "address_group", extra: extra}}
 }
 
-type addressGroupUpdateExt struct{ bodyExt }
+type addressGroupUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e addressGroupUpdateExt) ToAddressGroupUpdateMap() (map[string]any, error) { return e.body() }
 
 func withAddressGroupUpdateAttrs(b interface {
 	ToAddressGroupUpdateMap() (map[string]any, error)
 }, extra map[string]any) addressGroupUpdateExt {
-	return addressGroupUpdateExt{bodyExt{build: b.ToAddressGroupUpdateMap, key: "address_group", extra: extra}}
+	return addressGroupUpdateExt{bodyExt: bodyExt{build: b.ToAddressGroupUpdateMap, key: "address_group", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type qosPolicyCreateExt struct{ bodyExt }
@@ -209,14 +245,18 @@ func withQosPolicyCreateAttrs(b interface {
 	return qosPolicyCreateExt{bodyExt{build: b.ToPolicyCreateMap, key: "policy", extra: extra}}
 }
 
-type qosPolicyUpdateExt struct{ bodyExt }
+type qosPolicyUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e qosPolicyUpdateExt) ToPolicyUpdateMap() (map[string]any, error) { return e.body() }
 
 func withQosPolicyUpdateAttrs(b interface {
 	ToPolicyUpdateMap() (map[string]any, error)
 }, extra map[string]any) qosPolicyUpdateExt {
-	return qosPolicyUpdateExt{bodyExt{build: b.ToPolicyUpdateMap, key: "policy", extra: extra}}
+	return qosPolicyUpdateExt{bodyExt: bodyExt{build: b.ToPolicyUpdateMap, key: "policy", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type rbacCreateExt struct{ bodyExt }
@@ -229,14 +269,18 @@ func withRbacCreateAttrs(b interface {
 	return rbacCreateExt{bodyExt{build: b.ToRBACPolicyCreateMap, key: "rbac_policy", extra: extra}}
 }
 
-type rbacUpdateExt struct{ bodyExt }
+type rbacUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e rbacUpdateExt) ToRBACPolicyUpdateMap() (map[string]any, error) { return e.body() }
 
 func withRbacUpdateAttrs(b interface {
 	ToRBACPolicyUpdateMap() (map[string]any, error)
 }, extra map[string]any) rbacUpdateExt {
-	return rbacUpdateExt{bodyExt{build: b.ToRBACPolicyUpdateMap, key: "rbac_policy", extra: extra}}
+	return rbacUpdateExt{bodyExt: bodyExt{build: b.ToRBACPolicyUpdateMap, key: "rbac_policy", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type segmentCreateExt struct{ bodyExt }
@@ -249,14 +293,18 @@ func withSegmentCreateAttrs(b interface {
 	return segmentCreateExt{bodyExt{build: b.ToSegmentCreateMap, key: "segment", extra: extra}}
 }
 
-type segmentUpdateExt struct{ bodyExt }
+type segmentUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e segmentUpdateExt) ToSegmentUpdateMap() (map[string]any, error) { return e.body() }
 
 func withSegmentUpdateAttrs(b interface {
 	ToSegmentUpdateMap() (map[string]any, error)
 }, extra map[string]any) segmentUpdateExt {
-	return segmentUpdateExt{bodyExt{build: b.ToSegmentUpdateMap, key: "segment", extra: extra}}
+	return segmentUpdateExt{bodyExt: bodyExt{build: b.ToSegmentUpdateMap, key: "segment", extra: extra}, RevisionNumber: revisionOf(b)}
 }
 
 type trunkCreateExt struct{ bodyExt }
@@ -279,12 +327,16 @@ func withPortForwardingCreateAttrs(b interface {
 	return portForwardingCreateExt{bodyExt{build: b.ToPortForwardingCreateMap, key: "port_forwarding", extra: extra}}
 }
 
-type portForwardingUpdateExt struct{ bodyExt }
+type portForwardingUpdateExt struct {
+	bodyExt
+	// RevisionNumber re-declares the opts' If-Match guard; see revisionOf.
+	RevisionNumber *int `json:"-" h:"If-Match"`
+}
 
 func (e portForwardingUpdateExt) ToPortForwardingUpdateMap() (map[string]any, error) { return e.body() }
 
 func withPortForwardingUpdateAttrs(b interface {
 	ToPortForwardingUpdateMap() (map[string]any, error)
 }, extra map[string]any) portForwardingUpdateExt {
-	return portForwardingUpdateExt{bodyExt{build: b.ToPortForwardingUpdateMap, key: "port_forwarding", extra: extra}}
+	return portForwardingUpdateExt{bodyExt: bodyExt{build: b.ToPortForwardingUpdateMap, key: "port_forwarding", extra: extra}, RevisionNumber: revisionOf(b)}
 }

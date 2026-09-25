@@ -629,7 +629,7 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 			revision := current.RevisionNumber
 			opts.RevisionNumber = &revision
 		}
-		if s, err = subnets.Update(ctx, client, id, subnetUpdateBody(opts, attrs)).Extract(); err != nil {
+		if s, err = subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs)).Extract(); err != nil {
 			return fmt.Errorf("updating subnet %s: %w", nameOrID, err)
 		}
 	case current != nil:
@@ -768,19 +768,6 @@ func subnetSetLists(f *subnetSetFlags, current *subnets.Subnet, opts *subnets.Up
 		changed = true
 	}
 	return attrs, changed, nil
-}
-
-// subnetUpdateGuarded is withSubnetUpdateAttrs plus UpdateOpts' If-Match
-// revision guard. subnets.Update reads headers off the top-level fields of the
-// opts value it is handed (gophercloud.BuildHeaders), so a body wrapper alone
-// would silently drop the header; this one carries the h-tagged field itself.
-type subnetUpdateGuarded struct {
-	subnetUpdateExt
-	RevisionNumber *int `json:"-" h:"If-Match"`
-}
-
-func subnetUpdateBody(opts subnets.UpdateOpts, attrs map[string]any) subnetUpdateGuarded {
-	return subnetUpdateGuarded{withSubnetUpdateAttrs(opts, attrs), opts.RevisionNumber}
 }
 
 // appendUnlessCleared is upstream's "attrs[x] += obj.x unless --no-x": the

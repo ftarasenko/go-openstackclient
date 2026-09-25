@@ -3,12 +3,14 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 )
@@ -145,5 +147,72 @@ func TestReplaceTags_PutsOnlyOnChange(t *testing.T) {
 	}
 	if puts != 1 {
 		t.Errorf("tag PUTs = %d, want 1", puts)
+	}
+}
+
+// gophercloud reads the If-Match header off the top-level fields of the builder
+// handed to Update. Every update adapter re-declares RevisionNumber so a
+// wrapped update keeps neutron's revision guard.
+func TestUpdateAdapters_KeepTheIfMatchGuard(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPut)
+		th.TestHeader(t, r, "If-Match", "revision_number=7")
+		th.TestJSONRequest(t, r, `{"floatingip":{"qos_policy_id":null}}`)
+		writeJSON(t, w, http.StatusOK, `{"floatingip":{"id":"fip-1"}}`)
+	})
+	rev := 7
+	opts := floatingips.UpdateOpts{RevisionNumber: &rev}
+	b := withFloatingIPUpdateAttrs(opts, map[string]any{"qos_policy_id": nil})
+	if b.RevisionNumber == nil || *b.RevisionNumber != 7 {
+		t.Fatalf("adapter RevisionNumber = %v, want 7", b.RevisionNumber)
+	}
+	if err := floatingips.Update(context.Background(), networkClient(fakeServer), "fip-1", b).Err; err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+}
+
+func TestExplainMissingExtension_NamesTheAbsentExtension(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/extensions", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"extensions":[{"alias":"qos"},{"alias":"router"}]}`)
+	})
+	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusBadRequest, `{"NeutronError":{"message":"Unrecognized attribute(s) 'enable_ndp_proxy'"}}`)
+	})
+	client := networkClient(fakeServer)
+	ctx := context.Background()
+	resp, httpErr := client.Post(ctx, client.ServiceURL("routers"), map[string]any{}, nil, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if httpErr == nil {
+		t.Fatal("expected the mock 400")
+	}
+
+	err := explainMissingExtension(ctx, client, httpErr, map[string]any{
+		"enable_ndp_proxy": true, "qos_policy_id": "q", "name": "r1",
+	})
+	msg := err.Error()
+	if !strings.Contains(msg, "l3-ext-ndp-proxy (for enable_ndp_proxy)") {
+		t.Errorf("error does not name the missing extension:\n%s", msg)
+	}
+	if strings.Contains(msg, "qos (") {
+		t.Errorf("error blames an enabled extension:\n%s", msg)
+	}
+	var unwrapped gophercloud.ErrUnexpectedResponseCode
+	if !errors.As(err, &unwrapped) || unwrapped.Actual != http.StatusBadRequest {
+		t.Error("the original HTTP error must stay wrapped")
+	}
+
+	// Nothing to explain: no extension attribute, or a non-HTTP error.
+	if got := explainMissingExtension(ctx, client, httpErr, map[string]any{"name": "r1"}); got.Error() != httpErr.Error() {
+		t.Errorf("error without extension attributes was rewritten: %v", got)
+	}
+	plain := errors.New("boom")
+	if got := explainMissingExtension(ctx, client, plain, map[string]any{"enable_ndp_proxy": true}); got.Error() != "boom" {
+		t.Errorf("non-HTTP error was rewritten: %v", got)
 	}
 }

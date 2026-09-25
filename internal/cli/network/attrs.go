@@ -2,6 +2,7 @@ package network
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -180,4 +181,28 @@ func mergeAttrs(dst, src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+// revisionOf returns the RevisionNumber field of a gophercloud opts struct, or
+// nil when it has none. Every update adapter re-declares that field with the
+// same `h:"If-Match"` tag, because gophercloud.BuildHeaders reads headers off
+// the top-level fields of the builder handed to Update — the adapter, not the
+// opts inside it — so without this a wrapped update would silently drop
+// neutron's revision guard.
+func revisionOf(b any) *int {
+	v := reflect.ValueOf(b)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	f := v.FieldByName("RevisionNumber")
+	if !f.IsValid() {
+		return nil
+	}
+	if r, ok := f.Interface().(*int); ok {
+		return r
+	}
+	return nil
 }

@@ -107,7 +107,7 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 			return err
 		}
 		attrs = mergeAttrs(attrs, extra)
-		if s, err = subnets.Update(ctx, client, id, subnetUpdateBody(opts, attrs)).Extract(); err != nil {
+		if s, err = subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs)).Extract(); err != nil {
 			return fmt.Errorf("updating subnet %s: %w", nameOrID, err)
 		}
 	}
