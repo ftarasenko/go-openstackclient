@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-09-25 · `koc` @ this commit (base `5cc80b1`) · 627 leaf
+**Snapshot:** 2026-09-25 · `koc` @ this commit (base `5cc80b1`) · 647 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**577 of 947 in-scope upstream commands (61%).** Of `koc`'s 627 leaf commands,
-577 are upstream-equivalent and 50 are koc-native.
+**597 of 947 in-scope upstream commands (63%).** Of `koc`'s 647 leaf commands,
+597 are upstream-equivalent and 50 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -150,7 +150,7 @@ and Manila; 947 excluding them, since `koc` targets neither.
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
 | `openstack.network.v2.vpnaas` | 25/25 | 25/25 — VPN services, IKE/IPsec policies, endpoint groups, IPsec site connections |
-| `openstack.network.v2.fwaas` | 0/20 | 0/20 — firewall groups, policies, rules |
+| `openstack.network.v2.fwaas` | 20/20 | 20/20 — firewall groups, policies, rules |
 | `openstack.network.v2.bgpvpn` | 22/22 | 22/22 — BGP VPNs and their network/port/router associations |
 | `openstack.network.v2.dynamic_routing` | 0/18 | 0/18 — BGP speakers, peers, dragent scheduling |
 | `openstack.network.v2.taas` | 0/15 | 0/5 — tap mirrors; tap services and flows (10) have no gophercloud package and are outside the core denominator |
@@ -555,7 +555,7 @@ them in line with `network`.
 ## koc-native commands
 
 No upstream equivalent, by design — **50 leaves**, itemised so the total
-reconciles with the headline (627 = 577 + 50):
+reconciles with the headline (647 = 597 + 50):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -620,7 +620,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (627 leaf commands at the snapshot above)
+# 1. koc's own command tree (647 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -649,8 +649,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (577);
-2. leaf commands = headline numerator + koc-native (627 = 577 + 50);
+1. every raw row numerator summed = the headline numerator (597);
+2. leaf commands = headline numerator + koc-native (647 = 597 + 50);
 3. every raw row denominator summed = 1004, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (947).
 
