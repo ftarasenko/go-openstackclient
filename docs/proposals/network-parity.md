@@ -14,8 +14,8 @@ v2.13.0 — the networking package set is identical between the two).
 
 ## Status (2026-09-25)
 
-Steps 1–6 of §5 have shipped on this branch, and step 8 (the post-Zed flags) is
-in progress:
+Steps 1–6 and 8 of §5 have shipped on this branch (step 7, the Tier 3 nouns, is
+§6c below):
 
 | Step | Commit(s) | Result |
 | --- | --- | --- |
@@ -25,12 +25,14 @@ in progress:
 | 6 shape deviations | `58aecab`, `0b2ec2b`, `b4e68e9`, `5cc80b1` | every row of §4 |
 | foundation fixes | `352526a` | If-Match kept through the adapters; missing-extension errors named |
 | column parity | `53c44aa` | `ip availability list`, `network qos rule list` |
-| 8 post-Zed flags | `7181533` router · network/subnet and port in progress | §2c |
+| 8 post-Zed flags | `7181533` router · `a439145` port · `7f5ebf2` network + subnet | §2c, every flag, each naming its neutron extension |
+| regression guard | `1e39b15` | `upstream_flags_test.go` + `scripts/network-flag-table.py` |
 
 Command surface: **114/168** raw (core 97/97), up from 104/168. Flag surface:
-every upstream option of every implemented command is registered except the §2c
-set still in flight — `internal/cli/network/upstream_flags_test.go` walks the
-cobra tree against all of them. §6 below is the second audit: what is left.
+**every** upstream option of every implemented command is registered, post-Zed
+ones included — `internal/cli/network/upstream_flags_test.go` walks the cobra
+tree against all of them, with no allow-list. §6 below is the second audit:
+what is left.
 
 ## Summary (as measured before the pass)
 
@@ -259,7 +261,13 @@ mocked client (`$SP/np/cols.py`), and the behaviour notes from each batch.
 
 ### 6a. Flags
 
-Nothing outside §2c. The regression test is the gate from here on.
+Nothing left. The regression test is the gate from here on. One post-Zed flag
+deliberately sends a different attribute than upstream: `network create
+--qinq-vlan` sends `qinq`, the attribute neutron defines (neutron-lib
+`QINQ_FIELD`; neutron's `db/qinq_db.py`), where upstream 10.3.0 sends
+`vlan_qinq`, which neutron would reject. Two post-Zed list filters run
+server-side where upstream filters client-side (`network list --pvlan` — neutron
+marks `pvlan` filterable; `port list --pvlan` stays client-side like upstream).
 
 ### 6b. List columns
 
