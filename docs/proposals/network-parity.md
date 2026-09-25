@@ -25,7 +25,7 @@ in progress:
 | 6 shape deviations | `58aecab`, `0b2ec2b`, `b4e68e9`, `5cc80b1` | every row of §4 |
 | foundation fixes | `352526a` | If-Match kept through the adapters; missing-extension errors named |
 | column parity | `53c44aa` | `ip availability list`, `network qos rule list` |
-| 8 post-Zed flags | in progress | §2c |
+| 8 post-Zed flags | `7181533` router · network/subnet and port in progress | §2c |
 
 Command surface: **114/168** raw (core 97/97), up from 104/168. Flag surface:
 every upstream option of every implemented command is registered except the §2c
@@ -268,7 +268,7 @@ Upstream and koc headers now agree for every implemented list verb, default and
 
 | Command | Difference | Proposal |
 | --- | --- | --- |
-| `router list --long` | lacks upstream's `Availability zones` | add (after the post-Zed router batch lands, same file) |
+| `router list --long` | `Availability zones` appears when the routers carry the attribute; upstream keys it on the `router_availability_zone` extension, so the two differ only on an empty list (header without rows) | keep — matching exactly costs an extension lookup per listing |
 | `network rbac list --long`, `network trunk list --long`, `subnet list --long`, `subnet pool list --long` | koc appends one or two extra columns after upstream's (Target Project; Sub Ports, Project; Subnet Pool; Project) | keep: they sit after upstream's columns, so positional `-f value`/`csv` consumers are unaffected; record them in `coverage.md` next to the other koc-native flags |
 
 ### 6c. Missing commands — 54, all Tier 3 (no gophercloud package)
