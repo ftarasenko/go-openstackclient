@@ -15,7 +15,6 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -135,12 +134,9 @@ func subnetShowFields(s *subnetExt) ([]string, []any) {
 }
 
 // resolveSubnetSegmentID resolves a network segment name or ID for
-// --network-segment. A UUID passes straight through; anything else is looked
-// up by name under the shared name-or-ID policy (helpers.go pickID).
+// --network-segment under the shared name-or-ID policy (helpers.go
+// resolveByName).
 func resolveSubnetSegmentID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	if resolve.IsUUID(nameOrID) {
-		return nameOrID, nil
-	}
 	return resolveByName(client, "network segment", nameOrID, func(c *gophercloud.ServiceClient) ([]segments.Segment, error) {
 		pages, err := segments.List(c, segments.ListOpts{Name: nameOrID}).AllPages(ctx)
 		if err != nil {

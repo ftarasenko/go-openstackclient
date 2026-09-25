@@ -151,13 +151,9 @@ func TestRunSubnetCreate_RequestBodyHasNetworkID(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// resolveNetworkID lists networks filtered by name; return no match so the
-	// argument is treated as an ID and passed straight through.
-	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"networks":[]}`))
-	})
+	// resolveNetworkID lists networks filtered by name; the lookup answers with
+	// the one match.
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{
@@ -219,13 +215,9 @@ func TestRunSecurityGroupRuleCreate_NormalizesEtherTypeAndProtocol(t *testing.T)
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// resolveSecGroupID lists groups by name; return no match so the arg is
-	// treated as an ID and passed straight through.
-	fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"security_groups":[]}`))
-	})
+	// resolveSecGroupID lists groups by name; the lookup answers with the one
+	// match.
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{
@@ -259,11 +251,7 @@ func TestRunSecurityGroupRuleCreate_InfersIPv6FromRemoteIP(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"security_groups":[]}`))
-	})
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{
@@ -295,16 +283,8 @@ func TestRunFloatingIPCreate_AssociatesPortAtCreation(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"networks":[]}`))
-	})
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ports":[]}`))
-	})
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{
@@ -335,16 +315,8 @@ func TestRunRouterAddPort(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"routers":[]}`))
-	})
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ports":[]}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/routers/router-1/add_router_interface", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"port_id": "port-1"}`)
@@ -370,16 +342,8 @@ func TestRunPortCreate_SecurityGroupsAndAdminState(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"networks":[]}`))
-	})
-	fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"security_groups":[]}`))
-	})
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{
@@ -411,11 +375,7 @@ func TestRunSubnetSet_NoDHCPAndNoGateway(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"subnets":[]}`))
-	})
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/subnet-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		// A *string pointing to "" serializes to null via gophercloud's

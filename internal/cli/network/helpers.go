@@ -83,11 +83,10 @@ func mutuallyExclusive(flags interface{ Changed(string) bool }, a, b string) err
 	return nil
 }
 
-// resolveNetworkID resolves a network name or ID to an ID. It filters by name;
-// a single match wins. When no network matches by name the argument is assumed
-// to already be an ID and returned unchanged (matching OSC's name-or-ID
-// lookup). Multiple name matches are ambiguous and error. The sibling
-// resolvers (subnet/router/port/security group) follow the same policy.
+// resolveNetworkID resolves a network name or ID to an ID under the shared
+// policy in resolveByName: a UUID passes through with no request, otherwise a
+// name-filtered list must match exactly once. The sibling resolvers
+// (subnet/router/port/security group/...) all go through resolveByName.
 func resolveNetworkID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
 	return resolveByName(client, "network", nameOrID, func(c *gophercloud.ServiceClient) ([]networks.Network, error) {
 		pages, err := networks.List(c, networks.ListOpts{Name: nameOrID}).AllPages(ctx)
@@ -132,14 +131,7 @@ func resolvePortID(ctx context.Context, client *gophercloud.ServiceClient, nameO
 // Neither noun had a resolver, so `address scope show <name>` put the name
 // straight into the URL and neutron answered 404 for a resource that plainly
 // existed in `list`.
-//
-// Unlike the older resolvers above these short-circuit on a UUID rather than
-// listing first — that is the convention in AGENTS.md ("resolvers pass UUIDs
-// through untouched") and it saves a request on the common path.
 func resolveAddressScopeID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	if resolve.IsUUID(nameOrID) {
-		return nameOrID, nil
-	}
 	return resolveByName(client, "address scope", nameOrID, func(c *gophercloud.ServiceClient) ([]addressscopes.AddressScope, error) {
 		pages, err := addressscopes.List(c, addressscopes.ListOpts{Name: nameOrID}).AllPages(ctx)
 		if err != nil {
@@ -150,9 +142,6 @@ func resolveAddressScopeID(ctx context.Context, client *gophercloud.ServiceClien
 }
 
 func resolveAddressGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	if resolve.IsUUID(nameOrID) {
-		return nameOrID, nil
-	}
 	return resolveByName(client, "address group", nameOrID, func(c *gophercloud.ServiceClient) ([]addressgroups.AddressGroup, error) {
 		pages, err := addressgroups.List(c, addressgroups.ListOpts{Name: nameOrID}).AllPages(ctx)
 		if err != nil {
@@ -172,11 +161,22 @@ func resolveSecGroupID(ctx context.Context, client *gophercloud.ServiceClient, n
 	}, func(g groups.SecGroup) string { return g.ID })
 }
 
-// resolveByName runs a name-filtered list and applies pickID; it backs every
-// neutron name→ID resolver.
+// resolveByName backs every neutron name→ID resolver. A UUID is returned as-is
+// with no request: every neutron resource this package resolves has a UUID ID,
+// so no GET-by-ID step is needed to recognise one. Anything else is looked up
+// with the name-filtered list and settled by pickID — one match wins, none is
+// an error, several are ambiguous.
+//
+// The zero-match error mirrors upstream openstacksdk's find_* ("No Network
+// found for typo"). koc used to fall back to the literal reference instead, so
+// `koc network delete typo` sent DELETE /v2.0/networks/typo and surfaced
+// neutron's bare 404.
 func resolveByName[T any](client *gophercloud.ServiceClient, kind, nameOrID string,
 	list func(*gophercloud.ServiceClient) ([]T, error), idOf func(T) string,
 ) (string, error) {
+	if resolve.IsUUID(nameOrID) {
+		return nameOrID, nil
+	}
 	all, err := list(client)
 	if err != nil {
 		return "", fmt.Errorf("looking up %s %q: %w", kind, nameOrID, err)
@@ -198,15 +198,15 @@ func resolveSecGroupIDs(ctx context.Context, client *gophercloud.ServiceClient, 
 	return ids, nil
 }
 
-// pickID applies the shared name-or-ID resolution policy: exactly one match by
-// name wins, zero matches falls back to treating the argument as an ID, and
-// more than one match is ambiguous.
+// pickID settles a name (or address) lookup that has already run: exactly one
+// match wins, zero matches is a "no <kind> found" error, and more than one is
+// ambiguous. UUIDs never reach it — the callers short-circuit them.
 func pickID(nameOrID string, n int, id func(int) string, kind string) (string, error) {
 	switch n {
 	case 1:
 		return id(0), nil
 	case 0:
-		return nameOrID, nil
+		return "", fmt.Errorf("no %s found for %q", kind, nameOrID)
 	default:
 		return "", fmt.Errorf("%s %q is ambiguous: %d matches, use the ID", kind, nameOrID, n)
 	}

@@ -175,7 +175,7 @@ func TestParseExternalFixedIPs_ResolvesSubnetNames(t *testing.T) {
 
 	got, err := parseExternalFixedIPs(context.Background(), networkClient(fakeServer), []string{
 		"subnet=public-sub,ip-address=192.0.2.10",
-		// A UUID has no matching name, so the zero-match fallback keeps it as-is.
+		// A UUID passes straight through without a lookup.
 		"subnet=66666666-6666-6666-6666-666666666666",
 	})
 	if err != nil {
@@ -193,8 +193,8 @@ func TestParseExternalFixedIPs_ResolvesSubnetNames(t *testing.T) {
 			t.Errorf("fixed ip %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
-	if len(gotNames) != 2 || gotNames[0] != "public-sub" {
-		t.Errorf("subnet lookups = %v, want one per spec starting with public-sub", gotNames)
+	if len(gotNames) != 1 || gotNames[0] != "public-sub" {
+		t.Errorf("subnet lookups = %v, want only public-sub (the UUID needs none)", gotNames)
 	}
 }
 

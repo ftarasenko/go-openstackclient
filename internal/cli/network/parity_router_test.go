@@ -26,9 +26,9 @@ const (
 func TestRunRouterCreate_SendsEveryAttributeThenTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"router":{
@@ -130,9 +130,9 @@ func TestRouterFlavorID(t *testing.T) {
 func TestRunRouterSet_NewAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"router":{"description":"","distributed":false,"ha":false,
@@ -167,8 +167,8 @@ func TestRunRouterSet_QoSOnlySendsNetworkAndPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/routers", "routers")
-			emptyLookup(t, fakeServer, "/qos/policies", "policies")
+			echoLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/qos/policies", "policies")
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
 					writeJSON(t, w, http.StatusOK, routerGetBody)
@@ -191,8 +191,8 @@ func TestRunRouterSet_QoSOnlySendsNetworkAndPolicy(t *testing.T) {
 func TestRunRouterSet_FixedIPKeepsTheCurrentGateway(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			writeJSON(t, w, http.StatusOK, routerGetBody)
@@ -213,7 +213,7 @@ func TestRunRouterSet_FixedIPKeepsTheCurrentGateway(t *testing.T) {
 func TestRunRouterSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"router":{"id":"r1","tags":["old"]}}`)
@@ -240,7 +240,7 @@ func TestRunRouterSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 func TestRunRouterUnset_RouteQoSExtraAndTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	var puts int
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -292,7 +292,7 @@ func TestRunRouterUnset_Refusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/routers", "routers")
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodGet) // a refusal must not PUT
 				writeJSON(t, w, http.StatusOK, tc.get)
@@ -309,7 +309,7 @@ func TestRunRouterUnset_Refusals(t *testing.T) {
 func TestRunRouterUnset_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"router":{"id":"r1","tags":["a","b"]}}`)
@@ -344,9 +344,9 @@ func TestRunRouterRemoveGateway_NetworkAndFixedIPGuard(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/routers", "routers")
-			emptyLookup(t, fakeServer, "/networks", "networks")
-			emptyLookup(t, fakeServer, "/subnets", "subnets")
+			echoLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/networks", "networks")
+			echoLookup(t, fakeServer, "/subnets", "subnets")
 			var put bool
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPut {
@@ -388,8 +388,8 @@ func TestRunRouterShow_ExtensionFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/routers", "routers")
-			emptyLookup(t, fakeServer, "/ports", "ports")
+			echoLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/ports", "ports")
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, _ *http.Request) {
 				writeJSON(t, w, http.StatusOK, tc.body)
 			})
@@ -414,8 +414,8 @@ func TestRunRouterShow_ExtensionFields(t *testing.T) {
 func TestExec_RouterCreate_FlagsReachTheBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/networks", "networks")
-	emptyLookup(t, fakeServer, "/v2.0/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
+	echoLookup(t, fakeServer, "/v2.0/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/v2.0/routers", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"router":{"name":"edge","admin_state_up":false,"description":"d",
@@ -441,8 +441,8 @@ func TestExec_RouterCreate_FlagsReachTheBody(t *testing.T) {
 func TestExec_RouterRemoveGateway_NetworkPositional(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/routers", "routers")
-	emptyLookup(t, fakeServer, "/v2.0/networks", "networks")
+	echoLookup(t, fakeServer, "/v2.0/routers", "routers")
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
 	fakeServer.Mux.HandleFunc("/v2.0/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			t.Error("a gateway on another network must not be cleared")

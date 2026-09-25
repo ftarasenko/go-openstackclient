@@ -19,16 +19,10 @@ func TestRunSubnetList_SendsEveryFilter(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// resolveNetworkID / resolveSubnetPoolID name-filter first; empty results fall
-	// back to the literal reference.
-	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"networks": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/subnetpools", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"subnetpools": []}`))
-	})
+	// resolveNetworkID / resolveSubnetPoolID look the non-UUID references up by
+	// name.
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		th.TestFormValues(t, r, map[string]string{
@@ -129,10 +123,7 @@ func TestRunPortSet_AllowedAddressAndBindingAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var gotMethod string
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -189,10 +180,7 @@ func TestRunPortSet_NoAllowedAddressClearsTheList(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestJSONRequest(t, r, `{"port": {"allowed_address_pairs": []}}`)
 		w.Header().Set("Content-Type", "application/json")
@@ -253,20 +241,10 @@ func TestRunPortUnset_FiltersListsAndPinsRevision(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/security-groups", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"security_groups": []}`))
-	})
-	// buildFixedIPs resolves the subnet reference; an empty match falls back to
-	// the literal ID.
-	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"subnets": []}`))
-	})
+	echoLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
+	// buildFixedIPs resolves the subnet reference by name.
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 
 	var gotIfMatch string
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {

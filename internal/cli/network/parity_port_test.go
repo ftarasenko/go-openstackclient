@@ -19,8 +19,8 @@ import (
 func TestRunPortCreate_SendsEveryNewAttributeThenTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"port":{
@@ -76,7 +76,7 @@ func TestRunPortCreate_SendsEveryNewAttributeThenTags(t *testing.T) {
 func TestRunPortCreate_RejectsUnknownVNICType(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	f := &portCreateFlags{network: "net-1", portAttrFlags: portAttrFlags{vnicType: "fast"}}
 	err := runPortCreate(context.Background(), networkClient(fakeServer), &output.Options{Format: output.FormatValue},
 		"p1", f, fakeFlags{}, &bytes.Buffer{})
@@ -92,7 +92,7 @@ func TestExec_PortCreate_FlagsReachTheBody(t *testing.T) {
 	defer fakeServer.Teardown()
 	const netID = "11111111-1111-1111-1111-111111111111"
 	const projectID = "22222222-2222-2222-2222-222222222222"
-	emptyLookup(t, fakeServer, "/v2.0/networks", "networks")
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
 	fakeServer.Mux.HandleFunc("/v2.0/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"port":{"name":"p1","network_id":"`+netID+`","project_id":"`+projectID+`",
@@ -131,9 +131,9 @@ func TestExec_PortCreate_FixedIPAndNoFixedIPConflict(t *testing.T) {
 func TestRunPortSet_ExtendsListsAndMergesProfile(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	var gotIfMatch string
 	puts := 0
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
@@ -180,8 +180,8 @@ func TestRunPortSet_ExtendsListsAndMergesProfile(t *testing.T) {
 func TestRunPortSet_NoFlagsOverwriteWithoutReading(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		if got := r.Header.Get("If-Match"); got != "" {
@@ -206,8 +206,8 @@ func TestRunPortSet_NoFlagsOverwriteWithoutReading(t *testing.T) {
 func TestRunPortSet_SendsScalarAndExtensionAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"port":{
@@ -243,7 +243,7 @@ func TestRunPortSet_SendsScalarAndExtensionAttributes(t *testing.T) {
 func TestRunPortSet_RejectsBadDataPlaneStatus(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	f := &portSetFlags{dataPlaneStatus: "BUILD"}
 	err := runPortSet(context.Background(), networkClient(fakeServer), &output.Options{Format: output.FormatValue},
 		"port-1", f, fakeFlags{}, &bytes.Buffer{})
@@ -256,7 +256,7 @@ func TestRunPortSet_RejectsBadDataPlaneStatus(t *testing.T) {
 func TestRunPortSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","tags":["old","gone"]}}`)
@@ -283,8 +283,8 @@ func TestExec_PortSet_NoSecurityGroupCombinesWithSecurityGroup(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	const portID = "33333333-3333-3333-3333-333333333333"
-	emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
-	emptyLookup(t, fakeServer, "/v2.0/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/v2.0/ports", "ports")
+	echoLookup(t, fakeServer, "/v2.0/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/v2.0/ports/"+portID, func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"port":{"security_groups":["sg-1"],"binding:vnic_type":"baremetal","data_plane_status":"ACTIVE"}}`)
@@ -300,7 +300,7 @@ func TestExec_PortSet_NoSecurityGroupCombinesWithSecurityGroup(t *testing.T) {
 func TestRunPortUnset_ClearsNewAttributesAndTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var gotIfMatch string
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -338,7 +338,7 @@ func TestRunPortUnset_ClearsNewAttributesAndTags(t *testing.T) {
 func TestRunPortUnset_HostKeepsTheRevisionGuard(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var gotIfMatch string
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -361,7 +361,7 @@ func TestRunPortUnset_HostKeepsTheRevisionGuard(t *testing.T) {
 func TestRunPortUnset_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","tags":["a"]}}`)
@@ -381,7 +381,7 @@ func TestRunPortUnset_TagsOnlySkipsTheUpdate(t *testing.T) {
 func TestRunPortUnset_MissingBindingProfileKeyErrors(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","binding:profile":{"a":"1"}}}`)
@@ -421,7 +421,7 @@ func TestExec_PortList_TagFiltersReachTheQuery(t *testing.T) {
 func TestRunPortShow_RendersExtensionAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1",

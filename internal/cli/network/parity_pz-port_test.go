@@ -60,7 +60,7 @@ func serveNetwork(t *testing.T, fakeServer th.FakeServer, path, pvlan string) {
 func TestRunPortCreate_PostZedAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	serveNetwork(t, fakeServer, "/networks/net-1", "true")
 	asked := serveExtensions(t, fakeServer, "", "port-hints", "port-hint-ovs-tx-steering")
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +110,7 @@ func TestExec_PortCreate_PostZedFlagsReachTheBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	const netID = "11111111-1111-1111-1111-111111111111"
-	emptyLookup(t, fakeServer, "/v2.0/networks", "networks")
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
 	fakeServer.Mux.HandleFunc("/v2.0/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"port":{"name":"p1","network_id":"`+netID+`",
@@ -150,7 +150,7 @@ func TestExec_PortPostZedExclusions(t *testing.T) {
 func TestRunPortSet_PostZedAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	serveNetwork(t, fakeServer, "/networks/net-1", "true")
 	serveExtensions(t, fakeServer, "", "port-hints", "port-hint-ovs-tx-steering")
 	var gotIfMatch string
@@ -182,7 +182,7 @@ func TestExec_PortSet_PostZedFlagsReachTheBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	const portID = "33333333-3333-3333-3333-333333333333"
-	emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+	echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 	serveExtensions(t, fakeServer, "/v2.0", "port-hints", "port-hint-ovs-tx-steering")
 	fakeServer.Mux.HandleFunc("/v2.0/ports/"+portID, func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
@@ -200,7 +200,7 @@ func TestExec_PortSet_PostZedFlagsReachTheBody(t *testing.T) {
 func TestRunPortUnset_PostZedClears(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","revision_number":2,"numa_affinity_policy":"required"}}`)
@@ -221,7 +221,7 @@ func TestExec_PortUnset_PostZedFlagsAreRegistered(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	const portID = "33333333-3333-3333-3333-333333333333"
-	emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+	echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 	fakeServer.Mux.HandleFunc("/v2.0/ports/"+portID, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			writeJSON(t, w, http.StatusOK, `{"port":{"id":"`+portID+`","revision_number":1}}`)
@@ -273,7 +273,7 @@ func TestParsePortHints(t *testing.T) {
 func TestRunPortCreate_HintNeedsItsExtensions(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	serveExtensions(t, fakeServer, "", "port-hints")
 	fakeServer.Mux.HandleFunc("/ports", func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected %s /ports", r.Method)
@@ -318,7 +318,7 @@ func TestRunPortCreate_PVLANValidation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/networks", "networks")
+			echoLookup(t, fakeServer, "/networks", "networks")
 			if tc.pvlanNet != "" {
 				serveNetwork(t, fakeServer, "/networks/net-1", tc.pvlanNet)
 			}
@@ -391,7 +391,7 @@ func TestRunPortList_NoPVLANKeepsOnlyPlainPorts(t *testing.T) {
 func TestRunPortCreate_ExplainsMissingExtensions(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	serveExtensions(t, fakeServer, "", "port-numa-affinity-policy", "dns-integration", "binding")
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
@@ -428,7 +428,7 @@ func TestRunPortCreate_ExplainsMissingExtensions(t *testing.T) {
 func TestRunPortUnset_ExplainsMissingExtension(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	serveExtensions(t, fakeServer, "")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -452,7 +452,7 @@ func TestRunPortUnset_ExplainsMissingExtension(t *testing.T) {
 func TestRunPortShow_RendersPostZedAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","trusted":false,

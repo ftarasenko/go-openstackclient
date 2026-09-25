@@ -72,7 +72,7 @@ func TestRunRouterCreate_PostZedBodies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/networks", "networks")
+			echoLookup(t, fakeServer, "/networks", "networks")
 			multihomingExtensions(t, fakeServer, "/extensions")
 			fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodPost)
@@ -110,7 +110,7 @@ func TestRunRouterSet_PostZedBodies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/routers", "routers")
 			multihomingExtensions(t, fakeServer, "/extensions")
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodPut)
@@ -131,7 +131,7 @@ func TestRunRouterSet_PostZedBodies(t *testing.T) {
 func TestRunRouterSet_NDPProxyAloneSendsOnlyIt(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/extensions", func(http.ResponseWriter, *http.Request) {
 		t.Error("the multihoming check must not run without BFD/ECMP")
 	})
@@ -149,8 +149,8 @@ func TestRunRouterSet_NDPProxyAloneSendsOnlyIt(t *testing.T) {
 func TestRunRouterAddSubnet_AdvertiseHost(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1/add_router_interface", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"subnet_id":"sub-1","advertise_host":true}`)
@@ -219,7 +219,7 @@ func TestRunRouterCreate_PostZedRefusals(t *testing.T) {
 func TestRunRouterSet_BFDWithoutMultihomingSendsNothing(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/extensions", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"extensions":[{"alias":"router"}]}`)
 	})
@@ -279,9 +279,9 @@ func TestRouterWrites_ExplainMissingExtension(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
 			if tc.path != "/routers" {
-				emptyLookup(t, fakeServer, "/routers", "routers")
+				echoLookup(t, fakeServer, "/routers", "routers")
 			}
-			emptyLookup(t, fakeServer, "/subnets", "subnets")
+			echoLookup(t, fakeServer, "/subnets", "subnets")
 			fakeServer.Mux.HandleFunc("/extensions", func(w http.ResponseWriter, _ *http.Request) {
 				writeJSON(t, w, http.StatusOK, zedExtensions)
 			})
@@ -323,8 +323,8 @@ func TestRunRouterShow_PostZedFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/routers", "routers")
-			emptyLookup(t, fakeServer, "/ports", "ports")
+			echoLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/ports", "ports")
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, _ *http.Request) {
 				writeJSON(t, w, http.StatusOK, tc.body)
 			})
@@ -350,8 +350,8 @@ func TestRunRouterShow_PostZedFields(t *testing.T) {
 func TestExec_RouterPostZedFlagsReachTheBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/networks", "networks")
-	emptyLookup(t, fakeServer, "/v2.0/subnets", "subnets")
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
+	echoLookup(t, fakeServer, "/v2.0/subnets", "subnets")
 	multihomingExtensions(t, fakeServer, "/v2.0/extensions")
 	fakeServer.Mux.HandleFunc("/v2.0/routers", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet { // set/add resolve the router by name first

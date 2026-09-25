@@ -79,8 +79,8 @@ func TestRunSubnetList_ParityFiltersAndLongColumns(t *testing.T) {
 func TestRunSubnetCreate_SendsEveryParityAttributeThenTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/subnetpools", "subnetpools")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"subnet":{
@@ -138,7 +138,7 @@ func TestRunSubnetCreate_DefaultPoolAndPrefixDelegation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/networks", "networks")
+			echoLookup(t, fakeServer, "/networks", "networks")
 			fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, r *http.Request) {
 				th.TestJSONRequest(t, r, tc.body)
 				writeJSON(t, w, http.StatusCreated, `{"subnet":{"id":"sub-1"}}`)
@@ -184,7 +184,7 @@ func TestRunSubnetSet_AppendsListsToTheCurrentValues(t *testing.T) {
 		  "service_types":["network:router_gateway","compute:nova"]}}`)
 		writeJSON(t, w, http.StatusOK, paritySubnetBody)
 	})
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	f := &subnetSetFlags{
 		dnsNameservers: []string{"198.51.100.53"},
 		allocationPool: []string{"start=192.0.2.30,end=192.0.2.40"},
@@ -218,7 +218,7 @@ func TestRunSubnetSet_ClearsAndOverwritesListsAndSetsScalars(t *testing.T) {
 		  "segment_id":"`+paritySegmentID+`","custom":7}}`)
 		writeJSON(t, w, http.StatusOK, paritySubnetBody)
 	})
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	f := &subnetSetFlags{
 		dnsNameservers: []string{"198.51.100.53"}, noDNSNameservers: true,
 		noAllocationPool: true, noHostRoute: true,
@@ -235,7 +235,7 @@ func TestRunSubnetSet_ClearsAndOverwritesListsAndSetsScalars(t *testing.T) {
 func TestRunSubnetSet_GatewayAutoIsRejected(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	err := runSubnetSet(context.Background(), networkClient(fakeServer), &output.Options{},
 		paritySubnetID, &subnetSetFlags{gateway: "auto"}, fakeFlags{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "auto") {
@@ -247,7 +247,7 @@ func TestRunSubnetSet_GatewayAutoIsRejected(t *testing.T) {
 func TestRunSubnetSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/"+paritySubnetID, func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, paritySubnetBody)
@@ -274,7 +274,7 @@ func TestRunSubnetSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 func TestRunSubnetUnset_ExtraPropertyLastPoolAndTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/"+paritySubnetID, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			writeJSON(t, w, http.StatusOK, paritySubnetBody)
@@ -304,7 +304,7 @@ func TestRunSubnetUnset_ExtraPropertyLastPoolAndTags(t *testing.T) {
 func TestRunSubnetUnset_TagsOnlySendsNoSubnetPut(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/"+paritySubnetID, func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, paritySubnetBody)
@@ -324,7 +324,7 @@ func TestRunSubnetUnset_TagsOnlySendsNoSubnetPut(t *testing.T) {
 func TestRunSubnetUnset_MissingEntryIsAnError(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/"+paritySubnetID, func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, paritySubnetBody)
@@ -345,7 +345,7 @@ const poolLens = `"default_prefixlen":"24","min_prefixlen":"8","max_prefixlen":"
 func TestRunSubnetPoolList_TagFiltersAddressScopeAndLongColumns(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/address-scopes", "address_scopes")
+	echoLookup(t, fakeServer, "/address-scopes", "address_scopes")
 	fakeServer.Mux.HandleFunc("/subnetpools", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		want := map[string][]string{
@@ -374,7 +374,7 @@ func TestRunSubnetPoolList_TagFiltersAddressScopeAndLongColumns(t *testing.T) {
 func TestRunSubnetPoolCreate_ExtraPropertyAddressScopeAndTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/address-scopes", "address_scopes")
+	echoLookup(t, fakeServer, "/address-scopes", "address_scopes")
 	fakeServer.Mux.HandleFunc("/subnetpools", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"subnetpool":{"name":"pool","prefixes":["198.51.100.0/24"],
@@ -402,7 +402,7 @@ func TestRunSubnetPoolCreate_ExtraPropertyAddressScopeAndTags(t *testing.T) {
 func TestRunSubnetPoolSet_AppendsPrefixesAndClearsAddressScope(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnetpools", "subnetpools")
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	fakeServer.Mux.HandleFunc("/subnetpools/sp1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			writeJSON(t, w, http.StatusOK, `{"subnetpool":{`+poolLens+`"id":"sp1","prefixes":["10.0.0.0/8"]}}`)
@@ -422,7 +422,7 @@ func TestRunSubnetPoolSet_AppendsPrefixesAndClearsAddressScope(t *testing.T) {
 func TestRunSubnetPoolSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnetpools", "subnetpools")
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	fakeServer.Mux.HandleFunc("/subnetpools/sp1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"subnetpool":{`+poolLens+`"id":"sp1","tags":["a"]}}`)
@@ -442,7 +442,7 @@ func TestRunSubnetPoolSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 func TestRunSubnetPoolUnset_RemovesTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnetpools", "subnetpools")
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	fakeServer.Mux.HandleFunc("/subnetpools/sp1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"subnetpool":{`+poolLens+`"id":"sp1","tags":["a","b","c"]}}`)
@@ -477,7 +477,7 @@ func TestRunSubnetPoolUnset_RemovesTags(t *testing.T) {
 func TestExec_SubnetCreate_ProjectDefaultPoolAndTag(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/networks", "networks")
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
 	fakeServer.Mux.HandleFunc("/v2.0/subnets", func(w http.ResponseWriter, r *http.Request) {
 		th.TestJSONRequest(t, r, `{"subnet":{"name":"sn","network_id":"net-1","ip_version":4,
 		  "project_id":"`+subnetParityProjectID+`","use_default_subnetpool":true}}`)
@@ -511,7 +511,7 @@ func TestExec_SubnetCreate_PoolFlagsAreMutuallyExclusive(t *testing.T) {
 func TestExec_SubnetPoolUnset_IsWired(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/subnetpools", "subnetpools")
+	echoLookup(t, fakeServer, "/v2.0/subnetpools", "subnetpools")
 	fakeServer.Mux.HandleFunc("/v2.0/subnetpools/sp1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"subnetpool":{`+poolLens+`"id":"sp1","tags":["a"]}}`)
 	})

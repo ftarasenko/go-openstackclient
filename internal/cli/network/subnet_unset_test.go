@@ -136,7 +136,7 @@ func TestRunRouterAddGateway_SetsNetworkAndFixedIP(t *testing.T) {
 	const subnetID = "55555555-5555-5555-5555-555555555555"
 
 	var body map[string]any
-	serveRouterAndNetworkLookups(fakeServer, routerID, networkID, subnetID)
+	forbidRouterAndNetworkLookups(t, fakeServer)
 	fakeServer.Mux.HandleFunc("/routers/"+routerID, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -168,7 +168,7 @@ func TestRunRouterRemoveGateway_SendsExplicitEmptyObject(t *testing.T) {
 
 	const routerID = "33333333-3333-3333-3333-333333333333"
 	var body map[string]any
-	serveRouterAndNetworkLookups(fakeServer, routerID, "", "")
+	forbidRouterAndNetworkLookups(t, fakeServer)
 	fakeServer.Mux.HandleFunc("/routers/"+routerID, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -197,24 +197,15 @@ func TestRunRouterRemoveGateway_SendsExplicitEmptyObject(t *testing.T) {
 	}
 }
 
-// serveRouterAndNetworkLookups answers the name lookups the network resolvers
-// perform before any write; they list by name rather than passing a UUID
-// straight through.
-func serveRouterAndNetworkLookups(fakeServer th.FakeServer, routerID, networkID, subnetID string) {
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": [{"id": "` + routerID + `", "name": "edge"}]}`))
-	})
-	if networkID != "" {
-		fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"networks": [{"id": "` + networkID + `", "name": "public"}]}`))
-		})
-	}
-	if subnetID != "" {
-		fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"subnets": [{"id": "` + subnetID + `", "name": "public-sub"}]}`))
+// forbidRouterAndNetworkLookups fails the test if a router, network or subnet
+// name lookup is made: every reference these gateway tests pass is a UUID, and
+// a UUID must reach neutron without one.
+func forbidRouterAndNetworkLookups(t *testing.T, fakeServer th.FakeServer) {
+	t.Helper()
+	for _, path := range []string{"/routers", "/networks", "/subnets"} {
+		fakeServer.Mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("unexpected name lookup %s %s?%s for a UUID reference", r.Method, r.URL.Path, r.URL.RawQuery)
+			w.WriteHeader(http.StatusInternalServerError)
 		})
 	}
 }

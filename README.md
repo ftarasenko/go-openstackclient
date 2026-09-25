@@ -956,13 +956,16 @@ scoping, nova floating-IP microversion, `--wait` semantics, `--limit`, metadata
 unset, cross-service resolution, debug redaction, and more). A few lower-risk
 items are deferred and worth noting:
 
-- **Name-not-found resolution is silent.** A name→ID resolver that finds no match
-  passes the reference through as a literal ID, so a mistyped `--domain`/
-  `--project` filter yields an empty result rather than an error, and
-  `koc network delete typo-name` reports neutron's error for a malformed UUID
-  rather than koc's "no such network". The `server` package is the exception and
-  does error properly (`no server found with name "…"`); the other resolvers
-  should be brought in line with it. UUIDs always short-circuit resolution.
+- **Name-not-found resolution is silent in some packages.** Several name→ID
+  resolvers still pass a reference that matches nothing through as a literal ID:
+  identity (`--domain`/`--project` and friends), image, load balancer, the DNS
+  TSIG-key/TLD/blacklist/pool lookups, and the shared cross-service helpers in
+  `internal/cli/resolve` (e.g. `server create --network <name>`). A mistyped
+  filter there yields an empty result or the service's 404 rather than an
+  error. The `network` package errors like upstream (`no network found for
+  "typo"`, before any request is sent for it), as do `server` (`no server found
+  with name "…"`) and the volume resolvers (`no volume found matching "…"`); the
+  rest should be brought in line. UUIDs always short-circuit resolution.
 - **`baremetal node set` uses JSON-patch `replace`** for scalar attributes; on
   some ironic builds `add` is needed for a previously-absent attribute.
 - **`role assignment list` with both `--project` and `--domain`** sends both

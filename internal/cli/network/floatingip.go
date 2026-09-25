@@ -12,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -73,9 +74,14 @@ func getFloatingIP(ctx context.Context, client *gophercloud.ServiceClient, id st
 	return &f, nil
 }
 
-// resolveFloatingIPID resolves a floating IP address or ID to an ID. A single
-// address match wins; otherwise the argument is assumed to be an ID.
+// resolveFloatingIPID resolves a floating IP address or ID to an ID. A UUID
+// passes through with no request; anything else is looked up by
+// floating_ip_address (upstream's find_ip) and must match exactly once — no
+// match is an error rather than the literal being sent as an ID.
 func resolveFloatingIPID(ctx context.Context, client *gophercloud.ServiceClient, addrOrID string) (string, error) {
+	if resolve.IsUUID(addrOrID) {
+		return addrOrID, nil
+	}
 	pages, err := floatingips.List(client, floatingips.ListOpts{FloatingIP: addrOrID}).AllPages(ctx)
 	if err != nil {
 		return "", fmt.Errorf("looking up floating IP %q: %w", addrOrID, err)

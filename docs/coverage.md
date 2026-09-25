@@ -534,19 +534,23 @@ passes through, so a hostile endpoint cannot rewrite the operator's terminal.
 `-f csv` (RFC 4180 quoting) or `-f json` is the safe choice when a field may hold
 arbitrary text — image descriptions, `properties`, server metadata.
 
-**Zero-match name resolution passes the literal ref to the API**, rather than
-erroring. `resolve.pick`/`pickID` implement one match → its ID, many → an error,
-and **zero → the reference unchanged** (`internal/cli/resolve/resolve.go`). So
-`koc network delete typo-name` issues `DELETE /v2.0/networks/typo-name` and the
-operator sees neutron's 404 for a malformed UUID instead of koc's "no network
-named …". Upstream OSC resolves the name itself and reports the miss before
-issuing anything. This is inconsistent inside `koc` too: the `server` package
-does it properly — `no server found with name "…"` — while every other
-resolver falls through. Deliberately left as-is in this pass: the passthrough is
-what lets an ID be given wherever a name is accepted without a per-command
-`--id`, and on read paths (`--project`, `--domain` filters) it degrades to an
-empty result rather than a wrong one. Also recorded in README "Known
-limitations"; the fix is to make the other resolvers match `server`'s behaviour.
+**Zero-match name resolution passes the literal ref to the API outside
+`network`, `server` and `volume`.** The shared `resolve.pick`
+(`internal/cli/resolve/resolve.go`) and the identity, image, load-balancer and
+DNS TSIG-key/TLD/blacklist/pool resolvers implement one match → its ID, many →
+an error, and **zero → the reference unchanged**, so a mistyped
+`--project`/`--domain` filter degrades to an empty result and a mistyped
+cross-service reference (`server create --network typo`) reaches the API as if
+it were an ID. The `network` package now behaves like upstream: a UUID is used
+as-is with no lookup (every neutron ID is a UUID, so upstream's GET-by-ID step
+has nothing to find that the check does not), anything else is listed by name
+(floating IPs by address), and no match is `no network found for "typo"` before
+any request is sent for it — so `koc network delete typo-name` no longer issues
+`DELETE /v2.0/networks/typo-name`, and `router show nosuch` no longer GETs
+`/routers/nosuch` (`internal/cli/network/helpers.go resolveByName`). `server`
+(`no server found with name "…"`) and the volume resolvers were already strict.
+Also recorded in README "Known limitations"; the fix for the rest is to bring
+them in line with `network`.
 
 ## koc-native commands
 

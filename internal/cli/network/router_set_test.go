@@ -34,10 +34,7 @@ func TestRunRouterSet_DisableSNATPreservesGateway(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
 	var gotMethod string
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -75,14 +72,8 @@ func TestRunRouterSet_ExternalGatewayWithSNATSkipsReadBack(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"networks": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			t.Error("--external-gateway supplies the network id; no read-back should be needed")
@@ -112,10 +103,7 @@ func TestRunRouterSet_SNATWithoutAGatewayIsAnError(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		w.Header().Set("Content-Type", "application/json")
@@ -170,10 +158,7 @@ func TestRunRouterSet_RouteAppendClearAndReplace(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
 
-			fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"routers": []}`))
-			})
+			echoLookup(t, fakeServer, "/routers", "routers")
 			var sawGet bool
 			fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
@@ -244,10 +229,7 @@ func TestRunRouterSet_AppendIsIdempotent(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
