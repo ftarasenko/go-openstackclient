@@ -136,7 +136,7 @@ func TestRunQoSPolicyCreate_RequestBody(t *testing.T) {
 
 	f := &qosPolicyCreateFlags{
 		description: "gold tier",
-		project:     "p1",
+		projectID:   "p1",
 		share:       true,
 		isDefault:   true,
 	}
@@ -384,7 +384,7 @@ func TestRunAddressScopeCreate_RequestBody(t *testing.T) {
 		  "ip_version": 6, "shared": true, "project_id": "p1"}}`))
 	})
 
-	f := &addressScopeCreateFlags{ipVersion: 6, share: true, project: "p1"}
+	f := &addressScopeCreateFlags{ipVersion: 6, share: true, projectID: "p1"}
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	if err := runAddressScopeCreate(context.Background(), networkClient(fakeServer), o, "public", f, &out); err != nil {
