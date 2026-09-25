@@ -232,7 +232,8 @@ func TestRunSecurityGroupRuleCreate_NormalizesEtherTypeAndProtocol(t *testing.T)
 				"direction": "ingress",
 				"ethertype": "IPv6",
 				"protocol": "tcp",
-				"security_group_id": "sg-id-1"
+				"security_group_id": "sg-id-1",
+				"remote_ip_prefix": "::/0"
 			}
 		}`)
 		w.Header().Set("Content-Type", "application/json")
