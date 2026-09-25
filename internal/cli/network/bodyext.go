@@ -28,3 +28,23 @@ func withFloatingIPUpdateAttrs(b interface {
 }, extra map[string]any) floatingIPUpdateExt {
 	return floatingIPUpdateExt{bodyExt{build: b.ToFloatingIPUpdateMap, key: "floatingip", extra: extra}}
 }
+
+type networkCreateExt struct{ bodyExt }
+
+func (e networkCreateExt) ToNetworkCreateMap() (map[string]any, error) { return e.body() }
+
+func withNetworkCreateAttrs(b interface {
+	ToNetworkCreateMap() (map[string]any, error)
+}, extra map[string]any) networkCreateExt {
+	return networkCreateExt{bodyExt{build: b.ToNetworkCreateMap, key: "network", extra: extra}}
+}
+
+type networkUpdateExt struct{ bodyExt }
+
+func (e networkUpdateExt) ToNetworkUpdateMap() (map[string]any, error) { return e.body() }
+
+func withNetworkUpdateAttrs(b interface {
+	ToNetworkUpdateMap() (map[string]any, error)
+}, extra map[string]any) networkUpdateExt {
+	return networkUpdateExt{bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}}
+}

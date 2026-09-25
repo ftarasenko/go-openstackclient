@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/external"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/mtu"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/provider"
@@ -42,28 +43,39 @@ type MTUExt struct {
 	MTU int `json:"mtu"`
 }
 
-// networkExt is a Network decorated with the mtu, external-net and provider
-// extension attributes. Each is an anonymous embed so ExtractInto populates
-// them all — the standard gophercloud "network with extensions" pattern.
+// networkExt is a Network decorated with the mtu, external-net, provider and
+// the remaining extension attributes (NetExtAttrs). Each is an anonymous
+// embed so ExtractInto populates them all — the standard gophercloud "network
+// with extensions" pattern.
 type networkExt struct {
 	networks.Network
 	external.NetworkExternalExt
 	provider.NetworkProviderExt
 	MTUExt
+	NetExtAttrs
 }
 
+// networkShowFields renders the attributes upstream's "network show" prints,
+// under the same keys (is_vlan_transparent is the SDK's name for
+// vlan_transparent).
 func networkShowFields(n *networkExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "status", "admin_state_up", "shared", "router:external",
-		"mtu", "subnets", fieldProviderNetworkType, fieldProviderPhysicalNetwork,
-		"availability_zone_hints", "description", "project_id", "tags",
-		"created_at", "updated_at",
+		"is_default", "mtu", "subnets", fieldProviderNetworkType,
+		fieldProviderPhysicalNetwork, netAttrSegmentationID, netAttrPortSecurity,
+		netAttrQoSPolicyID, netAttrDNSDomain, "is_vlan_transparent",
+		"ipv4_address_scope", "ipv6_address_scope",
+		"availability_zone_hints", "availability_zones", "description",
+		"project_id", "tags", "revision_number", "created_at", "updated_at",
 	}
 	values := []any{
 		n.ID, n.Name, n.Status, n.AdminStateUp, n.Shared, n.External,
-		n.MTU, n.Subnets, n.NetworkType, n.PhysicalNetwork,
-		n.AvailabilityZoneHints, n.Description, n.ProjectID, n.Tags,
-		n.CreatedAt, n.UpdatedAt,
+		n.IsDefault, n.MTU, n.Subnets, n.NetworkType,
+		n.PhysicalNetwork, n.SegmentationID, n.PortSecurityEnabled,
+		n.QoSPolicyID, n.DNSDomain, n.VLANTransparent,
+		n.IPv4AddressScope, n.IPv6AddressScope,
+		n.AvailabilityZoneHints, n.AvailabilityZones, n.Description,
+		n.ProjectID, n.Tags, n.RevisionNumber, n.CreatedAt, n.UpdatedAt,
 	}
 	return fields, values
 }
@@ -79,11 +91,12 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			fl := cmd.Flags()
-			f.externalSet = fl.Changed("external")
+			f.externalSet = fl.Changed(netFlagExternal)
 			if err := mutuallyExclusive(fl, flagShare, flagNoShare); err != nil {
 				return err
 			}
 			f.shared = enableDisable(fl, f.share, f.noShare, flagShare, flagNoShare)
+			f.adminState = enableDisable(fl, f.enable, f.disable)
 			ctx := cmd.Context()
 			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
@@ -98,16 +111,23 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
-	fl.BoolVar(&f.external, "external", false, "list only external networks (use --external=false for internal)")
+	fl.BoolVar(&f.external, netFlagExternal, false, "list only external networks (use --external=false for internal)")
+	fl.BoolVar(&f.internal, netFlagInternal, false, "list only internal networks")
 	fl.StringVar(&f.name, "name", "", "list networks matching this name")
-	fl.StringVar(&f.project, "project", "", "list networks owned by this project (name or ID)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
+	fl.BoolVar(&f.enable, "enable", false, "list only enabled networks")
+	fl.BoolVar(&f.disable, "disable", false, "list only disabled networks")
+	fl.StringVar(&f.project, flagProject, "", "list networks owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
 	fl.StringVar(&f.status, "status", "", "list networks with this status (ACTIVE, DOWN, BUILD, ERROR)")
 	fl.BoolVar(&f.share, flagShare, false, "list only shared networks")
 	fl.BoolVar(&f.noShare, flagNoShare, false, "list only non-shared networks")
-	fl.StringVar(&f.providerNetworkType, "provider-network-type", "", "list networks of this provider network type (flat, vlan, vxlan, ...)")
-	fl.StringVar(&f.providerPhysicalNetwork, "provider-physical-network", "", "list networks on this provider physical network")
-	fl.StringVar(&f.providerSegment, "provider-segment", "", "list networks with this provider segmentation ID")
+	fl.StringVar(&f.providerNetworkType, netFlagProviderType, "", "list networks of this provider network type (flat, vlan, vxlan, ...)")
+	fl.StringVar(&f.providerPhysicalNetwork, netFlagProviderPhysNet, "", "list networks on this provider physical network")
+	fl.StringVar(&f.providerSegment, netFlagProviderSegment, "", "list networks with this provider segmentation ID")
+	fl.StringVar(&f.agent, "agent", "", "list only networks hosted by this DHCP agent (ID only; other filters are ignored, as upstream)")
+	bindTagFilterFlags(fl, &f.tagFilterFlags, "networks")
+	cmd.MarkFlagsMutuallyExclusive(netFlagExternal, netFlagInternal)
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 	return cmd
 }
 
@@ -115,7 +135,10 @@ type networkListFlags struct {
 	long        bool
 	external    bool
 	externalSet bool
+	internal    bool
 	name        string
+	enable      bool
+	disable     bool
 
 	project       string
 	projectDomain string
@@ -127,7 +150,24 @@ type networkListFlags struct {
 	providerPhysicalNetwork string
 	providerSegment         string
 
-	shared *bool
+	agent string
+	tagFilterFlags
+
+	shared     *bool
+	adminState *bool
+}
+
+// routerExternal is the router:external filter: --internal means false,
+// --external (or --external=false) means what it says, neither means unset.
+func (f *networkListFlags) routerExternal() *bool {
+	switch {
+	case f.internal:
+		return boolPtr(false)
+	case f.externalSet:
+		return boolPtr(f.external)
+	default:
+		return nil
+	}
 }
 
 // providerListOptsExt adds the provider-extension query parameters neutron
@@ -172,15 +212,20 @@ func (f *networkListFlags) hasProviderFilter() bool {
 func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *networkListFlags, projectID string, w io.Writer,
 ) error {
-	base := networks.ListOpts{
-		Name:      f.name,
-		ProjectID: projectID,
-		Status:    f.status,
-		Shared:    f.shared,
+	if f.agent != "" {
+		return runNetworkListByAgent(ctx, client, o, f.agent, w)
 	}
+	base := networks.ListOpts{
+		Name:         f.name,
+		ProjectID:    projectID,
+		Status:       f.status,
+		Shared:       f.shared,
+		AdminStateUp: f.adminState,
+	}
+	f.apply(&base.Tags, &base.TagsAny, &base.NotTags, &base.NotTagsAny)
 	var opts networks.ListOptsBuilder = base
-	if f.externalSet {
-		opts = external.ListOptsExt{ListOptsBuilder: opts, External: boolPtr(f.external)}
+	if ext := f.routerExternal(); ext != nil {
+		opts = external.ListOptsExt{ListOptsBuilder: opts, External: ext}
 	}
 	if f.hasProviderFilter() {
 		opts = providerListOptsExt{
@@ -201,16 +246,32 @@ func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	return o.WriteList(w, networkListTable(all, f.long))
 }
 
+// runNetworkListByAgent is "network list --agent": the networks a DHCP agent
+// hosts (GET /agents/{id}/dhcp-networks). Upstream ignores every other filter
+// and --long on this path and prints the short columns; so does koc.
+func runNetworkListByAgent(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, agentID string, w io.Writer) error {
+	var all []networkExt
+	if err := agents.ListDHCPNetworks(ctx, client, agentID).ExtractIntoSlicePtr(&all, "networks"); err != nil {
+		return fmt.Errorf("listing networks hosted by DHCP agent %s: %w", agentID, err)
+	}
+	return o.WriteList(w, networkListTable(all, false))
+}
+
+// networkListTable renders upstream ListNetwork's columns: ID, Name and
+// Subnets by default; --long adds status, project, state, shared, network
+// type, router type, availability zones and tags.
 func networkListTable(list []networkExt, long bool) output.Table {
 	cols := []string{"ID", "Name", "Subnets"}
 	if long {
-		cols = []string{"ID", "Name", "Status", "Project", "State", "Shared", "Subnets", "Network Type", "Router:External", "MTU"}
+		cols = []string{"ID", "Name", "Status", "Project", "State", "Shared", "Subnets",
+			"Network Type", "Router Type", "Availability Zones", "Tags"}
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for i := range list {
 		n := &list[i]
 		if long {
-			t.Rows = append(t.Rows, []any{n.ID, n.Name, n.Status, n.ProjectID, adminState(n.AdminStateUp), n.Shared, n.Subnets, n.NetworkType, n.External, n.MTU})
+			t.Rows = append(t.Rows, []any{n.ID, n.Name, n.Status, n.ProjectID, adminState(n.AdminStateUp), n.Shared,
+				n.Subnets, n.NetworkType, routerType(n.External), n.AvailabilityZones, n.Tags})
 		} else {
 			t.Rows = append(t.Rows, []any{n.ID, n.Name, n.Subnets})
 		}
@@ -223,6 +284,14 @@ func adminState(up bool) string {
 		return "UP"
 	}
 	return "DOWN"
+}
+
+// routerType is upstream's RouterExternalColumn.
+func routerType(external bool) string {
+	if external {
+		return "External"
+	}
+	return "Internal"
 }
 
 func newNetworkShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -258,15 +327,36 @@ func runNetworkShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	return o.WriteSingle(w, fields, values)
 }
 
+// networkCreateFlags mirrors upstream CreateNetwork (network/v2/network.py).
+// Each on/off pair is mutually exclusive, as upstream's argparse groups are.
+// --pvlan/--no-pvlan and --qinq-vlan/--no-qinq-vlan are post-Zed and left out.
 type networkCreateFlags struct {
-	enable          bool
-	disable         bool
-	share           bool
-	external        bool
-	mtu             int
-	providerType    string
-	providerPhysNet string
-	providerSegment string
+	enable              bool
+	disable             bool
+	share               bool
+	noShare             bool
+	external            bool
+	internal            bool
+	defaultNet          bool
+	noDefault           bool
+	enablePortSecurity  bool
+	disablePortSecurity bool
+	transparentVLAN     bool
+	noTransparentVLAN   bool
+	mtu                 int
+	providerType        string
+	providerPhysNet     string
+	providerSegment     string
+	description         string
+	qosPolicy           string
+	dnsDomain           string
+	azHints             []string
+	project             string
+	projectDomain       string
+	// projectID is --project resolved by RunE, so the seam needs no identity client.
+	projectID     string
+	extraProperty []string
+	tagWriteFlags
 }
 
 func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -279,12 +369,12 @@ func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			if err := mutuallyExclusive(cmd.Flags(), "enable", "disable"); err != nil {
+			ctx := cmd.Context()
+			client, session, err := newNetworkSession(ctx, a)
+			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
-			if err != nil {
+			if f.projectID, err = resolveProjectRef(ctx, session, f.project, f.projectDomain); err != nil {
 				return err
 			}
 			return runNetworkCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
@@ -294,11 +384,37 @@ func newNetworkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.BoolVar(&f.enable, "enable", false, "enable the network (admin state up, default)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the network (admin state down)")
 	fl.BoolVar(&f.share, flagShare, false, "share the network across projects")
-	fl.BoolVar(&f.external, "external", false, "set the network as external")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "do not share the network across projects")
+	fl.BoolVar(&f.external, netFlagExternal, false, "set the network as external (router:external)")
+	fl.BoolVar(&f.internal, netFlagInternal, false, "set the network as internal (default)")
+	fl.BoolVar(&f.defaultNet, flagDefault, false, "use the network as the default external network")
+	fl.BoolVar(&f.noDefault, flagNoDefault, false, "do not use the network as the default external network (default)")
+	fl.BoolVar(&f.enablePortSecurity, flagEnablePortSecurity, false, "enable port security by default for ports on this network (default)")
+	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security by default for ports on this network")
+	fl.BoolVar(&f.transparentVLAN, netFlagTransparentVLAN, false, "make the network VLAN transparent")
+	fl.BoolVar(&f.noTransparentVLAN, netFlagNoTransparentVLAN, false, "do not make the network VLAN transparent")
 	fl.IntVar(&f.mtu, "mtu", 0, "maximum transmission unit for the network")
-	fl.StringVar(&f.providerType, "provider-network-type", "", "physical network type (flat, vlan, vxlan, ...)")
-	fl.StringVar(&f.providerPhysNet, "provider-physical-network", "", "name of the physical network")
-	fl.StringVar(&f.providerSegment, "provider-segment", "", "VLAN ID or tunnel ID for the network segment")
+	fl.StringVar(&f.providerType, netFlagProviderType, "", "physical network type (flat, vlan, vxlan, ...)")
+	fl.StringVar(&f.providerPhysNet, netFlagProviderPhysNet, "", "name of the physical network")
+	fl.StringVar(&f.providerSegment, netFlagProviderSegment, "", "VLAN ID or tunnel ID for the network segment (requires --provider-network-type)")
+	fl.StringVar(&f.description, flagDescription, "", "description for the network")
+	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the network (name or ID)")
+	fl.StringVar(&f.dnsDomain, flagDNSDomain, "", "DNS domain for the network (requires the dns-integration extension)")
+	fl.StringArrayVar(&f.azHints, flagAvailabilityZoneHint, nil, "availability zone to create the network in (repeatable)")
+	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	bindTagCreateFlags(cmd, &f.tagWriteFlags, "network")
+	for _, pair := range [][2]string{
+		{"enable", "disable"},
+		{flagShare, flagNoShare},
+		{netFlagExternal, netFlagInternal},
+		{flagDefault, flagNoDefault},
+		{flagEnablePortSecurity, flagDisablePortSecurity},
+		{netFlagTransparentVLAN, netFlagNoTransparentVLAN},
+	} {
+		cmd.MarkFlagsMutuallyExclusive(pair[0], pair[1])
+	}
 	return cmd
 }
 
@@ -334,22 +450,27 @@ func (opts providerCreateOpts) ToNetworkCreateMap() (map[string]any, error) {
 }
 
 func runNetworkCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *networkCreateFlags, w io.Writer) error {
-	base := networks.CreateOpts{Name: name}
-	if f.disable {
-		base.AdminStateUp = boolPtr(false)
-	} else {
-		base.AdminStateUp = boolPtr(true)
+	if f.providerSegment != "" && f.providerType == "" {
+		return fmt.Errorf("--%s requires --%s", netFlagProviderSegment, netFlagProviderType)
 	}
-	if f.share {
-		base.Shared = boolPtr(true)
+	// admin_state_up is always sent (upstream's --enable defaults to true).
+	base := networks.CreateOpts{
+		Name:                  name,
+		Description:           f.description,
+		AdminStateUp:          boolPtr(!f.disable),
+		Shared:                pairBool(f.share, f.noShare),
+		ProjectID:             f.projectID,
+		AvailabilityZoneHints: f.azHints,
 	}
 
 	var builder networks.CreateOptsBuilder = base
 	if f.mtu > 0 {
 		builder = mtu.CreateOptsExt{CreateOptsBuilder: builder, MTU: f.mtu}
 	}
-	if f.external {
-		builder = external.CreateOptsExt{CreateOptsBuilder: builder, External: boolPtr(true)}
+	// Upstream sends router:external only when --external or --internal is given;
+	// is_default is sent as given, without checking --external (neutron does).
+	if ext := pairBool(f.external, f.internal); ext != nil {
+		builder = external.CreateOptsExt{CreateOptsBuilder: builder, External: ext}
 	}
 	if f.providerType != "" || f.providerPhysNet != "" || f.providerSegment != "" {
 		builder = providerCreateOpts{
@@ -359,10 +480,18 @@ func runNetworkCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 			SegmentationID:    f.providerSegment,
 		}
 	}
+	attrs, err := networkCreateAttrs(ctx, client, f)
+	if err != nil {
+		return err
+	}
 
 	var n networkExt
-	if err := networks.Create(ctx, client, builder).ExtractInto(&n); err != nil {
+	if err := networks.Create(ctx, client, withNetworkCreateAttrs(builder, attrs)).ExtractInto(&n); err != nil {
 		return fmt.Errorf("creating network: %w", err)
+	}
+	// Tags cannot ride on the create; upstream sets them afterwards too.
+	if n.Tags, err = applyTagsForSet(ctx, client, tagResourceNetworks, n.ID, n.Tags, &f.tagWriteFlags); err != nil {
+		return err
 	}
 	fields, values := networkShowFields(&n)
 	return o.WriteSingle(w, fields, values)
@@ -404,12 +533,30 @@ func runNetworkDelete(ctx context.Context, client *gophercloud.ServiceClient, na
 	})
 }
 
+// networkSetFlags mirrors upstream SetNetwork. --pvlan/--no-pvlan are
+// post-Zed and left out.
 type networkSetFlags struct {
-	name    string
-	mtu     int
-	enable  bool
-	disable bool
-	share   bool
+	name                string
+	description         string
+	mtu                 int
+	enable              bool
+	disable             bool
+	share               bool
+	noShare             bool
+	external            bool
+	internal            bool
+	defaultNet          bool
+	noDefault           bool
+	enablePortSecurity  bool
+	disablePortSecurity bool
+	qosPolicy           string
+	noQoSPolicy         bool
+	dnsDomain           string
+	providerType        string
+	providerPhysNet     string
+	providerSegment     string
+	extraProperty       []string
+	tagWriteFlags
 }
 
 func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -432,10 +579,35 @@ func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new network name")
+	fl.StringVar(&f.description, flagDescription, "", "new description for the network")
 	fl.IntVar(&f.mtu, "mtu", 0, "new maximum transmission unit")
 	fl.BoolVar(&f.enable, "enable", false, "enable the network (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the network (admin state down)")
 	fl.BoolVar(&f.share, flagShare, false, "share the network across projects")
+	fl.BoolVar(&f.noShare, flagNoShare, false, "stop sharing the network across projects")
+	fl.BoolVar(&f.external, netFlagExternal, false, "set the network as external (router:external)")
+	fl.BoolVar(&f.internal, netFlagInternal, false, "set the network as internal")
+	fl.BoolVar(&f.defaultNet, flagDefault, false, "use the network as the default external network")
+	fl.BoolVar(&f.noDefault, flagNoDefault, false, "do not use the network as the default external network")
+	fl.BoolVar(&f.enablePortSecurity, flagEnablePortSecurity, false, "enable port security by default for ports on this network")
+	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security by default for ports on this network")
+	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the network (name or ID)")
+	fl.BoolVar(&f.noQoSPolicy, flagNoQoSPolicy, false, "detach the network's QoS policy")
+	fl.StringVar(&f.dnsDomain, flagDNSDomain, "", "DNS domain for the network (requires the dns-integration extension)")
+	fl.StringVar(&f.providerType, netFlagProviderType, "", "physical network type (flat, vlan, vxlan, ...)")
+	fl.StringVar(&f.providerPhysNet, netFlagProviderPhysNet, "", "name of the physical network")
+	fl.StringVar(&f.providerSegment, netFlagProviderSegment, "", "VLAN ID or tunnel ID for the network segment")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	bindTagSetFlags(fl, &f.tagWriteFlags, "network")
+	for _, pair := range [][2]string{
+		{flagShare, flagNoShare},
+		{netFlagExternal, netFlagInternal},
+		{flagDefault, flagNoDefault},
+		{flagEnablePortSecurity, flagDisablePortSecurity},
+		{flagQoSPolicy, flagNoQoSPolicy},
+	} {
+		cmd.MarkFlagsMutuallyExclusive(pair[0], pair[1])
+	}
 	return cmd
 }
 
@@ -447,34 +619,17 @@ func runNetworkSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	base := networks.UpdateOpts{}
-	changed := false
-	if f.name != "" {
-		base.Name = &f.name
-		changed = true
+	opts, changed := networkSetOpts(f, flags)
+	attrs, err := networkSetAttrs(ctx, client, f, flags)
+	if err != nil {
+		return err
 	}
-	if state := enableDisable(flags, f.enable, f.disable); state != nil {
-		base.AdminStateUp = state
-		changed = true
-	}
-	if flags.Changed(flagShare) {
-		base.Shared = boolPtr(f.share)
-		changed = true
-	}
-	var builder networks.UpdateOptsBuilder = base
-	if f.mtu > 0 {
-		builder = mtu.UpdateOptsExt{UpdateOptsBuilder: base, MTU: f.mtu}
-		changed = true
-	}
-	if !changed {
+	changed = changed || len(attrs) > 0
+	if !changed && !f.given() {
 		return fmt.Errorf("network set requires at least one attribute flag")
 	}
-	var n networkExt
-	if err := networks.Update(ctx, client, id, builder).ExtractInto(&n); err != nil {
-		return fmt.Errorf("updating network %s: %w", nameOrID, err)
-	}
-	fields, values := networkShowFields(&n)
-	return o.WriteSingle(w, fields, values)
+	req := networkUpdate{opts: opts, attrs: attrs, changed: changed, applyTags: applyTagsForSet}
+	return updateNetwork(ctx, client, o, nameOrID, id, req, &f.tagWriteFlags, w)
 }
 
 // flagSet is the small surface of *pflag.FlagSet used by the set/unset seams,
@@ -483,8 +638,14 @@ type flagSet interface {
 	Changed(string) bool
 }
 
+type networkUnsetFlags struct {
+	share         bool
+	extraProperty []string
+	tagWriteFlags
+}
+
 func newNetworkUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var share bool
+	f := &networkUnsetFlags{}
 	cmd := &cobra.Command{
 		Use:   "unset <network>",
 		Short: "Unset network properties",
@@ -498,26 +659,34 @@ func newNetworkUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNetworkUnset(ctx, client, o, args[0], share, cmd.OutOrStdout())
+			return runNetworkUnset(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().BoolVar(&share, flagShare, false, "make the network project-private (unset shared)")
+	fl := cmd.Flags()
+	// koc-only extra: upstream spells this "network set --no-share".
+	fl.BoolVar(&f.share, flagShare, false, "make the network project-private (unset shared)")
+	bindExtraPropertyUnsetFlag(fl, &f.extraProperty)
+	bindTagUnsetFlags(cmd, &f.tagWriteFlags, "network")
 	return cmd
 }
 
-func runNetworkUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, share bool, w io.Writer) error {
+func runNetworkUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *networkUnsetFlags, w io.Writer) error {
 	id, err := resolveNetworkID(ctx, client, nameOrID)
 	if err != nil {
 		return err
 	}
-	if !share {
+	var opts networks.UpdateOpts
+	if f.share {
+		opts.Shared = boolPtr(false)
+	}
+	attrs, err := parseExtraProperties(f.extraProperty, true)
+	if err != nil {
+		return err
+	}
+	changed := f.share || len(attrs) > 0
+	if !changed && !f.given() {
 		return fmt.Errorf("network unset requires at least one attribute flag")
 	}
-	opts := networks.UpdateOpts{Shared: boolPtr(false)}
-	var n networkExt
-	if err := networks.Update(ctx, client, id, opts).ExtractInto(&n); err != nil {
-		return fmt.Errorf("updating network %s: %w", nameOrID, err)
-	}
-	fields, values := networkShowFields(&n)
-	return o.WriteSingle(w, fields, values)
+	req := networkUpdate{opts: opts, attrs: attrs, changed: changed, applyTags: applyTagsForUnset}
+	return updateNetwork(ctx, client, o, nameOrID, id, req, &f.tagWriteFlags, w)
 }
