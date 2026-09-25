@@ -98,23 +98,20 @@ func TestRunQoSPolicyShow_NotFound(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// The name filter matches nothing, so the ref falls back to a literal ID,
-	// and that ID does not exist either.
-	fakeServer.Mux.HandleFunc("/qos/policies", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"policies": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/qos/policies/missing", func(w http.ResponseWriter, _ *http.Request) {
+	// A UUID skips the name lookup (no /qos/policies handler: a lookup would
+	// fail the test with a different error) and goes straight to the GET,
+	// which neutron answers 404.
+	fakeServer.Mux.HandleFunc("/qos/policies/"+resolveMissingID, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	err := runQoSPolicyShow(context.Background(), networkClient(fakeServer), o, "missing", &out)
+	err := runQoSPolicyShow(context.Background(), networkClient(fakeServer), o, resolveMissingID, &out)
 	if err == nil {
 		t.Fatal("expected an error for a QoS policy that does not exist")
 	}
-	if !strings.Contains(err.Error(), "showing network QoS policy missing") {
+	if !strings.Contains(err.Error(), "showing network QoS policy "+resolveMissingID) {
 		t.Errorf("error does not name the ref: %v", err)
 	}
 }
@@ -179,11 +176,8 @@ func TestRunQoSPolicyDelete_AggregatesFailures(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// The name lookup always misses, so every ref falls back to a literal ID.
-	fakeServer.Mux.HandleFunc("/qos/policies", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"policies": []}`))
-	})
+	// The name lookup resolves each ref to the ID of the same spelling.
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 
 	var deleted []string
 	fakeServer.Mux.HandleFunc("/qos/policies/p1", func(w http.ResponseWriter, _ *http.Request) {
@@ -556,21 +550,19 @@ func TestRunSubnetPoolShow_NotFound(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/subnetpools", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"subnetpools": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/subnetpools/missing", func(w http.ResponseWriter, _ *http.Request) {
+	// A UUID skips the name lookup and goes straight to the GET (see
+	// TestRunQoSPolicyShow_NotFound).
+	fakeServer.Mux.HandleFunc("/subnetpools/"+resolveMissingID, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	err := runSubnetPoolShow(context.Background(), networkClient(fakeServer), o, "missing", &out)
+	err := runSubnetPoolShow(context.Background(), networkClient(fakeServer), o, resolveMissingID, &out)
 	if err == nil {
 		t.Fatal("expected an error for a subnet pool that does not exist")
 	}
-	if !strings.Contains(err.Error(), `showing subnet pool "missing"`) {
+	if !strings.Contains(err.Error(), `showing subnet pool "`+resolveMissingID+`"`) {
 		t.Errorf("error does not name the ref: %v", err)
 	}
 }
@@ -579,10 +571,7 @@ func TestRunSubnetPoolDelete_AggregatesFailuresAndReportsSuccesses(t *testing.T)
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/subnetpools", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"subnetpools": []}`))
-	})
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	var deleted []string
 	fakeServer.Mux.HandleFunc("/subnetpools/sp1", func(w http.ResponseWriter, _ *http.Request) {
 		deleted = append(deleted, "sp1")
@@ -646,10 +635,7 @@ func TestRunTrunkShow_NotFound(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
 	fakeServer.Mux.HandleFunc("/trunks/missing", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -668,10 +654,7 @@ func TestRunTrunkSet_OnlySendsGivenAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
 	var body map[string]any
 	fakeServer.Mux.HandleFunc("/trunks/t1", func(w http.ResponseWriter, r *http.Request) {
 		th.AssertEquals(t, http.MethodPut, r.Method)
@@ -702,10 +685,7 @@ func TestRunTrunkSet_EnableSendsAdminStateUp(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
 	var body map[string]any
 	fakeServer.Mux.HandleFunc("/trunks/t1", func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -733,14 +713,8 @@ func TestRunTrunkSubportAdd_RequestBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var gotMethod string
 	var body map[string]any
 	fakeServer.Mux.HandleFunc("/trunks/t1/add_subports", func(w http.ResponseWriter, r *http.Request) {
@@ -775,10 +749,7 @@ func TestRunTrunkSubportAdd_InvalidSpecIsRejectedBeforeAnyRequest(t *testing.T) 
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
 	// No /ports handler: parseSubports must fail validating the spec before it
 	// ever tries to resolve a port, so any port HTTP call would 404 the test.
 
@@ -810,10 +781,7 @@ func TestRunRouterUnset_ClearsTheExternalGateway(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
 	var gotMethod string
 	var body map[string]any
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, r *http.Request) {
@@ -845,10 +813,7 @@ func TestRunRouterUnset_Error(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -868,14 +833,8 @@ func TestRunRouterRemovePort_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var gotMethod string
 	var body map[string]any
 	fakeServer.Mux.HandleFunc("/routers/router-1/remove_router_interface", func(w http.ResponseWriter, r *http.Request) {
@@ -904,14 +863,8 @@ func TestRunRouterRemovePort_Error(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/routers", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"routers": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/routers/router-1/remove_router_interface", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 	})

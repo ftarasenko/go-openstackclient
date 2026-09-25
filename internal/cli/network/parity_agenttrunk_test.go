@@ -40,7 +40,7 @@ func agentGet(t *testing.T, fakeServer th.FakeServer, prefix string) {
 func TestRunAgentList_NetworkListsHostingDHCPAgents(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/n1/dhcp-agents", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		if len(r.URL.Query()) != 0 {
@@ -67,7 +67,7 @@ func TestRunAgentList_NetworkListsHostingDHCPAgents(t *testing.T) {
 func TestRunAgentList_RouterLongAddsHAState(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/r1/l3-agents", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"agents":[{"id":"a2","agent_type":"L3 agent","host":"net2",
@@ -130,7 +130,7 @@ func TestRunAgentAddNetwork_DHCP(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	agentGet(t, fakeServer, "")
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/agents/a1/dhcp-networks", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"network_id":"n1"}`)
@@ -151,7 +151,7 @@ func TestRunAgentAddNetwork_WithoutDHCPOnlyLooksUp(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	agentGet(t, fakeServer, "")
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/agents/a1/dhcp-networks", func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected %s %s without --dhcp", r.Method, r.URL.Path)
 	})
@@ -178,7 +178,7 @@ func TestRunAgentRemoveNetwork_DHCP(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	agentGet(t, fakeServer, "")
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/agents/a1/dhcp-networks/n1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -212,7 +212,7 @@ func TestRunAgentAddRouter_Body(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
 			agentGet(t, fakeServer, "")
-			emptyLookup(t, fakeServer, "/routers", "routers")
+			echoLookup(t, fakeServer, "/routers", "routers")
 			called := false
 			fakeServer.Mux.HandleFunc("/agents/a1/l3-routers", func(w http.ResponseWriter, r *http.Request) {
 				called = true
@@ -238,7 +238,7 @@ func TestExec_AgentAddRouter_PriorityReachesTheBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	agentGet(t, fakeServer, "/v2.0")
-	emptyLookup(t, fakeServer, "/v2.0/routers", "routers")
+	echoLookup(t, fakeServer, "/v2.0/routers", "routers")
 	fakeServer.Mux.HandleFunc("/v2.0/agents/a1/l3-routers", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"router_id":"r1","ha_chassis_priority":0}`)
@@ -255,7 +255,7 @@ func TestRunAgentRemoveRouter_L3(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	agentGet(t, fakeServer, "")
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/agents/a1/l3-routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -273,7 +273,7 @@ func TestRunAgentRouterSet_PutsPriority(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	agentGet(t, fakeServer, "")
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/agents/a1/l3-routers/r1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		// No envelope: openstacksdk's update_router_in_agent sends the bare key.
@@ -339,7 +339,7 @@ func TestExec_ServiceProviderList_Wired(t *testing.T) {
 func TestRunTrunkCreate_ProjectAndPortOnlySubport(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"trunk":{
@@ -364,8 +364,8 @@ func TestRunTrunkCreate_ProjectAndPortOnlySubport(t *testing.T) {
 func TestRunTrunkSet_SubportOnlySkipsTrunkPut(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/trunks", "trunks")
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/trunks", "trunks")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/trunks/t1", func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected %s /trunks/t1 for a subport-only set", r.Method)
 	})
@@ -388,8 +388,8 @@ func TestRunTrunkSet_SubportOnlySkipsTrunkPut(t *testing.T) {
 func TestRunTrunkSet_AttributesThenSubports(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/trunks", "trunks")
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/trunks", "trunks")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var order []string
 	fakeServer.Mux.HandleFunc("/trunks/t1", func(w http.ResponseWriter, r *http.Request) {
 		order = append(order, "put")
@@ -415,8 +415,8 @@ func TestRunTrunkSet_AttributesThenSubports(t *testing.T) {
 func TestExec_TrunkSet_SubportFlagReachesTheSeam(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/trunks", "trunks")
-	emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+	echoLookup(t, fakeServer, "/v2.0/trunks", "trunks")
+	echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 	fakeServer.Mux.HandleFunc("/v2.0/trunks/t1/add_subports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestJSONRequest(t, r, `{"sub_ports":[{"port_id":"sub-1","segmentation_type":"vlan","segmentation_id":9}]}`)
 		writeJSON(t, w, http.StatusOK, trunkBareBody)
@@ -454,8 +454,8 @@ func TestRunTrunkList_LongMatchesUpstreamColumns(t *testing.T) {
 func TestExec_TrunkUnset_RemovesEachSubport(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/trunks", "trunks")
-	emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+	echoLookup(t, fakeServer, "/v2.0/trunks", "trunks")
+	echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 	fakeServer.Mux.HandleFunc("/v2.0/trunks/t1/remove_subports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"sub_ports":[{"port_id":"sub-1"},{"port_id":"sub-2"}]}`)
@@ -474,7 +474,7 @@ func TestExec_TrunkUnset_RemovesEachSubport(t *testing.T) {
 func TestExec_SubportList_AliasOfTrunkSubportList(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/trunks", "trunks")
+	echoLookup(t, fakeServer, "/v2.0/trunks", "trunks")
 	fakeServer.Mux.HandleFunc("/v2.0/trunks/t1/get_subports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"sub_ports":[{"port_id":"sub-1","segmentation_type":"vlan","segmentation_id":101}]}`)
@@ -524,8 +524,8 @@ func TestExec_TrunkSubportAdd_BothShapes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/v2.0/trunks", "trunks")
-			emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+			echoLookup(t, fakeServer, "/v2.0/trunks", "trunks")
+			echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 			called := false
 			fakeServer.Mux.HandleFunc("/v2.0/trunks/t1/add_subports", func(w http.ResponseWriter, r *http.Request) {
 				called = true
@@ -579,8 +579,8 @@ func TestExec_TrunkSubportRemove_BothShapes(t *testing.T) {
 		t.Run(strings.Join(argv, " "), func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/v2.0/trunks", "trunks")
-			emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+			echoLookup(t, fakeServer, "/v2.0/trunks", "trunks")
+			echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 			fakeServer.Mux.HandleFunc("/v2.0/trunks/t1/remove_subports", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodPut)
 				th.TestJSONRequest(t, r, `{"sub_ports":[{"port_id":"sub-1"},{"port_id":"sub-2"}]}`)

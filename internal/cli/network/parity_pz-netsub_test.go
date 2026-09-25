@@ -222,7 +222,7 @@ func TestPZNetworkSet_PVLANBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/networks", "networks")
+			echoLookup(t, fakeServer, "/networks", "networks")
 			fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodPut)
 				th.TestJSONRequest(t, r, tc.body)
@@ -240,7 +240,7 @@ func TestPZNetworkSet_PVLANBody(t *testing.T) {
 func TestPZNetworkSet_PVLANPortSecurityExclusion(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	pzNoRequest(t, fakeServer, "/networks/net-1")
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
@@ -265,7 +265,7 @@ func TestPZNetworkSetAndUnset_ExplainMissingExtension(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	pzExtensions(t, fakeServer, "/extensions", "router")
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		writeJSON(t, w, http.StatusBadRequest, `{"NeutronError":{"message":"Unrecognized attribute(s)"}}`)
@@ -290,7 +290,7 @@ func TestPZNetworkSetAndUnset_ExplainMissingExtension(t *testing.T) {
 func TestPZNetworkShow_PostZedFieldsEmptyWhenAbsent(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-1","name":"old"}}`)
 	})
@@ -331,7 +331,7 @@ func TestPZSubnetSet_LeakRoutesBodyAndShow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/subnets", "subnets")
+			echoLookup(t, fakeServer, "/subnets", "subnets")
 			fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodPut)
 				th.TestJSONRequest(t, r, tc.body)
@@ -352,7 +352,7 @@ func TestPZSubnetSet_LeakRoutesBodyAndShow(t *testing.T) {
 func TestPZSubnetSet_LeakRoutesThroughCobra(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/subnets", "subnets")
+	echoLookup(t, fakeServer, "/v2.0/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/v2.0/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestJSONRequest(t, r, `{"subnet":{"leak_routes":false}}`)
 		writeJSON(t, w, http.StatusOK, `{"subnet":{"id":"sub-1","leak_routes":false}}`)
@@ -372,7 +372,7 @@ func TestPZSubnetSet_ExplainsMissingExtension(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	pzExtensions(t, fakeServer, "/extensions", "subnet-dns-publish-fixed-ip")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		writeJSON(t, w, http.StatusBadRequest, `{"NeutronError":{"message":"Unrecognized attribute(s) 'leak_routes'"}}`)
@@ -393,7 +393,7 @@ func TestPZSubnetCreate_ExplainsTypedExtensionAttribute(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	pzExtensions(t, fakeServer, "/extensions", "router")
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		writeJSON(t, w, http.StatusBadRequest, `{"NeutronError":{"message":"Unrecognized attribute(s) 'dns_publish_fixed_ip'"}}`)
@@ -413,7 +413,7 @@ func TestPZSubnetUnset_ExplainsMissingExtension(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 	pzExtensions(t, fakeServer, "/extensions", "router")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			writeJSON(t, w, http.StatusOK, `{"subnet":{"id":"sub-1","service_types":["network:router_gateway"],"revision_number":3}}`)
@@ -433,7 +433,7 @@ func TestPZSubnetUnset_ExplainsMissingExtension(t *testing.T) {
 func TestPZSubnetShow_LeakRoutesEmptyWhenAbsent(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"subnet":{"id":"sub-1","name":"s1","cidr":"192.0.2.0/24"}}`)
 	})

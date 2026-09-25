@@ -18,9 +18,9 @@ import (
 func TestRunFloatingIPList_SendsEveryFilter(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/ports", "ports")
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		q := r.URL.Query()
@@ -105,8 +105,8 @@ func TestRunFloatingIPList_DefaultColumnsMatchUpstream(t *testing.T) {
 func TestRunFloatingIPCreate_SendsExtensionAttributesThenTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"floatingip":{
@@ -141,7 +141,7 @@ func TestRunFloatingIPCreate_SendsExtensionAttributesThenTags(t *testing.T) {
 func TestRunFloatingIPSet_QoSAndDescription(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/floatingips", "floatingips")
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"floatingip":{"description":"","qos_policy_id":null}}`)
@@ -160,7 +160,7 @@ func TestRunFloatingIPSet_QoSAndDescription(t *testing.T) {
 func TestRunFloatingIPSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/floatingips", "floatingips")
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"floatingip":{"id":"fip-1","tags":["old"]}}`)
@@ -184,7 +184,7 @@ func TestRunFloatingIPSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 func TestRunFloatingIPUnset_QoSAndTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/floatingips", "floatingips")
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"floatingip":{"qos_policy_id":null,"custom":null}}`)

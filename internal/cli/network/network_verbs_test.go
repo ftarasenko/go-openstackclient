@@ -32,16 +32,40 @@ func writeJSON(t *testing.T, w http.ResponseWriter, status int, body string) {
 	}
 }
 
-// emptyLookup registers a collection GET handler returning an empty list, so a
-// name→ID resolver falls back to treating its argument as an ID (pass-through).
-func emptyLookup(t *testing.T, fakeServer th.FakeServer, path, key string) {
+// echoLookup registers a collection GET handler for the name→ID lookup the
+// neutron resolvers make before acting on a non-UUID reference. A lookup by
+// name (or, for floating IPs, by floating_ip_address) is answered with exactly
+// one resource whose ID is the reference itself, so the resolver's unique-match
+// path hands the fixture's short ID ("net-1") on unchanged; a GET with neither
+// filter (a plain list) gets an empty collection.
+//
+// It replaced emptyLookup, which answered every lookup with an empty list and
+// leaned on the zero-match fallback the resolvers no longer have.
+func echoLookup(t *testing.T, fakeServer th.FakeServer, path, key string) {
 	t.Helper()
 	fakeServer.Mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("collection %s: method = %q, want GET for lookup", path, r.Method)
 		}
-		writeJSON(t, w, http.StatusOK, `{"`+key+`":[]}`)
+		writeJSON(t, w, http.StatusOK, echoLookupBody(r.URL.Query(), key))
 	})
+}
+
+// echoLookupBody is echoLookup's response: one match named after the lookup's
+// filter value, or an empty collection when the GET carried no lookup filter.
+// gophercloud's subnetpools decoder rejects a pool without its prefix lengths,
+// so that collection's match carries them.
+func echoLookupBody(q url.Values, key string) string {
+	extra := ""
+	if key == "subnetpools" {
+		extra = `,"default_prefixlen":0,"min_prefixlen":0,"max_prefixlen":0`
+	}
+	for _, attr := range []string{"name", "floating_ip_address"} {
+		if ref := q.Get(attr); ref != "" {
+			return fmt.Sprintf(`{%q:[{"id":%q,%q:%q%s}]}`, key, ref, attr, ref, extra)
+		}
+	}
+	return `{"` + key + `":[]}`
 }
 
 // --- network: show / delete / set / unset ------------------------------------
@@ -50,7 +74,7 @@ func TestRunNetworkShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	var gotMethod, gotPath string
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
@@ -75,7 +99,7 @@ func TestRunNetworkDelete_MultipleIDs(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	deleted := map[string]bool{}
 	fakeServer.Mux.HandleFunc("/networks/", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
@@ -101,7 +125,7 @@ func TestRunNetworkSet_NameAndMTU(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"network":{"name":"renamed","mtu":1400}}`)
@@ -124,7 +148,7 @@ func TestRunNetworkUnset_Share(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"network":{"shared":false}}`)
@@ -142,7 +166,7 @@ func TestRunNetworkUnset_Share(t *testing.T) {
 func TestRunNetworkUnset_NoFlagErrors(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
@@ -180,7 +204,7 @@ func TestRunSubnetShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"subnet":{"id":"sub-1","name":"sn","cidr":"10.0.0.0/24","ip_version":4}}`)
@@ -201,7 +225,7 @@ func TestRunSubnetDelete(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -221,7 +245,7 @@ func TestRunSubnetSet_NameAndDHCP(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"subnet":{"name":"newname","enable_dhcp":false}}`)
@@ -453,7 +477,7 @@ func TestRunPortShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","name":"p","mac_address":"aa:bb:cc:dd:ee:ff"}}`)
@@ -475,7 +499,7 @@ func TestRunPortCreate_WithFixedIPResolvesSubnet(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	// network resolve → empty → pass through as ID.
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	// subnet resolve by name → one match, exercising name→ID resolution.
 	fakeServer.Mux.HandleFunc("/subnets", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
@@ -500,7 +524,7 @@ func TestRunPortDelete(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -520,7 +544,7 @@ func TestRunPortSet_Name(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"port":{"name":"renamed"}}`)
@@ -564,7 +588,7 @@ func TestRunRouterShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"router":{"id":"rtr-1","name":"r","status":"ACTIVE"}}`)
@@ -594,7 +618,7 @@ func TestRunRouterShow_InterfacesInfo(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"router":{"id":"rtr-1","name":"r","status":"ACTIVE"}}`)
 	})
@@ -767,7 +791,7 @@ func TestRunRouterDelete(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/routers", "routers")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -789,8 +813,8 @@ func TestRunRouterSet_ExternalGatewayResolvesNetwork(t *testing.T) {
 
 	// The router resolve and the gateway network resolve both list /networks
 	// and /routers by name; return empty so args pass through as IDs.
-	emptyLookup(t, fakeServer, "/routers", "routers")
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"router":{"name":"renamed","external_gateway_info":{"network_id":"ext-net"}}}`)
@@ -810,8 +834,8 @@ func TestRunRouterAddSubnet(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/routers", "routers")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1/add_router_interface", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"subnet_id":"sub-1"}`)
@@ -832,8 +856,8 @@ func TestRunRouterRemoveSubnet(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/routers", "routers")
-	emptyLookup(t, fakeServer, "/subnets", "subnets")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/subnets", "subnets")
 	fakeServer.Mux.HandleFunc("/routers/rtr-1/remove_router_interface", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"subnet_id":"sub-1"}`)
@@ -878,12 +902,8 @@ func TestRunFloatingIPShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// resolveFloatingIPID lists by floating_ip_address; return empty → the arg
-	// is treated as an ID.
-	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodGet)
-		writeJSON(t, w, http.StatusOK, `{"floatingips":[]}`)
-	})
+	// resolveFloatingIPID looks a non-UUID reference up by floating_ip_address.
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"floatingip":{"id":"fip-1","floating_ip_address":"1.2.3.4"}}`)
@@ -904,10 +924,7 @@ func TestRunFloatingIPCreate_ResolvesNetwork(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodGet)
-		writeJSON(t, w, http.StatusOK, `{"networks":[]}`)
-	})
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"floatingip":{"floating_network_id":"ext-net"}}`)
@@ -927,10 +944,7 @@ func TestRunFloatingIPDelete(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodGet)
-		writeJSON(t, w, http.StatusOK, `{"floatingips":[]}`)
-	})
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -950,11 +964,8 @@ func TestRunFloatingIPSet_AssociatesPort(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodGet)
-		writeJSON(t, w, http.StatusOK, `{"floatingips":[]}`)
-	})
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"floatingip":{"port_id":"port-1"}}`)
@@ -974,10 +985,7 @@ func TestRunFloatingIPUnset_DisassociatesPort(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodGet)
-		writeJSON(t, w, http.StatusOK, `{"floatingips":[]}`)
-	})
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"floatingip":{"port_id":null}}`)
@@ -995,9 +1003,7 @@ func TestRunFloatingIPUnset_DisassociatesPort(t *testing.T) {
 func TestRunFloatingIPUnset_NoPortErrors(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(t, w, http.StatusOK, `{"floatingips":[]}`)
-	})
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
 
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
@@ -1177,7 +1183,7 @@ func TestRunSecurityGroupShow_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"security_group":{"id":"sg-1","name":"default"}}`)
@@ -1217,7 +1223,7 @@ func TestRunSecurityGroupDelete(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodDelete)
 		w.WriteHeader(http.StatusNoContent)
@@ -1237,7 +1243,7 @@ func TestRunSecurityGroupSet_NameAndDescription(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"security_group":{"name":"renamed","description":"new desc"}}`)
@@ -1261,7 +1267,7 @@ func TestRunSecurityGroupRuleList_FilteredByGroup(t *testing.T) {
 
 	// resolveSecGroupID → empty → group arg passes through as ID and becomes a
 	// security_group_id filter on the rule list.
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		th.TestFormValues(t, r, map[string]string{"security_group_id": "sg-1"})
@@ -1327,7 +1333,7 @@ func TestRunPortShow_RendersAllowedAddressPairsAndPortSecurity(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"port":{
@@ -1372,7 +1378,7 @@ func TestRunPortShow_PortSecurityAbsentRendersEmpty(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"port":{"id":"port-1","name":"p"}}`)
 	})
@@ -1394,7 +1400,7 @@ func TestRunPortSet_RendersPortSecurityFromTheResponse(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"port": {"port_security_enabled": false}}`)
@@ -1425,7 +1431,7 @@ func TestRunPortCreate_NoSecurityGroupAndPortSecurity(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"port":{"name":"portA","network_id":"net-1","security_groups":[],"port_security_enabled":false}}`)
@@ -1449,7 +1455,7 @@ func TestRunPortCreate_AllowedAddress(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"port":{"name":"portA","network_id":"net-1","allowed_address_pairs":[{"ip_address":"10.0.0.100"}]}}`)

@@ -128,13 +128,8 @@ func TestRunSubnetPoolSet_OnlySendsGivenAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// resolveSubnetPoolID name-filters first; an empty result falls back to the
-	// literal reference.
-	fakeServer.Mux.HandleFunc("/subnetpools", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"subnetpools": []}`))
-	})
+	// resolveSubnetPoolID looks the non-UUID reference up by name.
+	echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
 	var gotMethod string
 	fakeServer.Mux.HandleFunc("/subnetpools/sp1", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -247,13 +242,9 @@ func TestRunTrunkDelete_AggregatesFailures(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// resolveTrunkID's name lookup always misses here, so each ref falls back
-	// to being treated as a literal ID (the documented zero-match behavior).
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
+	// resolveTrunkID's name lookup resolves each ref to the ID of the same
+	// spelling, so the per-ref DELETEs below are what is exercised.
+	echoLookup(t, fakeServer, "/trunks", "trunks")
 
 	var deleted []string
 	fakeServer.Mux.HandleFunc("/trunks/t1", func(w http.ResponseWriter, _ *http.Request) {
@@ -285,14 +276,8 @@ func TestRunTrunkCreate_RequestBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	// The parent and sub port references are UUIDs already, but resolvePortID
-	// still name-filters first; an empty result falls back to the literal ref.
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodGet)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	// resolvePortID looks the parent and sub port names up.
+	echoLookup(t, fakeServer, "/ports", "ports")
 
 	var gotMethod string
 	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, r *http.Request) {
@@ -340,11 +325,7 @@ func TestRunTrunkCreate_RequestBody(t *testing.T) {
 func TestParseSubports_Validation(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/ports", "ports")
 	client := networkClient(fakeServer)
 
 	tests := []struct {
@@ -381,11 +362,7 @@ func TestRunTrunkSubportList_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
 	var gotPath string
 	fakeServer.Mux.HandleFunc("/trunks/t1/get_subports", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -418,16 +395,8 @@ func TestRunTrunkSubportRemove_RequestBody(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/trunks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"trunks": []}`))
-	})
-	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ports": []}`))
-	})
+	echoLookup(t, fakeServer, "/trunks", "trunks")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var gotMethod string
 	fakeServer.Mux.HandleFunc("/trunks/t1/remove_subports", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method

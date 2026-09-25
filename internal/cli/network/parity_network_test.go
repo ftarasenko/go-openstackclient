@@ -98,7 +98,7 @@ func TestRunNetworkList_AgentListsDHCPNetworks(t *testing.T) {
 func TestRunNetworkCreate_SendsExtensionAttributesThenTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/networks", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"network":{
@@ -185,8 +185,8 @@ func TestRunNetworkCreate_ProviderSegmentNeedsType(t *testing.T) {
 func TestRunNetworkSet_SendsNewAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"network":{
@@ -223,7 +223,7 @@ func TestRunNetworkSet_SendsNewAttributes(t *testing.T) {
 func TestRunNetworkSet_NoQoSPolicyAndInternal(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestJSONRequest(t, r, `{"network":{"qos_policy_id":null,"router:external":false,
 		  "is_default":false,"port_security_enabled":true}}`)
@@ -242,7 +242,7 @@ func TestRunNetworkSet_NoQoSPolicyAndInternal(t *testing.T) {
 func TestRunNetworkSet_TagsOnlySkipsTheNetworkPut(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-1","tags":["old"]}}`)
@@ -268,7 +268,7 @@ func TestRunNetworkSet_TagsOnlySkipsTheNetworkPut(t *testing.T) {
 func TestRunNetworkUnset_ExtraPropertyShareAndTags(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"network":{"shared":false,"dns_domain":null}}`)
@@ -293,7 +293,7 @@ func TestRunNetworkUnset_ExtraPropertyShareAndTags(t *testing.T) {
 func TestRunNetworkUnset_AllTagOnlySkipsTheNetworkPut(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-1","tags":["a","b"]}}`)
@@ -316,7 +316,7 @@ func TestRunNetworkUnset_AllTagOnlySkipsTheNetworkPut(t *testing.T) {
 func TestRunNetworkShow_RendersExtensionAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/networks/net-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-1","qos_policy_id":"qos-1",
 		  "dns_domain":"example.com.","is_default":false,"port_security_enabled":true,
@@ -403,9 +403,7 @@ func TestExec_NetworkList_NewFlagsReachTheQuery(t *testing.T) {
 func TestExec_NetworkSet_NoShareAndInternal(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	fakeServer.Mux.HandleFunc("/v2.0/networks", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(t, w, http.StatusOK, `{"networks":[]}`)
-	})
+	echoLookup(t, fakeServer, "/v2.0/networks", "networks")
 	fakeServer.Mux.HandleFunc("/v2.0/networks/net-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"network":{"shared":false,"router:external":false,"dns_domain":"example.com."}}`)

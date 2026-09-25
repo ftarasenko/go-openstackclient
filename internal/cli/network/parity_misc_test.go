@@ -108,7 +108,7 @@ func TestRunQoSPolicyCreate_ExplicitFalsesProjectAndExtraProperty(t *testing.T) 
 func TestRunQoSPolicySet_ExtraProperty(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/qos/policies", "policies")
+	echoLookup(t, fakeServer, "/qos/policies", "policies")
 	fakeServer.Mux.HandleFunc("/qos/policies/"+qosPolicyID, func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"policy":{"name":"silver","custom":true}}`)
@@ -359,7 +359,7 @@ func TestExec_RBACSet_RequiresSomething(t *testing.T) {
 func TestRunSegmentCreateAndSet_ExtraProperty(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/networks", "networks")
 	fakeServer.Mux.HandleFunc("/segments", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"segment":{"name":"s1","network_id":"`+extNetworkID+`",
@@ -417,7 +417,7 @@ func TestRunSegmentList_ColumnsMatchUpstream(t *testing.T) {
 func TestRunPortForwardingList_SendsEveryFilter(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	var queries []map[string][]string
 	fakeServer.Mux.HandleFunc("/floatingips/"+extFIPID+"/port_forwardings", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
@@ -466,7 +466,7 @@ func TestRunPortForwardingList_RejectsABadExternalPort(t *testing.T) {
 func TestRunPortForwardingCreateAndSet_ExtraProperty(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/ports", "ports")
+	echoLookup(t, fakeServer, "/ports", "ports")
 	fakeServer.Mux.HandleFunc("/floatingips/"+extFIPID+"/port_forwardings", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"port_forwarding":{"internal_port_id":"`+extPortID+`",
@@ -493,7 +493,7 @@ func TestRunPortForwardingCreateAndSet_ExtraProperty(t *testing.T) {
 func TestExec_PortForwardingList_FlagsReachTheQuery(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/ports", "ports")
+	echoLookup(t, fakeServer, "/v2.0/ports", "ports")
 	fakeServer.Mux.HandleFunc("/v2.0/floatingips/"+extFIPID+"/port_forwardings", func(w http.ResponseWriter, r *http.Request) {
 		want := map[string][]string{"internal_port_id": {extPortID}, "external_port_range": {"80:90"}, "protocol": {"udp"}}
 		if got := map[string][]string(r.URL.Query()); !reflect.DeepEqual(got, want) {

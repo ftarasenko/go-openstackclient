@@ -81,7 +81,7 @@ func TestRunSecurityGroupCreate_StatefulAndExplicitEmptyDescription(t *testing.T
 func TestRunSecurityGroupSet_StatefulAndExtraProperty(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPut)
 		th.TestJSONRequest(t, r, `{"security_group":{"stateful":true,"custom":3}}`)
@@ -101,7 +101,7 @@ func TestRunSecurityGroupSet_StatefulAndExtraProperty(t *testing.T) {
 func TestRunSecurityGroupSet_TagsOnlySkipsTheUpdate(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
 		writeJSON(t, w, http.StatusOK, `{"security_group":{"id":"sg-1","tags":["old"]}}`)
@@ -142,7 +142,7 @@ func TestRunSecurityGroupUnset_TagAndAllTag(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+			echoLookup(t, fakeServer, "/security-groups", "security_groups")
 			fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, r *http.Request) {
 				th.TestMethod(t, r, http.MethodGet)
 				writeJSON(t, w, http.StatusOK, `{"security_group":{"id":"sg-1","tags":["a","b","c"]}}`)
@@ -171,7 +171,7 @@ func TestRunSecurityGroupUnset_RequiresAFlag(t *testing.T) {
 func TestRunSecurityGroupShow_SharedAndRevision(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"security_group":{"id":"sg-1","name":"web","stateful":true,"shared":true,"revision_number":4}}`)
 	})
@@ -192,8 +192,8 @@ func TestRunSecurityGroupShow_SharedAndRevision(t *testing.T) {
 func TestRunSecurityGroupRuleCreate_ICMPTypeCodeZeroAndNewAttributes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
-	emptyLookup(t, fakeServer, "/address-groups", "address_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/address-groups", "address_groups")
 	fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)
 		th.TestJSONRequest(t, r, `{"security_group_rule":{
@@ -241,7 +241,7 @@ func TestRunSecurityGroupRuleCreate_ProtocolNormalisation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
-			emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+			echoLookup(t, fakeServer, "/security-groups", "security_groups")
 			fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
 				th.TestJSONRequest(t, r, `{"security_group_rule":`+tc.body+`}`)
 				writeJSON(t, w, http.StatusCreated, `{"security_group_rule":{"id":"rule-1"}}`)
@@ -317,7 +317,7 @@ func TestRunSecurityGroupRuleList_SendsEveryFilterAndUpstreamColumns(t *testing.
 func TestRunSecurityGroupRuleList_GroupDropsTheGroupColumn(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/security-group-rules", func(w http.ResponseWriter, r *http.Request) {
 		th.TestFormValues(t, r, map[string]string{"security_group_id": "sg-1", "direction": "ingress"})
 		writeJSON(t, w, http.StatusOK, `{"security_group_rules":[]}`)
@@ -440,7 +440,7 @@ func TestExec_SecurityGroupCreate_StatelessProjectTags(t *testing.T) {
 func TestExec_SecurityGroupUnset_AllTag(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
-	emptyLookup(t, fakeServer, "/v2.0/security-groups", "security_groups")
+	echoLookup(t, fakeServer, "/v2.0/security-groups", "security_groups")
 	fakeServer.Mux.HandleFunc("/v2.0/security-groups/sg-1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusOK, `{"security_group":{"id":"sg-1","tags":["a"]}}`)
 	})
