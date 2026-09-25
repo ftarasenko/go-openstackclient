@@ -407,7 +407,7 @@ func runRBACSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if f.targetProject != "" {
 		opts = withRbacUpdateAttrs(rbacpolicies.UpdateOpts{TargetTenant: f.targetProject}, extra)
 	} else {
-		opts = rbacUpdateExt{bodyExt{
+		opts = rbacUpdateExt{bodyExt: bodyExt{
 			build: func() (map[string]any, error) { return map[string]any{"rbac_policy": map[string]any{}}, nil },
 			key:   "rbac_policy",
 			extra: extra,

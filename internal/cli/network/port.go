@@ -804,20 +804,6 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, names
 	})
 }
 
-// guardedPortUpdate is withPortUpdateAttrs plus neutron's If-Match revision
-// guard. ports.Update builds its headers by reflecting over the builder it is
-// handed, not over the ports.UpdateOpts inside it, so wrapping the opts alone
-// would silently drop opts.RevisionNumber; re-declaring the field here keeps
-// the header on the wire.
-type guardedPortUpdate struct {
-	portUpdateExt
-	RevisionNumber *int `json:"-" h:"If-Match"`
-}
-
-func portUpdateBuilder(opts ports.UpdateOpts, attrs map[string]any) guardedPortUpdate {
-	return guardedPortUpdate{portUpdateExt: withPortUpdateAttrs(opts, attrs), RevisionNumber: opts.RevisionNumber}
-}
-
 // updatePort is the shared tail of set and unset: PUT the attributes when any
 // were given (upstream skips the update when only tags change), then apply the
 // tag change, then render what the port now looks like. current, when the verb
@@ -832,7 +818,7 @@ func updatePort(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	switch {
 	case changed:
 		p = &portExt{}
-		if err := ports.Update(ctx, client, id, portUpdateBuilder(opts, attrs)).ExtractInto(p); err != nil {
+		if err := ports.Update(ctx, client, id, withPortUpdateAttrs(opts, attrs)).ExtractInto(p); err != nil {
 			return fmt.Errorf("updating port %s: %w", ref, err)
 		}
 	case p == nil:

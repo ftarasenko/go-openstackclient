@@ -344,7 +344,7 @@ func runFloatingIPCreate(ctx context.Context, client *gophercloud.ServiceClient,
 
 	var fip floatingIPExt
 	if err := floatingips.Create(ctx, client, withFloatingIPCreateAttrs(opts, attrs)).ExtractInto(&fip); err != nil {
-		return fmt.Errorf("creating floating IP: %w", err)
+		return explainMissingExtension(ctx, client, fmt.Errorf("creating floating IP: %w", err), attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if fip.Tags, err = applyTagsForSet(ctx, client, tagResourceFloatingIPs, fip.ID, fip.Tags, &f.tagWriteFlags); err != nil {
@@ -489,7 +489,7 @@ func updateFloatingIP(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if changed {
 		fip = &floatingIPExt{}
 		if err := floatingips.Update(ctx, client, id, withFloatingIPUpdateAttrs(opts, attrs)).ExtractInto(fip); err != nil {
-			return fmt.Errorf("updating floating IP %s: %w", ref, err)
+			return explainMissingExtension(ctx, client, fmt.Errorf("updating floating IP %s: %w", ref, err), attrs)
 		}
 	} else if fip, err = getFloatingIP(ctx, client, id); err != nil {
 		return fmt.Errorf("getting floating IP %s: %w", ref, err)
