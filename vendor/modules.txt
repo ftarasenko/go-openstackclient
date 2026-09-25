@@ -75,8 +75,13 @@ github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/providers
 github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/quotas
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/attributestags
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgp/peers
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgp/speakers
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgpvpns
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/external
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/groups
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/policies
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/rules
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/addressscopes
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/extraroutes
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips
@@ -94,7 +99,13 @@ github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/securit
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/rules
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/segments
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/subnetpools
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/taas/tapmirrors
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/trunks
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/endpointgroups
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/ikepolicies
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/ipsecpolicies
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/services
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/siteconnections
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets
