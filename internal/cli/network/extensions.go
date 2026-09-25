@@ -14,6 +14,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/networkipavailabilities"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/rbacpolicies"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/segments"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -82,14 +83,63 @@ func runIPAvailabilityList(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return fmt.Errorf("parsing the IP availability list: %w", err)
 	}
-	t := output.Table{
-		Columns: []string{"Network ID", "Network Name", "Total IPs", "Used IPs"},
-		Rows:    make([][]any, 0, len(all)),
+	details, err := ipAvailabilityDetails(pages)
+	if err != nil {
+		return fmt.Errorf("parsing the IP availability list: %w", err)
 	}
-	for _, av := range all {
-		t.Rows = append(t.Rows, []any{av.NetworkID, av.NetworkName, av.TotalIPs, av.UsedIPs})
+	t := output.Table{
+		Columns: []string{
+			"Network ID", "Network Name", "Total IPs", "Used IPs",
+			"Total IPs in Subnet", "Total IPs in Allocation Pool",
+			"Used IPs in Subnet", "Used IPs in Allocation Pool",
+		},
+		Rows: make([][]any, 0, len(all)),
+	}
+	for i, av := range all {
+		row := []any{av.NetworkID, av.NetworkName, av.TotalIPs, av.UsedIPs}
+		for _, field := range ipAvailabilityDetailFields {
+			var v any = ""
+			if i < len(details) && details[i] != nil {
+				if d, ok := details[i][field]; ok {
+					v = d
+				}
+			}
+			row = append(row, v)
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
+}
+
+// ipAvailabilityDetailFields are the four keys of ip_availability_details,
+// upstream's last four list columns (ip_availability.py _DETAIL_FIELDS). The
+// attribute exists only with the network-ip-availability-details extension, so
+// a cloud without it renders the columns empty, as upstream does.
+var ipAvailabilityDetailFields = []string{
+	"total_ips_in_subnet", "total_ips_in_allocation_pool",
+	"used_ips_in_subnet", "used_ips_in_allocation_pool",
+}
+
+// ipAvailabilityDetails reads ip_availability_details off each listed network,
+// index-aligned with ExtractNetworkIPAvailabilities. It is decoded separately
+// because NetworkIPAvailability has its own UnmarshalJSON (for total_ips as a
+// big integer), which an embedding struct would inherit and so lose the field.
+func ipAvailabilityDetails(pages pagination.Page) ([]map[string]any, error) {
+	var rows []struct {
+		Details map[string]any `json:"ip_availability_details"`
+	}
+	page, ok := pages.(networkipavailabilities.NetworkIPAvailabilityPage)
+	if !ok {
+		return nil, fmt.Errorf("unexpected page type %T", pages)
+	}
+	if err := page.ExtractIntoSlicePtr(&rows, "network_ip_availabilities"); err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, len(rows))
+	for i, r := range rows {
+		out[i] = r.Details
+	}
+	return out, nil
 }
 
 func newIPAvailabilityShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

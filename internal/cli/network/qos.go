@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -454,36 +455,42 @@ func runQoSRuleList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return fmt.Errorf("listing the rules of network QoS policy %s: %w", ref, err)
 	}
-	t := output.Table{
-		Columns: []string{"ID", "Type", "Properties"},
-		Rows:    make([][]any, 0, len(p.Rules)),
-	}
+	t := output.Table{Columns: qosRuleListColumns, Rows: make([][]any, 0, len(p.Rules))}
 	for _, rule := range p.Rules {
-		t.Rows = append(t.Rows, []any{
-			fmt.Sprint(rule["id"]),
-			fmt.Sprint(rule["type"]),
-			summariseQoSRule(rule),
-		})
+		row := make([]any, 0, len(qosRuleListFields))
+		for _, field := range qosRuleListFields {
+			row = append(row, qosRuleCell(rule[field]))
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }
 
-// summariseQoSRule renders every field but id/type as a stable key=value list,
-// so a rule type koc does not model still shows its settings.
-func summariseQoSRule(rule map[string]any) string {
-	keys := make([]string, 0, len(rule))
-	for k := range rule {
-		if k == "id" || k == "type" {
-			continue
-		}
-		keys = append(keys, k)
+// qosRuleListColumns/qosRuleListFields are upstream's ListNetworkQosRule
+// columns: one per rule attribute, empty where a rule type has no such field.
+// "Max Burst Kbits" reads max_burst_kbps — neutron's key, upstream's header.
+var (
+	qosRuleListColumns = []string{
+		"ID", "QoS Policy ID", "Type", "Max Kbps", "Max Burst Kbits",
+		"Min Kbps", "Min Kpps", "DSCP mark", "Direction",
 	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, rule[k]))
+	qosRuleListFields = []string{
+		"id", "qos_policy_id", "type", "max_kbps", "max_burst_kbps",
+		"min_kbps", "min_kpps", "dscp_mark", "direction",
 	}
-	return strings.Join(parts, ", ")
+)
+
+// qosRuleCell renders one rule attribute: absent is empty, and JSON numbers
+// (float64 after decoding) print as integers, which every QoS rule value is.
+func qosRuleCell(v any) any {
+	switch n := v.(type) {
+	case nil:
+		return ""
+	case float64:
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	default:
+		return v
+	}
 }
 
 // qosRuleTypeOf finds an existing rule's type by looking it up in its policy,
