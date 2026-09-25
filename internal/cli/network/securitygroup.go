@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/rules"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
@@ -17,6 +15,13 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+)
+
+// Flag names local to "security group". They live here rather than in
+// flagnames.go because only this file uses them.
+const (
+	flagSGStateful  = "stateful"
+	flagSGStateless = "stateless"
 )
 
 // newSecurityGroupCommand builds the "group" child of the "security" parent,
@@ -32,32 +37,70 @@ func newSecurityGroupCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	cmd.AddCommand(newSecurityGroupCreateCommand(a, o))
 	cmd.AddCommand(newSecurityGroupDeleteCommand(a, o))
 	cmd.AddCommand(newSecurityGroupSetCommand(a, o))
+	cmd.AddCommand(newSecurityGroupUnsetCommand(a, o))
 	cmd.AddCommand(newSecurityGroupRuleCommand(a, o))
 	return cmd
 }
 
-func secGroupShowFields(g *groups.SecGroup) ([]string, []any) {
-	fields := []string{"id", "name", "description", "stateful", "project_id", "tags", "created_at", "updated_at"}
-	values := []any{g.ID, g.Name, g.Description, g.Stateful, g.ProjectID, g.Tags, g.CreatedAt, g.UpdatedAt}
+// SecGroupSharedAttr is neutron's `shared` attribute of a security group (the
+// security-groups-shared-filtering extension), which gophercloud's SecGroup
+// does not model. A pointer, so a cloud without the extension renders an empty
+// cell rather than a misleading False.
+type SecGroupSharedAttr struct {
+	Shared *bool `json:"shared"`
+}
+
+// secGroupExt is a SecGroup plus its shared attribute. Both are anonymous
+// embeds so gophercloud's ExtractInto decodes each separately — SecGroup's own
+// UnmarshalJSON would otherwise swallow the extension field. The embed is
+// exported because gophercloud reflects into each embedded struct, and
+// reflect cannot read an unexported one (it panics).
+type secGroupExt struct {
+	groups.SecGroup
+	SecGroupSharedAttr
+}
+
+// secGroupKey is the envelope of a single security group in neutron's
+// responses. groups' results define no ExtractInto that knows it, so the
+// label is passed to ExtractIntoStructPtr directly.
+const secGroupKey = "security_group"
+
+// secGroupShowFields renders upstream's show columns except `rules`, which koc
+// lists with "security group rule list <group>" instead.
+func secGroupShowFields(g *secGroupExt) ([]string, []any) {
+	fields := []string{
+		"id", "name", "description", "stateful", "shared", "project_id", "tags",
+		"revision_number", "created_at", "updated_at",
+	}
+	values := []any{
+		g.ID, g.Name, g.Description, g.Stateful, derefOrNil(g.Shared), g.ProjectID, g.Tags,
+		g.RevisionNumber, g.CreatedAt, g.UpdatedAt,
+	}
 	return fields, values
+}
+
+func getSecGroup(ctx context.Context, client *gophercloud.ServiceClient, id string) (*secGroupExt, error) {
+	var g secGroupExt
+	if err := groups.Get(ctx, client, id).ExtractIntoStructPtr(&g, secGroupKey); err != nil {
+		return nil, err
+	}
+	return &g, nil
 }
 
 // secGroupListFlags holds the filters accepted by "security group list".
 // Upstream OSC (network/v2/security_group.py ListSecurityGroup) takes --project,
-// --project-domain and the tag filters; --name and --all-projects are
-// koc-native additions (see allProjectsNetworkList for the latter). --name is a
-// plain neutron query filter, so it is exact-match and server-side.
+// --project-domain, --share/--no-share and the tag filters; --name and
+// --all-projects are koc-native additions (see allProjectsNetworkList for the
+// latter). --name is a plain neutron query filter, so it is exact-match and
+// server-side.
 type secGroupListFlags struct {
 	name          string
 	project       string
 	projectDomain string
-	tags          []string
-	anyTags       []string
-	notTags       []string
-	notAnyTags    []string
 	share         bool
 	noShare       bool
 	allProjects   bool
+	tagFilterFlags
 
 	shared *bool
 }
@@ -91,48 +134,21 @@ func newSecurityGroupListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "list only security groups with this name")
-	fl.StringVar(&f.project, "project", "", "list only security groups owned by this project (name or ID)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
-	fl.StringSliceVar(&f.tags, "tags", nil, "list only security groups with all of these tags (comma-separated)")
-	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only security groups with any of these tags (comma-separated)")
-	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude security groups with all of these tags (comma-separated)")
-	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude security groups with any of these tags (comma-separated)")
+	fl.StringVar(&f.project, flagProject, "", "list only security groups owned by this project (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindTagFilterFlags(fl, &f.tagFilterFlags, "security groups")
 	fl.BoolVar(&f.share, flagShare, false, "list only security groups shared between projects")
 	fl.BoolVar(&f.noShare, flagNoShare, false, "list only security groups not shared between projects")
 	allprojects.Bind(cmd, &f.allProjects, allProjectsNetworkList)
-	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
+	cmd.MarkFlagsMutuallyExclusive(flagProject, "all-projects")
 	return cmd
-}
-
-// SecGroupSharedAttr is neutron's `shared` attribute of a security group (the
-// security-groups-shared-filtering extension), which gophercloud's SecGroup
-// does not model. A pointer, so a cloud without the extension renders an empty
-// cell rather than a misleading False.
-type SecGroupSharedAttr struct {
-	Shared *bool `json:"shared"`
-}
-
-// secGroupListRow is a SecGroup plus its shared attribute. Both are anonymous
-// embeds so gophercloud's ExtractIntoSlicePtr decodes each separately —
-// SecGroup's own UnmarshalJSON would otherwise swallow the extension field. The embed is
-// exported because gophercloud reflects into each embedded struct, and
-// reflect cannot read an unexported one (it panics).
-type secGroupListRow struct {
-	groups.SecGroup
-	SecGroupSharedAttr
 }
 
 func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *secGroupListFlags, projectID string, w io.Writer,
 ) error {
-	opts := groups.ListOpts{
-		Name:       f.name,
-		ProjectID:  projectID,
-		Tags:       strings.Join(f.tags, ","),
-		TagsAny:    strings.Join(f.anyTags, ","),
-		NotTags:    strings.Join(f.notTags, ","),
-		NotTagsAny: strings.Join(f.notAnyTags, ","),
-	}
+	opts := groups.ListOpts{Name: f.name, ProjectID: projectID}
+	f.apply(&opts.Tags, &opts.TagsAny, &opts.NotTags, &opts.NotTagsAny)
 	all, err := listSecGroups(ctx, client, opts, f.shared)
 	if err != nil {
 		return err
@@ -151,7 +167,7 @@ func runSecurityGroupList(ctx context.Context, client *gophercloud.ServiceClient
 // the concrete ListOpts (no builder interface) and has no shared field, and
 // there is no ExtractGroupsInto, so the pager is built here over the same URL
 // and page type. Replace it once gophercloud models the attribute.
-func listSecGroups(ctx context.Context, client *gophercloud.ServiceClient, opts groups.ListOpts, shared *bool) ([]secGroupListRow, error) {
+func listSecGroups(ctx context.Context, client *gophercloud.ServiceClient, opts groups.ListOpts, shared *bool) ([]secGroupExt, error) {
 	q, err := gophercloud.BuildQueryString(&opts)
 	if err != nil {
 		return nil, fmt.Errorf("building security group query: %w", err)
@@ -174,7 +190,7 @@ func listSecGroups(ctx context.Context, client *gophercloud.ServiceClient, opts 
 	if !ok {
 		return nil, fmt.Errorf("parsing security group list: unexpected page type %T", pages)
 	}
-	var all []secGroupListRow
+	var all []secGroupExt
 	if err := page.ExtractIntoSlicePtr(&all, "security_groups"); err != nil {
 		return nil, fmt.Errorf("parsing security group list: %w", err)
 	}
@@ -206,7 +222,7 @@ func runSecurityGroupShow(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	g, err := groups.Get(ctx, client, id).Extract()
+	g, err := getSecGroup(ctx, client, id)
 	if err != nil {
 		return fmt.Errorf("getting security group %s: %w", nameOrID, err)
 	}
@@ -214,8 +230,21 @@ func runSecurityGroupShow(ctx context.Context, client *gophercloud.ServiceClient
 	return o.WriteSingle(w, fields, values)
 }
 
+// secGroupCreateFlags mirrors upstream CreateSecurityGroup.
+type secGroupCreateFlags struct {
+	description   string
+	stateful      bool
+	stateless     bool
+	project       string
+	projectDomain string
+	// projectID is --project resolved by RunE, so the seam needs no identity client.
+	projectID     string
+	extraProperty []string
+	tagWriteFlags
+}
+
 func newSecurityGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var description string
+	f := &secGroupCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new security group",
@@ -225,23 +254,55 @@ func newSecurityGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runSecurityGroupCreate(ctx, client, o, args[0], description, cmd.OutOrStdout())
+			if f.projectID, err = resolveProjectRef(ctx, session, f.project, f.projectDomain); err != nil {
+				return err
+			}
+			return runSecurityGroupCreate(ctx, client, o, args[0], f, cmd.Flags(), cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&description, "description", "", "description for the security group")
+	fl := cmd.Flags()
+	fl.StringVar(&f.description, flagDescription, "", "description for the security group (default: its name)")
+	fl.BoolVar(&f.stateful, flagSGStateful, false, "security group is stateful (neutron's default)")
+	fl.BoolVar(&f.stateless, flagSGStateless, false, "security group is stateless")
+	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	bindTagCreateFlags(cmd, &f.tagWriteFlags, "security group")
+	cmd.MarkFlagsMutuallyExclusive(flagSGStateful, flagSGStateless)
 	return cmd
 }
 
-func runSecurityGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name, description string, w io.Writer) error {
-	g, err := groups.Create(ctx, client, groups.CreateOpts{Name: name, Description: description}).Extract()
+// runSecurityGroupCreate follows upstream: an omitted --description defaults
+// to the group's name, --stateful/--stateless is sent only when given, and
+// tags are applied after the create.
+func runSecurityGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	name string, f *secGroupCreateFlags, flags flagSet, w io.Writer,
+) error {
+	opts := groups.CreateOpts{
+		Name:        name,
+		Description: name,
+		ProjectID:   f.projectID,
+		Stateful:    enableDisable(flags, f.stateful, f.stateless, flagSGStateful, flagSGStateless),
+	}
+	if flags.Changed(flagDescription) {
+		opts.Description = f.description
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
+		return err
+	}
+	var g secGroupExt
+	if err := groups.Create(ctx, client, withSecGroupCreateAttrs(opts, extra)).ExtractIntoStructPtr(&g, secGroupKey); err != nil {
 		return fmt.Errorf("creating security group: %w", err)
 	}
-	fields, values := secGroupShowFields(g)
+	if g.Tags, err = applyTagsForSet(ctx, client, tagResourceSecurityGroups, g.ID, g.Tags, &f.tagWriteFlags); err != nil {
+		return err
+	}
+	fields, values := secGroupShowFields(&g)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -282,8 +343,12 @@ func runSecurityGroupDelete(ctx context.Context, client *gophercloud.ServiceClie
 }
 
 type secGroupSetFlags struct {
-	name        string
-	description string
+	name          string
+	description   string
+	stateful      bool
+	stateless     bool
+	extraProperty []string
+	tagWriteFlags
 }
 
 func newSecurityGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -306,126 +371,59 @@ func newSecurityGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new security group name")
-	fl.StringVar(&f.description, "description", "", "new description")
+	fl.StringVar(&f.description, flagDescription, "", "new description")
+	fl.BoolVar(&f.stateful, flagSGStateful, false, "make the security group stateful")
+	fl.BoolVar(&f.stateless, flagSGStateless, false, "make the security group stateless")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	bindTagSetFlags(fl, &f.tagWriteFlags, "security group")
+	cmd.MarkFlagsMutuallyExclusive(flagSGStateful, flagSGStateless)
 	return cmd
 }
 
 func runSecurityGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *secGroupSetFlags, flags flagSet, w io.Writer) error {
+	opts := groups.UpdateOpts{
+		Name:     f.name,
+		Stateful: enableDisable(flags, f.stateful, f.stateless, flagSGStateful, flagSGStateless),
+	}
+	if flags.Changed(flagDescription) {
+		opts.Description = &f.description
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	changed := f.name != "" || opts.Description != nil || opts.Stateful != nil || len(extra) > 0
+	if !changed && !f.given() {
+		return fmt.Errorf("security group set requires at least one attribute flag")
+	}
 	id, err := resolveSecGroupID(ctx, client, nameOrID)
 	if err != nil {
 		return err
 	}
-	opts := groups.UpdateOpts{}
-	changed := false
-	if f.name != "" {
-		opts.Name = f.name
-		changed = true
+	var g *secGroupExt
+	if changed {
+		g = &secGroupExt{}
+		if err := groups.Update(ctx, client, id, withSecGroupUpdateAttrs(opts, extra)).ExtractIntoStructPtr(g, secGroupKey); err != nil {
+			return fmt.Errorf("updating security group %s: %w", nameOrID, err)
+		}
+	} else if g, err = getSecGroup(ctx, client, id); err != nil {
+		// Tags are the only change: upstream sends no update either.
+		return fmt.Errorf("getting security group %s: %w", nameOrID, err)
 	}
-	if flags.Changed("description") {
-		opts.Description = &f.description
-		changed = true
-	}
-	if !changed {
-		return fmt.Errorf("security group set requires at least one attribute flag")
-	}
-	g, err := groups.Update(ctx, client, id, opts).Extract()
-	if err != nil {
-		return fmt.Errorf("updating security group %s: %w", nameOrID, err)
+	if g.Tags, err = applyTagsForSet(ctx, client, tagResourceSecurityGroups, id, g.Tags, &f.tagWriteFlags); err != nil {
+		return err
 	}
 	fields, values := secGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)
 }
 
-// --- security group rule ---
-
-func newSecurityGroupRuleCommand(a *auth.Options, o *output.Options) *cobra.Command {
+// newSecurityGroupUnsetCommand is upstream UnsetSecurityGroup, which takes the
+// tag flags and nothing else: a security group has no other attribute to clear.
+func newSecurityGroupUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &tagWriteFlags{}
 	cmd := &cobra.Command{
-		Use:   "rule",
-		Short: "Manage security group rules",
-	}
-	cmd.AddCommand(newSecurityGroupRuleListCommand(a, o))
-	cmd.AddCommand(newSecurityGroupRuleShowCommand(a, o))
-	cmd.AddCommand(newSecurityGroupRuleCreateCommand(a, o))
-	cmd.AddCommand(newSecurityGroupRuleDeleteCommand(a, o))
-	return cmd
-}
-
-func secGroupRuleShowFields(r *rules.SecGroupRule) ([]string, []any) {
-	fields := []string{
-		"id", "security_group_id", "direction", "ethertype", "protocol",
-		"port_range_min", "port_range_max", "remote_ip_prefix", "remote_group_id",
-		"description", "project_id", "created_at",
-	}
-	values := []any{
-		r.ID, r.SecGroupID, r.Direction, r.EtherType, r.Protocol,
-		r.PortRangeMin, r.PortRangeMax, r.RemoteIPPrefix, r.RemoteGroupID,
-		r.Description, r.ProjectID, r.CreatedAt,
-	}
-	return fields, values
-}
-
-func newSecurityGroupRuleListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "list [<group>]",
-		Short: "List security group rules, optionally for one group",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := o.Validate(); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
-			if err != nil {
-				return err
-			}
-			group := ""
-			if len(args) == 1 {
-				group = args[0]
-			}
-			return runSecurityGroupRuleList(ctx, client, o, group, cmd.OutOrStdout())
-		},
-	}
-	return cmd
-}
-
-func runSecurityGroupRuleList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, group string, w io.Writer) error {
-	opts := rules.ListOpts{}
-	if group != "" {
-		gid, err := resolveSecGroupID(ctx, client, group)
-		if err != nil {
-			return err
-		}
-		opts.SecGroupID = gid
-	}
-	pages, err := rules.List(client, opts).AllPages(ctx)
-	if err != nil {
-		return fmt.Errorf("listing security group rules: %w", err)
-	}
-	all, err := rules.ExtractRules(pages)
-	if err != nil {
-		return fmt.Errorf("parsing security group rule list: %w", err)
-	}
-	t := output.Table{Columns: []string{"ID", "Direction", "Ether Type", "Protocol", "Port Range", "Remote IP Prefix", "Remote Group", "Security Group"}, Rows: make([][]any, 0, len(all))}
-	for _, r := range all {
-		t.Rows = append(t.Rows, []any{r.ID, r.Direction, r.EtherType, r.Protocol, portRangeString(r.PortRangeMin, r.PortRangeMax), r.RemoteIPPrefix, r.RemoteGroupID, r.SecGroupID})
-	}
-	return o.WriteList(w, t)
-}
-
-func portRangeString(lo, hi int) string {
-	if lo == 0 && hi == 0 {
-		return ""
-	}
-	if lo == hi {
-		return fmt.Sprintf("%d", lo)
-	}
-	return fmt.Sprintf("%d:%d", lo, hi)
-}
-
-func newSecurityGroupRuleShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "show <rule>",
-		Short: "Show details of a security group rule",
+		Use:   "unset <group>",
+		Short: "Unset security group properties",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -436,179 +434,28 @@ func newSecurityGroupRuleShowCommand(a *auth.Options, o *output.Options) *cobra.
 			if err != nil {
 				return err
 			}
-			return runSecurityGroupRuleShow(ctx, client, o, args[0], cmd.OutOrStdout())
+			return runSecurityGroupUnset(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
+	bindTagUnsetFlags(cmd, f, "security group")
 	return cmd
 }
 
-func runSecurityGroupRuleShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	r, err := rules.Get(ctx, client, id).Extract()
-	if err != nil {
-		return fmt.Errorf("getting security group rule %s: %w", id, err)
+func runSecurityGroupUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *tagWriteFlags, w io.Writer) error {
+	if !f.given() {
+		return fmt.Errorf("security group unset requires --%s or --%s", flagTag, flagAllTag)
 	}
-	fields, values := secGroupRuleShowFields(r)
-	return o.WriteSingle(w, fields, values)
-}
-
-type secGroupRuleCreateFlags struct {
-	protocol    string
-	ingress     bool
-	egress      bool
-	dstPort     string
-	remoteIP    string
-	ethertype   string
-	remoteGroup string
-}
-
-func newSecurityGroupRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	f := &secGroupRuleCreateFlags{}
-	cmd := &cobra.Command{
-		Use:   "create <group>",
-		Short: "Create a new security group rule",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := o.Validate(); err != nil {
-				return err
-			}
-			if err := mutuallyExclusive(cmd.Flags(), "ingress", "egress"); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
-			if err != nil {
-				return err
-			}
-			return runSecurityGroupRuleCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
-		},
-	}
-	fl := cmd.Flags()
-	fl.StringVar(&f.protocol, "protocol", "", "IP protocol (tcp, udp, icmp, ...)")
-	fl.BoolVar(&f.ingress, "ingress", false, "rule applies to incoming traffic (default)")
-	fl.BoolVar(&f.egress, "egress", false, "rule applies to outgoing traffic")
-	fl.StringVar(&f.dstPort, "dst-port", "", "destination port or range (e.g. 80 or 8000:9000)")
-	fl.StringVar(&f.remoteIP, "remote-ip", "", "remote IP prefix (CIDR) to match")
-	fl.StringVar(&f.ethertype, "ethertype", "", "IPv4 or IPv6 (inferred from --remote-ip/--protocol when unset, else IPv4)")
-	fl.StringVar(&f.remoteGroup, "remote-group", "", "remote security group (name or ID) to match")
-	cmd.MarkFlagsMutuallyExclusive("remote-ip", "remote-group")
-	return cmd
-}
-
-func runSecurityGroupRuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, groupArg string, f *secGroupRuleCreateFlags, w io.Writer) error {
-	gid, err := resolveSecGroupID(ctx, client, groupArg)
+	id, err := resolveSecGroupID(ctx, client, nameOrID)
 	if err != nil {
 		return err
 	}
-	direction := rules.DirIngress
-	if f.egress {
-		direction = rules.DirEgress
-	}
-	var etherType rules.RuleEtherType
-	if f.ethertype != "" {
-		normalized, err := normalizeEtherType(f.ethertype)
-		if err != nil {
-			return err
-		}
-		etherType = normalized
-	} else {
-		etherType = inferEtherType(f.remoteIP, f.protocol)
-	}
-	opts := rules.CreateOpts{
-		Direction:      direction,
-		EtherType:      etherType,
-		SecGroupID:     gid,
-		Protocol:       normalizeProtocol(f.protocol),
-		RemoteIPPrefix: f.remoteIP,
-	}
-	if f.dstPort != "" {
-		lo, hi, err := parsePortRange(f.dstPort)
-		if err != nil {
-			return err
-		}
-		opts.PortRangeMin = lo
-		opts.PortRangeMax = hi
-	}
-	if f.remoteGroup != "" {
-		rgid, err := resolveSecGroupID(ctx, client, f.remoteGroup)
-		if err != nil {
-			return err
-		}
-		opts.RemoteGroupID = rgid
-	}
-	r, err := rules.Create(ctx, client, opts).Extract()
+	g, err := getSecGroup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("creating security group rule: %w", err)
+		return fmt.Errorf("getting security group %s: %w", nameOrID, err)
 	}
-	fields, values := secGroupRuleShowFields(r)
+	if g.Tags, err = applyTagsForUnset(ctx, client, tagResourceSecurityGroups, id, g.Tags, f); err != nil {
+		return err
+	}
+	fields, values := secGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)
-}
-
-// normalizeEtherType maps a case-insensitive ethertype (e.g. "ipv6", "IPV4")
-// onto neutron's canonical "IPv4"/"IPv6" spelling. Empty values are handled by
-// the caller (the default applies).
-func normalizeEtherType(v string) (rules.RuleEtherType, error) {
-	switch strings.ToLower(v) {
-	case "ipv4":
-		return rules.EtherType4, nil
-	case "ipv6":
-		return rules.EtherType6, nil
-	default:
-		return "", fmt.Errorf("invalid --ethertype %q: want IPv4 or IPv6", v)
-	}
-}
-
-// inferEtherType picks a default ethertype when --ethertype was not given. An
-// IPv6 remote CIDR (contains ':') or an IPv6-specific protocol
-// (icmpv6/ipv6-*) implies IPv6; everything else defaults to IPv4, matching the
-// upstream OSC behavior.
-func inferEtherType(remoteIP, protocol string) rules.RuleEtherType {
-	if strings.Contains(remoteIP, ":") {
-		return rules.EtherType6
-	}
-	p := strings.ToLower(protocol)
-	if p == "icmpv6" || strings.HasPrefix(p, "ipv6-") {
-		return rules.EtherType6
-	}
-	return rules.EtherType4
-}
-
-// normalizeProtocol lowercases the protocol so values like "TCP" become the
-// "tcp" neutron expects. Empty values are left untouched (no protocol set).
-func normalizeProtocol(v string) rules.RuleProtocol {
-	if v == "" {
-		return ""
-	}
-	return rules.RuleProtocol(strings.ToLower(v))
-}
-
-func newSecurityGroupRuleDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "delete <rule> [<rule> ...]",
-		Short: "Delete security group rule(s)",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := o.Validate(); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
-			if err != nil {
-				return err
-			}
-			return runSecurityGroupRuleDelete(ctx, client, args, cmd.OutOrStdout())
-		},
-	}
-	return cmd
-}
-
-func runSecurityGroupRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
-	return batchdelete.Each(ids, func(id string) error {
-		if err := rules.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting security group rule %s: %w", id, err)
-		}
-		if _, err := fmt.Fprintf(w, "Deleted security group rule %s\n", id); err != nil {
-			return err
-		}
-		return nil
-	})
 }

@@ -9,6 +9,26 @@ package network
 // instead of hand-rolling a wrapper type per missing attribute. A nil or empty
 // extra returns the typed body unchanged.
 
+type networkCreateExt struct{ bodyExt }
+
+func (e networkCreateExt) ToNetworkCreateMap() (map[string]any, error) { return e.body() }
+
+func withNetworkCreateAttrs(b interface {
+	ToNetworkCreateMap() (map[string]any, error)
+}, extra map[string]any) networkCreateExt {
+	return networkCreateExt{bodyExt{build: b.ToNetworkCreateMap, key: "network", extra: extra}}
+}
+
+type networkUpdateExt struct{ bodyExt }
+
+func (e networkUpdateExt) ToNetworkUpdateMap() (map[string]any, error) { return e.body() }
+
+func withNetworkUpdateAttrs(b interface {
+	ToNetworkUpdateMap() (map[string]any, error)
+}, extra map[string]any) networkUpdateExt {
+	return networkUpdateExt{bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}}
+}
+
 type floatingIPCreateExt struct{ bodyExt }
 
 func (e floatingIPCreateExt) ToFloatingIPCreateMap() (map[string]any, error) { return e.body() }
@@ -29,22 +49,32 @@ func withFloatingIPUpdateAttrs(b interface {
 	return floatingIPUpdateExt{bodyExt{build: b.ToFloatingIPUpdateMap, key: "floatingip", extra: extra}}
 }
 
-type networkCreateExt struct{ bodyExt }
+type secGroupCreateExt struct{ bodyExt }
 
-func (e networkCreateExt) ToNetworkCreateMap() (map[string]any, error) { return e.body() }
+func (e secGroupCreateExt) ToSecGroupCreateMap() (map[string]any, error) { return e.body() }
 
-func withNetworkCreateAttrs(b interface {
-	ToNetworkCreateMap() (map[string]any, error)
-}, extra map[string]any) networkCreateExt {
-	return networkCreateExt{bodyExt{build: b.ToNetworkCreateMap, key: "network", extra: extra}}
+func withSecGroupCreateAttrs(b interface {
+	ToSecGroupCreateMap() (map[string]any, error)
+}, extra map[string]any) secGroupCreateExt {
+	return secGroupCreateExt{bodyExt{build: b.ToSecGroupCreateMap, key: "security_group", extra: extra}}
 }
 
-type networkUpdateExt struct{ bodyExt }
+type secGroupUpdateExt struct{ bodyExt }
 
-func (e networkUpdateExt) ToNetworkUpdateMap() (map[string]any, error) { return e.body() }
+func (e secGroupUpdateExt) ToSecGroupUpdateMap() (map[string]any, error) { return e.body() }
 
-func withNetworkUpdateAttrs(b interface {
-	ToNetworkUpdateMap() (map[string]any, error)
-}, extra map[string]any) networkUpdateExt {
-	return networkUpdateExt{bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}}
+func withSecGroupUpdateAttrs(b interface {
+	ToSecGroupUpdateMap() (map[string]any, error)
+}, extra map[string]any) secGroupUpdateExt {
+	return secGroupUpdateExt{bodyExt{build: b.ToSecGroupUpdateMap, key: "security_group", extra: extra}}
+}
+
+type secGroupRuleCreateExt struct{ bodyExt }
+
+func (e secGroupRuleCreateExt) ToSecGroupRuleCreateMap() (map[string]any, error) { return e.body() }
+
+func withSecGroupRuleCreateAttrs(b interface {
+	ToSecGroupRuleCreateMap() (map[string]any, error)
+}, extra map[string]any) secGroupRuleCreateExt {
+	return secGroupRuleCreateExt{bodyExt{build: b.ToSecGroupRuleCreateMap, key: "security_group_rule", extra: extra}}
 }

@@ -1121,7 +1121,10 @@ func TestRunSecurityGroupList_SendsEveryFilter(t *testing.T) {
 	})
 
 	f := &secGroupListFlags{
-		name: "web", tags: []string{"a"}, anyTags: []string{"b"}, notTags: []string{"c"}, notAnyTags: []string{"d"},
+		name: "web",
+		tagFilterFlags: tagFilterFlags{
+			tags: []string{"a"}, anyTags: []string{"b"}, notTags: []string{"c"}, notAnyTags: []string{"d"},
+		},
 	}
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
@@ -1202,7 +1205,8 @@ func TestRunSecurityGroupCreate(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
-	if err := runSecurityGroupCreate(context.Background(), client, o, "web", "web tier", &buf); err != nil {
+	if err := runSecurityGroupCreate(context.Background(), client, o, "web",
+		&secGroupCreateFlags{description: "web tier"}, fakeFlags{flagDescription: true}, &buf); err != nil {
 		t.Fatalf("runSecurityGroupCreate: %v", err)
 	}
 }
@@ -1265,7 +1269,7 @@ func TestRunSecurityGroupRuleList_FilteredByGroup(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runSecurityGroupRuleList(context.Background(), client, o, "sg-1", &buf); err != nil {
+	if err := runSecurityGroupRuleList(context.Background(), client, o, "sg-1", &secGroupRuleListFlags{}, "", &buf); err != nil {
 		t.Fatalf("runSecurityGroupRuleList: %v", err)
 	}
 	for _, want := range []string{"rule-1", "ingress", "tcp", "80"} {
