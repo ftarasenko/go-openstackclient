@@ -132,8 +132,10 @@ func runPortUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	return updatePort(ctx, client, o, nameOrID, id, opts, attrs, changed, current, applyTagsForUnset, &f.tagWriteFlags, w)
 }
 
-// portUnsetLists filters the list attributes, keeping every entry no removal
-// spec matches.
+// portUnsetLists removes the entries each list flag names. As upstream
+// (port.py UnsetPort), every spec must name an entry the port carries: one
+// that does not is an error ("Port does not contain …") rather than a silent
+// no-op, and each spec removes exactly one entry.
 func portUnsetLists(ctx context.Context, client *gophercloud.ServiceClient, f *portUnsetFlags,
 	current *portExt, opts *ports.UpdateOpts,
 ) (bool, error) {
@@ -143,8 +145,11 @@ func portUnsetLists(ctx context.Context, client *gophercloud.ServiceClient, f *p
 		if err != nil {
 			return false, err
 		}
-		opts.FixedIPs = keepUnmatched(current.FixedIPs,
-			func(have ports.IP) bool { return matchesAnyFixedIP(have, remove) })
+		kept, err := removeEachMatch(current.FixedIPs, remove, f.fixedIP, fixedIPMatches, "fixed-ip")
+		if err != nil {
+			return false, err
+		}
+		opts.FixedIPs = kept
 		changed = true
 	}
 
@@ -153,8 +158,11 @@ func portUnsetLists(ctx context.Context, client *gophercloud.ServiceClient, f *p
 		if err != nil {
 			return false, err
 		}
-		kept := keepUnmatched(current.SecurityGroups,
-			func(have string) bool { return slices.Contains(removeIDs, have) })
+		kept, err := removeEachMatch(current.SecurityGroups, removeIDs, f.securityGroup,
+			func(have, want string) bool { return have == want }, "security group")
+		if err != nil {
+			return false, err
+		}
 		opts.SecurityGroups = &kept
 		changed = true
 	}
@@ -164,12 +172,46 @@ func portUnsetLists(ctx context.Context, client *gophercloud.ServiceClient, f *p
 		if err != nil {
 			return false, err
 		}
-		kept := keepUnmatched(current.AllowedAddressPairs,
-			func(have ports.AddressPair) bool { return matchesAnyAddressPair(have, remove) })
+		kept, err := removeEachMatch(current.AllowedAddressPairs, remove, f.allowedAddress,
+			addressPairMatches, "allowed-address-pair")
+		if err != nil {
+			return false, err
+		}
 		opts.AllowedAddressPairs = &kept
 		changed = true
 	}
 	return changed, nil
+}
+
+// removeEachMatch removes, from a copy of have, the one entry each element of
+// remove matches. A spec that matches nothing fails with upstream's wording
+// ("port does not contain <noun> <spec>"); one that matches several — possible
+// only when it leaves a key out — fails too, rather than guessing which entry
+// was meant. specs are the operator's spellings, quoted in the errors. The
+// result is never nil, so an emptied list is sent as [].
+func removeEachMatch[T any](have, remove []T, specs []string, matches func(have, want T) bool,
+	noun string,
+) ([]T, error) {
+	out := slices.Clone(have)
+	if out == nil {
+		out = []T{}
+	}
+	for i, want := range remove {
+		hit, count := -1, 0
+		for j, h := range out {
+			if matches(h, want) {
+				hit, count = j, count+1
+			}
+		}
+		switch {
+		case count == 0:
+			return nil, fmt.Errorf("port does not contain %s %s", noun, specs[i])
+		case count > 1:
+			return nil, fmt.Errorf("%s %s matches %d entries of the port: give every key to name one", noun, specs[i], count)
+		}
+		out = slices.Delete(out, hit, hit+1)
+	}
+	return out, nil
 }
 
 // portUnsetAttrs builds the extension attributes unset clears. qos_policy_id,
@@ -216,31 +258,22 @@ func portUnsetAttrs(f *portUnsetFlags, current *portExt) (map[string]any, error)
 	return mergeAttrs(attrs, extra), nil
 }
 
-// matchesAnyFixedIP reports whether have should be removed. A removal spec that
-// names only a subnet removes every fixed IP on that subnet; one that names only
-// an address removes that address whatever its subnet; naming both requires both
-// to match. This mirrors how OSC's --fixed-ip removal reads.
-func matchesAnyFixedIP(have ports.IP, remove []ports.IP) bool {
-	for _, want := range remove {
-		subnetMatches := want.SubnetID == "" || want.SubnetID == have.SubnetID
-		addressMatches := want.IPAddress == "" || want.IPAddress == have.IPAddress
-		if subnetMatches && addressMatches {
-			return true
-		}
-	}
-	return false
+// fixedIPMatches reports whether have is the fixed IP the removal spec want
+// names. Upstream removes the spec as a dict ({subnet_id, ip_address}, the
+// subnet already resolved to its ID) by equality, and neutron always returns
+// both keys, so upstream only ever matches a spec that gives both. koc compares
+// the keys the spec gives — subnet= alone names the port's one IP on that
+// subnet, ip-address= alone its one entry with that address — and
+// removeEachMatch rejects a partial spec that is ambiguous.
+func fixedIPMatches(have, want ports.IP) bool {
+	return (want.SubnetID == "" || want.SubnetID == have.SubnetID) &&
+		(want.IPAddress == "" || want.IPAddress == have.IPAddress)
 }
 
-// matchesAnyAddressPair applies the same partial-match rule to allowed address
-// pairs: a spec with no mac-address removes the pair for that IP regardless of
-// which MAC it carries.
-func matchesAnyAddressPair(have ports.AddressPair, remove []ports.AddressPair) bool {
-	for _, want := range remove {
-		ipMatches := want.IPAddress == "" || want.IPAddress == have.IPAddress
-		macMatches := want.MACAddress == "" || want.MACAddress == have.MACAddress
-		if ipMatches && macMatches {
-			return true
-		}
-	}
-	return false
+// addressPairMatches applies the same rule to allowed address pairs. Neutron
+// fills an omitted mac-address in with the port's own MAC, so upstream's
+// ip-address-only spec never equals a stored pair; koc matches it on the IP.
+func addressPairMatches(have, want ports.AddressPair) bool {
+	return want.IPAddress == have.IPAddress &&
+		(want.MACAddress == "" || want.MACAddress == have.MACAddress)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -663,16 +664,98 @@ func (f *qosRuleFlags) directionFor(k qosRuleKind) (dir string, ok bool, err err
 		}
 		return "any", true, nil
 	case f.changed.Changed(flagQoSDirection):
+		if f.direction == "any" && k.apiType != "minimum_packet_rate" {
+			return "", false, fmt.Errorf("--direction any can only be used with a minimum-packet-rate rule, not %s", k.cliType)
+		}
 		return f.direction, true, nil
 	default:
 		return "", false, nil
 	}
 }
 
+// qosRuleParamFlags maps each rule parameter upstream validates to the koc
+// flags that set it, in upstream's sorted order (its errors sort the names).
+var qosRuleParamFlags = []struct {
+	param string
+	flags []string
+}{
+	{"direction", []string{flagQoSDirection, flagQoSIngress, flagQoSEgress, flagQoSAny}},
+	{"dscp_mark", []string{"dscp-mark"}},
+	{"max_burst_kbps", []string{"max-burst-kbits"}},
+	{"max_kbps", []string{"max-kbps"}},
+	{"min_kbps", []string{"min-kbps"}},
+	{"min_kpps", []string{"min-kpps"}},
+}
+
+// qosRuleParamSet is one rule type's row of upstream's MANDATORY_PARAMETERS /
+// OPTIONAL_PARAMETERS table (network_qos_rule.py).
+type qosRuleParamSet struct{ required, optional []string }
+
+var qosRuleParams = map[string]qosRuleParamSet{
+	"bandwidth_limit":     {required: []string{"max_kbps"}, optional: []string{"direction", "max_burst_kbps"}},
+	"dscp_marking":        {required: []string{"dscp_mark"}},
+	"minimum_bandwidth":   {required: []string{"direction", "min_kbps"}},
+	"minimum_packet_rate": {required: []string{"direction", "min_kpps"}},
+}
+
+// checkType is upstream's _check_type_parameters, run before any request that
+// would carry the rule: on create every required parameter of the type must be
+// given, and on create and set a flag belonging to no parameter of the type is
+// refused. Upstream only refuses a flag that is *required* by another type, so
+// it lets --max-burst-kbits through on every type for neutron to reject; koc
+// refuses it too. --extra-property is not checked, as upstream.
+func (f *qosRuleFlags) checkType(k qosRuleKind, create bool) error {
+	if _, _, err := f.directionFor(k); err != nil {
+		return err
+	}
+	params := qosRuleParams[k.apiType]
+	allowed := slices.Concat(params.required, params.optional)
+	var missing, stray, accepted []string
+	for _, pf := range qosRuleParamFlags {
+		if slices.Contains(allowed, pf.param) {
+			accepted = append(accepted, qosRuleParamSpelling(pf.param, pf.flags, k))
+		}
+		given := ""
+		for _, name := range pf.flags {
+			if f.changed.Changed(name) {
+				given = "--" + name
+				break
+			}
+		}
+		switch {
+		case given != "" && !slices.Contains(allowed, pf.param):
+			stray = append(stray, given)
+		case given == "" && create && slices.Contains(params.required, pf.param):
+			missing = append(missing, qosRuleParamSpelling(pf.param, pf.flags, k))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("\"create\" rule command for type %q requires arguments: %s",
+			k.cliType, strings.Join(missing, ", "))
+	}
+	if len(stray) > 0 {
+		return fmt.Errorf("rule type %q only accepts arguments: %s (got %s)",
+			k.cliType, strings.Join(accepted, ", "), strings.Join(stray, ", "))
+	}
+	return nil
+}
+
+// qosRuleParamSpelling names a parameter by the flags that set it; direction
+// is spelled with upstream's --ingress/--egress (and --any where it applies).
+func qosRuleParamSpelling(param string, flags []string, k qosRuleKind) string {
+	if param != "direction" {
+		return "--" + flags[0]
+	}
+	if k.apiType == "minimum_packet_rate" {
+		return "--ingress/--egress/--any"
+	}
+	return "--ingress/--egress"
+}
+
 // body builds the rule attributes for kind k. Only the fields the operator
 // actually set are included, so an update patches nothing it was not asked to;
-// a flag belonging to another rule type is ignored. --extra-property is merged
-// last, so it wins.
+// checkType has already refused a flag belonging to another rule type.
+// --extra-property is merged last, so it wins.
 func (f *qosRuleFlags) body(k qosRuleKind) (map[string]any, error) {
 	attrs := map[string]any{}
 	set := func(flag, key string, v any) {
@@ -723,6 +806,9 @@ func newQoSRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			}
 			k, err := qosRuleKindByCLIType(ruleType)
 			if err != nil {
+				return err
+			}
+			if err := f.checkType(k, true); err != nil {
 				return err
 			}
 			attrs, err := f.body(k)
@@ -785,6 +871,9 @@ func runQoSRuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 ) error {
 	policyID, k, err := resolveQoSRule(ctx, client, ref, ruleID)
 	if err != nil {
+		return err
+	}
+	if err := f.checkType(k, false); err != nil {
 		return err
 	}
 	attrs, err := f.body(k)

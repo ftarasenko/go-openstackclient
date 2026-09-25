@@ -318,8 +318,8 @@ func TestMatchesAnyFixedIP_PartialSpecs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := matchesAnyFixedIP(have, []ports.IP{tc.remove}); got != tc.want {
-				t.Errorf("matchesAnyFixedIP(%+v) = %v, want %v", tc.remove, got, tc.want)
+			if got := fixedIPMatches(have, tc.remove); got != tc.want {
+				t.Errorf("fixedIPMatches(%+v) = %v, want %v", tc.remove, got, tc.want)
 			}
 		})
 	}
@@ -381,6 +381,8 @@ func TestRunQoSRuleTypeList_AllFlagsBecomeQueryParams(t *testing.T) {
 func TestRunRBACCreate_TargetAllProjectsSendsWildcard(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
+	// The object is resolved by name per --type now; answer the network lookup.
+	echoLookup(t, fakeServer, "/networks", "networks")
 
 	fakeServer.Mux.HandleFunc("/rbac-policies", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodPost)

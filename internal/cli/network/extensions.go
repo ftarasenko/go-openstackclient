@@ -49,6 +49,9 @@ func newIPAvailabilityListCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err := o.Validate(); err != nil {
 				return err
 			}
+			if ipVersion != 4 && ipVersion != 6 {
+				return fmt.Errorf("--ip-version must be 4 or 6, not %d", ipVersion)
+			}
 			ctx := cmd.Context()
 			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
@@ -62,7 +65,9 @@ func newIPAvailabilityListCommand(a *auth.Options, o *output.Options) *cobra.Com
 		},
 	}
 	fl := cmd.Flags()
-	fl.IntVar(&ipVersion, "ip-version", 0, "filter by IP version: 4 or 6")
+	// Upstream defaults to 4 (ip_availability.py: default=4, choices=[4, 6]), so an
+	// unfiltered list shows a dual-stack network once, for its IPv4 side.
+	fl.IntVar(&ipVersion, "ip-version", 4, "list only networks of this IP version: 4 or 6")
 	fl.StringVar(&project, flagProject, "", "list only networks owned by this project (name or ID)")
 	fl.StringVar(&projectDomain, flagProjectDomain, "", projectDomainHelp)
 	return cmd
@@ -72,6 +77,7 @@ func runIPAvailabilityList(ctx context.Context, client *gophercloud.ServiceClien
 	ipVersion int, project string, w io.Writer,
 ) error {
 	opts := networkipavailabilities.ListOpts{IPVersion: strconv.Itoa(ipVersion), ProjectID: project}
+	// The command always passes 4 or 6; 0 is for callers that want no filter.
 	if ipVersion == 0 {
 		opts.IPVersion = ""
 	}
@@ -332,8 +338,8 @@ type rbacCreateFlags struct {
 func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &rbacCreateFlags{}
 	cmd := &cobra.Command{
-		Use:   "create <object-id>",
-		Short: "Create a network RBAC policy",
+		Use:   "create <rbac-object>",
+		Short: "Create a network RBAC policy (the object by name or ID, per --type)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -341,6 +347,9 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			}
 			if f.targetProject == "" && !f.targetAllProjects {
 				return fmt.Errorf("one of --target-project or --target-all-projects is required")
+			}
+			if err := checkRBACObjectType(f.objectType); err != nil {
+				return err
 			}
 			ctx := cmd.Context()
 			c, session, err := newNetworkSession(ctx, a)
@@ -360,7 +369,7 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.action, "action", "", "access_as_external or access_as_shared")
-	fl.StringVar(&f.objectType, "type", "", "object type, e.g. network or qos_policy")
+	fl.StringVar(&f.objectType, "type", "", "object type: "+strings.Join(rbacObjectTypes, ", "))
 	fl.StringVar(&f.targetProject, flagTargetProject, "", "project to grant access to (name or ID)")
 	fl.StringVar(&f.targetProjectDomain, flagTargetProjectDomain, "",
 		"domain owning --target-project (name or ID), to disambiguate a project name")
@@ -376,9 +385,48 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// rbacObjectResolvers are upstream's --type choices, each with the resolver
+// upstream's _get_attrs uses to turn <rbac-object> into an ID
+// (network_rbac.py: find_network, find_qos_policy, …). A UUID passes through
+// every one of them without a request.
+var rbacObjectResolvers = map[string]func(context.Context, *gophercloud.ServiceClient, string) (string, error){
+	"address_group":  resolveAddressGroupID,
+	"address_scope":  resolveAddressScopeID,
+	"security_group": resolveSecGroupID,
+	"subnetpool":     resolveSubnetPoolID,
+	"qos_policy":     resolveQoSPolicyID,
+	"network":        resolveNetworkID,
+}
+
+// rbacObjectTypes lists the --type choices in upstream's order, for help and
+// errors.
+var rbacObjectTypes = []string{"address_group", "address_scope", "security_group", "subnetpool", "qos_policy", "network"}
+
+// checkRBACObjectType rejects a --type outside upstream's choices before any
+// request is made.
+func checkRBACObjectType(objectType string) error {
+	if _, ok := rbacObjectResolvers[objectType]; !ok {
+		return fmt.Errorf("invalid --type %q: choose from %s", objectType, strings.Join(rbacObjectTypes, ", "))
+	}
+	return nil
+}
+
+// resolveRBACObject validates --type and resolves the object reference by
+// name within that type.
+func resolveRBACObject(ctx context.Context, client *gophercloud.ServiceClient, objectType, ref string) (string, error) {
+	if err := checkRBACObjectType(objectType); err != nil {
+		return "", err
+	}
+	return rbacObjectResolvers[objectType](ctx, client, ref)
+}
+
 func runRBACCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	objectID string, f *rbacCreateFlags, w io.Writer,
+	objectRef string, f *rbacCreateFlags, w io.Writer,
 ) error {
+	objectID, err := resolveRBACObject(ctx, client, f.objectType, objectRef)
+	if err != nil {
+		return err
+	}
 	opts := rbacpolicies.CreateOpts{
 		Action:       rbacpolicies.PolicyAction(f.action),
 		ObjectType:   f.objectType,
@@ -762,7 +810,8 @@ func runSegmentDelete(ctx context.Context, client *gophercloud.ServiceClient, id
 // --- floating ip port forwarding --------------------------------------------
 
 func newPortForwardingCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	cmd := &cobra.Command{Use: "forwarding", Short: "Manage floating IP port forwarding"}
+	// Every verb takes <floating-ip> as an address or an ID, as upstream's find_ip.
+	cmd := &cobra.Command{Use: "forwarding", Short: "Manage floating IP port forwarding (<floating-ip> is an address or ID)"}
 	cmd.AddCommand(
 		newPortForwardingListCommand(a, o),
 		newPortForwardingShowCommand(a, o),
@@ -810,8 +859,12 @@ func newPortForwardingListCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runPortForwardingList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	fipID string, f *portForwardingListFlags, w io.Writer,
+	fipRef string, f *portForwardingListFlags, w io.Writer,
 ) error {
+	fipID, err := resolveFloatingIPID(ctx, client, fipRef)
+	if err != nil {
+		return err
+	}
 	opts := portforwarding.ListOpts{Protocol: f.protocol}
 	if f.port != "" {
 		portID, err := resolvePortID(ctx, client, f.port)
@@ -834,7 +887,7 @@ func runPortForwardingList(ctx context.Context, client *gophercloud.ServiceClien
 	}
 	pages, err := portforwarding.List(client, opts, fipID).AllPages(ctx)
 	if err != nil {
-		return fmt.Errorf("listing port forwardings of floating IP %s: %w", fipID, err)
+		return fmt.Errorf("listing port forwardings of floating IP %s: %w", fipRef, err)
 	}
 	all, err := portforwarding.ExtractPortForwardings(pages)
 	if err != nil {
@@ -871,8 +924,12 @@ func newPortForwardingShowCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runPortForwardingShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	fipID, id string, w io.Writer,
+	fipRef, id string, w io.Writer,
 ) error {
+	fipID, err := resolveFloatingIPID(ctx, client, fipRef)
+	if err != nil {
+		return err
+	}
 	pf, err := portforwarding.Get(ctx, client, fipID, id).Extract()
 	if err != nil {
 		return fmt.Errorf("showing port forwarding %s: %w", id, err)
@@ -888,9 +945,26 @@ func writePortForwarding(o *output.Options, w io.Writer, pf *portforwarding.Port
 			pf.InternalPortRange, pf.ExternalPort, pf.ExternalPortRange, pf.Description})
 }
 
+// Port forwarding's port flags. Upstream spells a single port and a range
+// with the same flag ("22" or "22:23", floating_ip_port_forwarding.py
+// validate_and_assign_port_ranges); koc's older --*-protocol-port-range flags
+// stay as aliases for the range form, exclusive with the upstream spelling of
+// the same side.
+const (
+	flagPFInternalPort      = "internal-protocol-port"
+	flagPFExternalPort      = "external-protocol-port"
+	flagPFInternalPortRange = "internal-protocol-port-range"
+	flagPFExternalPortRange = "external-protocol-port-range"
+)
+
 type portForwardingFlags struct {
-	port              string
-	internalIP        string
+	port       string
+	internalIP string
+	// internalPortArg/externalPortArg are --internal/--external-protocol-port as
+	// given ("N" or "N:M"); resolvePorts folds each into the single-port or the
+	// range field below, which are what the request carries.
+	internalPortArg   string
+	externalPortArg   string
 	internalPort      int
 	externalPort      int
 	internalPortRange string
@@ -911,15 +985,111 @@ func (f *portForwardingFlags) register(cmd *cobra.Command, defaultProtocol strin
 	fl := cmd.Flags()
 	fl.StringVar(&f.port, "port", "", "internal neutron port to forward to (name or ID)")
 	fl.StringVar(&f.internalIP, "internal-ip-address", "", "internal IP address on that port")
-	fl.IntVar(&f.internalPort, "internal-protocol-port", 0, "internal TCP/UDP port number")
-	fl.IntVar(&f.externalPort, "external-protocol-port", 0, "external TCP/UDP port number")
-	fl.StringVar(&f.internalPortRange, "internal-protocol-port-range", "",
-		"internal port range as <first>:<last> (neutron 'port_forwarding_port_ranges' extension)")
-	fl.StringVar(&f.externalPortRange, "external-protocol-port-range", "",
-		"external port range as <first>:<last> (neutron 'port_forwarding_port_ranges' extension)")
+	fl.StringVar(&f.internalPortArg, flagPFInternalPort, "",
+		"internal TCP/UDP port number, or <first>:<last> range")
+	fl.StringVar(&f.externalPortArg, flagPFExternalPort, "",
+		"external TCP/UDP port number, or <first>:<last> range")
+	fl.StringVar(&f.internalPortRange, flagPFInternalPortRange, "",
+		"internal port range as <first>:<last>; same as --internal-protocol-port <first>:<last>")
+	fl.StringVar(&f.externalPortRange, flagPFExternalPortRange, "",
+		"external port range as <first>:<last>; same as --external-protocol-port <first>:<last>")
 	fl.StringVar(&f.protocol, "protocol", defaultProtocol, "protocol: tcp, udp, icmp, icmp6, sctp or dccp")
 	fl.StringVar(&f.description, "description", "", "description of the forwarding")
 	bindExtraPropertyFlag(fl, &f.extraProperty)
+	cmd.MarkFlagsMutuallyExclusive(flagPFInternalPort, flagPFInternalPortRange)
+	cmd.MarkFlagsMutuallyExclusive(flagPFExternalPort, flagPFExternalPortRange)
+}
+
+// resolvePorts folds --internal/--external-protocol-port into the single-port
+// or range field, then applies upstream's checks to the resulting pair: each
+// range ascending, an internal range the same width as the external one (1:N
+// and N:N are the only shapes), every port within 1-65535.
+func (f *portForwardingFlags) resolvePorts() error {
+	internal, err := foldPortArg(f.internalPortArg, flagPFInternalPort, &f.internalPort, &f.internalPortRange)
+	if err != nil {
+		return err
+	}
+	external, err := foldPortArg(f.externalPortArg, flagPFExternalPort, &f.externalPort, &f.externalPortRange)
+	if err != nil {
+		return err
+	}
+	return validatePortForwardingPorts(internal, external)
+}
+
+// foldPortArg returns one side's port numbers as upstream splits them — [N]
+// for a single port, [first, last] for a range, none when the side was not
+// given — and stores an "N" argument as the single port, an "N:M" one as the
+// range. The range may instead hold the koc-only --*-range spelling; cobra
+// keeps the two exclusive, and a seam caller setting both is refused too.
+func foldPortArg(arg, flag string, port *int, portRange *string) ([]int, error) {
+	spec, name := arg, flag
+	switch {
+	case arg != "" && *portRange != "":
+		return nil, fmt.Errorf("--%s and --%s-range are mutually exclusive", flag, flag)
+	case arg == "" && *portRange != "":
+		spec, name = *portRange, flag+"-range"
+	case arg == "" && *port != 0:
+		return []int{*port}, nil
+	case arg == "":
+		return nil, nil
+	}
+	parts := strings.Split(spec, ":")
+	if len(parts) > 2 || (arg == "" && len(parts) != 2) {
+		return nil, fmt.Errorf("--%s %q is not a port number or <first>:<last> range", name, spec)
+	}
+	nums := make([]int, 0, len(parts))
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("--%s %q is not a port number or <first>:<last> range", name, spec)
+		}
+		nums = append(nums, n)
+	}
+	if arg != "" {
+		if len(nums) == 2 {
+			*portRange = arg
+		} else {
+			*port = nums[0]
+		}
+	}
+	return nums, nil
+}
+
+// validatePortForwardingPorts is upstream's validate_ports_match plus
+// validate_port, with upstream's messages.
+func validatePortForwardingPorts(internal, external []int) error {
+	internalDiff, err := portRangeWidth(internal)
+	if err != nil {
+		return err
+	}
+	externalDiff, err := portRangeWidth(external)
+	if err != nil {
+		return err
+	}
+	if internalDiff != 0 && internalDiff != externalDiff {
+		return fmt.Errorf("the relation between internal and external ports does not match the pattern 1:N and N:N")
+	}
+	for _, side := range [][]int{external, internal} {
+		for _, p := range side {
+			if p <= 0 || p > 65535 {
+				return fmt.Errorf("the port number range is <1-65535>")
+			}
+		}
+	}
+	return nil
+}
+
+// portRangeWidth is upstream's validate_ports_diff: last minus first, which
+// must not be negative.
+func portRangeWidth(ports []int) (int, error) {
+	if len(ports) == 0 {
+		return 0, nil
+	}
+	diff := ports[len(ports)-1] - ports[0]
+	if diff < 0 {
+		return 0, fmt.Errorf("the last number in port range must be greater or equal to the first")
+	}
+	return diff, nil
 }
 
 func newPortForwardingCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -946,8 +1116,15 @@ func newPortForwardingCreateCommand(a *auth.Options, o *output.Options) *cobra.C
 }
 
 func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	fipID string, f *portForwardingFlags, w io.Writer,
+	fipRef string, f *portForwardingFlags, w io.Writer,
 ) error {
+	if err := f.resolvePorts(); err != nil {
+		return err
+	}
+	fipID, err := resolveFloatingIPID(ctx, client, fipRef)
+	if err != nil {
+		return err
+	}
 	portID, err := resolvePortID(ctx, client, f.port)
 	if err != nil {
 		return err
@@ -969,7 +1146,7 @@ func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceCli
 		Description:       f.description,
 	}, extra)).Extract()
 	if err != nil {
-		return fmt.Errorf("creating a port forwarding on floating IP %s: %w", fipID, err)
+		return fmt.Errorf("creating a port forwarding on floating IP %s: %w", fipRef, err)
 	}
 	return writePortForwarding(o, w, pf)
 }
@@ -998,8 +1175,15 @@ func newPortForwardingSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	fipID, id string, f *portForwardingFlags, w io.Writer,
+	fipRef, id string, f *portForwardingFlags, w io.Writer,
 ) error {
+	if err := f.resolvePorts(); err != nil {
+		return err
+	}
+	fipID, err := resolveFloatingIPID(ctx, client, fipRef)
+	if err != nil {
+		return err
+	}
 	opts := portforwarding.UpdateOpts{
 		InternalIPAddress: f.internalIP,
 		InternalPort:      f.internalPort,
@@ -1047,7 +1231,11 @@ func newPortForwardingDeleteCommand(a *auth.Options, o *output.Options) *cobra.C
 	}
 }
 
-func runPortForwardingDelete(ctx context.Context, client *gophercloud.ServiceClient, fipID string, ids []string) error {
+func runPortForwardingDelete(ctx context.Context, client *gophercloud.ServiceClient, fipRef string, ids []string) error {
+	fipID, err := resolveFloatingIPID(ctx, client, fipRef)
+	if err != nil {
+		return err
+	}
 	return batchdelete.Each(ids, func(id string) error {
 		if err := portforwarding.Delete(ctx, client, fipID, id).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting port forwarding %s: %w", id, err)
