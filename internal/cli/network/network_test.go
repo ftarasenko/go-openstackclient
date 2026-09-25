@@ -110,8 +110,9 @@ func TestRunNetworkList_LongIncludesExtensionColumns(t *testing.T) {
 		t.Fatalf("runNetworkList returned error: %v", err)
 	}
 	out := buf.String()
-	// mtu and provider network type from the extension embeds must render.
-	for _, want := range []string{"Network Type", "MTU", "vxlan", "1442"} {
+	// provider network type and router:external from the extension embeds must
+	// render (MTU left the --long columns when they were aligned with upstream).
+	for _, want := range []string{"Network Type", "Router Type", "vxlan", "External"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--long output missing %q\n---\n%s", want, out)
 		}

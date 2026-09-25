@@ -134,7 +134,7 @@ func TestRunNetworkUnset_Share(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
-	if err := runNetworkUnset(context.Background(), client, o, "net-1", true, &buf); err != nil {
+	if err := runNetworkUnset(context.Background(), client, o, "net-1", &networkUnsetFlags{share: true}, &buf); err != nil {
 		t.Fatalf("runNetworkUnset: %v", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestRunNetworkUnset_NoFlagErrors(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
-	if err := runNetworkUnset(context.Background(), client, o, "net-1", false, &buf); err == nil {
+	if err := runNetworkUnset(context.Background(), client, o, "net-1", &networkUnsetFlags{}, &buf); err == nil {
 		t.Fatal("expected error when no attribute flag is set")
 	}
 }
