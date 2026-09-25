@@ -34,7 +34,8 @@ var attrExtensions = map[string]string{
 	"port_security_enabled":     "port-security",
 	"is_default":                "auto-allocated-topology",
 	"vlan_transparent":          "vlan-transparent",
-	"vlan_qinq":                 "qinq",
+	"qinq":                      "qinq", // neutron's wire name (QINQ_FIELD); see netAttrQinQ
+	"vlan_qinq":                 "qinq", // upstream OSC's spelling, reachable via --extra-property
 	"pvlan":                     "pvlan",
 	"pvlan_type":                "pvlan",
 	"pvlan_community":           "pvlan",
