@@ -862,7 +862,7 @@ func TestRunFloatingIPList_RequestAndOutput(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runFloatingIPList(context.Background(), client, o, &buf); err != nil {
+	if err := runFloatingIPList(context.Background(), client, o, &floatingIPListFlags{long: true}, "", &buf); err != nil {
 		t.Fatalf("runFloatingIPList: %v", err)
 	}
 	for _, want := range []string{"fip-1", "1.2.3.4", "ACTIVE"} {
@@ -963,7 +963,7 @@ func TestRunFloatingIPSet_AssociatesPort(t *testing.T) {
 	o := &output.Options{Format: output.FormatValue}
 	f := &floatingIPSetFlags{port: "port-1"}
 	var buf bytes.Buffer
-	if err := runFloatingIPSet(context.Background(), client, o, "fip-1", f, &buf); err != nil {
+	if err := runFloatingIPSet(context.Background(), client, o, "fip-1", f, fakeFlags{}, &buf); err != nil {
 		t.Fatalf("runFloatingIPSet: %v", err)
 	}
 }
@@ -985,7 +985,7 @@ func TestRunFloatingIPUnset_DisassociatesPort(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
-	if err := runFloatingIPUnset(context.Background(), client, o, "fip-1", true, &buf); err != nil {
+	if err := runFloatingIPUnset(context.Background(), client, o, "fip-1", &floatingIPUnsetFlags{port: true}, &buf); err != nil {
 		t.Fatalf("runFloatingIPUnset: %v", err)
 	}
 }
@@ -1000,7 +1000,7 @@ func TestRunFloatingIPUnset_NoPortErrors(t *testing.T) {
 	client := networkClient(fakeServer)
 	o := &output.Options{Format: output.FormatValue}
 	var buf bytes.Buffer
-	if err := runFloatingIPUnset(context.Background(), client, o, "fip-1", false, &buf); err == nil {
+	if err := runFloatingIPUnset(context.Background(), client, o, "fip-1", &floatingIPUnsetFlags{}, &buf); err == nil {
 		t.Fatal("expected error when --port not given")
 	}
 }

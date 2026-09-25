@@ -35,3 +35,18 @@ const (
 	fieldProviderNetworkType     = "provider:network_type"
 	fieldProviderPhysicalNetwork = "provider:physical_network"
 )
+
+// Flag names shared by the network parity pass (docs/proposals/network-parity.md).
+const (
+	flagProject              = "project"
+	flagProjectDomain        = "project-domain"
+	flagDescription          = "description"
+	flagQoSPolicy            = "qos-policy"
+	flagNoQoSPolicy          = "no-qos-policy"
+	flagDNSDomain            = "dns-domain"
+	flagDNSName              = "dns-name"
+	flagAvailabilityZoneHint = "availability-zone-hint"
+)
+
+// Help text for the --project/--project-domain pair every owner-aware verb takes.
+const projectDomainHelp = "domain owning --project (name or ID), to disambiguate a project name"
