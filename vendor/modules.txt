@@ -74,6 +74,7 @@ github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/pools
 github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/providers
 github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/quotas
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents
+github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/attributestags
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgp/speakers
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/external
 github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/addressscopes
