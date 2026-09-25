@@ -86,13 +86,12 @@ func TestRunQoSRuleList_ReadsRulesOffThePolicy(t *testing.T) {
 		t.Fatalf("runQoSRuleList returned error: %v", err)
 	}
 	// Neutron has no combined rule collection, so the policy's inline rules are
-	// the list — including the settings of types koc does not model.
-	got := out.String()
-	if !strings.Contains(got, qosRuleID) || !strings.Contains(got, "bandwidth_limit") {
-		t.Errorf("rule row missing from output:\n%s", got)
-	}
-	if !strings.Contains(got, "max_kbps=1000") {
-		t.Errorf("rule properties missing from output:\n%s", got)
+	// the list, rendered in upstream's one-column-per-attribute layout: fields a
+	// rule type does not have stay empty.
+	got := strings.Split(strings.TrimSpace(out.String()), "\t")
+	want := []string{qosRuleID, "", "bandwidth_limit", "1000", "0", "", "", "", "egress"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("rule row = %q\nwant      %q", got, want)
 	}
 }
 
