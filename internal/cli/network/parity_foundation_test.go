@@ -216,3 +216,35 @@ func TestExplainMissingExtension_NamesTheAbsentExtension(t *testing.T) {
 		t.Errorf("non-HTTP error was rewritten: %v", got)
 	}
 }
+
+func TestExplainMissingService_OnlyWhenTheExtensionIsAbsent(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	withVPN := false
+	fakeServer.Mux.HandleFunc("/extensions", func(w http.ResponseWriter, _ *http.Request) {
+		if withVPN {
+			writeJSON(t, w, http.StatusOK, `{"extensions":[{"alias":"vpnaas"}]}`)
+			return
+		}
+		writeJSON(t, w, http.StatusOK, `{"extensions":[{"alias":"router"}]}`)
+	})
+	fakeServer.Mux.HandleFunc("/vpn/vpnservices", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusNotFound, `{"NeutronError":{"message":"not found"}}`)
+	})
+	client := networkClient(fakeServer)
+	ctx := context.Background()
+	resp, notFound := client.Get(ctx, client.ServiceURL("vpn", "vpnservices"), nil, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if notFound == nil {
+		t.Fatal("expected the mock 404")
+	}
+	if msg := explainMissingService(ctx, client, notFound, extVPNaaS).Error(); !strings.Contains(msg, "does not enable the vpnaas extension") {
+		t.Errorf("absent service not named:\n%s", msg)
+	}
+	withVPN = true
+	if got := explainMissingService(ctx, client, notFound, extVPNaaS); got.Error() != notFound.Error() {
+		t.Errorf("a real 404 on a cloud with the service was rewritten: %v", got)
+	}
+}
