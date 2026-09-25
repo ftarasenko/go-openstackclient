@@ -27,6 +27,8 @@ Steps 1–6 and 8 of §5 have shipped on this branch (step 7, the Tier 3 nouns, 
 | column parity | `53c44aa` | `ip availability list`, `network qos rule list` |
 | 8 post-Zed flags | `7181533` router · `a439145` port · `7f5ebf2` network + subnet | §2c, every flag, each naming its neutron extension |
 | regression guard | `1e39b15` | `upstream_flags_test.go` + `scripts/network-flag-table.py` |
+| §6d plugin namespaces | `38e7299` vendor · `90e6978` service-absent errors · `f59679e` BGPVPN · `e61e304` VPNaaS · `fc5b656` FWaaS · `575873c` dynamic routing + tap mirrors | 90 commands; TaaS tap services/flows (10) skipped — no gophercloud package |
+| §6e behaviour, items 1–7 | `5611490` strict name resolution · `02903f1` items 2–7 | items 8–12 kept as documented deviations |
 
 Command surface: **114/168** raw (core 97/97), up from 104/168. Flag surface:
 **every** upstream option of every implemented command is registered, post-Zed
@@ -302,6 +304,11 @@ whole fleet. At roughly one noun per commit, raw coverage goes 114 → 168/168.
 
 ### 6d. The neutron plugin namespaces — 100 commands
 
+**Done except TaaS tap services/flows** (see the status table): 90 commands, every
+upstream flag (the regression test covers these namespaces too), a 404 from an
+undeployed service names the missing extension. The analysis below is kept as
+the record of the decision.
+
 `python-openstackclient` 10.3.0 registers them in its own entry points (they were
 absorbed from python-neutronclient), so they are upstream `openstack network …`
 surface too. Unlike §6c, gophercloud already has typed packages for almost all of
@@ -323,6 +330,13 @@ deployment fact, not a code one — `koc network extension list` on each cloud
 the likeliest to be deployed and the cheapest (45 commands, zero raw code).
 
 ### 6e. Behaviour — deviations the batches recorded
+
+**Items 1–7 are done** (status table). Two recorded refinements: `port unset`
+matches on the keys a spec gives (upstream compares the whole
+`{subnet_id, ip_address}` entry, so a partial spec never matches there) and
+errors when a partial spec matches more than one entry; and QoS rule
+validation also refuses `--max-burst-kbits` outside bandwidth-limit, which
+upstream lets through.
 
 Same command, same flags, different result. Each is small; grouped by how much
 it matters:
