@@ -32,7 +32,7 @@ func TestRunRBACList_SendsFilters(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
 	err := runRBACList(context.Background(), networkClient(fakeServer), o,
-		"access_as_shared", "network", "99999999-9999-9999-9999-999999999999", &out)
+		"access_as_shared", "network", "99999999-9999-9999-9999-999999999999", false, &out)
 	if err != nil {
 		t.Fatalf("runRBACList returned error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestRunRBACList_ErrorOnNon2xx(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runRBACList(context.Background(), networkClient(fakeServer), o, "", "", "", &out); err == nil {
+	if err := runRBACList(context.Background(), networkClient(fakeServer), o, "", "", "", false, &out); err == nil {
 		t.Fatal("expected an error from a 500 response")
 	}
 }
@@ -118,7 +118,7 @@ func TestRunRBACSet_SendsOnlyTargetProject(t *testing.T) {
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
 	err := runRBACSet(context.Background(), networkClient(fakeServer), o, extRBACID,
-		"77777777-7777-7777-7777-777777777777", &out)
+		&rbacSetFlags{targetProject: "77777777-7777-7777-7777-777777777777"}, &out)
 	if err != nil {
 		t.Fatalf("runRBACSet returned error: %v", err)
 	}
@@ -142,7 +142,8 @@ func TestRunRBACSet_ErrorOnNon2xx(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	if err := runRBACSet(context.Background(), networkClient(fakeServer), o, extRBACID, "x", &out); err == nil {
+	if err := runRBACSet(context.Background(), networkClient(fakeServer), o, extRBACID,
+		&rbacSetFlags{targetProject: "x"}, &out); err == nil {
 		t.Fatal("expected an error from a 400 response")
 	}
 }
@@ -194,7 +195,7 @@ func TestRunSegmentList_FiltersByNetworkAndType(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	err := runSegmentList(context.Background(), networkClient(fakeServer), o, "public", "vlan", "physnet1", &out)
+	err := runSegmentList(context.Background(), networkClient(fakeServer), o, "public", "vlan", "physnet1", false, &out)
 	if err != nil {
 		t.Fatalf("runSegmentList returned error: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestRunSegmentList_NoNetworkFilterSkipsResolution(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, "", "", "", &out); err != nil {
+	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, "", "", "", false, &out); err != nil {
 		t.Fatalf("runSegmentList returned error: %v", err)
 	}
 }
@@ -239,7 +240,7 @@ func TestRunSegmentList_ErrorOnMalformedBody(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, "", "", "", &out); err == nil {
+	if err := runSegmentList(context.Background(), networkClient(fakeServer), o, "", "", "", false, &out); err == nil {
 		t.Fatal("expected an error from a malformed response body")
 	}
 }
@@ -428,7 +429,8 @@ func TestRunPortForwardingList(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runPortForwardingList(context.Background(), networkClient(fakeServer), o, extFIPID, &out); err != nil {
+	if err := runPortForwardingList(context.Background(), networkClient(fakeServer), o, extFIPID,
+		&portForwardingListFlags{}, &out); err != nil {
 		t.Fatalf("runPortForwardingList returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), extPFID) || !strings.Contains(out.String(), "2222") {
@@ -446,7 +448,8 @@ func TestRunPortForwardingList_ErrorOnNon2xx(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "table"}
-	if err := runPortForwardingList(context.Background(), networkClient(fakeServer), o, extFIPID, &out); err == nil {
+	if err := runPortForwardingList(context.Background(), networkClient(fakeServer), o, extFIPID,
+		&portForwardingListFlags{}, &out); err == nil {
 		t.Fatal("expected an error from a 403 response")
 	}
 }

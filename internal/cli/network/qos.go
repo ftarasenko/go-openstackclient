@@ -57,7 +57,7 @@ func qosPolicyShowFields(p *policies.Policy) ([]string, []any) {
 }
 
 func newQoSPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var project string
+	var project, projectDomain string
 	var share, noShare bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -70,15 +70,21 @@ func newQoSPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err := mutuallyExclusive(cmd.Flags(), flagShare, flagNoShare); err != nil {
 				return err
 			}
-			c, err := newNetworkClient(cmd.Context(), a)
+			ctx := cmd.Context()
+			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runQoSPolicyList(cmd.Context(), c, o, project, share, noShare, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, project, projectDomain)
+			if err != nil {
+				return err
+			}
+			return runQoSPolicyList(ctx, c, o, projectID, share, noShare, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&project, "project", "", "filter by project ID")
+	fl.StringVar(&project, flagProject, "", "list only policies owned by this project (name or ID)")
+	fl.StringVar(&projectDomain, flagProjectDomain, "", projectDomainHelp)
 	fl.BoolVar(&share, flagShare, false, "list only shared policies")
 	fl.BoolVar(&noShare, flagNoShare, false, "list only unshared policies")
 	return cmd
@@ -150,12 +156,16 @@ func runQoSPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 }
 
 type qosPolicyCreateFlags struct {
-	description string
-	project     string
-	share       bool
-	noShare     bool
-	isDefault   bool
-	noDefault   bool
+	description   string
+	project       string
+	projectDomain string
+	// projectID is --project resolved by RunE, so the seam needs no identity client.
+	projectID     string
+	share         bool
+	noShare       bool
+	isDefault     bool
+	noDefault     bool
+	extraProperty []string
 }
 
 func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -174,35 +184,54 @@ func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err := mutuallyExclusive(cmd.Flags(), flagDefault, flagNoDefault); err != nil {
 				return err
 			}
-			c, err := newNetworkClient(cmd.Context(), a)
+			ctx := cmd.Context()
+			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			// --no-share / --no-default exist for OSC parity; they select the
-			// neutron defaults, so there is nothing extra to send.
-			return runQoSPolicyCreate(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
+			if f.projectID, err = resolveProjectRef(ctx, session, f.project, f.projectDomain); err != nil {
+				return err
+			}
+			return runQoSPolicyCreate(ctx, c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.description, "description", "", "description of the policy")
-	fl.StringVar(&f.project, "project", "", "owning project ID")
+	fl.StringVar(&f.description, flagDescription, "", "description of the policy")
+	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
 	fl.BoolVar(&f.share, flagShare, false, "make the policy usable by every project")
 	fl.BoolVar(&f.noShare, flagNoShare, false, "keep the policy private to its project (default)")
 	fl.BoolVar(&f.isDefault, flagDefault, false, "make this the project's default policy")
 	fl.BoolVar(&f.noDefault, flagNoDefault, false, "do not make this the default policy (default)")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 	return cmd
 }
 
 func runQoSPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *qosPolicyCreateFlags, w io.Writer,
 ) error {
-	p, err := policies.Create(ctx, client, policies.CreateOpts{
+	opts := policies.CreateOpts{
 		Name:        name,
 		Description: f.description,
-		ProjectID:   f.project,
+		ProjectID:   f.projectID,
 		Shared:      f.share,
 		IsDefault:   f.isDefault,
-	}).Extract()
+	}
+	// CreateOpts drops a false Shared/IsDefault as a zero value, while upstream
+	// sends --no-share / --no-default as an explicit false.
+	var attrs map[string]any
+	if f.noShare {
+		attrs = mergeAttrs(attrs, map[string]any{"shared": false})
+	}
+	if f.noDefault {
+		attrs = mergeAttrs(attrs, map[string]any{"is_default": false})
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	attrs = mergeAttrs(attrs, extra)
+	p, err := policies.Create(ctx, client, withQosPolicyCreateAttrs(opts, attrs)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating network QoS policy %q: %w", name, err)
 	}
@@ -217,6 +246,8 @@ type qosPolicySetFlags struct {
 	noShare     bool
 	isDefault   bool
 	noDefault   bool
+
+	extraProperty []string
 
 	// descSet records whether --description was given: an empty value is a
 	// meaningful update, so it cannot be inferred from description alone.
@@ -255,6 +286,7 @@ func newQoSPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.noShare, flagNoShare, false, "make the policy private to its project")
 	fl.BoolVar(&f.isDefault, flagDefault, false, "make this the project's default policy")
 	fl.BoolVar(&f.noDefault, flagNoDefault, false, "stop this being the default policy")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 	return cmd
 }
 
@@ -275,7 +307,11 @@ func runQoSPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if f.isDefault || f.noDefault {
 		opts.IsDefault = &f.isDefault
 	}
-	p, err := policies.Update(ctx, client, id, opts).Extract()
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	p, err := policies.Update(ctx, client, id, withQosPolicyUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("updating network QoS policy %s: %w", ref, err)
 	}
@@ -563,6 +599,16 @@ func resolveQoSRule(ctx context.Context, client *gophercloud.ServiceClient, ref,
 	return policyID, k, nil
 }
 
+// Upstream's direction spellings for a QoS rule (network_qos_rule.py). koc's
+// own --direction <d> predates them and stays as a pass-through extra; all four
+// are mutually exclusive.
+const (
+	flagQoSDirection = "direction"
+	flagQoSIngress   = "ingress"
+	flagQoSEgress    = "egress"
+	flagQoSAny       = "any"
+)
+
 type qosRuleFlags struct {
 	maxKBps       int
 	maxBurstKbits int
@@ -570,6 +616,10 @@ type qosRuleFlags struct {
 	minKpps       int
 	dscpMark      int
 	direction     string
+	ingress       bool
+	egress        bool
+	anyDirection  bool
+	extraProperty []string
 
 	// changed is the command's flag set, captured at construction so the run
 	// seams take resolved flags instead of a second parameter.
@@ -583,33 +633,74 @@ func (f *qosRuleFlags) register(cmd *cobra.Command) {
 	fl.IntVar(&f.minKBps, "min-kbps", 0, "guaranteed bandwidth in kbps (minimum-bandwidth)")
 	fl.IntVar(&f.minKpps, "min-kpps", 0, "guaranteed packet rate in kpps (minimum-packet-rate)")
 	fl.IntVar(&f.dscpMark, "dscp-mark", 0, "DSCP mark value (dscp-marking)")
-	fl.StringVar(&f.direction, "direction", "", "traffic direction: egress, ingress or any")
+	fl.StringVar(&f.direction, flagQoSDirection, "", "traffic direction: egress, ingress or any")
+	fl.BoolVar(&f.ingress, flagQoSIngress, false, "ingress traffic, from the project's point of view")
+	fl.BoolVar(&f.egress, flagQoSEgress, false, "egress traffic, from the project's point of view")
+	fl.BoolVar(&f.anyDirection, flagQoSAny, false, "traffic in either direction (minimum-packet-rate only)")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	cmd.MarkFlagsMutuallyExclusive(flagQoSDirection, flagQoSIngress, flagQoSEgress, flagQoSAny)
+}
+
+// directionFor resolves the direction flags for kind k: ok is false when none
+// was given. Upstream rejects --any on every type but minimum-packet-rate; the
+// koc --direction spelling is passed through for neutron to validate.
+func (f *qosRuleFlags) directionFor(k qosRuleKind) (dir string, ok bool, err error) {
+	switch {
+	case f.ingress:
+		return "ingress", true, nil
+	case f.egress:
+		return "egress", true, nil
+	case f.anyDirection:
+		if k.apiType != "minimum_packet_rate" {
+			return "", false, fmt.Errorf("--any can only be used with a minimum-packet-rate rule, not %s", k.cliType)
+		}
+		return "any", true, nil
+	case f.changed.Changed(flagQoSDirection):
+		return f.direction, true, nil
+	default:
+		return "", false, nil
+	}
 }
 
 // body builds the rule attributes for kind k. Only the fields the operator
-// actually set are included, so an update patches nothing it was not asked to.
-func (f *qosRuleFlags) body(k qosRuleKind) map[string]any {
+// actually set are included, so an update patches nothing it was not asked to;
+// a flag belonging to another rule type is ignored. --extra-property is merged
+// last, so it wins.
+func (f *qosRuleFlags) body(k qosRuleKind) (map[string]any, error) {
 	attrs := map[string]any{}
 	set := func(flag, key string, v any) {
 		if f.changed.Changed(flag) {
 			attrs[key] = v
 		}
 	}
+	dir, dirGiven, err := f.directionFor(k)
+	if err != nil {
+		return nil, err
+	}
+	setDirection := func() {
+		if dirGiven {
+			attrs["direction"] = dir
+		}
+	}
 	switch k.apiType {
 	case "bandwidth_limit":
 		set("max-kbps", "max_kbps", f.maxKBps)
 		set("max-burst-kbits", "max_burst_kbps", f.maxBurstKbits)
-		set("direction", "direction", f.direction)
+		setDirection()
 	case "dscp_marking":
 		set("dscp-mark", "dscp_mark", f.dscpMark)
 	case "minimum_bandwidth":
 		set("min-kbps", "min_kbps", f.minKBps)
-		set("direction", "direction", f.direction)
+		setDirection()
 	case "minimum_packet_rate":
 		set("min-kpps", "min_kpps", f.minKpps)
-		set("direction", "direction", f.direction)
+		setDirection()
 	}
-	return attrs
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return nil, err
+	}
+	return mergeAttrs(attrs, extra), nil
 }
 
 func newQoSRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -627,11 +718,15 @@ func newQoSRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 			if err != nil {
 				return err
 			}
+			attrs, err := f.body(k)
+			if err != nil {
+				return err
+			}
 			c, err := newNetworkClient(cmd.Context(), a)
 			if err != nil {
 				return err
 			}
-			return runQoSRuleCreate(cmd.Context(), c, o, args[0], k, f.body(k), cmd.OutOrStdout())
+			return runQoSRuleCreate(cmd.Context(), c, o, args[0], k, attrs, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&ruleType, "type", "",
@@ -685,7 +780,10 @@ func runQoSRuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	attrs := f.body(k)
+	attrs, err := f.body(k)
+	if err != nil {
+		return err
+	}
 	if len(attrs) == 0 {
 		return fmt.Errorf("nothing to set on QoS rule %s: give at least one property flag", ruleID)
 	}

@@ -39,7 +39,7 @@ func newIPAvailabilityCommand(a *auth.Options, o *output.Options) *cobra.Command
 
 func newIPAvailabilityListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var ipVersion int
-	var project string
+	var project, projectDomain string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List IP address availability per network",
@@ -48,16 +48,22 @@ func newIPAvailabilityListCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			c, err := newNetworkClient(cmd.Context(), a)
+			ctx := cmd.Context()
+			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runIPAvailabilityList(cmd.Context(), c, o, ipVersion, project, cmd.OutOrStdout())
+			projectID, err := resolveProjectRef(ctx, session, project, projectDomain)
+			if err != nil {
+				return err
+			}
+			return runIPAvailabilityList(ctx, c, o, ipVersion, projectID, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.IntVar(&ipVersion, "ip-version", 0, "filter by IP version: 4 or 6")
-	fl.StringVar(&project, "project", "", "filter by project ID")
+	fl.StringVar(&project, flagProject, "", "list only networks owned by this project (name or ID)")
+	fl.StringVar(&projectDomain, flagProjectDomain, "", projectDomainHelp)
 	return cmd
 }
 
@@ -143,6 +149,7 @@ func newRBACCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func newRBACListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var action, objectType, targetProject string
+	var long bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List network RBAC policies",
@@ -151,22 +158,42 @@ func newRBACListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			c, err := newNetworkClient(cmd.Context(), a)
+			ctx := cmd.Context()
+			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runRBACList(cmd.Context(), c, o, action, objectType, targetProject, cmd.OutOrStdout())
+			// Upstream resolves the target project without a domain and passes
+			// the "*" wildcard through untouched.
+			targetID, err := resolveRBACTargetProject(ctx, session, targetProject, "")
+			if err != nil {
+				return err
+			}
+			return runRBACList(ctx, c, o, action, objectType, targetID, long, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&action, "action", "", "filter by action: access_as_external or access_as_shared")
 	fl.StringVar(&objectType, "type", "", "filter by object type, e.g. network or qos_policy")
-	fl.StringVar(&targetProject, flagTargetProject, "", "filter by the project the policy grants access to")
+	fl.StringVar(&targetProject, flagTargetProject, "", "filter by the project the policy grants access to (name or ID)")
+	fl.BoolVar(&long, "long", false, "list additional fields in output")
 	return cmd
 }
 
+// resolveRBACTargetProject resolves a --target-project, leaving neutron's "*"
+// wildcard alone: it names every project, not a keystone project called "*".
+func resolveRBACTargetProject(ctx context.Context, session *auth.Client, ref, domainRef string) (string, error) {
+	if ref == rbacAllProjects {
+		return ref, nil
+	}
+	return resolveProjectRef(ctx, session, ref, domainRef)
+}
+
+// runRBACList renders upstream's columns: ID, object type and object ID, with
+// the action under --long. koc also shows the target project under --long,
+// which upstream's list never does.
 func runRBACList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	action, objectType, targetProject string, w io.Writer,
+	action, objectType, targetProject string, long bool, w io.Writer,
 ) error {
 	opts := rbacpolicies.ListOpts{
 		Action:       rbacpolicies.PolicyAction(action),
@@ -181,12 +208,17 @@ func runRBACList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("parsing the network RBAC policy list: %w", err)
 	}
-	t := output.Table{
-		Columns: []string{"ID", "Object Type", "Object ID", "Action", "Target Project"},
-		Rows:    make([][]any, 0, len(all)),
+	cols := []string{"ID", "Object Type", "Object ID"}
+	if long {
+		cols = append(cols, "Action", "Target Project")
 	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
-		t.Rows = append(t.Rows, []any{p.ID, p.ObjectType, p.ObjectID, p.Action, p.TargetTenant})
+		row := []any{p.ID, p.ObjectType, p.ObjectID}
+		if long {
+			row = append(row, p.Action, p.TargetTenant)
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }
@@ -229,11 +261,22 @@ func writeRBAC(o *output.Options, w io.Writer, p *rbacpolicies.RBACPolicy) error
 // (openstackclient/network/v2/network_rbac.py).
 const rbacAllProjects = "*"
 
+// flagTargetProjectDomain disambiguates --target-project the way
+// --project-domain does --project.
+const flagTargetProjectDomain = "target-project-domain"
+
 type rbacCreateFlags struct {
-	action            string
-	objectType        string
-	targetProject     string
-	targetAllProjects bool
+	action              string
+	objectType          string
+	targetProject       string
+	targetProjectDomain string
+	targetAllProjects   bool
+	project             string
+	projectDomain       string
+	// projectID is the owner (--project) resolved by RunE; targetProject is
+	// likewise replaced by its resolved ID (or "*").
+	projectID     string
+	extraProperty []string
 }
 
 func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -249,21 +292,32 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if f.targetProject == "" && !f.targetAllProjects {
 				return fmt.Errorf("one of --target-project or --target-all-projects is required")
 			}
-			if f.targetAllProjects {
-				f.targetProject = rbacAllProjects
-			}
-			c, err := newNetworkClient(cmd.Context(), a)
+			ctx := cmd.Context()
+			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runRBACCreate(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
+			if f.targetAllProjects {
+				f.targetProject = rbacAllProjects
+			} else if f.targetProject, err = resolveProjectRef(ctx, session, f.targetProject, f.targetProjectDomain); err != nil {
+				return err
+			}
+			if f.projectID, err = resolveProjectRef(ctx, session, f.project, f.projectDomain); err != nil {
+				return err
+			}
+			return runRBACCreate(ctx, c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.action, "action", "", "access_as_external or access_as_shared")
 	fl.StringVar(&f.objectType, "type", "", "object type, e.g. network or qos_policy")
-	fl.StringVar(&f.targetProject, flagTargetProject, "", "project to grant access to")
+	fl.StringVar(&f.targetProject, flagTargetProject, "", "project to grant access to (name or ID)")
+	fl.StringVar(&f.targetProjectDomain, flagTargetProjectDomain, "",
+		"domain owning --target-project (name or ID), to disambiguate a project name")
 	fl.BoolVar(&f.targetAllProjects, flagTargetAllProjects, false, "grant access to every project")
+	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 	_ = cmd.MarkFlagRequired("action")
 	_ = cmd.MarkFlagRequired("type")
 	// --target-project is no longer cobra-required because --target-all-projects
@@ -275,20 +329,37 @@ func newRBACCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runRBACCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	objectID string, f *rbacCreateFlags, w io.Writer,
 ) error {
-	p, err := rbacpolicies.Create(ctx, client, rbacpolicies.CreateOpts{
+	opts := rbacpolicies.CreateOpts{
 		Action:       rbacpolicies.PolicyAction(f.action),
 		ObjectType:   f.objectType,
 		ObjectID:     objectID,
 		TargetTenant: f.targetProject,
-	}).Extract()
+	}
+	// CreateOpts has no owner field: project_id rides as an extra attribute.
+	var attrs map[string]any
+	if f.projectID != "" {
+		attrs = map[string]any{"project_id": f.projectID}
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	attrs = mergeAttrs(attrs, extra)
+	p, err := rbacpolicies.Create(ctx, client, withRbacCreateAttrs(opts, attrs)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating a network RBAC policy for %s: %w", objectID, err)
 	}
 	return writeRBAC(o, w, p)
 }
 
+type rbacSetFlags struct {
+	targetProject       string
+	targetProjectDomain string
+	extraProperty       []string
+}
+
 func newRBACSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var targetProject string
+	f := &rbacSetFlags{}
 	cmd := &cobra.Command{
 		Use:   "set <rbac-policy>",
 		Short: "Change the target project of a network RBAC policy",
@@ -297,24 +368,52 @@ func newRBACSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			c, err := newNetworkClient(cmd.Context(), a)
+			if f.targetProject == "" && len(f.extraProperty) == 0 {
+				return fmt.Errorf("network rbac set requires --target-project or --extra-property")
+			}
+			ctx := cmd.Context()
+			c, session, err := newNetworkSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runRBACSet(cmd.Context(), c, o, args[0], targetProject, cmd.OutOrStdout())
+			if f.targetProject, err = resolveRBACTargetProject(ctx, session, f.targetProject, f.targetProjectDomain); err != nil {
+				return err
+			}
+			return runRBACSet(ctx, c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
-	// The target project is the only mutable field: neutron's update schema has
-	// nothing else in it.
-	cmd.Flags().StringVar(&targetProject, flagTargetProject, "", "project to grant access to")
-	_ = cmd.MarkFlagRequired(flagTargetProject)
+	// The target project is the only mutable field in neutron's update schema;
+	// --extra-property is upstream's escape hatch for anything a newer
+	// neutron adds.
+	fl := cmd.Flags()
+	fl.StringVar(&f.targetProject, flagTargetProject, "", "project to grant access to (name or ID)")
+	fl.StringVar(&f.targetProjectDomain, flagTargetProjectDomain, "",
+		"domain owning --target-project (name or ID), to disambiguate a project name")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 	return cmd
 }
 
+// runRBACSet sends target_tenant (already resolved) plus any extra attributes.
+// UpdateOpts tags target_tenant required, so an extra-property-only update
+// builds its body without it.
 func runRBACSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id, targetProject string, w io.Writer,
+	id string, f *rbacSetFlags, w io.Writer,
 ) error {
-	p, err := rbacpolicies.Update(ctx, client, id, rbacpolicies.UpdateOpts{TargetTenant: targetProject}).Extract()
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	var opts rbacpolicies.UpdateOptsBuilder
+	if f.targetProject != "" {
+		opts = withRbacUpdateAttrs(rbacpolicies.UpdateOpts{TargetTenant: f.targetProject}, extra)
+	} else {
+		opts = rbacUpdateExt{bodyExt{
+			build: func() (map[string]any, error) { return map[string]any{"rbac_policy": map[string]any{}}, nil },
+			key:   "rbac_policy",
+			extra: extra,
+		}}
+	}
+	p, err := rbacpolicies.Update(ctx, client, id, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("updating network RBAC policy %s: %w", id, err)
 	}
@@ -364,6 +463,7 @@ func newSegmentCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func newSegmentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var network, networkType, physicalNetwork string
+	var long bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List network segments",
@@ -376,18 +476,21 @@ func newSegmentListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runSegmentList(cmd.Context(), c, o, network, networkType, physicalNetwork, cmd.OutOrStdout())
+			return runSegmentList(cmd.Context(), c, o, network, networkType, physicalNetwork, long, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&network, "network", "", "filter by network (name or ID)")
 	fl.StringVar(&networkType, flagNetworkType, "", "filter by network type, e.g. vlan or vxlan")
 	fl.StringVar(&physicalNetwork, "physical-network", "", "filter by physical network")
+	fl.BoolVar(&long, "long", false, "list additional fields in output")
 	return cmd
 }
 
+// runSegmentList renders upstream's columns; --long adds the physical network.
+// --network-type and --physical-network are koc-only filters.
 func runSegmentList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	network, networkType, physicalNetwork string, w io.Writer,
+	network, networkType, physicalNetwork string, long bool, w io.Writer,
 ) error {
 	opts := segments.ListOpts{NetworkType: networkType, PhysicalNetwork: physicalNetwork}
 	if network != "" {
@@ -405,12 +508,17 @@ func runSegmentList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return fmt.Errorf("parsing the network segment list: %w", err)
 	}
-	t := output.Table{
-		Columns: []string{"ID", "Name", "Network ID", "Network Type", "Segmentation ID"},
-		Rows:    make([][]any, 0, len(all)),
+	cols := []string{"ID", "Name", "Network", "Network Type", "Segment"}
+	if long {
+		cols = append(cols, "Physical Network")
 	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, seg := range all {
-		t.Rows = append(t.Rows, []any{seg.ID, seg.Name, seg.NetworkID, seg.NetworkType, seg.SegmentationID})
+		row := []any{seg.ID, seg.Name, seg.NetworkID, seg.NetworkType, seg.SegmentationID}
+		if long {
+			row = append(row, seg.PhysicalNetwork)
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }
@@ -453,6 +561,7 @@ type segmentCreateFlags struct {
 	physicalNetwork string
 	description     string
 	segmentationID  int
+	extraProperty   []string
 }
 
 func newSegmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -478,6 +587,7 @@ func newSegmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "physical network name")
 	fl.StringVar(&f.description, "description", "", "description of the segment")
 	fl.IntVar(&f.segmentationID, "segment", 0, "segmentation ID, e.g. the VLAN tag")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 	_ = cmd.MarkFlagRequired("network")
 	_ = cmd.MarkFlagRequired(flagNetworkType)
 	return cmd
@@ -490,14 +600,18 @@ func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	seg, err := segments.Create(ctx, client, segments.CreateOpts{
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	seg, err := segments.Create(ctx, client, withSegmentCreateAttrs(segments.CreateOpts{
 		Name:            name,
 		Description:     f.description,
 		NetworkID:       networkID,
 		NetworkType:     f.networkType,
 		PhysicalNetwork: f.physicalNetwork,
 		SegmentationID:  f.segmentationID,
-	}).Extract()
+	}, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating network segment %q: %w", name, err)
 	}
@@ -508,6 +622,7 @@ type segmentSetFlags struct {
 	name           string
 	description    string
 	segmentationID int
+	extraProperty  []string
 
 	// Which of the three were given: each field is a pointer in UpdateOpts, so
 	// an empty name or a zero segmentation ID is still a real update.
@@ -539,6 +654,7 @@ func newSegmentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.name, "name", "", "new name")
 	fl.StringVar(&f.description, "description", "", "new description")
 	fl.IntVar(&f.segmentationID, "segment", 0, "new segmentation ID")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 	return cmd
 }
 
@@ -555,7 +671,11 @@ func runSegmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.segSet {
 		opts.SegmentationID = &f.segmentationID
 	}
-	seg, err := segments.Update(ctx, client, id, opts).Extract()
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	seg, err := segments.Update(ctx, client, id, withSegmentUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("updating network segment %s: %w", id, err)
 	}
@@ -605,8 +725,18 @@ func newPortForwardingCommand(a *auth.Options, o *output.Options) *cobra.Command
 	return parent
 }
 
+// portForwardingListFlags are upstream's list filters: the internal port
+// (name or ID), the external port — a single number, or <first>:<last> for a
+// range — and the protocol.
+type portForwardingListFlags struct {
+	port         string
+	externalPort string
+	protocol     string
+}
+
 func newPortForwardingListCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
+	f := &portForwardingListFlags{}
+	cmd := &cobra.Command{
 		Use:   "list <floating-ip>",
 		Short: "List a floating IP's port forwardings",
 		Args:  cobra.ExactArgs(1),
@@ -618,15 +748,41 @@ func newPortForwardingListCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			return runPortForwardingList(cmd.Context(), c, o, args[0], cmd.OutOrStdout())
+			return runPortForwardingList(cmd.Context(), c, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
+	fl := cmd.Flags()
+	fl.StringVar(&f.port, "port", "", "list only forwardings to this internal port (name or ID)")
+	fl.StringVar(&f.externalPort, "external-protocol-port", "",
+		"list only forwardings on this external port number, or <first>:<last> range")
+	fl.StringVar(&f.protocol, "protocol", "", "list only forwardings using this protocol")
+	return cmd
 }
 
 func runPortForwardingList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	fipID string, w io.Writer,
+	fipID string, f *portForwardingListFlags, w io.Writer,
 ) error {
-	pages, err := portforwarding.List(client, portforwarding.ListOpts{}, fipID).AllPages(ctx)
+	opts := portforwarding.ListOpts{Protocol: f.protocol}
+	if f.port != "" {
+		portID, err := resolvePortID(ctx, client, f.port)
+		if err != nil {
+			return err
+		}
+		opts.InternalPortID = portID
+	}
+	// Upstream sends a range as external_port_range and a single port as
+	// external_port (an integer).
+	switch {
+	case strings.Contains(f.externalPort, ":"):
+		opts.ExternalPortRange = f.externalPort
+	case f.externalPort != "":
+		n, err := strconv.Atoi(f.externalPort)
+		if err != nil {
+			return fmt.Errorf("--external-protocol-port %q is not a port number or <first>:<last> range", f.externalPort)
+		}
+		opts.ExternalPort = strconv.Itoa(n)
+	}
+	pages, err := portforwarding.List(client, opts, fipID).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing port forwardings of floating IP %s: %w", fipID, err)
 	}
@@ -635,12 +791,13 @@ func runPortForwardingList(ctx context.Context, client *gophercloud.ServiceClien
 		return fmt.Errorf("parsing the port forwarding list: %w", err)
 	}
 	t := output.Table{
-		Columns: []string{"ID", "Protocol", "External Port", "Internal Port", "Internal IP", "Internal Port ID"},
-		Rows:    make([][]any, 0, len(all)),
+		Columns: []string{"ID", "Internal Port ID", "Internal IP Address", "Internal Port", "Internal Port Range",
+			"External Port", "External Port Range", "Protocol", "Description"},
+		Rows: make([][]any, 0, len(all)),
 	}
 	for _, pf := range all {
-		t.Rows = append(t.Rows, []any{pf.ID, pf.Protocol, pf.ExternalPort, pf.InternalPort,
-			pf.InternalIPAddress, pf.InternalPortID})
+		t.Rows = append(t.Rows, []any{pf.ID, pf.InternalPortID, pf.InternalIPAddress, pf.InternalPort,
+			pf.InternalPortRange, pf.ExternalPort, pf.ExternalPortRange, pf.Protocol, pf.Description})
 	}
 	return o.WriteList(w, t)
 }
@@ -690,6 +847,7 @@ type portForwardingFlags struct {
 	externalPortRange string
 	protocol          string
 	description       string
+	extraProperty     []string
 
 	// descSet records whether --description was given: clearing a description
 	// is a real update, so an empty value cannot stand in for "not given".
@@ -711,6 +869,7 @@ func (f *portForwardingFlags) register(cmd *cobra.Command, defaultProtocol strin
 		"external port range as <first>:<last> (neutron 'port_forwarding_port_ranges' extension)")
 	fl.StringVar(&f.protocol, "protocol", defaultProtocol, "protocol: tcp, udp, icmp, icmp6, sctp or dccp")
 	fl.StringVar(&f.description, "description", "", "description of the forwarding")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
 }
 
 func newPortForwardingCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -743,9 +902,13 @@ func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
 	// Neutron treats the single port and the port range as mutually exclusive,
 	// so both are omitempty and only the pair the operator gave is sent.
-	pf, err := portforwarding.Create(ctx, client, fipID, portforwarding.CreateOpts{
+	pf, err := portforwarding.Create(ctx, client, fipID, withPortForwardingCreateAttrs(portforwarding.CreateOpts{
 		Protocol:          f.protocol,
 		InternalPortID:    portID,
 		InternalIPAddress: f.internalIP,
@@ -754,7 +917,7 @@ func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceCli
 		InternalPortRange: f.internalPortRange,
 		ExternalPortRange: f.externalPortRange,
 		Description:       f.description,
-	}).Extract()
+	}, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating a port forwarding on floating IP %s: %w", fipID, err)
 	}
@@ -805,7 +968,11 @@ func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient
 	if f.descSet {
 		opts.Description = &f.description
 	}
-	pf, err := portforwarding.Update(ctx, client, fipID, id, opts).Extract()
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	pf, err := portforwarding.Update(ctx, client, fipID, id, withPortForwardingUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("updating port forwarding %s: %w", id, err)
 	}

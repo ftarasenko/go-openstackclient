@@ -122,7 +122,10 @@ func TestRunQoSRuleCreate_PostsToTheTypeSpecificCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qosRuleKindByCLIType returned error: %v", err)
 	}
-	attrs := f.body(k)
+	attrs, err := f.body(k)
+	if err != nil {
+		t.Fatalf("body returned error: %v", err)
+	}
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
@@ -195,7 +198,10 @@ func TestQoSRuleFlagsBody_IgnoresFlagsFromOtherRuleTypes(t *testing.T) {
 		changed: changedFlags{"dscp-mark": true, "max-kbps": true, "direction": true}}
 	// A dscp-marking rule has no bandwidth or direction attribute; sending one
 	// would be a 400 from neutron.
-	attrs := f.body(k)
+	attrs, err := f.body(k)
+	if err != nil {
+		t.Fatalf("body returned error: %v", err)
+	}
 	th.AssertDeepEquals(t, map[string]any{"dscp_mark": 26}, attrs)
 }
 
