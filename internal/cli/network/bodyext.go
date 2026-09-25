@@ -29,6 +29,26 @@ func withNetworkUpdateAttrs(b interface {
 	return networkUpdateExt{bodyExt{build: b.ToNetworkUpdateMap, key: "network", extra: extra}}
 }
 
+type subnetCreateExt struct{ bodyExt }
+
+func (e subnetCreateExt) ToSubnetCreateMap() (map[string]any, error) { return e.body() }
+
+func withSubnetCreateAttrs(b interface {
+	ToSubnetCreateMap() (map[string]any, error)
+}, extra map[string]any) subnetCreateExt {
+	return subnetCreateExt{bodyExt{build: b.ToSubnetCreateMap, key: "subnet", extra: extra}}
+}
+
+type subnetUpdateExt struct{ bodyExt }
+
+func (e subnetUpdateExt) ToSubnetUpdateMap() (map[string]any, error) { return e.body() }
+
+func withSubnetUpdateAttrs(b interface {
+	ToSubnetUpdateMap() (map[string]any, error)
+}, extra map[string]any) subnetUpdateExt {
+	return subnetUpdateExt{bodyExt{build: b.ToSubnetUpdateMap, key: "subnet", extra: extra}}
+}
+
 type routerCreateExt struct{ bodyExt }
 
 func (e routerCreateExt) ToRouterCreateMap() (map[string]any, error) { return e.body() }
@@ -97,6 +117,26 @@ func withSecGroupRuleCreateAttrs(b interface {
 	ToSecGroupRuleCreateMap() (map[string]any, error)
 }, extra map[string]any) secGroupRuleCreateExt {
 	return secGroupRuleCreateExt{bodyExt{build: b.ToSecGroupRuleCreateMap, key: "security_group_rule", extra: extra}}
+}
+
+type subnetPoolCreateExt struct{ bodyExt }
+
+func (e subnetPoolCreateExt) ToSubnetPoolCreateMap() (map[string]any, error) { return e.body() }
+
+func withSubnetPoolCreateAttrs(b interface {
+	ToSubnetPoolCreateMap() (map[string]any, error)
+}, extra map[string]any) subnetPoolCreateExt {
+	return subnetPoolCreateExt{bodyExt{build: b.ToSubnetPoolCreateMap, key: "subnetpool", extra: extra}}
+}
+
+type subnetPoolUpdateExt struct{ bodyExt }
+
+func (e subnetPoolUpdateExt) ToSubnetPoolUpdateMap() (map[string]any, error) { return e.body() }
+
+func withSubnetPoolUpdateAttrs(b interface {
+	ToSubnetPoolUpdateMap() (map[string]any, error)
+}, extra map[string]any) subnetPoolUpdateExt {
+	return subnetPoolUpdateExt{bodyExt{build: b.ToSubnetPoolUpdateMap, key: "subnetpool", extra: extra}}
 }
 
 type addressScopeCreateExt struct{ bodyExt }

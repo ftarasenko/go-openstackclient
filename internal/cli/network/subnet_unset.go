@@ -31,20 +31,27 @@ type subnetUnsetFlags struct {
 	hostRoute      []string
 	serviceType    []string
 	gateway        bool
+	extraProperty  []string
+	tagWriteFlags
+}
+
+// changesAttrs reports whether any flag other than the tag pair was given.
+func (f *subnetUnsetFlags) changesAttrs() bool {
+	return len(f.allocationPool) > 0 || len(f.dnsNameserver) > 0 || len(f.hostRoute) > 0 ||
+		len(f.serviceType) > 0 || f.gateway || len(f.extraProperty) > 0
 }
 
 func newSubnetUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &subnetUnsetFlags{}
 	cmd := &cobra.Command{
 		Use:   "unset <subnet>",
-		Short: "Remove individual allocation pools, nameservers, host routes or service types from a subnet",
+		Short: "Remove individual allocation pools, nameservers, host routes, service types or tags from a subnet",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
 			}
-			if len(f.allocationPool) == 0 && len(f.dnsNameserver) == 0 &&
-				len(f.hostRoute) == 0 && len(f.serviceType) == 0 && !f.gateway {
+			if !f.changesAttrs() && !f.given() {
 				return fmt.Errorf("subnet unset requires at least one attribute flag")
 			}
 			ctx := cmd.Context()
@@ -56,13 +63,15 @@ func newSubnetUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.allocationPool, "allocation-pool", nil,
+	fl.StringArrayVar(&f.allocationPool, subnetFlagAllocationPool, nil,
 		"allocation pool to remove as start=<ip>,end=<ip> (repeatable)")
 	fl.StringArrayVar(&f.dnsNameserver, flagDNSNameserver, nil, "DNS nameserver to remove (repeatable)")
-	fl.StringArrayVar(&f.hostRoute, "host-route", nil,
+	fl.StringArrayVar(&f.hostRoute, subnetFlagHostRoute, nil,
 		"host route to remove as destination=<cidr>,gateway=<ip> (repeatable)")
-	fl.StringArrayVar(&f.serviceType, "service-type", nil, "service type to remove (repeatable)")
-	fl.BoolVar(&f.gateway, "gateway", false, "clear the subnet's gateway IP")
+	fl.StringArrayVar(&f.serviceType, subnetFlagServiceType, nil, "service type to remove (repeatable)")
+	fl.BoolVar(&f.gateway, subnetFlagGateway, false, "clear the subnet's gateway IP")
+	bindExtraPropertyUnsetFlag(fl, &f.extraProperty)
+	bindTagUnsetFlags(cmd, &f.tagWriteFlags, "subnet")
 	return cmd
 }
 
@@ -78,54 +87,108 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		return fmt.Errorf("reading subnet %s before unset: %w", nameOrID, err)
 	}
 
-	revision := current.RevisionNumber
-	opts := subnets.UpdateOpts{RevisionNumber: &revision}
-
-	if len(f.allocationPool) > 0 {
-		remove, err := parseAllocationPools(f.allocationPool)
+	s := current
+	if f.changesAttrs() {
+		revision := current.RevisionNumber
+		opts := subnets.UpdateOpts{RevisionNumber: &revision}
+		attrs, err := subnetUnsetLists(f, current, &opts)
 		if err != nil {
 			return err
 		}
-		opts.AllocationPools = keepUnmatched(current.AllocationPools,
-			func(have subnets.AllocationPool) bool { return slices.Contains(remove, have) })
-	}
-
-	if len(f.dnsNameserver) > 0 {
-		kept := keepUnmatched(current.DNSNameservers,
-			func(have string) bool { return slices.Contains(f.dnsNameserver, have) })
-		opts.DNSNameservers = &kept
-	}
-
-	if len(f.hostRoute) > 0 {
-		remove, err := parseHostRoutes(f.hostRoute)
+		if f.gateway {
+			// Neutron drops the gateway on an explicit null. GatewayIP is a *string so
+			// "" stays distinguishable from "unchanged", and gophercloud's
+			// ToSubnetUpdateMap rewrites the "" to null on the way out.
+			empty := ""
+			opts.GatewayIP = &empty
+		}
+		extra, err := parseExtraProperties(f.extraProperty, true)
 		if err != nil {
 			return err
 		}
-		kept := keepUnmatched(current.HostRoutes,
-			func(have subnets.HostRoute) bool { return slices.Contains(remove, have) })
-		opts.HostRoutes = &kept
+		attrs = mergeAttrs(attrs, extra)
+		if s, err = subnets.Update(ctx, client, id, subnetUpdateBody(opts, attrs)).Extract(); err != nil {
+			return fmt.Errorf("updating subnet %s: %w", nameOrID, err)
+		}
 	}
-
-	if len(f.serviceType) > 0 {
-		kept := keepUnmatched(current.ServiceTypes,
-			func(have string) bool { return slices.Contains(f.serviceType, have) })
-		opts.ServiceTypes = &kept
-	}
-
-	if f.gateway {
-		// Neutron drops the gateway on an explicit null. GatewayIP is a *string so
-		// "" stays distinguishable from "unchanged", and gophercloud's
-		// ToSubnetUpdateMap rewrites the "" to null on the way out.
-		empty := ""
-		opts.GatewayIP = &empty
-	}
-
-	s, err := subnets.Update(ctx, client, id, opts).Extract()
-	if err != nil {
-		return fmt.Errorf("updating subnet %s: %w", nameOrID, err)
+	// Tags are a sub-resource; a tags-only unset sends no subnet PUT, as upstream.
+	if s.Tags, err = applyTagsForUnset(ctx, client, tagResourceSubnets, id, s.Tags, &f.tagWriteFlags); err != nil {
+		return err
 	}
 	fields, values := subnetShowFields(s)
 	return o.WriteSingle(w, fields, values)
+}
+
+// subnetUnsetLists computes the surviving entries of each list a flag names.
+// As upstream (_update_arguments), naming an entry the subnet does not carry
+// is an error rather than a silent no-op. An emptied allocation-pool list is
+// returned as a body attribute, because UpdateOpts drops an empty slice there.
+func subnetUnsetLists(f *subnetUnsetFlags, current *subnets.Subnet, opts *subnets.UpdateOpts) (map[string]any, error) {
+	var attrs map[string]any
+	if len(f.allocationPool) > 0 {
+		remove, err := parseAllocationPools(f.allocationPool)
+		if err != nil {
+			return nil, err
+		}
+		kept, err := removeEach(current.AllocationPools, remove, subnetFlagAllocationPool,
+			func(p subnets.AllocationPool) string { return "start=" + p.Start + ",end=" + p.End })
+		if err != nil {
+			return nil, err
+		}
+		if len(kept) == 0 {
+			attrs = map[string]any{"allocation_pools": []subnets.AllocationPool{}}
+		} else {
+			opts.AllocationPools = kept
+		}
+	}
+	if len(f.dnsNameserver) > 0 {
+		kept, err := removeEach(current.DNSNameservers, f.dnsNameserver, flagDNSNameserver, subnetListEntry)
+		if err != nil {
+			return nil, err
+		}
+		opts.DNSNameservers = &kept
+	}
+	if len(f.hostRoute) > 0 {
+		remove, err := parseHostRoutes(f.hostRoute)
+		if err != nil {
+			return nil, err
+		}
+		kept, err := removeEach(current.HostRoutes, remove, subnetFlagHostRoute,
+			func(r subnets.HostRoute) string { return "destination=" + r.DestinationCIDR + ",gateway=" + r.NextHop })
+		if err != nil {
+			return nil, err
+		}
+		opts.HostRoutes = &kept
+	}
+	if len(f.serviceType) > 0 {
+		kept, err := removeEach(current.ServiceTypes, f.serviceType, subnetFlagServiceType, subnetListEntry)
+		if err != nil {
+			return nil, err
+		}
+		opts.ServiceTypes = &kept
+	}
+	return attrs, nil
+}
+
+// subnetListEntry formats a plain string list entry for removeEach errors.
+func subnetListEntry(s string) string { return s }
+
+// removeEach removes one occurrence of every entry of remove from a copy of
+// have, failing on the first entry have does not contain. The result is never
+// nil, so an emptied list is sent as [].
+func removeEach[T comparable](have, remove []T, option string, format func(T) string) ([]T, error) {
+	out := slices.Clone(have)
+	if out == nil {
+		out = []T{}
+	}
+	for _, r := range remove {
+		i := slices.Index(out, r)
+		if i < 0 {
+			return nil, fmt.Errorf("subnet does not contain %s %s", option, format(r))
+		}
+		out = slices.Delete(out, i, i+1)
+	}
+	return out, nil
 }
 
 // parseAllocationPools parses repeated "start=<ip>,end=<ip>" values, reusing the
