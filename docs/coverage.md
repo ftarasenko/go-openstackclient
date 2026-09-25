@@ -284,7 +284,8 @@ Glance metadefs and cached images; Cinder consistency groups, volume groups,
 groups, deploy templates, runbooks, traits, history, console, shards, volume
 connectors/targets; Neutron metering, flavors, L3 conntrack helpers, local IPs,
 NDP proxies, segment ranges, default SG rules; octavia availability zones and
-profiles; all of Swift and Manila. (Designate is no longer on this list — the raw
+profiles; TaaS tap services and flows (only tap mirrors have a gophercloud
+package); all of Swift and Manila. (Designate is no longer on this list — the raw
 fallback is written and its whole surface is covered; see below. Ironic VIFs and
 BIOS settings are no longer here either — `baremetal/v1/nodes` carries typed
 calls for both, so they are Tier 1.)
