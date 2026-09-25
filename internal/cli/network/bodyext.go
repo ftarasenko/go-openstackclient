@@ -49,6 +49,26 @@ func withSubnetUpdateAttrs(b interface {
 	return subnetUpdateExt{bodyExt{build: b.ToSubnetUpdateMap, key: "subnet", extra: extra}}
 }
 
+type portCreateExt struct{ bodyExt }
+
+func (e portCreateExt) ToPortCreateMap() (map[string]any, error) { return e.body() }
+
+func withPortCreateAttrs(b interface {
+	ToPortCreateMap() (map[string]any, error)
+}, extra map[string]any) portCreateExt {
+	return portCreateExt{bodyExt{build: b.ToPortCreateMap, key: "port", extra: extra}}
+}
+
+type portUpdateExt struct{ bodyExt }
+
+func (e portUpdateExt) ToPortUpdateMap() (map[string]any, error) { return e.body() }
+
+func withPortUpdateAttrs(b interface {
+	ToPortUpdateMap() (map[string]any, error)
+}, extra map[string]any) portUpdateExt {
+	return portUpdateExt{bodyExt{build: b.ToPortUpdateMap, key: "port", extra: extra}}
+}
+
 type routerCreateExt struct{ bodyExt }
 
 func (e routerCreateExt) ToRouterCreateMap() (map[string]any, error) { return e.body() }

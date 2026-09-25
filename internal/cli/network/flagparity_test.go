@@ -136,10 +136,19 @@ func TestRunPortSet_AllowedAddressAndBindingAttributes(t *testing.T) {
 	var gotMethod string
 	fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
-		// port_security_enabled and binding:host_id come from the local
-		// UpdateOptsBuilder extension, not ports.UpdateOpts.
+		// --allowed-address appends to the port's current pairs, as upstream's
+		// does, so the port is read first.
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"port": {"id": "port-1", "network_id": "net-1",
+              "allowed_address_pairs": [{"ip_address": "10.0.0.49"}]}}`))
+			return
+		}
+		// port_security_enabled and binding:host_id are extension attributes
+		// merged into the body, not ports.UpdateOpts fields.
 		th.TestJSONRequest(t, r, `{"port": {
           "allowed_address_pairs": [
+            {"ip_address": "10.0.0.49"},
             {"ip_address": "10.0.0.50"},
             {"ip_address": "10.0.0.51", "mac_address": "fa:16:3e:aa:bb:cc"}
           ],
