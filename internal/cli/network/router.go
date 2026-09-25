@@ -16,6 +16,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -49,6 +50,46 @@ func routerShowFields(r *routers.Router) ([]string, []any) {
 	return fields, values
 }
 
+// routerDetailFields is routerShowFields plus the attributes upstream's
+// ShowRouter also prints that gophercloud's Router does not model: ha (shown
+// only when neutron sent it, as upstream hides it when None — it is
+// admin-only by policy), availability_zone_hints, availability_zones and
+// flavor_id. The router verbs this file owns render through it; the extraroute
+// verbs in extensions.go keep the plain field set.
+func routerDetailFields(r *routers.Router, ext routerExtAttrs) ([]string, []any) {
+	fields, values := routerShowFields(r)
+	if ext.HA != nil {
+		fields = append(fields, "ha")
+		values = append(values, *ext.HA)
+	}
+	fields = append(fields, "availability_zone_hints", "availability_zones", "flavor_id")
+	values = append(values, r.AvailabilityZoneHints, derefOrNil(ext.AvailabilityZones), derefOrNil(ext.FlavorID))
+	return fields, values
+}
+
+// extractRouterDetail decodes a single-router response (get, create or
+// update) into the typed Router and its routerExtAttrs. As with the list, the
+// body is decoded twice because Router's UnmarshalJSON would swallow the rest.
+func extractRouterDetail(res gophercloud.Result) (*routers.Router, routerExtAttrs, error) {
+	var (
+		r   routers.Router
+		ext routerExtAttrs
+	)
+	if err := res.ExtractIntoStructPtr(&r, "router"); err != nil {
+		return nil, ext, err
+	}
+	if err := res.ExtractIntoStructPtr(&ext, "router"); err != nil {
+		return nil, ext, err
+	}
+	return &r, ext, nil
+}
+
+// writeRouterDetail renders one router through routerDetailFields.
+func writeRouterDetail(o *output.Options, w io.Writer, r *routers.Router, ext routerExtAttrs) error {
+	fields, values := routerDetailFields(r, ext)
+	return o.WriteSingle(w, fields, values)
+}
+
 // routerListFlags holds the filters accepted by "router list". Upstream OSC's
 // parser (network/v2/router.py ListRouter) is the reference; --all-projects is
 // the one koc-native addition — see allProjectsNetworkList.
@@ -58,13 +99,10 @@ type routerListFlags struct {
 	projectDomain string
 	enable        bool
 	disable       bool
-	tags          []string
-	anyTags       []string
-	notTags       []string
-	notAnyTags    []string
 	agent         string
 	long          bool
 	allProjects   bool
+	tagFilterFlags
 
 	adminStateUp *bool
 }
@@ -102,10 +140,7 @@ func newRouterListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project, to disambiguate the name (name or ID)")
 	fl.BoolVar(&f.enable, "enable", false, "list only enabled routers (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "list only disabled routers (admin state down)")
-	fl.StringSliceVar(&f.tags, "tags", nil, "list only routers with all of these tags (comma-separated)")
-	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only routers with any of these tags (comma-separated)")
-	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude routers with all of these tags (comma-separated)")
-	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude routers with any of these tags (comma-separated)")
+	bindTagFilterFlags(fl, &f.tagFilterFlags, "routers")
 	fl.StringVar(&f.agent, "agent", "", "list only routers hosted by this L3 agent (ID only)")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	allprojects.Bind(cmd, &f.allProjects, allProjectsNetworkList)
@@ -132,6 +167,7 @@ type routerExtAttrs struct {
 	Distributed       *bool     `json:"distributed"`
 	HA                *bool     `json:"ha"`
 	AvailabilityZones *[]string `json:"availability_zones"`
+	FlavorID          *string   `json:"flavor_id"`
 }
 
 // routerListRow pairs a router with its routerExtAttrs. The page is decoded
@@ -171,11 +207,8 @@ func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Name:         f.name,
 		ProjectID:    projectID,
 		AdminStateUp: f.adminStateUp,
-		Tags:         strings.Join(f.tags, ","),
-		TagsAny:      strings.Join(f.anyTags, ","),
-		NotTags:      strings.Join(f.notTags, ","),
-		NotTagsAny:   strings.Join(f.notAnyTags, ","),
 	}
+	f.apply(&opts.Tags, &opts.TagsAny, &opts.NotTags, &opts.NotTagsAny)
 	if f.agent != "" {
 		// The agent's l3-routers subresource takes no query filters (upstream
 		// notes the same), so every filter is re-applied client-side.
@@ -314,7 +347,7 @@ func runRouterShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	r, err := routers.Get(ctx, client, id).Extract()
+	r, ext, err := extractRouterDetail(routers.Get(ctx, client, id).Result)
 	if err != nil {
 		return fmt.Errorf("getting router %s: %w", nameOrID, err)
 	}
@@ -322,7 +355,7 @@ func runRouterShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	fields, values := routerShowFields(r)
+	fields, values := routerDetailFields(r, ext)
 	fields = append(fields, "interfaces_info")
 	values = append(values, interfaces)
 	return o.WriteSingle(w, fields, values)
@@ -362,11 +395,49 @@ func routerInterfaces(ctx context.Context, client *gophercloud.ServiceClient, ro
 	return out, nil
 }
 
+// Router flag names. They live here rather than in flagnames.go because only
+// the router verbs use them (see the note in flagnames.go on why each name is
+// a constant: pflag reports a mistyped lookup as "not set").
+const (
+	flagRouterDistributed     = "distributed"
+	flagRouterCentralized     = "centralized"
+	flagRouterHA              = "ha"
+	flagRouterNoHA            = "no-ha"
+	flagRouterExternalGateway = "external-gateway"
+	flagRouterFlavor          = "flavor"
+	flagRouterFlavorID        = "flavor-id"
+	flagRouterRoute           = "route"
+)
+
 type routerCreateFlags struct {
-	enable  bool
-	disable bool
+	enable          bool
+	disable         bool
+	description     string
+	distributed     bool
+	centralized     bool
+	ha              bool
+	noHA            bool
+	azHints         []string
+	externalGateway string
+	fixedIPs        []string
+	enableSNAT      bool
+	disableSNAT     bool
+	qosPolicy       string
+	flavor          string
+	flavorID        string
+	project         string
+	projectDomain   string
+	// projectID is --project resolved by RunE, so the seam needs no identity client.
+	projectID     string
+	extraProperty []string
+	tagWriteFlags
 }
 
+// newRouterCreateCommand builds "router create". Upstream's CreateRouter is
+// the reference; its post-Zed flags (--enable/--disable-ndp-proxy, the
+// default-route BFD/ECMP pairs, --evpn-vni/--auto-evpn-vni) are left out, and
+// --external-gateway takes one network — several need the
+// external-gateway-multihoming extension, which Zed does not have.
 func newRouterCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &routerCreateFlags{}
 	cmd := &cobra.Command{
@@ -378,8 +449,11 @@ func newRouterCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
+				return err
+			}
+			if f.projectID, err = resolveProjectRef(ctx, session, f.project, f.projectDomain); err != nil {
 				return err
 			}
 			return runRouterCreate(ctx, client, o, args[0], f, cmd.OutOrStdout())
@@ -388,22 +462,139 @@ func newRouterCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&f.enable, "enable", false, "enable the router (admin state up, default)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the router (admin state down)")
+	fl.StringVar(&f.description, flagDescription, "", "description for the router")
+	fl.BoolVar(&f.distributed, flagRouterDistributed, false, "create a distributed (DVR) router")
+	fl.BoolVar(&f.centralized, flagRouterCentralized, false, "create a centralized router")
+	fl.BoolVar(&f.ha, flagRouterHA, false, "create a highly available router")
+	fl.BoolVar(&f.noHA, flagRouterNoHA, false, "create a legacy (non-HA) router")
+	fl.StringArrayVar(&f.azHints, flagAvailabilityZoneHint, nil,
+		"availability zone to schedule the router in (repeatable; router_availability_zone extension)")
+	fl.StringVar(&f.externalGateway, flagRouterExternalGateway, "", "external network for the router's gateway (name or ID)")
+	fl.StringArrayVar(&f.fixedIPs, flagFixedIP, nil,
+		"gateway address as subnet=<name|id>[,ip-address=<ip>] (repeatable; needs --external-gateway)")
+	fl.BoolVar(&f.enableSNAT, flagEnableSNAT, false, "enable source NAT on the external gateway")
+	fl.BoolVar(&f.disableSNAT, flagDisableSNAT, false, "disable source NAT on the external gateway")
+	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy for the gateway IPs (name or ID; needs --external-gateway)")
+	fl.StringVar(&f.flavor, flagRouterFlavor, "", "router flavor (ID; koc cannot look a flavor up by name yet)")
+	fl.StringVar(&f.flavorID, flagRouterFlavorID, "", "router flavor ID (deprecated alias of --flavor)")
+	_ = fl.MarkHidden(flagRouterFlavorID)
+	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	bindTagCreateFlags(cmd, &f.tagWriteFlags, "router")
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
+	cmd.MarkFlagsMutuallyExclusive(flagRouterDistributed, flagRouterCentralized)
+	cmd.MarkFlagsMutuallyExclusive(flagRouterHA, flagRouterNoHA)
+	cmd.MarkFlagsMutuallyExclusive(flagEnableSNAT, flagDisableSNAT)
 	return cmd
 }
 
 func runRouterCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *routerCreateFlags, w io.Writer) error {
-	opts := routers.CreateOpts{Name: name}
-	if f.disable {
-		opts.AdminStateUp = boolPtr(false)
-	} else {
-		opts.AdminStateUp = boolPtr(true)
+	// Upstream checks this only after the router exists, leaving it behind;
+	// checking first creates nothing on a usage error.
+	if f.externalGateway == "" && (f.enableSNAT || f.disableSNAT || len(f.fixedIPs) > 0 || f.qosPolicy != "") {
+		return fmt.Errorf("--%s, --%s, --%s and --%s need --%s",
+			flagEnableSNAT, flagDisableSNAT, flagFixedIP, flagQoSPolicy, flagRouterExternalGateway)
 	}
-	r, err := routers.Create(ctx, client, opts).Extract()
+	opts := routers.CreateOpts{
+		Name:                  name,
+		Description:           f.description,
+		AdminStateUp:          boolPtr(!f.disable),
+		ProjectID:             f.projectID,
+		AvailabilityZoneHints: f.azHints,
+	}
+	switch {
+	case f.distributed:
+		opts.Distributed = boolPtr(true)
+	case f.centralized:
+		opts.Distributed = boolPtr(false)
+	}
+	gateway, err := buildCreateGatewayInfo(ctx, client, f)
+	if err != nil {
+		return err
+	}
+	opts.GatewayInfo = gateway
+	attrs, err := routerCreateAttrs(f)
+	if err != nil {
+		return err
+	}
+	r, ext, err := extractRouterDetail(routers.Create(ctx, client, withRouterCreateAttrs(opts, attrs)).Result)
 	if err != nil {
 		return fmt.Errorf("creating router: %w", err)
 	}
-	fields, values := routerShowFields(r)
-	return o.WriteSingle(w, fields, values)
+	// Tags cannot ride on the create; upstream sets them afterwards too.
+	if r.Tags, err = applyTagsForSet(ctx, client, tagResourceRouters, r.ID, r.Tags, &f.tagWriteFlags); err != nil {
+		return err
+	}
+	return writeRouterDetail(o, w, r, ext)
+}
+
+// buildCreateGatewayInfo assembles the create's external_gateway_info from
+// --external-gateway and the flags that only mean something with it.
+func buildCreateGatewayInfo(ctx context.Context, client *gophercloud.ServiceClient, f *routerCreateFlags) (*routers.GatewayInfo, error) {
+	if f.externalGateway == "" {
+		return nil, nil
+	}
+	networkID, err := resolveNetworkID(ctx, client, f.externalGateway)
+	if err != nil {
+		return nil, err
+	}
+	info := &routers.GatewayInfo{NetworkID: networkID}
+	switch {
+	case f.enableSNAT:
+		info.EnableSNAT = boolPtr(true)
+	case f.disableSNAT:
+		info.EnableSNAT = boolPtr(false)
+	}
+	if info.ExternalFixedIPs, err = parseExternalFixedIPs(ctx, client, f.fixedIPs); err != nil {
+		return nil, err
+	}
+	if f.qosPolicy != "" {
+		if info.QoSPolicyID, err = resolveQoSPolicyID(ctx, client, f.qosPolicy); err != nil {
+			return nil, err
+		}
+	}
+	return info, nil
+}
+
+// routerCreateAttrs collects the create attributes routers.CreateOpts lacks —
+// ha and flavor_id — then --extra-property, last so it wins.
+func routerCreateAttrs(f *routerCreateFlags) (map[string]any, error) {
+	var attrs map[string]any
+	switch {
+	case f.ha:
+		attrs = mergeAttrs(attrs, map[string]any{"ha": true})
+	case f.noHA:
+		attrs = mergeAttrs(attrs, map[string]any{"ha": false})
+	}
+	flavorID, err := routerFlavorID(f.flavor, f.flavorID)
+	if err != nil {
+		return nil, err
+	}
+	if flavorID != "" {
+		attrs = mergeAttrs(attrs, map[string]any{"flavor_id": flavorID})
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return nil, err
+	}
+	return mergeAttrs(attrs, extra), nil
+}
+
+// routerFlavorID picks the flavor to send. Upstream resolves both --flavor and
+// its hidden alias --flavor-id by name or ID (find_flavor), the alias winning.
+// koc has no "network flavor" support to look a name up with, so the alias is
+// sent as given and --flavor must be a UUID — a name is refused with a clear
+// error rather than being sent as an ID neutron would reject.
+func routerFlavorID(flavor, flavorID string) (string, error) {
+	if flavorID != "" {
+		return flavorID, nil
+	}
+	if flavor == "" || resolve.IsUUID(flavor) {
+		return flavor, nil
+	}
+	return "", fmt.Errorf("--%s %q: pass the flavor's ID; koc cannot look a network flavor up by name yet",
+		flagRouterFlavor, flavor)
 }
 
 func newRouterDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -444,17 +635,28 @@ func runRouterDelete(ctx context.Context, client *gophercloud.ServiceClient, nam
 
 type routerSetFlags struct {
 	name            string
+	description     string
 	enable          bool
 	disable         bool
+	distributed     bool
+	centralized     bool
+	ha              bool
+	noHA            bool
 	externalGateway string
+	fixedIPs        []string
 
-	enableSNAT  bool
-	disableSNAT bool
-	qosPolicy   string
-	route       []string
-	noRoute     bool
+	enableSNAT    bool
+	disableSNAT   bool
+	qosPolicy     string
+	noQoSPolicy   bool
+	route         []string
+	noRoute       bool
+	extraProperty []string
+	tagWriteFlags
 }
 
+// newRouterSetCommand builds "router set". As on create, upstream's post-Zed
+// flags are left out and --external-gateway takes one network.
 func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &routerSetFlags{}
 	cmd := &cobra.Command{
@@ -475,16 +677,29 @@ func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.name, "name", "", "new router name")
+	fl.StringVar(&f.description, flagDescription, "", "new description for the router")
 	fl.BoolVar(&f.enable, "enable", false, "enable the router (admin state up)")
 	fl.BoolVar(&f.disable, "disable", false, "disable the router (admin state down)")
-	fl.StringVar(&f.externalGateway, "external-gateway", "", "set the external gateway network (name or ID)")
+	fl.BoolVar(&f.distributed, flagRouterDistributed, false, "make the router distributed (disabled router only)")
+	fl.BoolVar(&f.centralized, flagRouterCentralized, false, "make the router centralized (disabled router only)")
+	fl.BoolVar(&f.ha, flagRouterHA, false, "make the router highly available (disabled router only)")
+	fl.BoolVar(&f.noHA, flagRouterNoHA, false, "make the router a legacy (non-HA) router (disabled router only)")
+	fl.StringVar(&f.externalGateway, flagRouterExternalGateway, "", "set the external gateway network (name or ID)")
+	fl.StringArrayVar(&f.fixedIPs, flagFixedIP, nil,
+		"gateway address as subnet=<name|id>[,ip-address=<ip>] (repeatable; replaces the gateway's fixed IPs)")
 	fl.BoolVar(&f.enableSNAT, flagEnableSNAT, false, "enable source NAT on the external gateway")
 	fl.BoolVar(&f.disableSNAT, flagDisableSNAT, false, "disable source NAT on the external gateway")
-	fl.StringVar(&f.qosPolicy, "qos-policy", "", "QoS policy ID to attach to the external gateway")
-	fl.StringArrayVar(&f.route, "route", nil,
+	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the gateway IPs (name or ID)")
+	fl.BoolVar(&f.noQoSPolicy, flagNoQoSPolicy, false, "detach the gateway IPs' QoS policy")
+	fl.StringArrayVar(&f.route, flagRouterRoute, nil,
 		"static route as destination=<cidr>,gateway=<ip> (repeatable; appends unless --no-route is also given)")
 	fl.BoolVar(&f.noRoute, "no-route", false, "clear the router's static routes (with --route, replaces them instead)")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	bindTagSetFlags(fl, &f.tagWriteFlags, "router")
 	cmd.MarkFlagsMutuallyExclusive(flagEnableSNAT, flagDisableSNAT)
+	cmd.MarkFlagsMutuallyExclusive(flagRouterDistributed, flagRouterCentralized)
+	cmd.MarkFlagsMutuallyExclusive(flagRouterHA, flagRouterNoHA)
+	cmd.MarkFlagsMutuallyExclusive(flagQoSPolicy, flagNoQoSPolicy)
 	return cmd
 }
 
@@ -496,87 +711,169 @@ func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	opts := routers.UpdateOpts{}
-	changed := false
-	if f.name != "" {
-		opts.Name = f.name
-		changed = true
+	opts, attrs, err := buildRouterUpdate(ctx, client, nameOrID, id, f, flags)
+	if err != nil {
+		return err
 	}
-	if state := enableDisable(flags, f.enable, f.disable); state != nil {
-		opts.AdminStateUp = state
-		changed = true
+	changed := opts != (routers.UpdateOpts{}) || len(attrs) > 0
+	if !changed && !f.given() {
+		return fmt.Errorf("router set requires at least one attribute flag")
+	}
+	return updateRouter(ctx, client, o, nameOrID, id, routerUpdate{opts: opts, attrs: attrs, changed: changed, action: "updating"},
+		applyTagsForSet, &f.tagWriteFlags, w)
+}
+
+// buildRouterUpdate turns the set flags into the typed update plus the
+// attributes UpdateOpts lacks (ha, and external_gateway_info as a map so
+// --no-qos-policy can send null), with --extra-property merged last.
+func buildRouterUpdate(ctx context.Context, client *gophercloud.ServiceClient,
+	nameOrID, id string, f *routerSetFlags, flags flagSet,
+) (routers.UpdateOpts, map[string]any, error) {
+	opts := routers.UpdateOpts{
+		Name:         f.name,
+		AdminStateUp: enableDisable(flags, f.enable, f.disable),
+		Distributed:  enableDisable(flags, f.distributed, f.centralized, flagRouterDistributed, flagRouterCentralized),
+	}
+	if flags.Changed(flagDescription) {
+		opts.Description = &f.description
+	}
+	var attrs map[string]any
+	if ha := enableDisable(flags, f.ha, f.noHA, flagRouterHA, flagRouterNoHA); ha != nil {
+		attrs = mergeAttrs(attrs, map[string]any{"ha": *ha})
 	}
 	gateway, err := buildGatewayInfo(ctx, client, nameOrID, id, f, flags)
 	if err != nil {
-		return err
+		return opts, nil, err
 	}
 	if gateway != nil {
-		opts.GatewayInfo = gateway
-		changed = true
+		attrs = mergeAttrs(attrs, map[string]any{"external_gateway_info": gateway})
 	}
-	routes, err := buildRoutes(ctx, client, nameOrID, id, f)
+	if opts.Routes, err = buildRoutes(ctx, client, nameOrID, id, f); err != nil {
+		return opts, nil, err
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
+		return opts, nil, err
+	}
+	return opts, mergeAttrs(attrs, extra), nil
+}
+
+// routerUpdate is one prepared router PUT: the typed options, the extra
+// attributes merged over them, whether anything is to be sent at all, and the
+// verb phrase an error names ("updating router r1: …").
+type routerUpdate struct {
+	opts    routers.UpdateOpts
+	attrs   map[string]any
+	changed bool
+	action  string
+}
+
+// updateRouter is the shared tail of set and unset: PUT the attributes when
+// any were given (upstream skips the update when only tags change, reading
+// the router instead), then apply the tag change, then render the router.
+func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
+	u routerUpdate,
+	applyTags func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error),
+	tags *tagWriteFlags, w io.Writer,
+) error {
+	var res gophercloud.Result
+	action := u.action
+	if u.changed {
+		res = routers.Update(ctx, client, id, withRouterUpdateAttrs(u.opts, u.attrs)).Result
+	} else {
+		res, action = routers.Get(ctx, client, id).Result, "getting"
+	}
+	r, ext, err := extractRouterDetail(res)
+	if err != nil {
+		return fmt.Errorf("%s router %s: %w", action, ref, err)
+	}
+	if r.Tags, err = applyTags(ctx, client, tagResourceRouters, id, r.Tags, tags); err != nil {
 		return err
 	}
-	if routes != nil {
-		opts.Routes = routes
-		changed = true
-	}
-	if !changed {
-		return fmt.Errorf("router set requires at least one attribute flag")
-	}
-	r, err := routers.Update(ctx, client, id, opts).Extract()
-	if err != nil {
-		return fmt.Errorf("updating router %s: %w", nameOrID, err)
-	}
-	fields, values := routerShowFields(r)
-	return o.WriteSingle(w, fields, values)
+	return writeRouterDetail(o, w, r, ext)
 }
 
 // buildGatewayInfo assembles external_gateway_info from --external-gateway,
-// --enable-snat/--disable-snat and --qos-policy, returning nil when none were
-// given.
+// --fixed-ip, --enable-snat/--disable-snat and --qos-policy/--no-qos-policy,
+// returning nil when none were given. It is a map rather than a
+// routers.GatewayInfo because --no-qos-policy has to send qos_policy_id: null,
+// which the typed struct's omitempty string cannot.
 //
 // Neutron replaces external_gateway_info wholesale and rejects it without a
-// network_id, so changing only SNAT or the QoS policy means re-sending the
-// router's current gateway network — which is read back here rather than
-// requiring the operator to repeat --external-gateway.
+// network_id, so changing the gateway without --external-gateway means
+// re-sending the router's current gateway network — which is read back here
+// rather than requiring the operator to repeat --external-gateway (upstream
+// demands it for SNAT and fixed IPs; koc does not).
 func buildGatewayInfo(ctx context.Context, client *gophercloud.ServiceClient,
 	nameOrID, id string, f *routerSetFlags, flags flagSet,
-) (*routers.GatewayInfo, error) {
+) (map[string]any, error) {
 	snat := enableDisable(flags, f.enableSNAT, f.disableSNAT, flagEnableSNAT, flagDisableSNAT)
-	if f.externalGateway == "" && snat == nil && f.qosPolicy == "" {
+	if f.externalGateway == "" && snat == nil && len(f.fixedIPs) == 0 && f.qosPolicy == "" && !f.noQoSPolicy {
 		return nil, nil
 	}
+	fixed, err := parseExternalFixedIPs(ctx, client, f.fixedIPs)
+	if err != nil {
+		return nil, err
+	}
+	var qos any // nil is --no-qos-policy's null
+	if f.qosPolicy != "" {
+		if qos, err = resolveQoSPolicyID(ctx, client, f.qosPolicy); err != nil {
+			return nil, err
+		}
+	}
+	qosGiven := f.noQoSPolicy || f.qosPolicy != ""
 
-	info := &routers.GatewayInfo{EnableSNAT: snat, QoSPolicyID: f.qosPolicy}
 	if f.externalGateway != "" {
 		gwID, err := resolveNetworkID(ctx, client, f.externalGateway)
 		if err != nil {
 			return nil, err
 		}
-		info.NetworkID = gwID
-		return info, nil
+		return gatewayInfoBody(gwID, snat, fixed, qos, qosGiven), nil
 	}
 
 	current, err := routers.Get(ctx, client, id).Extract()
 	if err != nil {
 		return nil, fmt.Errorf("reading router %s to preserve its external gateway: %w", nameOrID, err)
 	}
-	if current.GatewayInfo.NetworkID == "" {
-		return nil, fmt.Errorf("router %s has no external gateway: pass --external-gateway alongside --enable-snat/--disable-snat/--qos-policy", nameOrID)
+	cur := current.GatewayInfo
+	if cur.NetworkID == "" {
+		return nil, fmt.Errorf("router %s has no external gateway: pass --%s alongside --%s/--%s/--%s/--%s/--%s",
+			nameOrID, flagRouterExternalGateway, flagEnableSNAT, flagDisableSNAT, flagFixedIP, flagQoSPolicy, flagNoQoSPolicy)
 	}
-	info.NetworkID = current.GatewayInfo.NetworkID
-	// Keep the fixed IPs neutron already assigned; omitting them would make it
-	// reallocate from the external subnet, changing the router's gateway address.
-	info.ExternalFixedIPs = current.GatewayInfo.ExternalFixedIPs
-	if info.EnableSNAT == nil {
-		info.EnableSNAT = current.GatewayInfo.EnableSNAT
+	if snat == nil && fixed == nil {
+		// A QoS-only change sends what upstream sends: the current network and
+		// the policy. Re-sending the fixed IPs or SNAT as well would trip
+		// neutron's admin-only policy on those sub-attributes for a project user.
+		return gatewayInfoBody(cur.NetworkID, nil, nil, qos, true), nil
 	}
-	if info.QoSPolicyID == "" {
-		info.QoSPolicyID = current.GatewayInfo.QoSPolicyID
+	// Keep what neutron already has for anything not being changed; omitting
+	// the fixed IPs would make it reallocate the router's gateway address.
+	if snat == nil {
+		snat = cur.EnableSNAT
 	}
-	return info, nil
+	if fixed == nil {
+		fixed = cur.ExternalFixedIPs
+	}
+	if !qosGiven && cur.QoSPolicyID != "" {
+		qos, qosGiven = cur.QoSPolicyID, true
+	}
+	return gatewayInfoBody(cur.NetworkID, snat, fixed, qos, qosGiven), nil
+}
+
+// gatewayInfoBody lays out one external_gateway_info object. qos is sent only
+// when withQoS is set, and then as given — a nil qos is JSON null.
+func gatewayInfoBody(networkID string, snat *bool, fixed []routers.ExternalFixedIP, qos any, withQoS bool) map[string]any {
+	gw := map[string]any{"network_id": networkID}
+	if snat != nil {
+		gw["enable_snat"] = *snat
+	}
+	if len(fixed) > 0 {
+		gw["external_fixed_ips"] = fixed
+	}
+	if withQoS {
+		gw["qos_policy_id"] = qos
+	}
+	return gw
 }
 
 // buildRoutes resolves the --route/--no-route pair into the routes list to send,
@@ -661,8 +958,16 @@ func parseRouteSpec(spec string) (routers.Route, error) {
 	return route, nil
 }
 
+type routerUnsetFlags struct {
+	externalGateway bool
+	route           []string
+	qosPolicy       bool
+	extraProperty   []string
+	tagWriteFlags
+}
+
 func newRouterUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var externalGateway bool
+	f := &routerUnsetFlags{}
 	cmd := &cobra.Command{
 		Use:   "unset <router>",
 		Short: "Unset router properties",
@@ -676,30 +981,102 @@ func newRouterUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runRouterUnset(ctx, client, o, args[0], externalGateway, cmd.OutOrStdout())
+			return runRouterUnset(ctx, client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().BoolVar(&externalGateway, "external-gateway", false, "clear the router's external gateway")
+	fl := cmd.Flags()
+	fl.BoolVar(&f.externalGateway, flagRouterExternalGateway, false, "clear the router's external gateway")
+	fl.StringArrayVar(&f.route, flagRouterRoute, nil,
+		"static route to remove, as destination=<cidr>,gateway=<ip> (repeatable)")
+	fl.BoolVar(&f.qosPolicy, flagQoSPolicy, false, "detach the gateway IPs' QoS policy")
+	bindExtraPropertyUnsetFlag(fl, &f.extraProperty)
+	bindTagUnsetFlags(cmd, &f.tagWriteFlags, "router")
 	return cmd
 }
 
-func runRouterUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, externalGateway bool, w io.Writer) error {
-	if !externalGateway {
-		return fmt.Errorf("router unset requires --external-gateway")
+// runRouterUnset mirrors upstream's UnsetRouter: --route rewrites the routes
+// list minus the named ones (each must be present), --qos-policy re-sends the
+// current gateway network with qos_policy_id null, --external-gateway clears
+// the gateway (and so wins over --qos-policy), and --extra-property nulls the
+// named attributes. The router is read only when --route or --qos-policy
+// needs its current state.
+func runRouterUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *routerUnsetFlags, w io.Writer) error {
+	if !f.externalGateway && len(f.route) == 0 && !f.qosPolicy && len(f.extraProperty) == 0 && !f.given() {
+		return fmt.Errorf("router unset requires at least one attribute flag")
 	}
 	id, err := resolveRouterID(ctx, client, nameOrID)
 	if err != nil {
 		return err
 	}
-	// An empty GatewayInfo object serializes to "external_gateway_info": {},
-	// which neutron interprets as clearing the external gateway.
-	opts := routers.UpdateOpts{GatewayInfo: &routers.GatewayInfo{}}
-	r, err := routers.Update(ctx, client, id, opts).Extract()
+	opts, attrs, err := buildRouterUnset(ctx, client, nameOrID, id, f)
 	if err != nil {
-		return fmt.Errorf("clearing external gateway on router %s: %w", nameOrID, err)
+		return err
 	}
-	fields, values := routerShowFields(r)
-	return o.WriteSingle(w, fields, values)
+	action := "updating"
+	if f.externalGateway {
+		action = "clearing external gateway on"
+	}
+	u := routerUpdate{opts: opts, attrs: attrs, changed: opts != (routers.UpdateOpts{}) || len(attrs) > 0, action: action}
+	return updateRouter(ctx, client, o, nameOrID, id, u, applyTagsForUnset, &f.tagWriteFlags, w)
+}
+
+func buildRouterUnset(ctx context.Context, client *gophercloud.ServiceClient,
+	nameOrID, id string, f *routerUnsetFlags,
+) (routers.UpdateOpts, map[string]any, error) {
+	var (
+		opts  routers.UpdateOpts
+		attrs map[string]any
+	)
+	removed, err := parseRoutes(f.route)
+	if err != nil {
+		return opts, nil, err
+	}
+	if len(removed) > 0 || f.qosPolicy {
+		current, err := routers.Get(ctx, client, id).Extract()
+		if err != nil {
+			return opts, nil, fmt.Errorf("reading router %s: %w", nameOrID, err)
+		}
+		if len(removed) > 0 {
+			kept, err := routesWithout(current.Routes, removed, nameOrID)
+			if err != nil {
+				return opts, nil, err
+			}
+			opts.Routes = &kept
+		}
+		if f.qosPolicy {
+			if current.GatewayInfo.NetworkID == "" {
+				return opts, nil, fmt.Errorf("router %s has no external gateway, so no gateway QoS policy to unset", nameOrID)
+			}
+			// Exactly upstream's body: the network, and a null policy.
+			attrs = map[string]any{"external_gateway_info": gatewayInfoBody(current.GatewayInfo.NetworkID, nil, nil, nil, true)}
+		}
+	}
+	if f.externalGateway {
+		// An empty object is neutron's "clear the external gateway".
+		attrs = mergeAttrs(attrs, map[string]any{"external_gateway_info": map[string]any{}})
+	}
+	extra, err := parseExtraProperties(f.extraProperty, true)
+	if err != nil {
+		return opts, nil, err
+	}
+	return opts, mergeAttrs(attrs, extra), nil
+}
+
+// routesWithout returns have minus every route in remove, erroring on a route
+// the router does not carry — upstream's "Router does not contain route".
+func routesWithout(have, remove []routers.Route, nameOrID string) ([]routers.Route, error) {
+	kept := slices.Clone(have)
+	for _, r := range remove {
+		i := slices.Index(kept, r)
+		if i < 0 {
+			return nil, fmt.Errorf("router %s does not contain route destination=%s,gateway=%s", nameOrID, r.DestinationCIDR, r.NextHop)
+		}
+		kept = slices.Delete(kept, i, i+1)
+	}
+	if kept == nil {
+		kept = []routers.Route{}
+	}
+	return kept, nil
 }
 
 // newRouterAddCommand builds "router add subnet <router> <subnet>" and

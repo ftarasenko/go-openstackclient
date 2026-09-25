@@ -181,7 +181,7 @@ func TestRunRouterRemoveGateway_SendsExplicitEmptyObject(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	if err := runRouterRemoveGateway(context.Background(), networkClient(fakeServer), o, routerID, &out); err != nil {
+	if err := runRouterRemoveGateway(context.Background(), networkClient(fakeServer), o, routerID, "", nil, &out); err != nil {
 		t.Fatalf("runRouterRemoveGateway returned error: %v", err)
 	}
 

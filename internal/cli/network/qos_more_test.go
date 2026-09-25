@@ -800,8 +800,8 @@ func TestRunRouterUnset_RequiresExternalGatewayFlag(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	err := runRouterUnset(context.Background(), networkClient(fakeServer), o, "r1", false, &out)
-	if err == nil || !strings.Contains(err.Error(), "requires --external-gateway") {
+	err := runRouterUnset(context.Background(), networkClient(fakeServer), o, "r1", &routerUnsetFlags{}, &out)
+	if err == nil || !strings.Contains(err.Error(), "requires at least one attribute flag") {
 		t.Fatalf("expected a missing-flag error, got %v", err)
 	}
 }
@@ -827,7 +827,7 @@ func TestRunRouterUnset_ClearsTheExternalGateway(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	if err := runRouterUnset(context.Background(), networkClient(fakeServer), o, "r1", true, &out); err != nil {
+	if err := runRouterUnset(context.Background(), networkClient(fakeServer), o, "r1", &routerUnsetFlags{externalGateway: true}, &out); err != nil {
 		t.Fatalf("runRouterUnset returned error: %v", err)
 	}
 	if gotMethod != http.MethodPut {
@@ -855,7 +855,7 @@ func TestRunRouterUnset_Error(t *testing.T) {
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "value"}
-	err := runRouterUnset(context.Background(), networkClient(fakeServer), o, "r1", true, &out)
+	err := runRouterUnset(context.Background(), networkClient(fakeServer), o, "r1", &routerUnsetFlags{externalGateway: true}, &out)
 	if err == nil {
 		t.Fatal("expected an error when clearing the gateway fails")
 	}

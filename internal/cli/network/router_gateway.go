@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -62,20 +63,27 @@ func runRouterAddGateway(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	gateway := routers.GatewayInfo{NetworkID: networkID, ExternalFixedIPs: external}
-	r, err := routers.Update(ctx, client, routerID, routers.UpdateOpts{GatewayInfo: &gateway}).Extract()
+	r, ext, err := extractRouterDetail(routers.Update(ctx, client, routerID, routers.UpdateOpts{GatewayInfo: &gateway}).Result)
 	if err != nil {
 		return fmt.Errorf("setting the external gateway of router %s: %w", routerArg, err)
 	}
-	fields, values := routerShowFields(r)
-	return o.WriteSingle(w, fields, values)
+	return writeRouterDetail(o, w, r, ext)
 }
 
-// newRouterRemoveGatewayCommand builds "router remove gateway <router>".
+// newRouterRemoveGatewayCommand builds "router remove gateway <router> [<network>]".
+//
+// Upstream's RemoveGatewayFromRouter takes a required <network> plus --fixed-ip
+// to pick one of several gateways, and refuses to run without neutron's
+// external-gateway-multihoming extension (post-Zed). On the single-gateway
+// API a router has at most one gateway, so koc keeps <network> optional and
+// treats both as a guard: when given, the router's current gateway must match
+// them or nothing is removed.
 func newRouterRemoveGatewayCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	return &cobra.Command{
-		Use:   "gateway <router>",
+	var fixedIPs []string
+	cmd := &cobra.Command{
+		Use:   "gateway <router> [<network>]",
 		Short: "Clear a router's external gateway",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
 				return err
@@ -85,29 +93,99 @@ func newRouterRemoveGatewayCommand(a *auth.Options, o *output.Options) *cobra.Co
 			if err != nil {
 				return err
 			}
-			return runRouterRemoveGateway(ctx, client, o, args[0], cmd.OutOrStdout())
+			var networkArg string
+			if len(args) == 2 {
+				networkArg = args[1]
+			}
+			return runRouterRemoveGateway(ctx, client, o, args[0], networkArg, fixedIPs, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringArrayVar(&fixedIPs, flagFixedIP, nil,
+		"only remove a gateway holding this address, as subnet=<name|id>[,ip-address=<ip>] (repeatable)")
+	return cmd
 }
 
 // runRouterRemoveGateway clears the gateway. gophercloud's UpdateOpts tags
 // GatewayInfo `omitempty`, so a pointer to a zero GatewayInfo would be dropped
 // from the body and the request would become a no-op instead of a removal —
 // neutron needs an explicit `"external_gateway_info": {}`. The builder below
-// writes that key unconditionally.
+// writes that key unconditionally. networkArg and fixedIPs, when given, must
+// match the current gateway first (checkGatewayMatches).
 func runRouterRemoveGateway(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	routerArg string, w io.Writer,
+	routerArg, networkArg string, fixedIPs []string, w io.Writer,
 ) error {
 	routerID, err := resolveRouterID(ctx, client, routerArg)
 	if err != nil {
 		return err
 	}
-	r, err := routers.Update(ctx, client, routerID, clearGatewayOpts{}).Extract()
+	if networkArg != "" || len(fixedIPs) > 0 {
+		if err := checkGatewayMatches(ctx, client, routerArg, routerID, networkArg, fixedIPs); err != nil {
+			return err
+		}
+	}
+	r, ext, err := extractRouterDetail(routers.Update(ctx, client, routerID, clearGatewayOpts{}).Result)
 	if err != nil {
 		return fmt.Errorf("clearing the external gateway of router %s: %w", routerArg, err)
 	}
-	fields, values := routerShowFields(r)
-	return o.WriteSingle(w, fields, values)
+	return writeRouterDetail(o, w, r, ext)
+}
+
+// checkGatewayMatches reads the router and errors unless its gateway is on
+// networkArg (when given) and holds an address matching each --fixed-ip spec.
+// A spec matches a gateway address when every key it names agrees, so unlike
+// "add gateway" either key alone identifies an address here.
+func checkGatewayMatches(ctx context.Context, client *gophercloud.ServiceClient,
+	routerArg, routerID, networkArg string, fixedIPs []string,
+) error {
+	current, err := routers.Get(ctx, client, routerID).Extract()
+	if err != nil {
+		return fmt.Errorf("reading router %s: %w", routerArg, err)
+	}
+	gw := current.GatewayInfo
+	if gw.NetworkID == "" {
+		return fmt.Errorf("router %s has no external gateway", routerArg)
+	}
+	if networkArg != "" {
+		networkID, err := resolveNetworkID(ctx, client, networkArg)
+		if err != nil {
+			return err
+		}
+		if networkID != gw.NetworkID {
+			return fmt.Errorf("router %s has no gateway on network %s (its gateway is on %s)", routerArg, networkArg, gw.NetworkID)
+		}
+	}
+	for _, spec := range fixedIPs {
+		want, err := resolveGatewayFixedIPSpec(ctx, client, spec)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(gw.ExternalFixedIPs, func(have routers.ExternalFixedIP) bool {
+			return (want.SubnetID == "" || want.SubnetID == have.SubnetID) &&
+				(want.IPAddress == "" || want.IPAddress == have.IPAddress)
+		}) {
+			return fmt.Errorf("router %s has no gateway address matching --%s %q", routerArg, flagFixedIP, spec)
+		}
+	}
+	return nil
+}
+
+// resolveGatewayFixedIPSpec parses one identifying --fixed-ip spec and
+// resolves its subnet, requiring at least one of the two keys.
+func resolveGatewayFixedIPSpec(ctx context.Context, client *gophercloud.ServiceClient, spec string) (routers.ExternalFixedIP, error) {
+	parsed, err := parseFixedIPSpec(spec)
+	if err != nil {
+		return routers.ExternalFixedIP{}, err
+	}
+	out := routers.ExternalFixedIP{IPAddress: parsed.ipAddress}
+	if parsed.subnetRef != "" {
+		if out.SubnetID, err = resolveSubnetID(ctx, client, parsed.subnetRef); err != nil {
+			return out, err
+		}
+	}
+	if out.SubnetID == "" && out.IPAddress == "" {
+		return out, fmt.Errorf("--%s %q requires subnet= or ip-address=", flagFixedIP, spec)
+	}
+	return out, nil
 }
 
 // clearGatewayOpts implements routers.UpdateOptsBuilder to emit exactly
