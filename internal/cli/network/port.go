@@ -2,10 +2,13 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -18,6 +21,28 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
+
+// Flag names only the port verbs use. They carry a port prefix so they cannot
+// collide with a constant another noun declares in this package.
+const (
+	flagPortHost             = "host"
+	flagPortDevice           = "device"
+	flagPortVNICType         = "vnic-type"
+	flagPortBindingProfile   = "binding-profile"
+	flagPortNoBindingProfile = "no-binding-profile"
+	flagPortNoFixedIP        = "no-fixed-ip"
+	flagPortExtraDHCPOption  = "extra-dhcp-option"
+	flagPortEnableUplink     = "enable-uplink-status-propagation"
+	flagPortDisableUplink    = "disable-uplink-status-propagation"
+	flagPortDataPlaneStatus  = "data-plane-status"
+)
+
+// portVNICTypes are the --vnic-type values upstream accepts (port.py
+// _add_updatable_args choices); every one predates Zed.
+var portVNICTypes = []string{
+	"accelerator-direct", "accelerator-direct-physical", "direct", "direct-physical",
+	"macvtap", "normal", "baremetal", "virtio-forwarder", "smart-nic", "vdpa", "remote-managed",
+}
 
 func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -73,21 +98,46 @@ func portShowFields(p *portExt) ([]string, []any) {
 		"id", "name", "network_id", "mac_address", "status", "admin_state_up",
 		"device_owner", "device_id", "fixed_ips", "security_groups",
 		"allowed_address_pairs", "port_security_enabled",
+		"binding_host_id", "binding_profile", "binding_vif_details", "binding_vif_type", "binding_vnic_type",
+		"data_plane_status", "dns_assignment", "dns_domain", "dns_name", "extra_dhcp_opts",
+		"propagate_uplink_status", "qos_network_policy_id", "qos_policy_id", "revision_number",
 		"description", "project_id", "tags", "created_at", "updated_at",
-	}
-	// port_security_enabled stays nil when the deployment does not run the
-	// extension, so it renders empty rather than a misleading "false".
-	var portSecurity any
-	if p.PortSecurityEnabled != nil {
-		portSecurity = *p.PortSecurityEnabled
 	}
 	values := []any{
 		p.ID, p.Name, p.NetworkID, p.MACAddress, p.Status, p.AdminStateUp,
 		p.DeviceOwner, p.DeviceID, formatFixedIPs(p.FixedIPs), p.SecurityGroups,
-		formatAddressPairs(p.AllowedAddressPairs), portSecurity,
+		formatAddressPairs(p.AllowedAddressPairs), optionalBool(p.PortSecurityEnabled),
+		p.BindingHostID, mapOrNil(p.BindingProfile), mapOrNil(p.BindingVIFDetails), p.BindingVIFType, p.BindingVNICType,
+		p.DataPlaneStatus, listOrNil(p.DNSAssignment), p.DNSDomain, p.DNSName, listOrNil(p.ExtraDHCPOpts),
+		p.PropagateUplinkStatus, p.QoSNetworkPolicyID, p.QoSPolicyID, p.RevisionNumber,
 		p.Description, p.ProjectID, p.Tags, p.CreatedAt, p.UpdatedAt,
 	}
 	return fields, values
+}
+
+// optionalBool renders an extension boolean: nil (empty) when the deployment
+// does not run the extension, rather than a misleading "false".
+func optionalBool(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	return *b
+}
+
+// mapOrNil and listOrNil render an absent or empty structured attribute as an
+// empty cell instead of the literal "null"/"{}" the JSON fallback would print.
+func mapOrNil(m map[string]any) any {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+func listOrNil(l []map[string]any) any {
+	if len(l) == 0 {
+		return nil
+	}
+	return l
 }
 
 type portListFlags struct {
@@ -104,12 +154,9 @@ type portListFlags struct {
 	projectDomain string
 	securityGroup []string
 	fixedIP       []string
-	tags          []string
-	anyTags       []string
-	notTags       []string
-	notAnyTags    []string
 	long          bool
 	allProjects   bool
+	tagFilterFlags
 }
 
 // portListDeps supplies the secondary service clients `port list` may need:
@@ -147,23 +194,20 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.server, "server", "", "list only ports attached to this server (name or ID)")
 	fl.StringVar(&f.deviceID, "device-id", "", "list only ports with this device ID")
 	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "list only ports with this device owner")
-	fl.StringVar(&f.host, "host", "", "list only ports bound to this host ID")
+	fl.StringVar(&f.host, flagPortHost, "", "list only ports bound to this host ID")
 	fl.StringVar(&f.macAddress, flagMACAddress, "", "list only ports with this MAC address")
 	fl.StringVar(&f.status, "status", "", "list only ports with this status (ACTIVE, BUILD, DOWN, ERROR)")
-	fl.StringVar(&f.project, "project", "", "list only ports in this project (name or ID)")
-	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID)")
+	fl.StringVar(&f.project, flagProject, "", "list only ports in this project (name or ID)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", "domain owning --project (name or ID)")
 	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "list only ports in this security group (name or ID, repeatable)")
 	// OSC form: --fixed-ip subnet=<subnet>,ip-address=<ip>,ip-substring=<substr>; repeatable.
 	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "filter by fixed IP: subnet=/ip-address=/ip-substring= pairs; repeatable")
-	fl.StringSliceVar(&f.tags, "tags", nil, "list only ports with all of these tags (comma-separated)")
-	fl.StringSliceVar(&f.anyTags, "any-tags", nil, "list only ports with any of these tags (comma-separated)")
-	fl.StringSliceVar(&f.notTags, "not-tags", nil, "exclude ports with all of these tags (comma-separated)")
-	fl.StringSliceVar(&f.notAnyTags, "not-any-tags", nil, "exclude ports with any of these tags (comma-separated)")
+	bindTagFilterFlags(fl, &f.tagFilterFlags, "ports")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	allprojects.Bind(cmd, &f.allProjects, allProjectsPortList)
 	// Upstream OSC models these three as one device filter; they all set device_id.
 	cmd.MarkFlagsMutuallyExclusive("router", "server", "device-id")
-	cmd.MarkFlagsMutuallyExclusive("project", "all-projects")
+	cmd.MarkFlagsMutuallyExclusive(flagProject, "all-projects")
 	return cmd
 }
 
@@ -188,36 +232,51 @@ type portListOpts struct {
 
 func (opts portListOpts) ToPortListQuery() (string, error) {
 	q, err := opts.ListOpts.ToPortListQuery()
-	if err != nil || opts.hostID == "" {
+	if opts.hostID == "" {
 		return q, err
 	}
-	params, err := url.ParseQuery(strings.TrimPrefix(q, "?"))
-	if err != nil {
-		return "", fmt.Errorf("building port list query: %w", err)
-	}
-	params.Set("binding:host_id", opts.hostID)
-	return "?" + params.Encode(), nil
+	return withQueryValues(q, err, url.Values{"binding:host_id": {opts.hostID}})
 }
 
-// portExt is a Port decorated with the trunk_details attribute, which
-// gophercloud does not model; `port list --long` renders its sub_ports as
-// "Trunk subports". Both parts are anonymous embeds so ExtractPortsInto
-// populates them — that extraction path only decodes into struct-kind fields, so
-// the attribute has to arrive via a flat extension struct (as with MTUExt on
+// portExt is a Port decorated with the extension attributes gophercloud does
+// not model: trunk_details (`port list --long` renders its sub_ports as "Trunk
+// subports"), port_security_enabled, and the binding/QoS/DNS/DHCP attributes
+// `port show` displays. Every part is an anonymous embed so ExtractPortsInto
+// populates it — that extraction path decodes each embedded struct on its own,
+// so an attribute has to arrive via a flat extension struct (as with MTUExt on
 // networkExt) rather than a named pointer field.
 type portExt struct {
 	ports.Port
 	TrunkDetailsExt
 	PortSecurityExt
+	PortAttrsExt
 }
 
 // PortSecurityExt carries the port_security_enabled attribute, which
 // gophercloud's ports.Port does not model. `port set
-// --enable/--disable-port-security` wrote it (see portUpdateOptsExt) but nothing
-// could read it back, so the flag was write-only and its effect unverifiable
-// from koc. Exported and flat for the same reason as TrunkDetailsExt.
+// --enable/--disable-port-security` writes it, and without this read side the
+// flag's effect would be unverifiable from koc. Exported and flat for the same
+// reason as TrunkDetailsExt.
 type PortSecurityExt struct {
 	PortSecurityEnabled *bool `json:"port_security_enabled"`
+}
+
+// PortAttrsExt carries the portbindings, QoS, DNS-integration, extra-DHCP-opt
+// and data-plane-status attributes (propagate_uplink_status is one ports.Port
+// already models).
+type PortAttrsExt struct {
+	BindingHostID      string           `json:"binding:host_id"`
+	BindingProfile     map[string]any   `json:"binding:profile"`
+	BindingVIFDetails  map[string]any   `json:"binding:vif_details"`
+	BindingVIFType     string           `json:"binding:vif_type"`
+	BindingVNICType    string           `json:"binding:vnic_type"`
+	DataPlaneStatus    string           `json:"data_plane_status"`
+	DNSAssignment      []map[string]any `json:"dns_assignment"`
+	DNSDomain          string           `json:"dns_domain"`
+	DNSName            string           `json:"dns_name"`
+	ExtraDHCPOpts      []map[string]any `json:"extra_dhcp_opts"`
+	QoSNetworkPolicyID string           `json:"qos_network_policy_id"`
+	QoSPolicyID        string           `json:"qos_policy_id"`
 }
 
 // TrunkDetailsExt carries the trunk_details attribute. It stays exported
@@ -334,13 +393,10 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			DeviceOwner: f.deviceOwner,
 			MACAddress:  f.macAddress,
 			Status:      status,
-			Tags:        strings.Join(f.tags, ","),
-			TagsAny:     strings.Join(f.anyTags, ","),
-			NotTags:     strings.Join(f.notTags, ","),
-			NotTagsAny:  strings.Join(f.notAnyTags, ","),
 		},
 		hostID: f.host,
 	}
+	f.apply(&opts.Tags, &opts.TagsAny, &opts.NotTags, &opts.NotTagsAny)
 	if err := resolvePortDeviceFilters(ctx, client, f, deps, &opts); err != nil {
 		return err
 	}
@@ -447,11 +503,82 @@ func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	return o.WriteSingle(w, fields, values)
 }
 
+// portAttrFlags are the flags create and set share and turn into body
+// attributes the same way (upstream port.py _get_attrs). Most are extension
+// attributes ports.CreateOpts/UpdateOpts lack, so they travel through the
+// bodyExt adapters; uplink status propagation is the one gophercloud models.
+type portAttrFlags struct {
+	vnicType        string
+	qosPolicy       string
+	dnsName         string
+	dnsDomain       string
+	extraDHCPOption []string
+	enableUplink    bool
+	disableUplink   bool
+	bindingProfile  []string
+	extraProperty   []string
+}
+
+func bindPortAttrFlags(cmd *cobra.Command, f *portAttrFlags) {
+	fl := cmd.Flags()
+	fl.StringVar(&f.vnicType, flagPortVNICType, "", "VNIC type for the port ("+strings.Join(portVNICTypes, ", ")+")")
+	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the port (name or ID)")
+	fl.StringVar(&f.dnsName, flagDNSName, "", "DNS name for the port (requires the dns-integration extension)")
+	fl.StringVar(&f.dnsDomain, flagDNSDomain, "", "DNS domain for the port (requires the dns-domain-ports extension)")
+	fl.StringArrayVar(&f.extraDHCPOption, flagPortExtraDHCPOption, nil,
+		"extra DHCP option as name=<name>[,value=<value>,ip-version={4,6}] (repeatable)")
+	fl.BoolVar(&f.enableUplink, flagPortEnableUplink, false, "enable uplink status propagation")
+	fl.BoolVar(&f.disableUplink, flagPortDisableUplink, false, "disable uplink status propagation")
+	bindExtraPropertyFlag(fl, &f.extraProperty)
+	cmd.MarkFlagsMutuallyExclusive(flagPortEnableUplink, flagPortDisableUplink)
+}
+
+// attrs returns the shared extension attributes, never nil so a caller can add
+// its own. --dns-name/--dns-domain are sent whenever given, so an empty value
+// clears them, as upstream's "is not None" does.
+func (f *portAttrFlags) attrs(ctx context.Context, client *gophercloud.ServiceClient, flags flagSet) (map[string]any, error) {
+	attrs := map[string]any{}
+	if f.vnicType != "" {
+		if !slices.Contains(portVNICTypes, f.vnicType) {
+			return nil, fmt.Errorf("invalid --%s %q: want one of %s", flagPortVNICType, f.vnicType, strings.Join(portVNICTypes, ", "))
+		}
+		attrs["binding:vnic_type"] = f.vnicType
+	}
+	if f.qosPolicy != "" {
+		qosID, err := resolveQoSPolicyID(ctx, client, f.qosPolicy)
+		if err != nil {
+			return nil, err
+		}
+		attrs["qos_policy_id"] = qosID
+	}
+	if flags.Changed(flagDNSName) {
+		attrs["dns_name"] = f.dnsName
+	}
+	if flags.Changed(flagDNSDomain) {
+		attrs["dns_domain"] = f.dnsDomain
+	}
+	if len(f.extraDHCPOption) > 0 {
+		opts, err := parseExtraDHCPOptions(f.extraDHCPOption)
+		if err != nil {
+			return nil, err
+		}
+		attrs["extra_dhcp_opts"] = opts
+	}
+	return attrs, nil
+}
+
+func (f *portAttrFlags) uplink(flags flagSet) *bool {
+	return enableDisable(flags, f.enableUplink, f.disableUplink, flagPortEnableUplink, flagPortDisableUplink)
+}
+
 type portCreateFlags struct {
 	network             string
 	fixedIP             []string
+	noFixedIP           bool
 	macAddress          string
 	deviceOwner         string
+	device              string
+	host                string
 	description         string
 	securityGroup       []string
 	noSecurityGroup     bool
@@ -460,6 +587,12 @@ type portCreateFlags struct {
 	disablePortSecurity bool
 	enable              bool
 	disable             bool
+	project             string
+	projectDomain       string
+	// projectID is --project resolved by RunE, so the seam needs no identity client.
+	projectID string
+	portAttrFlags
+	tagWriteFlags
 }
 
 func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -476,8 +609,11 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
+			client, session, err := newNetworkSession(ctx, a)
 			if err != nil {
+				return err
+			}
+			if f.projectID, err = resolveProjectRef(ctx, session, f.project, f.projectDomain); err != nil {
 				return err
 			}
 			return runPortCreate(ctx, client, o, args[0], f, cmd.Flags(), cmd.OutOrStdout())
@@ -486,9 +622,12 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.network, "network", "", "network for the port (name or ID, required)")
 	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable)")
+	fl.BoolVar(&f.noFixedIP, flagPortNoFixedIP, false, "create the port with no fixed IP")
 	fl.StringVar(&f.macAddress, flagMACAddress, "", "MAC address for the port")
 	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "device owner for the port")
-	fl.StringVar(&f.description, "description", "", "description for the port")
+	fl.StringVar(&f.device, flagPortDevice, "", "device ID for the port")
+	fl.StringVar(&f.host, flagPortHost, "", "bind the port to this host ID")
+	fl.StringVar(&f.description, flagDescription, "", "description for the port")
 	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "security group to associate (name or ID, repeatable)")
 	fl.BoolVar(&f.noSecurityGroup, flagNoSecurityGroup, false, "create the port with no security groups")
 	fl.StringArrayVar(&f.allowedAddress, flagAllowedAddress, nil, "allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable)")
@@ -496,6 +635,13 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security")
 	fl.BoolVar(&f.enable, "enable", false, "create the port administratively up (default)")
 	fl.BoolVar(&f.disable, "disable", false, "create the port administratively down")
+	fl.StringArrayVar(&f.bindingProfile, flagPortBindingProfile, nil,
+		"binding:profile data as <key>=<value> or a JSON object (repeatable)")
+	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
+	fl.StringVar(&f.projectDomain, flagProjectDomain, "", projectDomainHelp)
+	bindPortAttrFlags(cmd, &f.portAttrFlags)
+	bindTagCreateFlags(cmd, &f.tagWriteFlags, "port")
+	cmd.MarkFlagsMutuallyExclusive(flagFixedIP, flagPortNoFixedIP)
 	cmd.MarkFlagsMutuallyExclusive(flagSecurityGroup, flagNoSecurityGroup)
 	cmd.MarkFlagsMutuallyExclusive(flagEnablePortSecurity, flagDisablePortSecurity)
 	_ = cmd.MarkFlagRequired("network")
@@ -503,16 +649,43 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *portCreateFlags, flags flagSet, w io.Writer) error {
-	networkID, err := resolveNetworkID(ctx, client, f.network)
+	opts, err := portCreateOpts(ctx, client, name, f, flags)
 	if err != nil {
 		return err
 	}
+	attrs, err := portCreateAttrs(ctx, client, f, flags)
+	if err != nil {
+		return err
+	}
+	var p portExt
+	if err := ports.Create(ctx, client, withPortCreateAttrs(opts, attrs)).ExtractInto(&p); err != nil {
+		return fmt.Errorf("creating port: %w", err)
+	}
+	// Tags are a sub-resource a create cannot carry on every deployment, so
+	// they are set afterwards, as upstream does without the
+	// tag-ports-during-bulk-creation extension.
+	if p.Tags, err = applyTagsForSet(ctx, client, tagResourcePorts, p.ID, p.Tags, &f.tagWriteFlags); err != nil {
+		return err
+	}
+	fields, values := portShowFields(&p)
+	return o.WriteSingle(w, fields, values)
+}
+
+// portCreateOpts builds the attributes gophercloud's ports.CreateOpts models.
+func portCreateOpts(ctx context.Context, client *gophercloud.ServiceClient, name string, f *portCreateFlags, flags flagSet) (ports.CreateOpts, error) {
+	networkID, err := resolveNetworkID(ctx, client, f.network)
+	if err != nil {
+		return ports.CreateOpts{}, err
+	}
 	opts := ports.CreateOpts{
-		NetworkID:   networkID,
-		Name:        name,
-		MACAddress:  f.macAddress,
-		DeviceOwner: f.deviceOwner,
-		Description: f.description,
+		NetworkID:             networkID,
+		Name:                  name,
+		MACAddress:            f.macAddress,
+		DeviceOwner:           f.deviceOwner,
+		DeviceID:              f.device,
+		Description:           f.description,
+		ProjectID:             f.projectID,
+		PropagateUplinkStatus: f.uplink(flags),
 	}
 	switch {
 	case f.disable:
@@ -522,7 +695,7 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 	fixedIPs, err := buildFixedIPs(ctx, client, f.fixedIP)
 	if err != nil {
-		return err
+		return opts, err
 	}
 	if fixedIPs != nil {
 		opts.FixedIPs = fixedIPs
@@ -533,33 +706,51 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	case len(f.securityGroup) > 0:
 		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
 		if err != nil {
-			return err
+			return opts, err
 		}
 		opts.SecurityGroups = &sgIDs
 	}
 	if len(f.allowedAddress) > 0 {
 		pairs, err := parseAddressPairs(f.allowedAddress)
 		if err != nil {
-			return err
+			return opts, err
 		}
 		opts.AllowedAddressPairs = pairs
 	}
+	return opts, nil
+}
 
-	// port_security_enabled lives in neutron's port-security extension, which
-	// gophercloud v2.13.0 has no create-side package for, so it is layered on
-	// the same way runPortSet does it.
-	var builder ports.CreateOptsBuilder = opts
+// portCreateAttrs builds the attributes ports.CreateOpts lacks. --extra-property
+// is merged last so it wins, as upstream's attrs.update(...) does.
+func portCreateAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *portCreateFlags, flags flagSet) (map[string]any, error) {
+	attrs, err := f.attrs(ctx, client, flags)
+	if err != nil {
+		return nil, err
+	}
+	if f.host != "" {
+		attrs["binding:host_id"] = f.host
+	}
+	if len(f.bindingProfile) > 0 {
+		profile, err := parseBindingProfile(f.bindingProfile)
+		if err != nil {
+			return nil, err
+		}
+		attrs["binding:profile"] = profile
+	}
+	// ports.CreateOpts.FixedIPs is omitempty, so an explicit empty list has to
+	// be set as a raw attribute.
+	if f.noFixedIP {
+		attrs["fixed_ips"] = []any{}
+	}
 	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
 		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {
-		builder = portCreateOptsExt{CreateOptsBuilder: opts, PortSecurityEnabled: secure}
+		attrs["port_security_enabled"] = *secure
 	}
-
-	var p portExt
-	if err := ports.Create(ctx, client, builder).ExtractInto(&p); err != nil {
-		return fmt.Errorf("creating port: %w", err)
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return nil, err
 	}
-	fields, values := portShowFields(&p)
-	return o.WriteSingle(w, fields, values)
+	return mergeAttrs(attrs, extra), nil
 }
 
 func buildFixedIPs(ctx context.Context, client *gophercloud.ServiceClient, specs []string) ([]ports.IP, error) {
@@ -613,205 +804,47 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, names
 	})
 }
 
-type portSetFlags struct {
-	name            string
-	fixedIP         []string
-	description     string
-	securityGroup   []string
-	noSecurityGroup bool
-	enable          bool
-	disable         bool
-
-	allowedAddress      []string
-	noAllowedAddress    bool
-	enablePortSecurity  bool
-	disablePortSecurity bool
-	host                string
-	device              string
-	deviceOwner         string
+// guardedPortUpdate is withPortUpdateAttrs plus neutron's If-Match revision
+// guard. ports.Update builds its headers by reflecting over the builder it is
+// handed, not over the ports.UpdateOpts inside it, so wrapping the opts alone
+// would silently drop opts.RevisionNumber; re-declaring the field here keeps
+// the header on the wire.
+type guardedPortUpdate struct {
+	portUpdateExt
+	RevisionNumber *int `json:"-" h:"If-Match"`
 }
 
-func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	f := &portSetFlags{}
-	cmd := &cobra.Command{
-		Use:   "set <port>",
-		Short: "Set port properties",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := o.Validate(); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			client, err := newNetworkClient(ctx, a)
-			if err != nil {
-				return err
-			}
-			return runPortSet(ctx, client, o, args[0], f, cmd.Flags(), cmd.OutOrStdout())
-		},
+func portUpdateBuilder(opts ports.UpdateOpts, attrs map[string]any) guardedPortUpdate {
+	return guardedPortUpdate{portUpdateExt: withPortUpdateAttrs(opts, attrs), RevisionNumber: opts.RevisionNumber}
+}
+
+// updatePort is the shared tail of set and unset: PUT the attributes when any
+// were given (upstream skips the update when only tags change), then apply the
+// tag change, then render what the port now looks like. current, when the verb
+// already read the port, spares a second GET on the tags-only path.
+func updatePort(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
+	opts ports.UpdateOpts, attrs map[string]any, changed bool, current *portExt,
+	applyTags func(context.Context, *gophercloud.ServiceClient, string, string, []string, *tagWriteFlags) ([]string, error),
+	tags *tagWriteFlags, w io.Writer,
+) error {
+	var err error
+	p := current
+	switch {
+	case changed:
+		p = &portExt{}
+		if err := ports.Update(ctx, client, id, portUpdateBuilder(opts, attrs)).ExtractInto(p); err != nil {
+			return fmt.Errorf("updating port %s: %w", ref, err)
+		}
+	case p == nil:
+		if p, err = getPort(ctx, client, id); err != nil {
+			return fmt.Errorf("getting port %s: %w", ref, err)
+		}
 	}
-	fl := cmd.Flags()
-	fl.StringVar(&f.name, "name", "", "new port name")
-	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil, "desired IP as subnet=<name|id>,ip-address=<ip> (repeatable, replaces existing)")
-	fl.StringVar(&f.description, "description", "", "new port description")
-	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "security group to associate (name or ID, repeatable, replaces existing)")
-	fl.BoolVar(&f.noSecurityGroup, flagNoSecurityGroup, false, "clear all security groups from the port")
-	fl.BoolVar(&f.enable, "enable", false, "set the port administratively up")
-	fl.BoolVar(&f.disable, "disable", false, "set the port administratively down")
-	fl.StringArrayVar(&f.allowedAddress, flagAllowedAddress, nil,
-		"allowed address pair as ip-address=<ip>[,mac-address=<mac>] (repeatable, replaces existing)")
-	fl.BoolVar(&f.noAllowedAddress, flagNoAllowedAddress, false, "clear all allowed address pairs from the port")
-	fl.BoolVar(&f.enablePortSecurity, flagEnablePortSecurity, false, "enable port security (security groups and anti-spoofing)")
-	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security")
-	fl.StringVar(&f.host, "host", "", "binding host ID for the port")
-	fl.StringVar(&f.device, "device", "", "device ID the port is attached to")
-	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "device owner of the port")
-	cmd.MarkFlagsMutuallyExclusive(flagSecurityGroup, flagNoSecurityGroup)
-	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
-	cmd.MarkFlagsMutuallyExclusive(flagAllowedAddress, flagNoAllowedAddress)
-	cmd.MarkFlagsMutuallyExclusive(flagEnablePortSecurity, flagDisablePortSecurity)
-	return cmd
-}
-
-func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *portSetFlags, flags flagSet, w io.Writer) error {
-	id, err := resolvePortID(ctx, client, nameOrID)
-	if err != nil {
+	if p.Tags, err = applyTags(ctx, client, tagResourcePorts, id, p.Tags, tags); err != nil {
 		return err
 	}
-	opts := ports.UpdateOpts{}
-	changed := false
-	if f.name != "" {
-		opts.Name = &f.name
-		changed = true
-	}
-	if flags.Changed("description") {
-		opts.Description = &f.description
-		changed = true
-	}
-	if flags.Changed(flagFixedIP) {
-		fixedIPs, err := buildFixedIPs(ctx, client, f.fixedIP)
-		if err != nil {
-			return err
-		}
-		opts.FixedIPs = fixedIPs
-		changed = true
-	}
-	if state := enableDisable(flags, f.enable, f.disable); state != nil {
-		opts.AdminStateUp = state
-		changed = true
-	}
-	switch {
-	case f.noSecurityGroup:
-		opts.SecurityGroups = &[]string{}
-		changed = true
-	case flags.Changed(flagSecurityGroup):
-		sgIDs, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
-		if err != nil {
-			return err
-		}
-		opts.SecurityGroups = &sgIDs
-		changed = true
-	}
-	switch {
-	case f.noAllowedAddress:
-		opts.AllowedAddressPairs = &[]ports.AddressPair{}
-		changed = true
-	case flags.Changed(flagAllowedAddress):
-		pairs, err := parseAddressPairs(f.allowedAddress)
-		if err != nil {
-			return err
-		}
-		opts.AllowedAddressPairs = &pairs
-		changed = true
-	}
-	if flags.Changed("device") {
-		opts.DeviceID = &f.device
-		changed = true
-	}
-	if flags.Changed(flagDeviceOwner) {
-		opts.DeviceOwner = &f.deviceOwner
-		changed = true
-	}
-
-	// --host and --*-port-security live in neutron's portsbinding and
-	// port-security extensions, which gophercloud v2.13.0 does not vendor a
-	// package for, so they are layered on as a local UpdateOptsBuilder.
-	ext := portUpdateOptsExt{UpdateOptsBuilder: opts}
-	if flags.Changed("host") {
-		ext.HostID = &f.host
-		changed = true
-	}
-	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
-		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {
-		ext.PortSecurityEnabled = secure
-		changed = true
-	}
-
-	if !changed {
-		return fmt.Errorf("port set requires at least one attribute flag")
-	}
-	var p portExt
-	if err := ports.Update(ctx, client, id, ext).ExtractInto(&p); err != nil {
-		return fmt.Errorf("updating port %s: %w", nameOrID, err)
-	}
-	fields, values := portShowFields(&p)
+	fields, values := portShowFields(p)
 	return o.WriteSingle(w, fields, values)
-}
-
-// portUpdateOptsExt layers the binding and port-security attributes onto a
-// ports.UpdateOpts. gophercloud has extensions/portsbinding and
-// extensions/portsecurity upstream, but neither is vendored at v2.13.0 and
-// ports.UpdateOpts has no fields for them — so rather than pull two packages in
-// for two keys, this follows the same composition pattern as
-// external.UpdateOptsExt and injects them into the request body. Swap it for the
-// vendored extensions if they are ever needed more widely.
-// portCreateOptsExt carries port_security_enabled onto a create, which the
-// port-security extension defines and gophercloud v2.13.0 does not vendor.
-type portCreateOptsExt struct {
-	ports.CreateOptsBuilder
-	PortSecurityEnabled *bool
-}
-
-func (opts portCreateOptsExt) ToPortCreateMap() (map[string]any, error) {
-	base, err := opts.CreateOptsBuilder.ToPortCreateMap()
-	if err != nil {
-		return nil, err
-	}
-	if opts.PortSecurityEnabled == nil {
-		return base, nil
-	}
-	portMap, ok := base["port"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected port create body shape: %T", base["port"])
-	}
-	portMap["port_security_enabled"] = *opts.PortSecurityEnabled
-	return base, nil
-}
-
-type portUpdateOptsExt struct {
-	ports.UpdateOptsBuilder
-	HostID              *string
-	PortSecurityEnabled *bool
-}
-
-func (opts portUpdateOptsExt) ToPortUpdateMap() (map[string]any, error) {
-	base, err := opts.UpdateOptsBuilder.ToPortUpdateMap()
-	if err != nil {
-		return nil, err
-	}
-	if opts.HostID == nil && opts.PortSecurityEnabled == nil {
-		return base, nil
-	}
-	portMap, ok := base["port"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected port update body shape: %T", base["port"])
-	}
-	if opts.HostID != nil {
-		portMap["binding:host_id"] = *opts.HostID
-	}
-	if opts.PortSecurityEnabled != nil {
-		portMap["port_security_enabled"] = *opts.PortSecurityEnabled
-	}
-	return base, nil
 }
 
 // parseAddressPairs parses the repeatable --allowed-address specs into
@@ -845,4 +878,367 @@ func parseAddressPairs(specs []string) ([]ports.AddressPair, error) {
 		pairs = append(pairs, pair)
 	}
 	return pairs, nil
+}
+
+// parseBindingProfile is upstream's JSONKeyValueAction: each value is either a
+// JSON object merged into the profile (keeping its types) or a <key>=<value>
+// pair whose value is sent as a string. Later values win.
+func parseBindingProfile(specs []string) (map[string]any, error) {
+	out := map[string]any{}
+	for _, spec := range specs {
+		if obj, ok := decodeJSONObject(spec); ok {
+			maps.Copy(out, obj)
+			continue
+		}
+		k, v, found := strings.Cut(spec, "=")
+		if !found || k == "" {
+			return nil, fmt.Errorf("--%s %q: expected <key>=<value> or a JSON object", flagPortBindingProfile, spec)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// decodeJSONObject reports whether s is exactly one JSON object. Numbers stay
+// json.Number so they reach neutron unchanged.
+func decodeJSONObject(s string) (map[string]any, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var obj map[string]any
+	if err := dec.Decode(&obj); err != nil || obj == nil || dec.More() {
+		return nil, false
+	}
+	return obj, true
+}
+
+// parseExtraDHCPOptions turns --extra-dhcp-option specs into neutron's
+// extra_dhcp_opts entries (upstream _convert_extra_dhcp_options): name= is
+// required, value= and ip-version= optional. ip-version is sent as the integer
+// neutron converts it to anyway.
+func parseExtraDHCPOptions(specs []string) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(specs))
+	for _, spec := range specs {
+		kv, err := splitCommaKV(flagPortExtraDHCPOption, spec, "name", "value", "ip-version")
+		if err != nil {
+			return nil, err
+		}
+		name := kv["name"]
+		if name == "" {
+			return nil, fmt.Errorf("--%s %q requires name=", flagPortExtraDHCPOption, spec)
+		}
+		opt := map[string]any{"opt_name": name}
+		if v, ok := kv["value"]; ok {
+			opt["opt_value"] = v
+		}
+		if v, ok := kv["ip-version"]; ok {
+			n, err := strconv.Atoi(v)
+			if err != nil || (n != 4 && n != 6) {
+				return nil, fmt.Errorf("--%s %q: ip-version must be 4 or 6", flagPortExtraDHCPOption, spec)
+			}
+			opt["ip_version"] = n
+		}
+		out = append(out, opt)
+	}
+	return out, nil
+}
+
+// splitCommaKV is osc-lib's MultiKeyValueCommaAction: comma-separated
+// key=value pairs where a piece with no '=' continues the previous value, so a
+// value may itself contain commas (value=a.example.com,b.example.com).
+func splitCommaKV(flag, spec string, allowed ...string) (map[string]string, error) {
+	kv := map[string]string{}
+	key := ""
+	for _, part := range strings.Split(spec, ",") {
+		k, v, found := strings.Cut(part, "=")
+		switch {
+		case !found && key == "":
+			return nil, fmt.Errorf("parsing --%s %q: a key=value pair is required, got %q", flag, spec, part)
+		case !found:
+			kv[key] += "," + part
+		case k == "":
+			return nil, fmt.Errorf("parsing --%s %q: a key must be given before '='", flag, spec)
+		case !slices.Contains(allowed, k):
+			return nil, fmt.Errorf("parsing --%s %q: unknown key %q (want %s)", flag, spec, k, strings.Join(allowed, ", "))
+		default:
+			kv[k] = v
+			key = k
+		}
+	}
+	return kv, nil
+}
+
+type portSetFlags struct {
+	name            string
+	fixedIP         []string
+	noFixedIP       bool
+	description     string
+	securityGroup   []string
+	noSecurityGroup bool
+	enable          bool
+	disable         bool
+
+	allowedAddress      []string
+	noAllowedAddress    bool
+	enablePortSecurity  bool
+	disablePortSecurity bool
+	host                string
+	device              string
+	deviceOwner         string
+	macAddress          string
+	noBindingProfile    bool
+	dataPlaneStatus     string
+	portAttrFlags
+	tagWriteFlags
+}
+
+func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &portSetFlags{}
+	cmd := &cobra.Command{
+		Use:   "set <port>",
+		Short: "Set port properties",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newNetworkClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runPortSet(ctx, client, o, args[0], f, cmd.Flags(), cmd.OutOrStdout())
+		},
+	}
+	// The list flags extend what the port already has, as upstream's do; their
+	// --no-* twin clears it first, so giving both overwrites the list.
+	fl := cmd.Flags()
+	fl.StringVar(&f.name, "name", "", "new port name")
+	fl.StringArrayVar(&f.fixedIP, flagFixedIP, nil,
+		"fixed IP to add as subnet=<name|id>,ip-address=<ip> (repeatable)")
+	fl.BoolVar(&f.noFixedIP, flagPortNoFixedIP, false,
+		"clear the port's fixed IPs; combine with --fixed-ip to overwrite them")
+	fl.StringVar(&f.description, flagDescription, "", "new port description")
+	fl.StringArrayVar(&f.securityGroup, flagSecurityGroup, nil, "security group to add (name or ID, repeatable)")
+	fl.BoolVar(&f.noSecurityGroup, flagNoSecurityGroup, false,
+		"clear the port's security groups; combine with --security-group to overwrite them")
+	fl.BoolVar(&f.enable, "enable", false, "set the port administratively up")
+	fl.BoolVar(&f.disable, "disable", false, "set the port administratively down")
+	fl.StringArrayVar(&f.allowedAddress, flagAllowedAddress, nil,
+		"allowed address pair to add as ip-address=<ip>[,mac-address=<mac>] (repeatable)")
+	fl.BoolVar(&f.noAllowedAddress, flagNoAllowedAddress, false,
+		"clear the port's allowed address pairs; combine with --allowed-address to overwrite them")
+	fl.BoolVar(&f.enablePortSecurity, flagEnablePortSecurity, false, "enable port security (security groups and anti-spoofing)")
+	fl.BoolVar(&f.disablePortSecurity, flagDisablePortSecurity, false, "disable port security")
+	fl.StringVar(&f.host, flagPortHost, "", "binding host ID for the port")
+	fl.StringVar(&f.device, flagPortDevice, "", "device ID the port is attached to")
+	fl.StringVar(&f.deviceOwner, flagDeviceOwner, "", "device owner of the port")
+	fl.StringVar(&f.macAddress, flagMACAddress, "", "MAC address for the port (admin)")
+	fl.StringArrayVar(&f.bindingProfile, flagPortBindingProfile, nil,
+		"binding:profile data to merge in, as <key>=<value> or a JSON object (repeatable)")
+	fl.BoolVar(&f.noBindingProfile, flagPortNoBindingProfile, false,
+		"clear the port's binding:profile; combine with --binding-profile to overwrite it")
+	fl.StringVar(&f.dataPlaneStatus, flagPortDataPlaneStatus, "",
+		"data plane status of the port (ACTIVE, DOWN; requires the data-plane-status extension)")
+	bindPortAttrFlags(cmd, &f.portAttrFlags)
+	bindTagSetFlags(fl, &f.tagWriteFlags, "port")
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
+	cmd.MarkFlagsMutuallyExclusive(flagEnablePortSecurity, flagDisablePortSecurity)
+	return cmd
+}
+
+// portSnapshot reads the port at most once, and only for the flags that
+// extend its current value rather than replace it.
+type portSnapshot struct {
+	load func() (*portExt, error)
+	port *portExt
+}
+
+func (s *portSnapshot) get() (*portExt, error) {
+	if s.port == nil {
+		p, err := s.load()
+		if err != nil {
+			return nil, fmt.Errorf("reading port before set: %w", err)
+		}
+		s.port = p
+	}
+	return s.port, nil
+}
+
+// extendOrReplace is upstream's set semantics for a list attribute: with its
+// --no-* flag the list starts empty, otherwise from the port's current entries,
+// and the given ones are appended.
+func extendOrReplace[T any](reset bool, snap *portSnapshot, current func(*portExt) []T, add []T) ([]T, error) {
+	out := []T{}
+	if !reset {
+		p, err := snap.get()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, current(p)...)
+	}
+	return append(out, add...), nil
+}
+
+func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *portSetFlags, flags flagSet, w io.Writer) error {
+	id, err := resolvePortID(ctx, client, nameOrID)
+	if err != nil {
+		return err
+	}
+	opts, changed := portSetScalarOpts(f, flags)
+	attrs, err := portSetAttrs(ctx, client, f, flags)
+	if err != nil {
+		return err
+	}
+	snap := &portSnapshot{load: func() (*portExt, error) { return getPort(ctx, client, id) }}
+	listsChanged, err := portSetLists(ctx, client, f, flags, snap, &opts, attrs)
+	if err != nil {
+		return err
+	}
+	extra, err := parseExtraProperties(f.extraProperty, false)
+	if err != nil {
+		return err
+	}
+	attrs = mergeAttrs(attrs, extra)
+	changed = changed || listsChanged || len(attrs) > 0
+	if !changed && !f.given() {
+		return fmt.Errorf("port set requires at least one attribute flag")
+	}
+	// A list computed from what was just read is pinned to that revision, so a
+	// concurrent change is rejected rather than overwritten (as in port unset).
+	if snap.port != nil {
+		revision := snap.port.RevisionNumber
+		opts.RevisionNumber = &revision
+	}
+	return updatePort(ctx, client, o, nameOrID, id, opts, attrs, changed, snap.port, applyTagsForSet, &f.tagWriteFlags, w)
+}
+
+// portSetScalarOpts builds the plain attributes ports.UpdateOpts models.
+func portSetScalarOpts(f *portSetFlags, flags flagSet) (ports.UpdateOpts, bool) {
+	opts := ports.UpdateOpts{}
+	changed := false
+	if f.name != "" {
+		opts.Name = &f.name
+		changed = true
+	}
+	if flags.Changed(flagDescription) {
+		opts.Description = &f.description
+		changed = true
+	}
+	if state := enableDisable(flags, f.enable, f.disable); state != nil {
+		opts.AdminStateUp = state
+		changed = true
+	}
+	if flags.Changed(flagPortDevice) {
+		opts.DeviceID = &f.device
+		changed = true
+	}
+	if flags.Changed(flagDeviceOwner) {
+		opts.DeviceOwner = &f.deviceOwner
+		changed = true
+	}
+	if flags.Changed(flagMACAddress) {
+		opts.MACAddress = &f.macAddress
+		changed = true
+	}
+	if uplink := f.uplink(flags); uplink != nil {
+		opts.PropagateUplinkStatus = uplink
+		changed = true
+	}
+	return opts, changed
+}
+
+// portSetAttrs builds the extension attributes ports.UpdateOpts lacks.
+func portSetAttrs(ctx context.Context, client *gophercloud.ServiceClient, f *portSetFlags, flags flagSet) (map[string]any, error) {
+	attrs, err := f.attrs(ctx, client, flags)
+	if err != nil {
+		return nil, err
+	}
+	if flags.Changed(flagPortHost) {
+		attrs["binding:host_id"] = f.host
+	}
+	if secure := enableDisable(flags, f.enablePortSecurity, f.disablePortSecurity,
+		flagEnablePortSecurity, flagDisablePortSecurity); secure != nil {
+		attrs["port_security_enabled"] = *secure
+	}
+	if f.dataPlaneStatus != "" {
+		status := strings.ToUpper(f.dataPlaneStatus)
+		if status != "ACTIVE" && status != "DOWN" {
+			return nil, fmt.Errorf("invalid --%s %q: want ACTIVE or DOWN", flagPortDataPlaneStatus, f.dataPlaneStatus)
+		}
+		attrs["data_plane_status"] = status
+	}
+	return attrs, nil
+}
+
+// portSetLists applies the four read-modify-write flags: fixed IPs, security
+// groups and allowed address pairs extend their lists, --binding-profile
+// merges into the profile. The port is read only if one of them needs it.
+func portSetLists(ctx context.Context, client *gophercloud.ServiceClient, f *portSetFlags, flags flagSet,
+	snap *portSnapshot, opts *ports.UpdateOpts, attrs map[string]any,
+) (bool, error) {
+	changed := false
+	if f.noFixedIP || flags.Changed(flagFixedIP) {
+		add, err := buildFixedIPs(ctx, client, f.fixedIP)
+		if err != nil {
+			return false, err
+		}
+		ips, err := extendOrReplace(f.noFixedIP, snap, func(p *portExt) []ports.IP { return p.FixedIPs }, add)
+		if err != nil {
+			return false, err
+		}
+		opts.FixedIPs = ips
+		changed = true
+	}
+	if f.noSecurityGroup || flags.Changed(flagSecurityGroup) {
+		add, err := resolveSecGroupIDs(ctx, client, f.securityGroup)
+		if err != nil {
+			return false, err
+		}
+		sgs, err := extendOrReplace(f.noSecurityGroup, snap, func(p *portExt) []string { return p.SecurityGroups }, add)
+		if err != nil {
+			return false, err
+		}
+		opts.SecurityGroups = &sgs
+		changed = true
+	}
+	if f.noAllowedAddress || flags.Changed(flagAllowedAddress) {
+		add, err := parseAddressPairs(f.allowedAddress)
+		if err != nil {
+			return false, err
+		}
+		pairs, err := extendOrReplace(f.noAllowedAddress, snap, func(p *portExt) []ports.AddressPair { return p.AllowedAddressPairs }, add)
+		if err != nil {
+			return false, err
+		}
+		opts.AllowedAddressPairs = &pairs
+		changed = true
+	}
+	if f.noBindingProfile || len(f.bindingProfile) > 0 {
+		profile, err := portSetBindingProfile(f, snap)
+		if err != nil {
+			return false, err
+		}
+		attrs["binding:profile"] = profile
+		changed = true
+	}
+	return changed, nil
+}
+
+// portSetBindingProfile merges --binding-profile into the port's current
+// profile, or into an empty one under --no-binding-profile.
+func portSetBindingProfile(f *portSetFlags, snap *portSnapshot) (map[string]any, error) {
+	add, err := parseBindingProfile(f.bindingProfile)
+	if err != nil {
+		return nil, err
+	}
+	profile := map[string]any{}
+	if !f.noBindingProfile {
+		p, err := snap.get()
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(profile, p.BindingProfile)
+	}
+	maps.Copy(profile, add)
+	return profile, nil
 }

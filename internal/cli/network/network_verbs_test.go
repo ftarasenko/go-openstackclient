@@ -382,10 +382,12 @@ func TestRunPortList_ScalarFilters(t *testing.T) {
 		host:        "cmp-01",
 		macAddress:  "aa:bb:cc:dd:ee:ff",
 		status:      "active",
-		tags:        []string{"a", "b"},
-		anyTags:     []string{"c"},
-		notTags:     []string{"d"},
-		notAnyTags:  []string{"e"},
+		tagFilterFlags: tagFilterFlags{
+			tags:       []string{"a", "b"},
+			anyTags:    []string{"c"},
+			notTags:    []string{"d"},
+			notAnyTags: []string{"e"},
+		},
 	}
 	if err := runPortList(context.Background(), client, o, f, portListDeps{}, &buf); err != nil {
 		t.Fatalf("runPortList: %v", err)
