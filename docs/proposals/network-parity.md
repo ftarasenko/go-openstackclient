@@ -20,7 +20,7 @@ v2.13.0 — the networking package set is identical between the two).
 | … implemented by koc under the same name | **104 (62%)** |
 | … missing — "core" (per `coverage.md`'s definition) | **10** |
 | … missing — niche subsystems | **54** |
-| Implemented commands with at least one missing upstream flag | **77 of 104** |
+| Implemented commands with at least one missing upstream flag (pagination and `--variable` excluded) | **54 of 104** |
 | Substantive missing flags (excluding the cross-cutting groups below) | **218, in 38 commands** |
 | Commands missing the tag flags (`--tag`/`--no-tag`/`--all-tag`, `--tags`/`--any-tags`/…) | 23 |
 | Commands missing `--project-domain` next to an existing or missing `--project` | 20 |
