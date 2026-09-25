@@ -820,7 +820,7 @@ func TestRunRouterAddSubnet(t *testing.T) {
 
 	client := networkClient(fakeServer)
 	var buf bytes.Buffer
-	if err := runRouterAddSubnet(context.Background(), client, "rtr-1", "sub-1", &buf); err != nil {
+	if err := runRouterAddSubnet(context.Background(), client, "rtr-1", "sub-1", false, &buf); err != nil {
 		t.Fatalf("runRouterAddSubnet: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Added interface for subnet sub-1 to router rtr-1") {
