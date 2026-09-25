@@ -646,22 +646,23 @@ func TestRunIPAvailabilityList_SendsFiltersAndTruncatesNothing(t *testing.T) {
 	}
 }
 
-func TestRunIPAvailabilityList_ZeroIPVersionOmitsFilter(t *testing.T) {
+// Without --ip-version the list is filtered to IPv4, as upstream
+// (ip_availability.py: default=4). This test used to assert the opposite — no
+// ip_version at all — which listed a dual-stack network twice.
+func TestExec_IPAvailabilityList_DefaultsToIPv4(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	fakeServer.Mux.HandleFunc("/network-ip-availabilities", func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.RawQuery, "ip_version=") {
-			t.Errorf("ip_version should be omitted when --ip-version was not given: %q", r.URL.RawQuery)
+	fakeServer.Mux.HandleFunc("/v2.0/network-ip-availabilities", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query()["ip_version"]; len(got) != 1 || got[0] != "4" {
+			t.Errorf("ip_version = %v, want [4] when --ip-version was not given (query %q)", got, r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"network_ip_availabilities": []}`))
 	})
 
-	var out bytes.Buffer
-	o := &output.Options{Format: "table"}
-	if err := runIPAvailabilityList(context.Background(), networkClient(fakeServer), o, 0, "", &out); err != nil {
-		t.Fatalf("runIPAvailabilityList returned error: %v", err)
+	if out, err := execNetwork(t, fakeServer, "ip", "availability", "list"); err != nil {
+		t.Fatalf("ip availability list: %v (%s)", err, out)
 	}
 }
 
