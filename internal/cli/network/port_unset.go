@@ -34,6 +34,9 @@ type portUnsetFlags struct {
 	deviceOwner     bool
 	qosPolicy       bool
 	dataPlaneStatus bool
+	numaPolicy      bool
+	hints           bool
+	pvlanCommunity  bool
 	extraProperty   []string
 	tagWriteFlags
 }
@@ -42,7 +45,8 @@ type portUnsetFlags struct {
 func (f *portUnsetFlags) empty() bool {
 	return len(f.fixedIP) == 0 && len(f.securityGroup) == 0 && len(f.allowedAddress) == 0 &&
 		len(f.bindingProfile) == 0 && len(f.extraProperty) == 0 &&
-		!f.host && !f.device && !f.deviceOwner && !f.qosPolicy && !f.dataPlaneStatus && !f.given()
+		!f.host && !f.device && !f.deviceOwner && !f.qosPolicy && !f.dataPlaneStatus &&
+		!f.numaPolicy && !f.hints && !f.pvlanCommunity && !f.given()
 }
 
 func newPortUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -78,6 +82,11 @@ func newPortUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.deviceOwner, flagDeviceOwner, false, "clear the port's device owner")
 	fl.BoolVar(&f.qosPolicy, flagQoSPolicy, false, "detach the port's QoS policy")
 	fl.BoolVar(&f.dataPlaneStatus, flagPortDataPlaneStatus, false, "clear the port's data plane status")
+	fl.BoolVar(&f.numaPolicy, flagPortNUMAPolicy, false,
+		"clear the port's NUMA affinity policy (requires the port-numa-affinity-policy extension)")
+	fl.BoolVar(&f.hints, flagPortHints, false, "clear the port's hints (requires the port-hints extension)")
+	fl.BoolVar(&f.pvlanCommunity, flagPortPVLANCommunity, false,
+		"clear the port's PVLAN community (requires the pvlan extension)")
 	bindExtraPropertyUnsetFlag(fl, &f.extraProperty)
 	bindTagUnsetFlags(cmd, &f.tagWriteFlags, "port")
 	return cmd
@@ -164,8 +173,9 @@ func portUnsetLists(ctx context.Context, client *gophercloud.ServiceClient, f *p
 }
 
 // portUnsetAttrs builds the extension attributes unset clears. qos_policy_id,
-// data_plane_status and --extra-property go out as null, as upstream sends
-// them; binding:host_id keeps koc's empty string.
+// data_plane_status, numa_affinity_policy, hints, pvlan_community and
+// --extra-property go out as null, as upstream sends them; binding:host_id
+// keeps koc's empty string.
 func portUnsetAttrs(f *portUnsetFlags, current *portExt) (map[string]any, error) {
 	attrs := map[string]any{}
 	if len(f.bindingProfile) > 0 {
@@ -189,6 +199,15 @@ func portUnsetAttrs(f *portUnsetFlags, current *portExt) (map[string]any, error)
 	}
 	if f.dataPlaneStatus {
 		attrs["data_plane_status"] = nil
+	}
+	if f.numaPolicy {
+		attrs["numa_affinity_policy"] = nil
+	}
+	if f.hints {
+		attrs["hints"] = nil
+	}
+	if f.pvlanCommunity {
+		attrs["pvlan_community"] = nil
 	}
 	extra, err := parseExtraProperties(f.extraProperty, true)
 	if err != nil {
