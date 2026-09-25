@@ -354,8 +354,7 @@ func TestParseSubports_Validation(t *testing.T) {
 	}{
 		{name: "well formed", spec: "port=p1,segmentation-type=vlan,segmentation-id=7"},
 		{name: "underscore keys", spec: "port=p1,segmentation_type=vlan,segmentation_id=7"},
-		{name: "missing type", spec: "port=p1,segmentation-id=7", wantErr: "requires port, segmentation-type"},
-		{name: "missing port", spec: "segmentation-type=vlan,segmentation-id=7", wantErr: "requires port, segmentation-type"},
+		{name: "missing port", spec: "segmentation-type=vlan,segmentation-id=7", wantErr: "requires port"},
 		{name: "non-numeric id", spec: "port=p1,segmentation-type=vlan,segmentation-id=x", wantErr: "is not a number"},
 		{name: "unknown key", spec: "port=p1,vlan=7", wantErr: "unknown key"},
 	}

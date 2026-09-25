@@ -27,6 +27,8 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	networkCmd := newNetworkCommand(a, o)
 	networkCmd.AddCommand(newAgentCommand(a, o))
 	networkCmd.AddCommand(newTrunkCommand(a, o))
+	networkCmd.AddCommand(newSubportCommand(a, o))
+	networkCmd.AddCommand(newServiceProviderCommand(a, o))
 	networkCmd.AddCommand(newExtensionCommand(a, o))
 	networkCmd.AddCommand(newRBACCommand(a, o))
 	networkCmd.AddCommand(newSegmentCommand(a, o))

@@ -189,7 +189,8 @@ func TestRunAgentList_AgentTypeFilterQueryParam(t *testing.T) {
 
 	fakeServer.Mux.HandleFunc("/agents", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, http.MethodGet)
-		th.TestFormValues(t, r, map[string]string{"agent_type": "l3"})
+		// The short --agent-type name maps to neutron's full agent_type.
+		th.TestFormValues(t, r, map[string]string{"agent_type": "L3 agent"})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"agents":[{"id":"agent-1","agent_type":"L3 agent","host":"cmp1","admin_state_up":true,"alive":true,"binary":"neutron-l3-agent"}]}`))

@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-09-25 · `koc` @ this commit (base `5cc80b1`) · 571 leaf
+**Snapshot:** 2026-09-25 · `koc` @ this commit (base `5cc80b1`) · 579 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**521 of 847 in-scope upstream commands (62%).** Of `koc`'s 571 leaf commands,
-521 are upstream-equivalent and 50 are koc-native.
+**529 of 847 in-scope upstream commands (62%).** Of `koc`'s 579 leaf commands,
+529 are upstream-equivalent and 50 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -37,7 +37,8 @@ points. `koc` already had all three, so the denominator grew by 3 and the
 numerator by 2 — `add` and `remove` move from "koc-native" to
 upstream-equivalent, and `list`, previously credited through the naming
 deviation to upstream's `network subport list`, now matches by name (one leaf
-cannot be counted twice, so `network subport list` becomes an ordinary gap).
+cannot be counted twice, so `network subport list` became an ordinary gap, since
+closed).
 The same entry-point file also carries five neutron plugin namespaces that no
 earlier snapshot counted anywhere; they are now an explicit not-targeted row
 (see below). Measured flag by flag against the same parsers, the network
@@ -129,7 +130,7 @@ since `koc` targets none of the three.
 | `openstack.image.v2` | 16/42 (38%) | **14/15 (93%)** — only `image member get` remains |
 | `openstack.volume.v3` | 52/94 (55%) | **34/38 (89%)** — QoS, transfers, the backend pool/capability reads and `block storage cluster` are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
-| `openstack.network.v2` | 105/168 (62%) | **88/97 (91%)** — QoS and RBAC land outside the "core" denominator but are implemented |
+| `openstack.network.v2` | 113/168 (67%) | **96/97 (99%)** — QoS and RBAC land outside the "core" denominator but are implemented |
 | `openstack.common` | 6/11 (55%) | 6/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show` |
 | `openstack.object_store.v1` (swift) | 0/17 | not targeted |
 | `openstack.share.v2` (manila) | 0/40 | not targeted |
@@ -530,7 +531,7 @@ limitations"; the fix is to make the other resolvers match `server`'s behaviour.
 ## koc-native commands
 
 No upstream equivalent, by design — **50 leaves**, itemised so the total
-reconciles with the headline (571 = 521 + 50):
+reconciles with the headline (579 = 529 + 50):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -595,7 +596,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (571 leaf commands at the snapshot above)
+# 1. koc's own command tree (579 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -624,8 +625,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (521);
-2. leaf commands = headline numerator + koc-native (571 = 521 + 50);
+1. every raw row numerator summed = the headline numerator (529);
+2. leaf commands = headline numerator + koc-native (579 = 529 + 50);
 3. every raw row denominator summed = 1004, and minus the three not-targeted rows
    (swift 17 + manila 40 + neutron plugins 100) = the in-scope denominator (847).
 
