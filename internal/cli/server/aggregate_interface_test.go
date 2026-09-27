@@ -470,7 +470,7 @@ func TestRunServerRescue_GeneratedPasswordNoImage(t *testing.T) {
 	o := &output.Options{Format: output.FormatValue}
 	f := &rescueFlags{}
 	var buf bytes.Buffer
-	// f.image is empty, so resolveRescueImageID never touches ac: nil is safe.
+	// f.image is empty, so resolveImageRef never touches ac: nil is safe.
 	if err := runServerRescue(context.Background(), client, nil, o, serverUUID, f, &buf); err != nil {
 		t.Fatalf("runServerRescue: %v", err)
 	}

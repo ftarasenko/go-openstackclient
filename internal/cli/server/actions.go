@@ -543,15 +543,19 @@ func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return fmt.Errorf("--image is required")
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRebuild(ctx, client, o, args[0], f, cmd.OutOrStdout())
+			// nova's imageRef takes only a UUID; a name goes through glance.
+			if f.image, err = resolveImageRef(ctx, s.auth, f.image); err != nil {
+				return err
+			}
+			return runServerRebuild(ctx, s.client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.image, "image", "", "image ID to rebuild from (required; pass an ID)")
+	fl.StringVar(&f.image, "image", "", "image (name or ID) to rebuild from (required)")
 	fl.StringVar(&f.name, "name", "", "rename the server as part of the rebuild")
 	fl.StringVar(&f.userData, "user-data", "",
 		"path to a cloud-init/user-data file to replace the server's own (nova 2.57 or later)")
