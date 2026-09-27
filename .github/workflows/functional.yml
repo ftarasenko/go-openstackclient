@@ -29,6 +29,8 @@ on:
     paths:
       - .github/workflows/functional.yml
       - scripts/devstack/**
+      - test/functional/**
+      - internal/vault/vaulttest/**
 
 permissions:
   contents: read
@@ -54,15 +56,23 @@ jobs:
         # The Ubuntu per series is devstack's, recorded in up.sh's host check:
         # jammy only through 2024.1, noble from 2026.1 (2025.1 takes either;
         # noble is what it was verified on).
+        #
+        # auth is the credential path the test suites run under (KOC_FT_AUTH).
+        # env openrc and clouds.yaml are both how operators run koc, so each
+        # takes two cells; the auth tests cover every path on every cell.
         include:
           - series: zed
             os: ubuntu-22.04
+            auth: env
           - series: caracal
             os: ubuntu-22.04
+            auth: env
           - series: epoxy
             os: ubuntu-24.04
+            auth: clouds
           - series: latest
             os: ubuntu-24.04
+            auth: clouds
     steps:
       # Outside the checkout, so nothing devstack writes can dirty the tree.
       # (The runner context is not available in a job-level env: block.)
@@ -114,18 +124,38 @@ jobs:
         timeout-minutes: 15
         run: scripts/devstack/smoke.sh --log-dir "$LOG_DIR" --devstack-dir "$DEVSTACK_DIR" --koc "$RUNNER_TEMP/koc"
 
+      # The Go functional tests (test/functional), with the binary smoke just
+      # used, offline: only devstack needs the network. The -v log lands in
+      # the log dir so a failure's artifact carries it.
+      - name: Functional tests
+        timeout-minutes: 20
+        env:
+          KOC_FT_AUTH: ${{ matrix.auth }}
+          GOTOOLCHAIN: local
+        run: |
+          set -o pipefail
+          make functional KOC_FT_ENV="$LOG_DIR/functional.env" KOC_BIN="$RUNNER_TEMP/koc" FUNCTIONAL_TIMEOUT=15m |
+            tee "$LOG_DIR/functional.log"
+
       # Timings and the smoke table for every run, green or not: this is where
       # the nightly's numbers are read, without downloading anything.
       - name: Summary
         if: always()
         env:
           SERIES: ${{ matrix.series }}
+          AUTH: ${{ matrix.auth }}
         run: |
           {
             echo "### devstack $SERIES"
             for f in bringup.json refs.txt smoke.txt; do
               if [[ -f "$LOG_DIR/$f" ]]; then printf '\n**%s**\n\n~~~\n' "$f"; cat "$LOG_DIR/$f"; echo '~~~'; fi
             done
+            if [[ -f "$LOG_DIR/functional.log" ]]; then
+              printf '\n**functional tests** (auth=%s): ' "$AUTH"
+              for r in PASS FAIL SKIP; do printf '%s %s  ' "$(grep -c "^\s*--- $r" "$LOG_DIR/functional.log")" "$r"; done
+              echo
+              grep -E '^\s*--- FAIL' "$LOG_DIR/functional.log" | sed 's/^/    /' || true
+            fi
           } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Collect logs
@@ -135,8 +165,9 @@ jobs:
       # The repository is public, so the artifact is too. It holds devstack's
       # own output from a disposable runner and nothing else: the whole-system
       # journal (runner agent and provisioning logs) is left out — each devstack
-      # service's journal is in units/ — and so is functional.env, whose EC2
-      # secret is worthless once the runner is gone but has no debugging value.
+      # service's journal is in units/ — and so are functional.env and
+      # openrc.env, whose EC2 secret and devstack password are worthless once
+      # the runner is gone but have no debugging value.
       - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -146,5 +177,6 @@ jobs:
             ${{ runner.temp }}/devstack-logs
             !${{ runner.temp }}/devstack-logs/journal.log
             !${{ runner.temp }}/devstack-logs/functional.env
+            !${{ runner.temp }}/devstack-logs/openrc.env
           retention-days: 14
           if-no-files-found: warn

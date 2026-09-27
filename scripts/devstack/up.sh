@@ -28,6 +28,8 @@
 #   refs.txt           the git ref resolved for devstack and every plugin
 #   bringup.json       series, backend, refs, host, durations, peak RAM, disk used, result
 #   functional.env     OS_CLOUD, S3 credentials and fixture names for the tests
+#   openrc.env         the OS_* devstack's `openrc admin admin` exports, resolved,
+#                      so the tests can run koc from an openrc instead of clouds.yaml
 #
 # The GitHub-runner workarounds (--gha, automatic when GITHUB_ACTIONS=true) are
 # adapted from gophercloud/devstack-action v0.19 (Apache-2.0,
@@ -334,6 +336,10 @@ if [[ $RC -eq 0 ]]; then
             echo "AWS_REGION=us-east-1"
         fi
     } >"$LOG_DIR/functional.env"
+    # The openrc path, resolved: a shell script cannot be read from Go, and
+    # these are the variables an operator's `source openrc` leaves behind —
+    # bare OS_VOLUME_API_VERSION=3 and ID-only domains included.
+    env | grep '^OS_' | sort >"$LOG_DIR/openrc.env"
 fi
 
 cat >"$LOG_DIR/bringup.json" <<EOF

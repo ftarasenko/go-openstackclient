@@ -200,6 +200,7 @@ internal/auth/             one authenticated ProviderClient per invocation + per
   debug.go                 --debug transport: redacts tokens+secrets, elides large bodies
 internal/kube/             minimal read-only k8s REST client (kubeconfig + secret/Ironic reads); no client-go
 internal/vault/            minimal Vault REST client (AppRole login / token + KV v2 read + X-Vault-Namespace)
+  vaulttest/               fake Vault server for tests, pinned to a real server's answers (TestContract)
 internal/s3/               minimal S3 REST client, no aws-sdk-go-v2 / minio-go: hand-rolled SigV4
                            (header + presigned query), list/head/get/put, multipart upload,
                            server-side copy, batch delete, versioning, retry with backoff
@@ -217,6 +218,8 @@ internal/cli/resolve/      cross-service name→ID (image→glance, network→ne
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
 scripts/devstack/          up.sh (single-node devstack per series, local VM or --gha runner),
                            smoke.sh (per-feature proof + koc read verbs), collect-logs.sh
+test/functional/           Go functional tests (build tag "functional"): the koc binary against
+                           a devstack from up.sh, plus the Vault CLI against vaulttest
 ```
 
 Services: `baremetal` (ironic), `server`+`compute` (nova), `identity` (keystone),
@@ -348,6 +351,33 @@ real factory), points it at the mock, and calls the `runXxx` seam directly.
 Assert **request method, URL, microversion header(s), request body, and rendered
 output**. Cover at least the primary list plus one write verb per noun.
 
+For Vault, use `internal/vault/vaulttest` rather than a hand-rolled handler: it
+answers the way a real server does (a LIST of an empty path is a 404, a policy
+denial has its own 403 body), and its `TestContract` re-runs against a real dev
+server with `VAULTTEST_ADDR` set. Extend that table, from a fresh probe, before
+koc relies on another part of the Vault API
+(`docs/verification/2026-09-27-vault-api-probe.md`).
+
+**Functional tests** (`test/functional`, build tag `functional`, so `go test
+./...` never builds them) run the real `koc` binary as an operator does: a
+separate process, credentials from `clouds.yaml` or an openrc, output parsed
+from `-f json`. `make functional KOC_FT_ENV=<log-dir>/functional.env` runs them
+against a devstack from `scripts/devstack/up.sh`; without `KOC_FT_ENV` the cloud
+tests skip and the rest (the harness's own tests, the Vault CLI against the
+fake) still run, which is what offline CI does. Rules for adding one:
+
+- Run koc through a `runner` (`defaultRunner`, `cloudsRunner`, `openrcRunner`):
+  it starts from a scrubbed environment, so a test never inherits a credential.
+  `KOC_FT_AUTH` (`clouds` or `env`) picks the suites' default path; both are
+  default operator paths, and the nightly alternates them across cells.
+- Gate on capability, not release: `requireExtension`/`requireFeature` first,
+  `requireSeries` only for behaviour nothing on the cloud advertises,
+  `requireBackend` only for data-plane assertions. A new capability also goes
+  into `TestCapabilityMatrix`, so its disappearance fails the run instead of
+  turning its tests into skips.
+- tap mirrors are API-only everywhere (under OVN the API loads but nothing is
+  mirrored) and absent before 2025.1.
+
 ## Coverage tracking
 
 `docs/coverage.md` records how much of the upstream `openstack` surface `koc`
@@ -455,7 +485,10 @@ being quietly weakened by a check that happens to need a proxy.
   than at release time); `test-race`, `go test -race` on the primary target, a
   separate job because `-race` needs `CGO_ENABLED=1` and that must never leak into
   the shipped static binaries; and `lint`, with golangci-lint pinned and its
-  download checksum-verified against the release's published `checksums.txt`.
+  download checksum-verified against the release's published `checksums.txt`
+  (it lints the `functional` build tag too). `build-test` also runs
+  `test/functional` with no cloud: its devstack tests skip, and the harness's
+  own tests plus the Vault CLI against the fake server run offline.
   Go is resolved as `1.27.x` + `check-latest` rather than `go-version-file:
   go.mod`, so the binaries get the newest 1.27 patch stdlib instead of the exact
   version go.mod pins — see the comment in the workflow before changing it. The
@@ -479,24 +512,27 @@ being quietly weakened by a check that happens to need a proxy.
   actually catches.
 - `.github/workflows/functional.yml` — the **nightly devstack run**, also
   network-allowed: `schedule` (02:23 UTC), `workflow_dispatch`, and a push to
-  `master`/`claude/**` that touches the workflow or `scripts/devstack/**` (so an
-  edit to the bring-up is proved on a runner by the commit that makes it; that
+  `master`/`claude/**` that touches the workflow, `scripts/devstack/**`,
+  `test/functional/**` or `internal/vault/vaulttest/**` (so an edit to the
+  bring-up or the tests is proved on a runner by the commit that makes it; that
   push is also what gives a branch its first run, since `workflow_dispatch`
   reaches a branch only after one). One job per supported cell — zed and
   caracal on `ubuntu-22.04` (ML2/OVS), epoxy and latest on `ubuntu-24.04`
   (ML2/OVN) — with `fail-fast: false`, a 60-minute timeout, and a single
   `concurrency` group so two runs never stack at once. It is a **thin
   wrapper**: enable `/dev/kvm`, build koc offline, `scripts/devstack/up.sh
-  --series <cell> --gha`, `scripts/devstack/smoke.sh --koc <that binary>`, and
-  on failure `collect-logs.sh` plus a 14-day artifact. Every devstack decision
+  --series <cell> --gha`, `scripts/devstack/smoke.sh --koc <that binary>`, `make
+  functional` with the same binary (the Go functional tests, under the cell's
+  `KOC_FT_AUTH`: env openrc on zed and caracal, `clouds.yaml` on epoxy and
+  latest), and on failure `collect-logs.sh` plus a 14-day artifact. Every devstack decision
   lives in `up.sh`, which was proved on runner-sized VMs first
   (`docs/verification/2026-09-27-devstack-bringup.md`, "Results"); a fix for a
   runner-only failure goes into `up.sh` under `--gha`, never into a workflow
   step, and the results doc changes with it. The artifact is public (so is the
   repository), so it carries devstack's own output only — the whole-system
-  journal and `functional.env` are excluded at upload. A red cell with a failed
+  journal, `functional.env` and `openrc.env` are excluded at upload. A red cell with a failed
   "Stack devstack" step is devstack or the runner image; a red "Smoke" step
-  with a `koc …` FAIL line is koc.
+  with a `koc …` FAIL line, or a red "Functional tests" step, is koc.
 - `.github/dependabot.yml` — weekly `gomod` and `github-actions` updates, each
   grouped into a single PR. Commit-message prefixes are set to `build` (gomod) and
   `ci` (actions) so Dependabot speaks Conventional Commits and
