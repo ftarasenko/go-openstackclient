@@ -385,3 +385,17 @@ to two failing tests:
   `feat(output)!: join -f value cells with a space, like openstack`, with the
   unambiguous tab-separated job moved to the new koc-native `-f tsv`
   (`feat(output): add -f tsv, an unambiguous tab-separated format`).
+
+And by a fast loop on two long-lived local VMs (zed on ML2/OVS with the
+openrc, 2026.2 on ML2/OVN with `clouds.yaml`), which re-ran single tests
+against a stack that stayed up and reached the steps earlier failures had
+hidden. It found the rebuild and volume-attach bugs above independently (nova
+2.101 is the microversion that made the attach answer 202), and one more:
+
+- `dns quota list/set/reset` for another project never sent
+  `X-Auth-All-Projects` from `clouds.yaml`, so 2026.2's designate answered 403.
+  **Fixed** by `fix(dns): send all-projects for another project's quotas from
+  clouds.yaml`.
+
+The same loop's parity pass against `openstack` fixed twelve rendering and
+column differences (each a `fix(...)` commit citing "the parity pass").
