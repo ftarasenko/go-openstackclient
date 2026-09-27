@@ -154,11 +154,11 @@ func TestComputeServicesAndHosts(t *testing.T) {
 	// one that does not exist must fail cleanly.
 	r.fails(t, "compute", "service", "delete", "ft-no-such-host", "nova-compute")
 
-	// drain plans the host's servers without moving them; evacuate refuses a
-	// host whose service is up and points at drain instead.
-	drain := r.run(t, "compute", "host", "drain", host, "--dry-run")
-	if drain.code != 0 || !strings.Contains(drain.stdout+drain.stderr, "Dry run") {
-		t.Errorf("compute host drain --dry-run: exit %d\n%s%s", drain.code, drain.stdout, drain.stderr)
+	// drain plans the host's servers without moving them (serial tests run
+	// before the parallel server suites, so there are none yet); evacuate
+	// refuses a host whose service is up and points at drain instead.
+	if drain := r.ok(t, "compute", "host", "drain", host, "--dry-run"); !strings.Contains(drain, "ID") {
+		t.Errorf("compute host drain --dry-run printed no plan: %s", drain)
 	}
 	if msg := r.fails(t, "compute", "host", "evacuate", host, "--dry-run"); !strings.Contains(msg, "drain") {
 		t.Errorf("compute host evacuate of an up host: %q, want a pointer to drain", msg)

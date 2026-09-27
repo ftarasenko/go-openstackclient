@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The keystone suite: every identity noun driven through its lifecycle on a
@@ -81,6 +82,11 @@ func TestIdentityDomainProjectUser(t *testing.T) {
 	}
 	newPW := "Ft-" + uniq("pw2")
 	as(pw).ok(t, "user", "password", "set", "--original-password", pw, "--password", newPW)
+	// The change revokes the user's tokens by a timestamp with one-second
+	// granularity, so a token issued in the same second is revoked with them.
+	waitFor(t, "a token with the new password", 15*time.Second, func() bool {
+		return as(newPW).run(t, "token", "issue").code == 0
+	})
 	if got := issue(t, as(newPW)); got.user != field(u, "id") {
 		t.Errorf("token after password change = %+v, want user %s", got, field(u, "id"))
 	}

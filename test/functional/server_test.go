@@ -66,10 +66,13 @@ func TestServerLifecycle(t *testing.T) {
 	id := boot(t, r, c, name, "--key-name", key, "--property", "ft=1", "--security-group", "default",
 		"--user-data", userData, "--config-drive")
 
-	s := r.show(t, "server", "show", id, "--user-data")
-	if field(s, "key_name") != key || !strings.Contains(field(s, "metadata"), "ft") ||
-		!strings.Contains(anyField(s, "user_data", "OS-EXT-SRV-ATTR:user_data"), "hostname") {
-		t.Errorf("server show --user-data = %v", s)
+	s := r.show(t, "server", "show", id)
+	if field(s, "key_name") != key || !strings.Contains(field(s, "metadata"), "ft") {
+		t.Errorf("server show = %v", s)
+	}
+	// --user-data writes the decoded script raw, for a pipe, whatever -f says.
+	if ud := r.ok(t, "server", "show", id, "--user-data"); ud != "#cloud-config\nhostname: ft\n" {
+		t.Errorf("server show --user-data = %q", ud)
 	}
 
 	// Properties, tags, name and description.

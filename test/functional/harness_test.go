@@ -398,7 +398,12 @@ func (r runner) run(t *testing.T, args ...string) result {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, koc(t), args...)
 	cmd.Env = r.env
-	cmd.Stdin = strings.NewReader(r.stdin)
+	// No input means no stdin at all (/dev/null), as a cron job or a terminal
+	// gives: an empty pipe is data to koc, as it is upstream, and image create
+	// would upload it.
+	if r.stdin != "" {
+		cmd.Stdin = strings.NewReader(r.stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -512,8 +517,13 @@ func field(m map[string]any, key string) string {
 			if v == nil {
 				return ""
 			}
-			if s, ok := v.(string); ok {
-				return s
+			switch v := v.(type) {
+			case string:
+				return v
+			case float64:
+				// encoding/json decodes every number as float64, and %v prints
+				// 1048576 as 1.048576e+06.
+				return strconv.FormatFloat(v, 'f', -1, 64)
 			}
 			return fmt.Sprint(v)
 		}
