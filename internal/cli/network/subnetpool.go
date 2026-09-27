@@ -59,7 +59,31 @@ func resolveSubnetPoolID(ctx context.Context, client *gophercloud.ServiceClient,
 	}, func(p subnetpools.SubnetPool) string { return p.ID })
 }
 
-func subnetPoolFields(p *subnetpools.SubnetPool) ([]string, []any) {
+// subnetPoolExt is a SubnetPool plus default_quota as neutron sent it: the
+// attribute is null until an operator sets one, and gophercloud's int would
+// render that as 0, a quota of nothing.
+type subnetPoolExt struct {
+	subnetpools.SubnetPool
+	defaultQuota *int
+}
+
+// extractSubnetPool decodes a get, create or update result into subnetPoolExt.
+func extractSubnetPool(r interface{ ExtractIntoStructPtr(any, string) error }) (*subnetPoolExt, error) {
+	var p subnetPoolExt
+	if err := r.ExtractIntoStructPtr(&p.SubnetPool, "subnetpool"); err != nil {
+		return nil, err
+	}
+	var raw struct {
+		DefaultQuota *int `json:"default_quota"`
+	}
+	if err := r.ExtractIntoStructPtr(&raw, "subnetpool"); err != nil {
+		return nil, err
+	}
+	p.defaultQuota = raw.DefaultQuota
+	return &p, nil
+}
+
+func subnetPoolFields(p *subnetPoolExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "project_id", "prefixes", "default_prefixlen", "min_prefixlen",
 		"max_prefixlen", "default_quota", "address_scope_id", "ip_version", "shared",
@@ -67,7 +91,7 @@ func subnetPoolFields(p *subnetpools.SubnetPool) ([]string, []any) {
 	}
 	values := []any{
 		p.ID, p.Name, p.ProjectID, p.Prefixes, p.DefaultPrefixLen, p.MinPrefixLen,
-		p.MaxPrefixLen, p.DefaultQuota, p.AddressScopeID, p.IPversion, p.Shared,
+		p.MaxPrefixLen, derefOrNil(p.defaultQuota), p.AddressScopeID, p.IPversion, p.Shared,
 		p.IsDefault, p.Description, p.Tags, p.RevisionNumber, p.CreatedAt, p.UpdatedAt,
 	}
 	return fields, values
@@ -211,7 +235,7 @@ func runSubnetPoolShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	p, err := subnetpools.Get(ctx, client, id).Extract()
+	p, err := extractSubnetPool(subnetpools.Get(ctx, client, id))
 	if err != nil {
 		return fmt.Errorf("showing subnet pool %q: %w", ref, err)
 	}
@@ -360,7 +384,7 @@ func runSubnetPoolCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	p, err := subnetpools.Create(ctx, client, withSubnetPoolCreateAttrs(opts, extra)).Extract()
+	p, err := extractSubnetPool(subnetpools.Create(ctx, client, withSubnetPoolCreateAttrs(opts, extra)))
 	if err != nil {
 		return fmt.Errorf("creating subnet pool %q: %w", name, err)
 	}
@@ -442,12 +466,12 @@ func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 		}
 		opts.Prefixes = append(slices.Clone(f.prefixes), current.Prefixes...)
 	}
-	var p *subnetpools.SubnetPool
+	var p *subnetPoolExt
 	if touched {
-		if p, err = subnetpools.Update(ctx, client, id, withSubnetPoolUpdateAttrs(opts, attrs)).Extract(); err != nil {
+		if p, err = extractSubnetPool(subnetpools.Update(ctx, client, id, withSubnetPoolUpdateAttrs(opts, attrs))); err != nil {
 			return fmt.Errorf("updating subnet pool %q: %w", ref, err)
 		}
-	} else if p, err = subnetpools.Get(ctx, client, id).Extract(); err != nil {
+	} else if p, err = extractSubnetPool(subnetpools.Get(ctx, client, id)); err != nil {
 		// Tags are the only change: read the pool for its current tags instead.
 		return fmt.Errorf("getting subnet pool %q: %w", ref, err)
 	}
@@ -531,7 +555,7 @@ func runSubnetPoolUnset(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	p, err := subnetpools.Get(ctx, client, id).Extract()
+	p, err := extractSubnetPool(subnetpools.Get(ctx, client, id))
 	if err != nil {
 		return fmt.Errorf("getting subnet pool %q: %w", ref, err)
 	}
