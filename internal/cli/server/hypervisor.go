@@ -109,10 +109,20 @@ func findHypervisor(ctx context.Context, client *gophercloud.ServiceClient, ref 
 		return hypervisors.Hypervisor{}, fmt.Errorf("parsing hypervisor list: %w", err)
 	}
 
-	var matches []hypervisors.Hypervisor
-	for _, h := range all {
-		if h.ID == ref || h.HypervisorHostname == ref {
-			matches = append(matches, h)
+	matches := matchHypervisors(all, ref)
+	if len(matches) == 0 && client.Microversion != "" {
+		// "hypervisor list" runs at the negotiated microversion, where nova has
+		// named hypervisors by UUID since 2.53, while 2.1 still names them by
+		// integer. Map a UUID copied from that listing to its hostname and
+		// service host, and match those in the 2.1 list.
+		if h, ok, err := hypervisorAtMicroversion(ctx, client, ref); err != nil {
+			return hypervisors.Hypervisor{}, err
+		} else if ok {
+			for _, cand := range all {
+				if cand.HypervisorHostname == h.HypervisorHostname && cand.Service.Host == h.Service.Host {
+					matches = append(matches, cand)
+				}
+			}
 		}
 	}
 	switch len(matches) {
@@ -123,6 +133,35 @@ func findHypervisor(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	default:
 		return hypervisors.Hypervisor{}, fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, len(matches))
 	}
+}
+
+func matchHypervisors(all []hypervisors.Hypervisor, ref string) []hypervisors.Hypervisor {
+	var matches []hypervisors.Hypervisor
+	for _, h := range all {
+		if h.ID == ref || h.HypervisorHostname == ref {
+			matches = append(matches, h)
+		}
+	}
+	return matches
+}
+
+// hypervisorAtMicroversion finds the hypervisor whose ID is ref in a listing at
+// the client's own microversion.
+func hypervisorAtMicroversion(ctx context.Context, client *gophercloud.ServiceClient, ref string) (hypervisors.Hypervisor, bool, error) {
+	pages, err := hypervisors.List(client, nil).AllPages(ctx)
+	if err != nil {
+		return hypervisors.Hypervisor{}, false, fmt.Errorf("listing hypervisors: %w", err)
+	}
+	all, err := hypervisors.ExtractHypervisors(pages)
+	if err != nil {
+		return hypervisors.Hypervisor{}, false, fmt.Errorf("parsing hypervisor list: %w", err)
+	}
+	for _, h := range all {
+		if h.ID == ref {
+			return h, true, nil
+		}
+	}
+	return hypervisors.Hypervisor{}, false, nil
 }
 
 // hostAggregates maps each compute host to the names of the aggregates holding
