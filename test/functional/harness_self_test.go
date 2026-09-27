@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ftarasenko/go-openstackclient/internal/cli"
 )
 
 // The harness's own tests. They need no cloud, so they run wherever the
@@ -171,6 +173,30 @@ func TestGates(t *testing.T) {
 		})
 		if ran != tc.runs {
 			t.Errorf("%s: test body ran = %v, want %v", tc.name, ran, tc.runs)
+		}
+	}
+}
+
+func TestResolveLeaf(t *testing.T) {
+	root := cli.NewRootCommand("functional")
+	for _, tc := range []struct {
+		args []string
+		want string // "" for no leaf
+	}{
+		{[]string{"network", "list", "-f", "json"}, "koc network list"},
+		{[]string{"--os-system-scope", "all", "endpoint", "list"}, "koc endpoint list"},
+		{[]string{"--os-cloud=x", "-f", "json", "server", "show", "web-1"}, "koc server show"},
+		{[]string{"--debug", "token", "issue"}, "koc token issue"},
+		{[]string{"application", "credential", "create", "x"}, "koc application credential create"},
+		{[]string{"network"}, ""},
+		{[]string{"no-such-command"}, ""},
+	} {
+		got := ""
+		if c := resolveLeaf(root, tc.args); c != nil {
+			got = c.CommandPath()
+		}
+		if got != tc.want {
+			t.Errorf("resolveLeaf(%q) = %q, want %q", tc.args, got, tc.want)
 		}
 	}
 }

@@ -456,8 +456,8 @@ type recorder struct {
 
 func (r *recorder) hit(args []string) {
 	r.once.Do(func() { r.root = cli.NewRootCommand("functional") })
-	cmd, _, err := r.root.Find(args)
-	if err != nil || cmd == nil || cmd.HasSubCommands() {
+	cmd := resolveLeaf(r.root, args) // the same resolution TestEveryLeafIsCovered uses
+	if cmd == nil {
 		return
 	}
 	r.mu.Lock()

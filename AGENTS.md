@@ -88,7 +88,8 @@ entry; re-check it there before enabling.
 Gate before committing: `gofmt` clean, `go vet` clean, `golangci-lint` **0
 issues**, `go test ./...` green, the offline static build succeeds, and — if the
 commit changes the command surface — `docs/coverage.md` is updated (see "Coverage
-tracking").
+tracking") and every new leaf has a functional test (`go test -tags functional
+./test/functional/` runs `TestEveryLeafIsCovered`, offline; see "Testing").
 
 **`gofmt` here means Go 1.27's.** 1.27 changed how a multi-value `return` whose
 operands are composite literals is indented, and the two versions disagree in
@@ -261,6 +262,9 @@ Every command file mirrors `internal/cli/baremetal/node.go`:
    then `Extract*`. `--limit` is a hard result cap where the API treats it only
    as a page size (truncate after Extract).
 5. **Update `docs/coverage.md` in the same commit** — see "Coverage tracking".
+6. **Add a functional test that runs the new leaf** against the devstack
+   (`test/functional`, see "Testing"). Every leaf command has one;
+   `TestEveryLeafIsCovered` fails the offline CI run for a leaf that does not.
 
 A new `list` or `show` leaf gets `--watch` for free: `internal/cli/watch.go`
 wraps every read verb in the final tree pass, so the command is re-run into a
@@ -364,7 +368,24 @@ separate process, credentials from `clouds.yaml` or an openrc, output parsed
 from `-f json`. `make functional KOC_FT_ENV=<log-dir>/functional.env` runs them
 against a devstack from `scripts/devstack/up.sh`; without `KOC_FT_ENV` the cloud
 tests skip and the rest (the harness's own tests, the Vault CLI against the
-fake) still run, which is what offline CI does. Rules for adding one:
+fake) still run, which is what offline CI does.
+
+**Every leaf command is covered by a functional test.** Unit tests through the
+`runXxx` seam prove koc sends what it means to send; only a run against a real
+cloud proves the cloud accepts it — the bare `OS_VOLUME_API_VERSION=3`, ID-only
+domains and `--os-project-name` over a named cloud were all bugs every unit
+test passed. `TestEveryLeafIsCovered` enforces the rule offline: it reads this
+package's sources, resolves every koc invocation (a runner's
+`run`/`ok`/`json`/`fails` with literal command words) against the real command
+tree, and fails for a leaf that no test invokes. A test gated to one cell still
+covers its leaf, since the check reads the source rather than a run.
+`test/functional/uncovered.txt` lists the leaves that predate the rule; it only
+shrinks — delete a line when its test lands (the check fails until you do), and
+never add one: a new command lands with its functional test. A test covers a
+leaf well when it drives the verb through its effect (create → show → set →
+show → delete), not merely when the verb exits 0.
+
+Rules for adding one:
 
 - Run koc through a `runner` (`defaultRunner`, `cloudsRunner`, `openrcRunner`):
   it starts from a scrubbed environment, so a test never inherits a credential.
@@ -756,6 +777,9 @@ refs no matter what the history says afterwards.
   the org".
 - **Do** update `docs/coverage.md` in the same commit as any command-surface
   change.
+- **Do** give every leaf command a functional test — and a new one before it
+  lands (`TestEveryLeafIsCovered`).
 - **Don't** hand-edit `vendor/`, import gophercloud v1, format structured output
-  inline, land a new command without touching `docs/coverage.md`, push private
+  inline, land a new command without touching `docs/coverage.md` or without a
+  functional test, add a line to `test/functional/uncovered.txt`, push private
   data to GitHub, or push to a branch other than the designated feature branch.

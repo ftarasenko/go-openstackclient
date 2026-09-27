@@ -19,14 +19,14 @@ import (
 // exports a bare OS_VOLUME_API_VERSION=3 and ID-only domains, the two things
 // koc used to get wrong on the env path.
 
-// token is `koc token issue`: which project and user the credentials scoped to.
-type token struct{ project, user string }
+// tokenScope is `koc token issue`: which project and user the credentials scoped to.
+type tokenScope struct{ project, user string }
 
-func issue(t *testing.T, r runner, args ...string) token {
+func issue(t *testing.T, r runner, args ...string) tokenScope {
 	t.Helper()
 	var m map[string]any
 	r.json(t, &m, append(args, "token", "issue")...)
-	return token{project: str(m["project_id"]), user: str(m["user_id"])}
+	return tokenScope{project: str(m["project_id"]), user: str(m["user_id"])}
 }
 
 func openrcValue(c *cloud, key string) string {

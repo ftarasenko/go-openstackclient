@@ -14,6 +14,9 @@ below so there is a single source of truth.
   the same commit** — counts, gap tiers, and the snapshot line. The rule and the
   re-derivation recipe live in AGENTS.md → "Coverage tracking"; treat it as part
   of the definition of done for a feature, not a follow-up.
+- **Every leaf command has a functional test** (`test/functional`), a new one
+  included, in the same commit. `TestEveryLeafIsCovered` fails otherwise;
+  `uncovered.txt` is old debt that only shrinks. See AGENTS.md → "Testing".
 - Prefer the dedicated file/search tools over shell `grep`/`find`.
 - This repo is developed on a feature branch — never push to `main` without
   explicit permission. Commit and push only when asked.
