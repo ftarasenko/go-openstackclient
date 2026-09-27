@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -173,8 +174,23 @@ func (c *Client) Volume() (*gophercloud.ServiceClient, error) {
 	if err != nil {
 		return nil, wrapService("volume", err)
 	}
-	sc.Microversion = c.opts.VolumeAPIVersion
+	sc.Microversion = volumeMicroversion(c.opts.VolumeAPIVersion)
 	return sc, nil
+}
+
+// volumeMicroversion maps --os-volume-api-version / OS_VOLUME_API_VERSION onto
+// the value sent in OpenStack-API-Version. Upstream OSC reads that setting as an
+// API *major* version, and openrc files routinely export
+// OS_VOLUME_API_VERSION=3; cinder answers a bare "volume 3" with 400, since a
+// microversion must be "X.Y" or "latest". A major-only value therefore means
+// that major's baseline, "3" → "3.0", which is what python-cinderclient's
+// get_api_version does with it (it then sends no header at all, and cinder's
+// default for a headerless request is the same 3.0).
+func volumeMicroversion(v string) string {
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return strconv.Itoa(n) + ".0"
+	}
+	return v
 }
 
 // DNS returns a designate (dns v2) service client.
