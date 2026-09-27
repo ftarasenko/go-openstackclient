@@ -293,6 +293,17 @@ and caracal as designed).
 - **Ref fallback order** (`stable/` → `unmaintained/` → `-eol`): held; zed
   mixes `unmaintained/zed` and `zed-eol` in one deployment.
 - **Ubuntu per series** (jammy for zed/2024.1, noble after): held.
+- **`neutron-network-segment-range` — dropped.** On latest (2026.2) an 8 vCPU
+  VM stacked in 472 s and then failed at stack.sh's first `network create`:
+  neutron answered 503 "No project network is available for allocation", with
+  the segment-range table empty. Each neutron process (API workers, rpc-server,
+  periodic and OVN maintenance workers) seeds the default ranges stamped with
+  its own start time and deletes every default stamped otherwise; the start
+  time is shared per parent PID, and processes that start together can leave
+  none. Restarting `neutron-api` repopulated them. koc has no segment-range
+  commands, so `up.sh` no longer enables the plugin; the re-stack on a fresh
+  VM passed (1281 s, smoke 31/31). Earlier cells passed with it only because
+  their slower starts did not race.
 
 ### On GitHub-hosted runners (nightly workflow)
 

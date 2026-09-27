@@ -212,9 +212,12 @@ EOF
     if has_feature net; then
         cat <<EOF
 
-# net: the neutron extensions koc's network commands cover.
+# net: the neutron extensions koc's network commands cover. Not segment
+# ranges: koc has no such commands, and on 2026.2 the plugin can leave no
+# default range when neutron's processes start together, so stack.sh's first
+# network create fails with "No project network is available".
 $(plugin neutron)
-enable_service q-qos q-trunk q-metering neutron-segments neutron-network-segment-range neutron-port-forwarding neutron-tag-ports-during-bulk-creation neutron-conntrack-helper neutron-ndp-proxy neutron-port-trusted-vif neutron-uplink-status-propagation
+enable_service q-qos q-trunk q-metering neutron-segments neutron-port-forwarding neutron-tag-ports-during-bulk-creation neutron-conntrack-helper neutron-ndp-proxy neutron-port-trusted-vif neutron-uplink-status-propagation
 $(plugin neutron-dynamic-routing)
 $(plugin networking-bgpvpn)
 $(plugin neutron-vpnaas)
