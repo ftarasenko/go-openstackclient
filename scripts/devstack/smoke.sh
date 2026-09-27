@@ -98,8 +98,33 @@ volume_services_up() {
     [[ $(openstack volume service list -f value -c Binary -c State | grep -c ' up$') -ge 3 ]]
 }
 s3_list() { # ListBuckets via swift's s3api, signed with the EC2 credentials
-    curl -sSf --aws-sigv4 "aws:amz:${AWS_REGION}:s3" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
-        "$AWS_ENDPOINT_URL/" >/dev/null
+    # Stdlib SigV4 rather than curl --aws-sigv4: jammy's curl 7.81 omits the
+    # x-amz-content-sha256 header s3api requires, and a koc-independent
+    # client keeps "the cloud's S3 works" separate from "koc's S3 works".
+    python3 - <<'PY'
+import datetime, hashlib, hmac, os, sys, urllib.error, urllib.parse, urllib.request
+ep, region = os.environ["AWS_ENDPOINT_URL"], os.environ["AWS_REGION"]
+ak, sk = os.environ["AWS_ACCESS_KEY_ID"], os.environ["AWS_SECRET_ACCESS_KEY"]
+host = urllib.parse.urlparse(ep).netloc
+now = datetime.datetime.now(datetime.timezone.utc)
+amz, day = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+payload = hashlib.sha256(b"").hexdigest()
+signed = "host;x-amz-content-sha256;x-amz-date"
+canon = f"GET\n/\n\nhost:{host}\nx-amz-content-sha256:{payload}\nx-amz-date:{amz}\n\n{signed}\n{payload}"
+scope = f"{day}/{region}/s3/aws4_request"
+sts = f"AWS4-HMAC-SHA256\n{amz}\n{scope}\n" + hashlib.sha256(canon.encode()).hexdigest()
+key = ("AWS4" + sk).encode()
+for part in (day, region, "s3", "aws4_request"):
+    key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+sig = hmac.new(key, sts.encode(), hashlib.sha256).hexdigest()
+req = urllib.request.Request(ep + "/", headers={
+    "x-amz-date": amz, "x-amz-content-sha256": payload,
+    "Authorization": f"AWS4-HMAC-SHA256 Credential={ak}/{scope}, SignedHeaders={signed}, Signature={sig}"})
+try:
+    urllib.request.urlopen(req, timeout=30)
+except urllib.error.HTTPError as e:
+    sys.exit(f"HTTP {e.code}: {e.read(300).decode(errors='replace')}")
+PY
 }
 if has_feature core; then
     for t in compute image volumev3 placement object-store; do check "catalog: $t" catalog_has "$t"; done
