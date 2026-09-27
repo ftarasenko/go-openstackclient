@@ -906,6 +906,25 @@ func TestRunServerAddVolume_RequestAndOutput(t *testing.T) {
 	}
 }
 
+// A current nova answers the attach with 202 and no body; that is success.
+func TestRunServerAddVolume_Accepts202(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/os-volume_attachments", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"volumeAttachment": {"volumeId": "`+vol9UUID+`"}}`)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	var buf bytes.Buffer
+	if err := runServerAddVolume(context.Background(), computeClient(fakeServer, "latest"), volumeClient(fakeServer),
+		serverUUID, vol9UUID, "", &buf); err != nil {
+		t.Fatalf("runServerAddVolume with a 202: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Attached volume "+vol9UUID) {
+		t.Errorf("output = %q, want the attach confirmation", buf.String())
+	}
+}
+
 func TestRunServerRemoveVolume_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -693,13 +694,31 @@ func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.S
 	if err != nil {
 		return err
 	}
-	if _, err := volumeattach.Create(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}).Extract(); err != nil {
+	if err := attachVolume(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}); err != nil {
 		return fmt.Errorf("attaching volume %q to server %q: %w", volumeRef, ref, err)
 	}
 	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeRef, ref); err != nil {
 		return err
 	}
 	return nil
+}
+
+// attachVolume is volumeattach.Create accepting both answers nova gives. The
+// attach used to be synchronous, 200 with the attachment; a current nova
+// (seen on 2026.2) answers 202 with no body and finishes the attach
+// asynchronously, which gophercloud's Create (200 only) reports as a failure.
+// Callers that need the attachment read it back.
+func attachVolume(ctx context.Context, client *gophercloud.ServiceClient, serverID string, opts volumeattach.CreateOpts) error {
+	body, err := opts.ToVolumeAttachmentCreateMap()
+	if err != nil {
+		return err
+	}
+	resp, err := client.Post(ctx, client.ServiceURL("servers", serverID, "os-volume_attachments"), body, nil,
+		&gophercloud.RequestOpts{OkCodes: []int{http.StatusOK, http.StatusAccepted}})
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	return err
 }
 
 func newServerRemoveVolumeCommand(a *auth.Options, o *output.Options) *cobra.Command {
