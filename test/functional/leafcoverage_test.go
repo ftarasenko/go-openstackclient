@@ -135,9 +135,10 @@ func coveredLeaves(t *testing.T, root *cobra.Command) map[string]bool {
 }
 
 // literalArgs is the leading run of string literals in a call's arguments,
-// looking through append(x, "a", "b")... — the form tests use to add a command
-// after flags. It stops at the first argument that is not a literal, which is
-// always past the command words (a name, an ID, a path).
+// looking through append(x, "a", "b")... (a command added after flags) and
+// append([]string{"a", "b", …}, more...)... (a command built in a slice). It
+// stops at the first argument that is not a literal, which is always past the
+// command words (a name, an ID, a path).
 func literalArgs(args []ast.Expr) []string {
 	var out []string
 	for _, a := range args {
@@ -149,10 +150,19 @@ func literalArgs(args []ast.Expr) []string {
 			}
 			out = append(out, s)
 		case *ast.CallExpr:
-			if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "append" && len(v.Args) > 1 {
-				return append(out, literalArgs(v.Args[1:])...)
+			id, ok := v.Fun.(*ast.Ident)
+			if !ok || id.Name != "append" || len(v.Args) == 0 {
+				return out
 			}
-			return out
+			// append([]string{"server", "create", …}, extra...) builds the
+			// command in its base; append(args, "network", "list") puts it
+			// after flags already in args.
+			if lit, ok := v.Args[0].(*ast.CompositeLit); ok {
+				return append(out, literalArgs(lit.Elts)...)
+			}
+			return append(out, literalArgs(v.Args[1:])...)
+		case *ast.CompositeLit:
+			return append(out, literalArgs(v.Elts)...)
 		default:
 			return out
 		}

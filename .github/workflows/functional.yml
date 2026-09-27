@@ -46,10 +46,11 @@ jobs:
   devstack:
     name: devstack ${{ matrix.series }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # stack.sh took 15-18 minutes on the verification VMs and smoke ~3; this
-    # allows for a slower runner and the --gha apt work without letting a hung
-    # stack hold a runner for GitHub's 6-hour default.
-    timeout-minutes: 60
+    # stack.sh takes 7-12 minutes on a runner and smoke ~1; the Go suites
+    # (servers resized, shelved and snapshotted) get up to 30. This leaves
+    # room for a slow runner without letting a hung step hold one for
+    # GitHub's 6-hour default.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -128,13 +129,13 @@ jobs:
       # used, offline: only devstack needs the network. The -v log lands in
       # the log dir so a failure's artifact carries it.
       - name: Functional tests
-        timeout-minutes: 20
+        timeout-minutes: 35
         env:
           KOC_FT_AUTH: ${{ matrix.auth }}
           GOTOOLCHAIN: local
         run: |
           set -o pipefail
-          make functional KOC_FT_ENV="$LOG_DIR/functional.env" KOC_BIN="$RUNNER_TEMP/koc" FUNCTIONAL_TIMEOUT=15m |
+          make functional KOC_FT_ENV="$LOG_DIR/functional.env" KOC_BIN="$RUNNER_TEMP/koc" FUNCTIONAL_TIMEOUT=30m |
             tee "$LOG_DIR/functional.log"
 
       # Timings and the smoke table for every run, green or not: this is where

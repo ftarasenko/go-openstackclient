@@ -539,7 +539,7 @@ being quietly weakened by a check that happens to need a proxy.
   push is also what gives a branch its first run, since `workflow_dispatch`
   reaches a branch only after one). One job per supported cell — zed and
   caracal on `ubuntu-22.04` (ML2/OVS), epoxy and latest on `ubuntu-24.04`
-  (ML2/OVN) — with `fail-fast: false`, a 60-minute timeout, and a single
+  (ML2/OVN) — with `fail-fast: false`, a 75-minute timeout, and a single
   `concurrency` group so two runs never stack at once. It is a **thin
   wrapper**: enable `/dev/kvm`, build koc offline, `scripts/devstack/up.sh
   --series <cell> --gha`, `scripts/devstack/smoke.sh --koc <that binary>`, `make

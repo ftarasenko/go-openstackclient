@@ -13,16 +13,7 @@ koc address scope delete
 koc address scope list
 koc address scope set
 koc address scope show
-koc aggregate add host
-koc aggregate create
-koc aggregate delete
-koc aggregate list
-koc aggregate remove host
-koc aggregate set
-koc aggregate show
-koc aggregate unset
 koc allocation candidate list
-koc availability zone list
 koc baremetal allocation create
 koc baremetal allocation delete
 koc baremetal allocation list
@@ -124,13 +115,6 @@ koc bgpvpn unset
 koc block storage cluster list
 koc block storage cluster set
 koc block storage cluster show
-koc compute host drain
-koc compute host evacuate
-koc compute service delete
-koc compute service list
-koc compute service set
-koc console log show
-koc console url show
 koc dns limit list
 koc dns pool list
 koc dns pool show
@@ -159,14 +143,6 @@ koc firewall group rule unset
 koc firewall group set
 koc firewall group show
 koc firewall group unset
-koc flavor create
-koc flavor delete
-koc flavor list
-koc flavor set
-koc flavor show
-koc flavor unset
-koc floating ip create
-koc floating ip delete
 koc floating ip list
 koc floating ip port forwarding create
 koc floating ip port forwarding delete
@@ -176,14 +152,8 @@ koc floating ip port forwarding show
 koc floating ip set
 koc floating ip show
 koc floating ip unset
-koc hypervisor list
-koc hypervisor show
 koc ip availability list
 koc ip availability show
-koc keypair create
-koc keypair delete
-koc keypair list
-koc keypair show
 koc keyvrm app-config set
 koc keyvrm app-config show
 koc keyvrm availability-zone host-aggregate list
@@ -202,7 +172,6 @@ koc keyvrm recommendation operation list
 koc keyvrm recommendation run
 koc keyvrm recommendation show
 koc keyvrm recommendation stop
-koc limits show
 koc loadbalancer amphora configure
 koc loadbalancer amphora delete
 koc loadbalancer amphora failover
@@ -274,8 +243,6 @@ koc network agent remove router
 koc network agent router set
 koc network agent set
 koc network agent show
-koc network create
-koc network delete
 koc network extension show
 koc network qos policy create
 koc network qos policy delete
@@ -313,8 +280,6 @@ koc network trunk subport list
 koc network trunk subport remove
 koc network trunk unset
 koc network unset
-koc port create
-koc port delete
 koc port list
 koc port set
 koc port show
@@ -385,8 +350,6 @@ koc s3 object show
 koc s3 presign
 koc s3 sync
 koc s3 upload
-koc security group create
-koc security group delete
 koc security group list
 koc security group rule create
 koc security group rule delete
@@ -395,57 +358,6 @@ koc security group rule show
 koc security group set
 koc security group show
 koc security group unset
-koc server add fixed ip
-koc server add floating ip
-koc server add network
-koc server add port
-koc server add security group
-koc server add server-group
-koc server add volume
-koc server console log show
-koc server console url show
-koc server create
-koc server delete
-koc server evacuate
-koc server event list
-koc server event show
-koc server group create
-koc server group delete
-koc server group list
-koc server group show
-koc server image create
-koc server lock
-koc server migrate
-koc server migration abort
-koc server migration force complete
-koc server migration list
-koc server migration show
-koc server password show
-koc server pause
-koc server reboot
-koc server rebuild
-koc server remove fixed ip
-koc server remove floating ip
-koc server remove network
-koc server remove port
-koc server remove security group
-koc server remove server-group
-koc server remove volume
-koc server rescue
-koc server resize
-koc server resume
-koc server set
-koc server shelve
-koc server show
-koc server start
-koc server stop
-koc server suspend
-koc server unlock
-koc server unpause
-koc server unrescue
-koc server unset
-koc server unshelve
-koc subnet create
 koc subnet delete
 koc subnet list
 koc subnet pool create
@@ -476,8 +388,6 @@ koc tsigkey delete
 koc tsigkey list
 koc tsigkey set
 koc tsigkey show
-koc usage list
-koc usage show
 koc volume attachment complete
 koc volume attachment create
 koc volume attachment delete
@@ -493,8 +403,6 @@ koc volume backup restore
 koc volume backup set
 koc volume backup show
 koc volume backup unset
-koc volume create
-koc volume delete
 koc volume extend
 koc volume migrate
 koc volume qos associate
@@ -508,7 +416,6 @@ koc volume qos unset
 koc volume service list
 koc volume service set
 koc volume set
-koc volume show
 koc volume snapshot create
 koc volume snapshot delete
 koc volume snapshot list

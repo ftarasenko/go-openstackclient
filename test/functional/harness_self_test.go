@@ -3,6 +3,8 @@
 package functional
 
 import (
+	"go/ast"
+	"go/parser"
 	"os"
 	"path/filepath"
 	"slices"
@@ -197,6 +199,26 @@ func TestResolveLeaf(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("resolveLeaf(%q) = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+// The argument shapes the coverage scan reads a command from.
+func TestLiteralArgs(t *testing.T) {
+	for src, want := range map[string]string{
+		`r.ok(t, "network", "list", "-f", "json")`:                           "network list -f json",
+		`r.ok(t, append(p.args, "volume", "list")...)`:                       "volume list",
+		`r.show(t, append([]string{"server", "create", name}, extra...)...)`: "server create",
+		`r.fails(t, "server", "show", id)`:                                   "server show",
+		`r.ok(t, args...)`:                                                   "",
+	} {
+		expr, err := parser.ParseExpr(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := expr.(*ast.CallExpr)
+		if got := strings.Join(literalArgs(call.Args[1:]), " "); got != want {
+			t.Errorf("literalArgs(%s) = %q, want %q", src, got, want)
 		}
 	}
 }
