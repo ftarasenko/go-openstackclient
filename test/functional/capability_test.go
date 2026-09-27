@@ -38,6 +38,13 @@ func TestCapabilityMatrix(t *testing.T) {
 			ext["tap-mirror"], c.Series, want)
 	}
 
+	// ML2/OVN schedules routers onto gateway chassis by priority from 2026.2
+	// (neutron 29.0.0); TestNetworkAgents asserts the verbs when it is there.
+	if want := c.Backend == "ovn" && c.Series.atLeast("2026.2"); ext["l3-agent-scheduler-ha-chassis-priority"] != want {
+		t.Errorf("l3-agent-scheduler-ha-chassis-priority present = %v on %s (%s), want %v",
+			ext["l3-agent-scheduler-ha-chassis-priority"], c.Series, c.Backend, want)
+	}
+
 	// The backend follows the series (up.sh): OVS through 2024.1, OVN after.
 	if want := map[bool]string{true: "ovn", false: "ovs"}[c.Series.atLeast("2025.1")]; c.Backend != want {
 		t.Errorf("backend %q on %s, want %q", c.Backend, c.Series, want)

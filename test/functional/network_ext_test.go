@@ -91,17 +91,39 @@ func TestNetworkAgents(t *testing.T) {
 	}
 	r.fails(t, "network", "agent", "add", "network", "--dhcp", first, f.net)
 	r.fails(t, "network", "agent", "remove", "network", "--dhcp", first, f.net)
-	// Scheduling a router onto an OVN gateway chassis is newer than some cells:
-	// either answer is neutron's, and which one this cloud gives is logged.
-	for _, res := range []result{
-		r.run(t, "network", "agent", "add", "router", "--l3", "--ha-chassis-priority", "10", first, router),
-		r.run(t, "network", "agent", "router", "set", "--ha-chassis-priority", "20", first, router),
-		r.run(t, "network", "agent", "remove", "router", "--l3", first, router),
-	} {
-		if res.code != 0 && res.stderr == "" {
-			t.Errorf("agent router scheduling failed with no message (exit %d)", res.code)
+
+	// Routers are scheduled onto OVN gateway chassis, and only a router with an
+	// external gateway has the chassis group neutron schedules (without one it
+	// answers 500). From 2026.2 neutron says so with its own extension.
+	gw := agentOf("gateway")
+	if gw == "" {
+		t.Fatalf("ML2/OVN with no OVN Controller Gateway agent: %v", agents)
+	}
+	r.ok(t, "router", "add", "gateway", router, "public")
+	t.Cleanup(func() { r.run(t, "router", "remove", "gateway", router) })
+	if !extensions(t)["l3-agent-scheduler-ha-chassis-priority"] {
+		// Older OVN: either answer is neutron's, and which one it gives is logged.
+		for _, res := range []result{
+			r.run(t, "network", "agent", "router", "set", "--ha-chassis-priority", "20", gw, router),
+			r.run(t, "network", "agent", "remove", "router", "--l3", gw, router),
+			r.run(t, "network", "agent", "add", "router", "--l3", "--ha-chassis-priority", "10", gw, router),
+		} {
+			if res.code != 0 && res.stderr == "" {
+				t.Errorf("agent router scheduling failed with no message (exit %d)", res.code)
+			}
+			t.Logf("exit %d %s", res.code, strings.TrimSpace(res.stderr))
 		}
-		t.Logf("exit %d %s", res.code, strings.TrimSpace(res.stderr))
+		return
+	}
+	// The gateway schedules the router at once; move it off and back.
+	r.ok(t, "network", "agent", "router", "set", "--ha-chassis-priority", "20", gw, router)
+	r.ok(t, "network", "agent", "remove", "router", "--l3", gw, router)
+	if rows := r.list(t, "network", "agent", "list", "--router", router); in(rows, gw) {
+		t.Errorf("network agent list --router after remove = %v, still lists %s", rows, gw)
+	}
+	r.ok(t, "network", "agent", "add", "router", "--l3", "--ha-chassis-priority", "10", gw, router)
+	if rows := r.list(t, "network", "agent", "list", "--router", router); !in(rows, gw) {
+		t.Errorf("network agent list --router after add = %v, want %s", rows, gw)
 	}
 }
 

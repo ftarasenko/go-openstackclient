@@ -182,8 +182,14 @@ func TestDNSTransfer(t *testing.T) {
 	waitFor(t, "the transfer to complete", dnsTimeout, func() bool {
 		return field(demo.show(t, "zone", "transfer", "accept", "show", accID), "status") == "COMPLETE"
 	})
-	if !in(demo.list(t, "zone", "transfer", "accept", "list"), accID) {
-		t.Errorf("transfer accept list does not list %s", accID)
+	// Listing accepts is an administrator's call (find_zone_transfer_accepts):
+	// the accepting project itself is refused, and the admin sees demo's accept
+	// only across projects.
+	if msg := demo.fails(t, "zone", "transfer", "accept", "list"); !strings.Contains(msg, "403") {
+		t.Errorf("zone transfer accept list as demo: %q, want designate's 403", msg)
+	}
+	if !in(r.list(t, "zone", "transfer", "accept", "list", "--all-projects"), accID) {
+		t.Errorf("transfer accept list --all-projects does not list %s", accID)
 	}
 	if z := demo.show(t, "zone", "show", id); field(z, "project_id") != demoID {
 		t.Errorf("zone after the transfer = %v, want project %s", z, demoID)
@@ -332,15 +338,35 @@ func TestDNSAdminViews(t *testing.T) {
 	proj := r.show(t, "project", "create", uniq("dnsquota"))
 	pid := field(proj, "id")
 	t.Cleanup(func() { r.run(t, "project", "delete", pid) })
-	// Another project's quotas are a system administrator's: from 2025.1
-	// designate enforces the new policy defaults and refuses a project-scoped
-	// admin, while the older cells accept either token.
-	r.ok(t, "--os-system-scope", "all", "dns", "quota", "set", pid, "--zones", "3", "--zone-recordsets", "40")
-	if q := r.show(t, "--os-system-scope", "all", "dns", "quota", "list", pid); field(q, "zones") != "3" || field(q, "zone_recordsets") != "40" {
+	// Who may write another project's quotas is designate policy, and it has
+	// moved: any admin on zed (the deprecated rules still apply), a
+	// system-scoped admin once 2025.1 enforces the new defaults, and a project
+	// admin again once designate dropped system scope (2026.2), which refuses
+	// a system token. Upstream's client is refused alike, so the test takes the
+	// token the cloud accepts: project scope first, then system scope, which
+	// designate serves only with --all-projects.
+	system := false
+	if res := r.run(t, "dns", "quota", "set", pid, "--zones", "3", "--zone-recordsets", "40"); res.code != 0 {
+		t.Logf("project-scoped dns quota set refused; using a system-scoped token: %s", strings.TrimSpace(res.stderr))
+		system = true
+		r.ok(t, "--os-system-scope", "all", "dns", "quota", "set", pid, "--zones", "3", "--zone-recordsets", "40", "--all-projects")
+	}
+	quotas := func() map[string]any {
+		t.Helper()
+		if system {
+			return r.show(t, "--os-system-scope", "all", "dns", "quota", "list", pid, "--all-projects")
+		}
+		return r.show(t, "dns", "quota", "list", pid)
+	}
+	if q := quotas(); field(q, "zones") != "3" || field(q, "zone_recordsets") != "40" {
 		t.Errorf("dns quota list after set = %v", q)
 	}
-	r.ok(t, "--os-system-scope", "all", "dns", "quota", "reset", pid)
-	if q := r.show(t, "--os-system-scope", "all", "dns", "quota", "list", pid); field(q, "zones") == "3" {
+	if system {
+		r.ok(t, "--os-system-scope", "all", "dns", "quota", "reset", pid, "--all-projects")
+	} else {
+		r.ok(t, "dns", "quota", "reset", pid)
+	}
+	if q := quotas(); field(q, "zones") == "3" {
 		t.Errorf("dns quota list after reset = %v, want the default", q)
 	}
 }
