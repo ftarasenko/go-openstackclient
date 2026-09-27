@@ -52,7 +52,8 @@ func TestWriteList_JSON(t *testing.T) {
 	}
 }
 
-func TestWriteList_ValueTabSeparated(t *testing.T) {
+// -f value is byte-for-byte cliff's ValueFormatter: cells joined by one space.
+func TestWriteList_ValueSpaceSeparated(t *testing.T) {
 	o := &Options{Format: FormatValue}
 	var buf bytes.Buffer
 	if err := o.WriteList(&buf, sampleTable()); err != nil {
@@ -62,7 +63,7 @@ func TestWriteList_ValueTabSeparated(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("want 2 lines, got %d", len(lines))
 	}
-	if lines[0] != "u1\tnode-a\tfalse" {
+	if lines[0] != "u1 node-a false" {
 		t.Errorf("value row = %q", lines[0])
 	}
 	if strings.Contains(buf.String(), "UUID") {
@@ -179,7 +180,7 @@ func TestWriteValue_EmitsEmbeddedNewlinesVerbatim(t *testing.T) {
 	if err := o.WriteList(&buf, tbl); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := buf.String(), "x\ty\nz\tend\n"; got != want {
+	if got, want := buf.String(), "x\ty\nz end\n"; got != want {
 		t.Errorf("value output = %q, want %q", got, want)
 	}
 }
@@ -402,7 +403,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 	}
 
 	t.Run("string column", func(t *testing.T) {
-		o := &Options{Format: FormatValue, SortColumns: []string{"Name"}}
+		o := &Options{Format: FormatTSV, SortColumns: []string{"Name"}}
 		var buf bytes.Buffer
 		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
 			t.Fatalf("WriteList: %v", err)
@@ -415,7 +416,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 
 	// Numbers must compare numerically: 9 before 10 before 100, not "10" < "100" < "9".
 	t.Run("numeric column", func(t *testing.T) {
-		o := &Options{Format: FormatValue, SortColumns: []string{"Size"}}
+		o := &Options{Format: FormatTSV, SortColumns: []string{"Size"}}
 		var buf bytes.Buffer
 		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
 			t.Fatalf("WriteList: %v", err)
@@ -428,7 +429,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 
 	// Repeated keys break ties, in the order given.
 	t.Run("multiple columns", func(t *testing.T) {
-		o := &Options{Format: FormatValue, SortColumns: []string{"Zone", "Size"}}
+		o := &Options{Format: FormatTSV, SortColumns: []string{"Zone", "Size"}}
 		var buf bytes.Buffer
 		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
 			t.Fatalf("WriteList: %v", err)
@@ -441,7 +442,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 
 	// Column names are prose; operators type lower case.
 	t.Run("case insensitive", func(t *testing.T) {
-		o := &Options{Format: FormatValue, SortColumns: []string{"name"}}
+		o := &Options{Format: FormatTSV, SortColumns: []string{"name"}}
 		var buf bytes.Buffer
 		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
 			t.Fatalf("WriteList: %v", err)
@@ -453,7 +454,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 
 	// Sorting runs before -c narrows the columns, so a sort key need not be shown.
 	t.Run("sort by a column that is not displayed", func(t *testing.T) {
-		o := &Options{Format: FormatValue, Columns: []string{"Name"}, SortColumns: []string{"Size"}}
+		o := &Options{Format: FormatTSV, Columns: []string{"Name"}, SortColumns: []string{"Size"}}
 		var buf bytes.Buffer
 		if err := o.WriteList(&buf, cloneTable(table)); err != nil {
 			t.Fatalf("WriteList: %v", err)
@@ -465,7 +466,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 	})
 
 	t.Run("unknown column errors", func(t *testing.T) {
-		o := &Options{Format: FormatValue, SortColumns: []string{"Nonesuch"}}
+		o := &Options{Format: FormatTSV, SortColumns: []string{"Nonesuch"}}
 		var buf bytes.Buffer
 		err := o.WriteList(&buf, cloneTable(table))
 		if err == nil || !strings.Contains(err.Error(), "unknown sort column") {
@@ -479,7 +480,7 @@ func TestWriteList_SortColumn(t *testing.T) {
 			Columns: []string{"Name", "Zone"},
 			Rows:    [][]any{{"b", "az1"}, {"a", "az1"}, {"c", "az1"}},
 		}
-		o := &Options{Format: FormatValue, SortColumns: []string{"Zone"}}
+		o := &Options{Format: FormatTSV, SortColumns: []string{"Zone"}}
 		var buf bytes.Buffer
 		if err := o.WriteList(&buf, dup); err != nil {
 			t.Fatalf("WriteList: %v", err)

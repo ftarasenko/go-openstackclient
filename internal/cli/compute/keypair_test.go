@@ -64,7 +64,7 @@ func TestRunKeypairList_RequestAndTableOutput(t *testing.T) {
 	}
 }
 
-func TestRunKeypairList_ValueFormatIsTabSeparatedNoHeader(t *testing.T) {
+func TestRunKeypairList_ValueFormatIsSpaceSeparatedNoHeader(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
@@ -90,9 +90,9 @@ func TestRunKeypairList_ValueFormatIsTabSeparatedNoHeader(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("value format: got %d rows, want 2:\n%s", len(lines), out)
 	}
-	first := strings.Split(lines[0], "\t")
-	if first[0] != "key-a" || first[1] != "aa:bb:cc" {
-		t.Errorf("unexpected value row fields: %#v", first)
+	// cliff's ValueFormatter joins cells with one space, and so does koc.
+	if !strings.HasPrefix(lines[0], "key-a aa:bb:cc") || strings.Contains(lines[0], "\t") {
+		t.Errorf("value row should be space-joined like openstack's, got %q", lines[0])
 	}
 }
 

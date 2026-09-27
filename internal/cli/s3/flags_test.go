@@ -27,7 +27,7 @@ func TestRunObjectListDelimiter(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runObjectList(context.Background(), client, valueOpts(), "db-backups",
+	err := runObjectList(context.Background(), client, tsvOpts(), "db-backups",
 		&objectListFlags{delimiter: "/"}, &buf)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestRunObjectListFilterThenLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := runObjectList(context.Background(), client, valueOpts(), "db-backups", f, &buf); err != nil {
+	if err := runObjectList(context.Background(), client, tsvOpts(), "db-backups", f, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := buf.String(), "nightly-a.gz\t2\t\t\n"; got != want {

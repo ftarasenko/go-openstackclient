@@ -326,6 +326,8 @@ stack timeouts leave ample room. Peak RAM matches the VMs (≤ 7.3 GB of 16).
   all, so the environment path and the `--os-*-domain-id` flags were missing
   too.
 - `-f value` separates columns with a tab; `openstack` uses a space. Upstream
-  cliff confirmed (`ValueFormatter.emit_list` joins with `' '`). This is a
-  **recorded deliberate deviation** (README "Output formats", `docs/coverage.md`),
-  not an oversight, so it is left for the maintainer to decide.
+  cliff confirmed (`ValueFormatter.emit_list` joins with `' '`). It was a
+  recorded deliberate deviation; the maintainer chose parity. **Fixed** by
+  `feat(output)!: join -f value cells with a space, like openstack`, with the
+  unambiguous tab-separated job moved to the new koc-native `-f tsv`
+  (`feat(output): add -f tsv, an unambiguous tab-separated format`).

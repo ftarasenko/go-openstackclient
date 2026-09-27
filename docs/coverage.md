@@ -510,30 +510,29 @@ precisely what koc's output layer exists to guarantee; upstream can afford it
 because its table is itself a cliff formatter, whereas koc's `-f` applies to the
 command's result and not to its diagnostics.
 
-`-f value` deviates in its **separator**, deliberately. `cliff`'s
-`ValueFormatter` joins a row's cells with a single **space**; `koc` joins them
-with a **tab** (`internal/output/output.go`, documented at the package comment,
-and in README "Output formats"). A tab is unambiguous where a space is not — most
-OpenStack values that show up in `-f value` output contain spaces (status
-strings, flavor names, `Fixed IP Addresses`), so a space-joined row cannot be
-split back into its cells. The cost is real and one-directional: the common
-upstream idiom `openstack … -f value | cut -d' ' -f2` silently returns the wrong
-field under `koc`. Use `cut -f2` (tab is `cut`'s default delimiter), `awk '{print
-$2}'` (which splits on either), or `-c <column>` to select a single column and
-avoid the question. Not changed, because a space separator would trade a loud
-script fix for a quiet ambiguity in the data.
+`-f value` matches `cliff`'s `ValueFormatter` byte for byte: a row's cells
+joined by a single **space**, no header, one row per line. It used to join them
+with a tab, a deliberate deviation for unambiguous splitting (most OpenStack
+values contain spaces, so a space-joined row cannot be split back into its
+cells); that cost every script written for `openstack` — `cut -d' ' -f2`
+returned the wrong field — so `-f value` now matches upstream and the
+unambiguous job moved to a koc-native format of its own, **`-f tsv`**:
+tab-separated, no header, with `\\`, `\t` and `\n` escaped inside a cell so one
+line is always one row and one tab one cell boundary (`internal/output/output.go
+writeTSV`). A script that relied on the old tab-separated `-f value` moves by
+renaming the format. `-c <column>` sidesteps the question for a single column
+in either format.
 
 Cells in `-f value` are otherwise **unescaped and unquoted**, so a value that
-itself contains a tab or a newline breaks the one-row-per-line, one-cell-per-tab
-contract. `cliff` has the same weakness, so this is parity rather than a
+itself contains a newline breaks the one-row-per-line contract. `cliff` has the same weakness, so this is parity rather than a
 deviation, but it is worth stating because `-f value` is the format scripts
 consume. Newlines surviving is deliberate — `koc zone export showfile <id>
 -f value > zone.txt` has to emit a zonefile that `zone import create` reads
 back, which collapsing them would destroy (`internal/output/output.go
 writeValue`). `koc` does strip control characters and ANSI escapes that upstream
 passes through, so a hostile endpoint cannot rewrite the operator's terminal.
-`-f csv` (RFC 4180 quoting) or `-f json` is the safe choice when a field may hold
-arbitrary text — image descriptions, `properties`, server metadata.
+`-f tsv`, `-f csv` (RFC 4180 quoting) or `-f json` is the safe choice when a
+field may hold arbitrary text — image descriptions, `properties`, server metadata.
 
 **Zero-match name resolution passes the literal ref to the API outside
 `network`, `server` and `volume`.** The shared `resolve.pick`

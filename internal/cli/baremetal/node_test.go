@@ -99,7 +99,7 @@ func TestRunNodeList_RequestAndTableOutput(t *testing.T) {
 	}
 }
 
-func TestRunNodeList_ValueFormatIsTabSeparatedNoHeader(t *testing.T) {
+func TestRunNodeList_ValueFormatIsSpaceSeparatedNoHeader(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
@@ -125,12 +125,10 @@ func TestRunNodeList_ValueFormatIsTabSeparatedNoHeader(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("value format: got %d rows, want 2:\n%s", len(lines), out)
 	}
-	first := strings.Split(lines[0], "\t")
-	if len(first) != 6 {
-		t.Fatalf("value row should have 6 tab-separated fields, got %d: %q", len(first), lines[0])
-	}
-	if first[0] != "11111111-1111-1111-1111-111111111111" || first[1] != "node-a" {
-		t.Errorf("unexpected value row fields: %#v", first)
+	// Space-joined like cliff's ValueFormatter. The row cannot be split back
+	// into its six cells ("power on" holds a space itself); -f tsv can.
+	if !strings.HasPrefix(lines[0], "11111111-1111-1111-1111-111111111111 node-a ") || strings.Contains(lines[0], "\t") {
+		t.Errorf("value row should be space-joined like openstack's, got %q", lines[0])
 	}
 }
 

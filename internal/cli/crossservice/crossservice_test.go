@@ -145,7 +145,7 @@ func TestRunUsageList_QueryAndOutput(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	f := &usageFlags{start: "2026-01-01", end: "2026-01-31"}
 	client := serviceClient(fakeServer, "compute", "latest")
 	if err := runUsageList(context.Background(), client, o, f, time.Now(), &out); err != nil {

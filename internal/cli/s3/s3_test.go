@@ -36,6 +36,10 @@ func newMockClient(t *testing.T, h http.HandlerFunc) *s3.Client {
 
 func valueOpts() *output.Options { return &output.Options{Format: output.FormatValue} }
 
+// tsvOpts is for tests that split a multi-column row back into its cells,
+// which -f value's space separator cannot do reliably.
+func tsvOpts() *output.Options { return &output.Options{Format: output.FormatTSV} }
+
 // testUploadFlags is the flag set an "upload" seam gets when a test drives it
 // directly: real defaults, but one part at a time so a mock endpoint sees the
 // requests in a deterministic order.
@@ -56,7 +60,7 @@ func TestRunBucketList(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := runBucketList(context.Background(), client, valueOpts(), &buf); err != nil {
+	if err := runBucketList(context.Background(), client, tsvOpts(), &buf); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := buf.String(), "db-backups\t2026-08-21T05:48:02Z\n"; got != want {
@@ -76,7 +80,7 @@ func TestRunObjectList(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runObjectList(context.Background(), client, valueOpts(), "db-backups",
+	err := runObjectList(context.Background(), client, tsvOpts(), "db-backups",
 		&objectListFlags{prefix: "e2e-"}, &buf)
 	if err != nil {
 		t.Fatal(err)

@@ -8,7 +8,7 @@
 //	table  human-readable ASCII table (default)
 //	json   JSON (array for lists, object for a single resource)
 //	yaml   YAML
-//	value  plain, tab-separated values, no headers (for scripting)
+//	value  plain, space-separated values, no headers (for scripting)
 //	csv    RFC 4180 CSV with a header row
 //
 // plus one koc-native format with no upstream equivalent:
@@ -634,8 +634,12 @@ func writeCSV(w io.Writer, cols []string, rows [][]any) error {
 	return nil
 }
 
-// writeValue emits tab-separated values with no header, one row per line, for
-// scripting (`-f value`).
+// writeValue emits `-f value`: a row's cells joined by a single space, no
+// header, one row per line — byte for byte what cliff's ValueFormatter writes,
+// so a script written for `openstack … -f value` (cut -d' ', read a b) runs
+// unchanged. Because most values contain spaces, a multi-column row cannot be
+// split back into its cells; that is upstream's contract too, and -f tsv is
+// the format for it.
 //
 // Values are written verbatim, embedded newlines included: `-f value` is the
 // format scripts pipe into a file, so collapsing them would corrupt the payload
@@ -650,7 +654,7 @@ func writeValue(w io.Writer, rows [][]any) error {
 		for i, v := range r {
 			cells[i] = cell(v)
 		}
-		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
+		if _, err := fmt.Fprintln(w, strings.Join(cells, " ")); err != nil {
 			return fmt.Errorf("writing value output: %w", err)
 		}
 	}

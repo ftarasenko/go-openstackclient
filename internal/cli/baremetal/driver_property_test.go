@@ -29,7 +29,7 @@ func TestRunDriverPropertyList_SortedByName(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := baremetalClient(fakeServer, "latest")
 	if err := runDriverPropertyList(context.Background(), client, o, "redfish", &out); err != nil {
 		t.Fatalf("runDriverPropertyList returned error: %v", err)
@@ -55,7 +55,7 @@ func TestRunDriverRAIDPropertyList_UsesRAIDEndpoint(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := baremetalClient(fakeServer, "latest")
 	if err := runDriverRAIDPropertyList(context.Background(), client, o, "redfish", &out); err != nil {
 		t.Fatalf("runDriverRAIDPropertyList returned error: %v", err)

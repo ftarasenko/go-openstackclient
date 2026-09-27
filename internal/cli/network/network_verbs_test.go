@@ -1134,7 +1134,7 @@ func TestRunSecurityGroupList_SendsEveryFilter(t *testing.T) {
 			tags: []string{"a"}, anyTags: []string{"b"}, notTags: []string{"c"}, notAnyTags: []string{"d"},
 		},
 	}
-	o := &output.Options{Format: output.FormatValue}
+	o := &output.Options{Format: output.FormatTSV}
 	var buf bytes.Buffer
 	if err := runSecurityGroupList(context.Background(), networkClient(fakeServer), o, f, "p1", &buf); err != nil {
 		t.Fatalf("runSecurityGroupList: %v", err)
@@ -1167,7 +1167,7 @@ func TestRunSecurityGroupList_Share(t *testing.T) {
 			})
 
 			f := &secGroupListFlags{name: "web", shared: &tc.shared}
-			o := &output.Options{Format: output.FormatValue, Columns: []string{"ID", "Shared"}}
+			o := &output.Options{Format: output.FormatTSV, Columns: []string{"ID", "Shared"}}
 			var buf bytes.Buffer
 			if err := runSecurityGroupList(context.Background(), networkClient(fakeServer), o, f, "", &buf); err != nil {
 				t.Fatalf("runSecurityGroupList: %v", err)

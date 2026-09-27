@@ -131,7 +131,7 @@ func TestRunTransferList_AllProjectsQuery(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := volumeClient(fakeServer, "latest")
 	if err := runTransferList(context.Background(), client, o, true, 0, &out); err != nil {
 		t.Fatalf("runTransferList returned error: %v", err)

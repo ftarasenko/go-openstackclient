@@ -29,7 +29,7 @@ func TestRunDuGroupByStorageClass(t *testing.T) {
 	client := newMockClient(t, duListHandler(t))
 
 	var buf bytes.Buffer
-	err := runDu(context.Background(), client, valueOpts(), "db-backups", "", &duFlags{group: true}, &buf)
+	err := runDu(context.Background(), client, tsvOpts(), "db-backups", "", &duFlags{group: true}, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
