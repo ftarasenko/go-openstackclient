@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
@@ -851,6 +852,27 @@ func TestRunServerRebuild_RequestAndOutput(t *testing.T) {
 	}
 }
 
+const vol9UUID = "9a9a9a9a-0b0b-4c0c-8d0d-0e0e0e0e0e0e"
+
+// volumeClient is a cinder client on the same fake server.
+func volumeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
+	sc := fakeclient.ServiceClient(fakeServer)
+	sc.Type = "block-storage"
+	return sc
+}
+
+// handleVolumeByName answers cinder's name lookup with one volume.
+func handleVolumeByName(t *testing.T, fakeServer th.FakeServer, name, id string) {
+	t.Helper()
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("name"); got != name {
+			t.Errorf("volume lookup name = %q, want %q", got, name)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volumes": [{"id": "` + id + `", "name": "` + name + `"}]}`))
+	})
+}
+
 func TestRunServerAddVolume_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
@@ -862,20 +884,22 @@ func TestRunServerAddVolume_RequestAndOutput(t *testing.T) {
 		gotBody = decodeBody(t, r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"volumeAttachment":{"id":"att-1","serverId":"` + serverUUID + `","volumeId":"vol-9","device":"/dev/vdb"}}`))
+		_, _ = w.Write([]byte(`{"volumeAttachment":{"id":"att-1","serverId":"` + serverUUID + `","volumeId":"` + vol9UUID + `","device":"/dev/vdb"}}`))
 	})
+	handleVolumeByName(t, fakeServer, "vol-9", vol9UUID)
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerAddVolume(context.Background(), client, serverUUID, "vol-9", "/dev/vdb", &buf); err != nil {
+	if err := runServerAddVolume(context.Background(), client, volumeClient(fakeServer), serverUUID, "vol-9", "/dev/vdb", &buf); err != nil {
 		t.Fatalf("runServerAddVolume: %v", err)
 	}
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
 	}
 	att, _ := gotBody["volumeAttachment"].(map[string]any)
-	if att["volumeId"] != "vol-9" || att["device"] != "/dev/vdb" {
-		t.Errorf("volumeAttachment body = %v, want volumeId=vol-9 device=/dev/vdb", att)
+	// nova takes only an ID: the name went through cinder first.
+	if att["volumeId"] != vol9UUID || att["device"] != "/dev/vdb" {
+		t.Errorf("volumeAttachment body = %v, want volumeId=%s device=/dev/vdb", att, vol9UUID)
 	}
 	if !strings.Contains(buf.String(), "Attached volume vol-9 to server "+serverUUID) {
 		t.Errorf("output = %q, want attach confirmation", buf.String())
@@ -887,14 +911,15 @@ func TestRunServerRemoveVolume_RequestAndOutput(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	var gotMethod string
-	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/os-volume_attachments/vol-9", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/os-volume_attachments/"+vol9UUID, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		w.WriteHeader(http.StatusAccepted)
 	})
+	handleVolumeByName(t, fakeServer, "vol-9", vol9UUID)
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerRemoveVolume(context.Background(), client, serverUUID, "vol-9", &buf); err != nil {
+	if err := runServerRemoveVolume(context.Background(), client, volumeClient(fakeServer), serverUUID, "vol-9", &buf); err != nil {
 		t.Fatalf("runServerRemoveVolume: %v", err)
 	}
 	if gotMethod != http.MethodDelete {

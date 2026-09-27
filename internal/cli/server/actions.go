@@ -18,6 +18,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -660,26 +661,38 @@ func newServerAddVolumeCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerAddVolume(ctx, client, args[0], args[1], device, cmd.OutOrStdout())
+			volumeClient, err := s.auth.Volume()
+			if err != nil {
+				return err
+			}
+			return runServerAddVolume(ctx, s.client, volumeClient, args[0], args[1], device, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&device, "device", "", "device name to expose the volume as (default auto)")
 	return cmd
 }
 
-func runServerAddVolume(ctx context.Context, client *gophercloud.ServiceClient, ref, volumeID, device string, w io.Writer) error {
+// runServerAddVolume attaches a volume, named or by ID: nova takes only the ID,
+// so a name is resolved through cinder first.
+func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.ServiceClient,
+	ref, volumeRef, device string, w io.Writer,
+) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	if _, err := volumeattach.Create(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}).Extract(); err != nil {
-		return fmt.Errorf("attaching volume %q to server %q: %w", volumeID, ref, err)
+	volumeID, err := resolve.VolumeID(ctx, volumeClient, volumeRef)
+	if err != nil {
+		return err
 	}
-	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeID, ref); err != nil {
+	if _, err := volumeattach.Create(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}).Extract(); err != nil {
+		return fmt.Errorf("attaching volume %q to server %q: %w", volumeRef, ref, err)
+	}
+	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeRef, ref); err != nil {
 		return err
 	}
 	return nil
@@ -695,25 +708,36 @@ func newServerRemoveVolumeCommand(a *auth.Options, o *output.Options) *cobra.Com
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRemoveVolume(ctx, client, args[0], args[1], cmd.OutOrStdout())
+			volumeClient, err := s.auth.Volume()
+			if err != nil {
+				return err
+			}
+			return runServerRemoveVolume(ctx, s.client, volumeClient, args[0], args[1], cmd.OutOrStdout())
 		},
 	}
 	return cmd
 }
 
-func runServerRemoveVolume(ctx context.Context, client *gophercloud.ServiceClient, ref, volumeID string, w io.Writer) error {
+// runServerRemoveVolume detaches a volume, named or by ID (see runServerAddVolume).
+func runServerRemoveVolume(ctx context.Context, client, volumeClient *gophercloud.ServiceClient,
+	ref, volumeRef string, w io.Writer,
+) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	if err := volumeattach.Delete(ctx, client, id, volumeID).ExtractErr(); err != nil {
-		return fmt.Errorf("detaching volume %q from server %q: %w", volumeID, ref, err)
+	volumeID, err := resolve.VolumeID(ctx, volumeClient, volumeRef)
+	if err != nil {
+		return err
 	}
-	if _, err := fmt.Fprintf(w, "Detached volume %s from server %s\n", volumeID, ref); err != nil {
+	if err := volumeattach.Delete(ctx, client, id, volumeID).ExtractErr(); err != nil {
+		return fmt.Errorf("detaching volume %q from server %q: %w", volumeRef, ref, err)
+	}
+	if _, err := fmt.Fprintf(w, "Detached volume %s from server %s\n", volumeRef, ref); err != nil {
 		return err
 	}
 	return nil
