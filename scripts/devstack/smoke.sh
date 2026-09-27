@@ -161,8 +161,10 @@ fi
 # --- koc ---------------------------------------------------------------------------
 
 if [[ -n "$KOC" ]]; then
-    # koc runs from clouds.yaml alone, so drop every OS_* openrc exported
-    # (including OS_VOLUME_API_VERSION=3, which koc would send as a microversion).
+    # koc runs from clouds.yaml alone, so drop every OS_* openrc exported: this
+    # is the check that the clouds.yaml path works on its own. (It once also
+    # hid two koc gaps devstack's openrc exposes — a bare OS_VOLUME_API_VERSION=3
+    # and ID-only OS_*_DOMAIN_ID — both since fixed.)
     mapfile -t OPENRC_VARS < <(compgen -e | grep '^OS_')
     koc() { env "${OPENRC_VARS[@]/#/--unset=}" OS_CLOUD=devstack-admin "$KOC" "$@" -f json; }
     check "koc catalog list" koc catalog list

@@ -298,6 +298,15 @@ and caracal as designed).
 
 - `OS_VOLUME_API_VERSION=3` (devstack's openrc) is sent verbatim as the cinder
   microversion and cinder answers 400; upstream OSC accepts a major-only
-  version. smoke now runs koc from `clouds.yaml` alone (`f82e83a`).
+  version. smoke now runs koc from `clouds.yaml` alone (`f82e83a`). **Fixed**
+  on master by `2d139cd` / `7b67ee7`: a bare major means "latest" for cinder,
+  nova, ironic and placement alike.
 - The Vault openrc parser ignores `OS_{USER,PROJECT}_DOMAIN_ID` (above).
-- `-f value` separates columns with a tab; `openstack` uses a space.
+  **Fixed** by `fix(auth): honour OS_{USER,PROJECT}_DOMAIN_ID and
+  OS_DOMAIN_ID`. The gap was wider than Vault: koc had no domain-ID support at
+  all, so the environment path and the `--os-*-domain-id` flags were missing
+  too.
+- `-f value` separates columns with a tab; `openstack` uses a space. Upstream
+  cliff confirmed (`ValueFormatter.emit_list` joins with `' '`). This is a
+  **recorded deliberate deviation** (README "Output formats", `docs/coverage.md`),
+  not an oversight, so it is left for the maintainer to decide.
