@@ -280,7 +280,7 @@ if [[ $RC -eq 0 ]]; then
             echo "KOC_FT_IMAGE=$(openstack image list -f value -c Name | grep -m1 -i cirros)"
             # S3 goes to swift's proxy through the s3api middleware, with EC2
             # credentials keystone mints for the admin user.
-            read -r ACCESS SECRET < <(openstack ec2 credentials create -f value -c access -c secret | tr '\n' ' ')
+            { read -r ACCESS; read -r SECRET; } < <(openstack ec2 credentials create -f value -c access -c secret)
             echo "AWS_ENDPOINT_URL=http://${SERVICE_HOST:-127.0.0.1}:8080"
             echo "AWS_ACCESS_KEY_ID=$ACCESS"
             echo "AWS_SECRET_ACCESS_KEY=$SECRET"
