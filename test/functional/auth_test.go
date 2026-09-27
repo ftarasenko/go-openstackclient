@@ -135,6 +135,12 @@ func TestAuthApplicationCredential(t *testing.T) {
 	if id == "" || secret == "" {
 		t.Fatalf("application credential create returned %v", cred)
 	}
+	if got := r.show(t, "application", "credential", "show", name); field(got, "id") != id || field(got, "secret") != "" {
+		t.Errorf("application credential show = %v, want id %s and no secret", got, id)
+	}
+	if !in(r.list(t, "application", "credential", "list"), id) {
+		t.Errorf("application credential list does not list %s", id)
+	}
 
 	authURL, region := openrcValue(c, "OS_AUTH_URL"), openrcValue(c, "OS_REGION_NAME")
 	t.Run("env", func(t *testing.T) {

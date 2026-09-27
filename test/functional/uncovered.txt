@@ -22,8 +22,6 @@ koc aggregate set
 koc aggregate show
 koc aggregate unset
 koc allocation candidate list
-koc application credential list
-koc application credential show
 koc availability zone list
 koc baremetal allocation create
 koc baremetal allocation delete
@@ -126,7 +124,6 @@ koc bgpvpn unset
 koc block storage cluster list
 koc block storage cluster set
 koc block storage cluster show
-koc catalog show
 koc compute host drain
 koc compute host evacuate
 koc compute service delete
@@ -142,15 +139,6 @@ koc dns quota reset
 koc dns quota set
 koc dns service list
 koc dns service show
-koc domain create
-koc domain delete
-koc domain list
-koc domain set
-koc domain show
-koc endpoint create
-koc endpoint delete
-koc endpoint set
-koc endpoint show
 koc firewall group create
 koc firewall group delete
 koc firewall group list
@@ -188,35 +176,8 @@ koc floating ip port forwarding show
 koc floating ip set
 koc floating ip show
 koc floating ip unset
-koc group add user
-koc group contains user
-koc group create
-koc group delete
-koc group list
-koc group remove user
-koc group set
-koc group show
 koc hypervisor list
 koc hypervisor show
-koc image add project
-koc image create
-koc image delete
-koc image import info
-koc image list
-koc image member list
-koc image member set
-koc image remove project
-koc image save
-koc image set
-koc image show
-koc image stage
-koc image stores list
-koc image task list
-koc image task show
-koc image unset
-koc implied role create
-koc implied role delete
-koc implied role list
 koc ip availability list
 koc ip availability show
 koc keypair create
@@ -358,10 +319,6 @@ koc port list
 koc port set
 koc port show
 koc port unset
-koc project create
-koc project delete
-koc project set
-koc project show
 koc ptr record list
 koc ptr record set
 koc ptr record show
@@ -373,11 +330,6 @@ koc recordset delete
 koc recordset list
 koc recordset set
 koc recordset show
-koc region create
-koc region delete
-koc region list
-koc region set
-koc region show
 koc resource class create
 koc resource class delete
 koc resource class list
@@ -404,14 +356,6 @@ koc resource provider trait list
 koc resource provider trait set
 koc resource provider usage show
 koc resource usage show
-koc role add
-koc role assignment list
-koc role create
-koc role delete
-koc role list
-koc role remove
-koc role set
-koc role show
 koc router add gateway
 koc router add port
 koc router add route
@@ -501,11 +445,6 @@ koc server unpause
 koc server unrescue
 koc server unset
 koc server unshelve
-koc service create
-koc service delete
-koc service list
-koc service set
-koc service show
 koc subnet create
 koc subnet delete
 koc subnet list
@@ -528,7 +467,6 @@ koc tld delete
 koc tld list
 koc tld set
 koc tld show
-koc token revoke
 koc trait create
 koc trait delete
 koc trait list
@@ -540,12 +478,6 @@ koc tsigkey set
 koc tsigkey show
 koc usage list
 koc usage show
-koc user create
-koc user delete
-koc user list
-koc user password set
-koc user set
-koc user show
 koc volume attachment complete
 koc volume attachment create
 koc volume attachment delete

@@ -95,7 +95,7 @@ func leafPaths(root *cobra.Command) []string {
 
 // runnerMethods are the runner calls that execute koc, and the index of the
 // first command-line argument in each.
-var runnerMethods = map[string]int{"run": 1, "ok": 1, "fails": 1, "json": 2}
+var runnerMethods = map[string]int{"run": 1, "ok": 1, "fails": 1, "json": 2, "show": 1, "list": 1}
 
 // coveredLeaves parses this package's tests and resolves every koc invocation
 // in them to the leaf it runs.

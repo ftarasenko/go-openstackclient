@@ -494,3 +494,54 @@ func (r *recorder) report() {
 		}
 	}
 }
+
+// --- small helpers for the suites ------------------------------------------------
+
+// uniq returns a resource name no other run or test will pick: tests create
+// real objects on a shared cloud, and a fixed name collides across reruns.
+func uniq(prefix string) string {
+	return fmt.Sprintf("ft-%s-%d", prefix, time.Now().UnixNano())
+}
+
+// field reads a key from a -f json object, ignoring case: koc's single-resource
+// views mix "Name"-style and "name"-style keys by command, and a suite asserts
+// on what a field says, not how it is capitalised.
+func field(m map[string]any, key string) string {
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			if v == nil {
+				return ""
+			}
+			if s, ok := v.(string); ok {
+				return s
+			}
+			return fmt.Sprint(v)
+		}
+	}
+	return ""
+}
+
+// column collects one column of a -f json listing, ignoring the key's case.
+func column(rows []map[string]any, key string) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, field(r, key))
+	}
+	return out
+}
+
+// show runs a single-resource command with -f json and returns the object.
+func (r runner) show(t *testing.T, args ...string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	r.json(t, &m, args...)
+	return m
+}
+
+// list runs a listing command with -f json and returns its rows.
+func (r runner) list(t *testing.T, args ...string) []map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	r.json(t, &rows, args...)
+	return rows
+}
