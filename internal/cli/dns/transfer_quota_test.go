@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	"github.com/spf13/cobra"
 
@@ -496,6 +498,35 @@ func TestDNSQuotaTarget_AutoAllProjects(t *testing.T) {
 				t.Errorf("allProjects = %v, want %v", tt.common.allProjects, tt.wantAll)
 			}
 		})
+	}
+}
+
+// From clouds.yaml, OS_PROJECT_* are empty and only the token names the
+// session's project; another project's quotas still need all-projects.
+func TestDNSQuotaTarget_AutoAllProjectsFromTheToken(t *testing.T) {
+	var r tokens.CreateResult
+	r.Header = http.Header{"X-Subject-Token": []string{"tok-1"}}
+	r.Body = map[string]any{"token": map[string]any{
+		"project": map[string]any{"id": "11111111-1111-1111-1111-111111111111", "name": "admin"},
+	}}
+	session := &auth.Client{Provider: &gophercloud.ProviderClient{}}
+	if err := session.Provider.SetTokenAndAuthResult(r); err != nil {
+		t.Fatalf("SetTokenAndAuthResult: %v", err)
+	}
+	for _, tc := range []struct {
+		arg     string
+		wantAll bool
+	}{
+		{"22222222-2222-2222-2222-222222222222", true},
+		{"11111111-1111-1111-1111-111111111111", false},
+	} {
+		common := &commonOptions{}
+		if _, err := (&dnsQuotaTarget{}).resolve(context.Background(), session, &auth.Options{}, []string{tc.arg}, common); err != nil {
+			t.Fatalf("resolve(%s): %v", tc.arg, err)
+		}
+		if common.allProjects != tc.wantAll {
+			t.Errorf("resolve(%s): allProjects = %v, want %v", tc.arg, common.allProjects, tc.wantAll)
+		}
 	}
 }
 
