@@ -154,9 +154,10 @@ SWIFT_HASH=1234123412341234
 DEST=$DEST
 LOGFILE=$LOG_DIR/stack.sh.log
 GIT_BASE=$GIT_BASE
-# Shallow clones: the history of ~15 repositories is dead weight on a
-# throwaway node.
-GIT_DEPTH=1
+# Full clones, not GIT_DEPTH=1: pbr derives each project's version from its
+# tags, so a shallow clone installs as 0.0.0 and pip then rejects any plugin
+# that requires a minimum version of it (bagpipe needs networking-bgpvpn>=12)
+# or replaces it with a PyPI wheel (neutron-dynamic-routing's neutron>=23).
 INSTALL_TEMPEST=False
 # One worker per API keeps the all-in-one node inside a runner's 16 GB.
 API_WORKERS=1
