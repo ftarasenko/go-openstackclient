@@ -11,7 +11,7 @@
 # Writes <log-dir>/smoke.txt (one PASS/FAIL/WARN line per check, with seconds)
 # and <log-dir>/extensions.txt (every neutron extension alias). Exits non-zero
 # if any check FAILs; a WARN is an expected per-release absence (tap-mirror
-# does not exist before 2023.2) and is recorded, not failed.
+# is not in tap-as-a-service before 2025.1) and is recorded, not failed.
 
 # The probe functions below only ever run as arguments to check/wait_for, which
 # the linter cannot follow.
@@ -141,7 +141,7 @@ fi
 
 if has_feature net; then
     for e in qos trunk segment bgp bgpvpn vpnaas fwaas_v2 taas; do check "extension: $e" extension "$e"; done
-    if extension tap-mirror; then echo "PASS extension: tap-mirror" | tee -a "$OUT"; else warn "extension: tap-mirror absent (expected before 2023.2)"; fi
+    if extension tap-mirror; then echo "PASS extension: tap-mirror" | tee -a "$OUT"; else warn "extension: tap-mirror absent (expected before 2025.1)"; fi
 fi
 
 # --- dns -------------------------------------------------------------------------
