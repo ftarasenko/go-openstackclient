@@ -1306,3 +1306,27 @@ func TestRunFlavorCreate_RxTxFactorAllowedUnderLatest(t *testing.T) {
 	}
 	assertJSONNum(t, flavorBody, "rxtx_factor", 2)
 }
+
+// From nova 2.102 flavors carry no rxtx_factor; nova never allows a factor of
+// 0, so the absent field is null, not 0.
+func TestRunFlavorShow_NoRxTxFactor(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	const tiny = `{"id": "1", "name": "m1.tiny", "ram": 512, "disk": 1, "vcpus": 1, "swap": 0, "os-flavor-access:is_public": true}`
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flavors": [` + tiny + `]}`))
+	})
+	fakeServer.Mux.HandleFunc("/flavors/1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flavor": ` + tiny + `}`))
+	})
+	o := &output.Options{Format: output.FormatJSON, Columns: []string{"RXTX Factor"}}
+	var buf bytes.Buffer
+	if err := runFlavorShow(context.Background(), computeClient(fakeServer, "latest"), o, "1", &buf); err != nil {
+		t.Fatalf("runFlavorShow: %v", err)
+	}
+	if !strings.Contains(buf.String(), `"RXTX Factor": null`) {
+		t.Errorf("flavor show = %s, want a null RXTX Factor", buf.String())
+	}
+}
