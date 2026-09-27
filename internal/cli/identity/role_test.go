@@ -286,3 +286,46 @@ func TestRunRoleAssignmentList_ResolvesFiltersAndOutput(t *testing.T) {
 		}
 	}
 }
+
+// Upstream's columns: System says "all" for a system assignment, Inherited
+// reports OS-INHERIT, and --names qualifies each name with its domain.
+func TestRunRoleAssignmentList_SystemInheritedAndNames(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/role_assignments", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"role_assignments":[
+			{"role":{"id":"r1","name":"admin"},"user":{"id":"u1","name":"admin","domain":{"id":"default","name":"Default"}},
+			 "scope":{"system":{"all":true}}},
+			{"role":{"id":"r2","name":"member"},"group":{"id":"g1","name":"ops","domain":{"id":"default","name":"Default"}},
+			 "scope":{"project":{"id":"p1","name":"demo","domain":{"id":"default","name":"Default"}},"OS-INHERIT:inherited_to":"projects"}},
+			{"role":{"id":"r3","name":"auditor","domain":{"id":"d2","name":"corp"}},"user":{"id":"u2","name":"bob","domain":{"id":"d2","name":"corp"}},
+			 "scope":{"domain":{"id":"d2","name":"corp"}}}
+		]}`))
+	})
+	client := identityClient(fakeServer)
+
+	var ids bytes.Buffer
+	if err := runRoleAssignmentList(context.Background(), client, &output.Options{Format: output.FormatCSV}, &assignmentListFlags{}, &ids); err != nil {
+		t.Fatalf("runRoleAssignmentList: %v", err)
+	}
+	want := "Role,User,Group,Project,Domain,System,Inherited\n" +
+		"r1,u1,,,,all,false\n" +
+		"r2,,g1,p1,,,true\n" +
+		"r3,u2,,,d2,,false\n"
+	if ids.String() != want {
+		t.Errorf("IDs:\n%s\nwant:\n%s", ids.String(), want)
+	}
+
+	var names bytes.Buffer
+	if err := runRoleAssignmentList(context.Background(), client, &output.Options{Format: output.FormatCSV}, &assignmentListFlags{names: true}, &names); err != nil {
+		t.Fatalf("runRoleAssignmentList --names: %v", err)
+	}
+	want = "Role,User,Group,Project,Domain,System,Inherited\n" +
+		"admin,admin@Default,,,,all,false\n" +
+		"member,,ops@Default,demo@Default,,,true\n" +
+		"auditor@corp,bob@corp,,,corp,,false\n"
+	if names.String() != want {
+		t.Errorf("--names:\n%s\nwant:\n%s", names.String(), want)
+	}
+}
