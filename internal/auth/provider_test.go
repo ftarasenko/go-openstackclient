@@ -445,7 +445,8 @@ func TestOverride_VaultOpenrcOutranksNamedCloud(t *testing.T) {
 
 // Lowering the compute microversion is only allowed while it is still koc's own
 // default: an operator who named a version — on the command line or through
-// OS_COMPUTE_API_VERSION — gets exactly that one.
+// OS_COMPUTE_API_VERSION — gets exactly that one. A bare major version names
+// none.
 func TestComputeAPIVersionPinnable(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -457,6 +458,9 @@ func TestComputeAPIVersionPinnable(t *testing.T) {
 		{"explicit flag", "", []string{"--os-compute-api-version", "2.79"}, false},
 		{"explicit flag naming the default", "", []string{"--os-compute-api-version", "latest"}, false},
 		{"environment", "2.79", nil, false},
+		// A bare major names no microversion, so it is still the default.
+		{"environment major only", "2", nil, true},
+		{"explicit flag major only", "2.79", []string{"--os-compute-api-version", "2"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("OS_COMPUTE_API_VERSION", tc.env)
