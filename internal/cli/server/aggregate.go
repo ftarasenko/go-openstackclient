@@ -166,7 +166,7 @@ func aggregateShowFields(agg *aggregates.Aggregate) ([]string, []any) {
 	values := []any{
 		agg.ID, agg.Name, agg.AvailabilityZone, strings.Join(agg.Hosts, ", "),
 		formatAggregateMetadata(agg.Metadata), agg.UUID,
-		agg.CreatedAt.String(), agg.UpdatedAt.String(),
+		agg.CreatedAt, agg.UpdatedAt,
 	}
 	return fields, values
 }

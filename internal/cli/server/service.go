@@ -176,7 +176,7 @@ func serviceListTable(list []services.Service, ext []serviceExt, long bool) outp
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for i, s := range list {
-		row := []any{s.ID, s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt.String()}
+		row := []any{s.ID, s.Binary, s.Host, s.Zone, s.Status, s.State, s.UpdatedAt}
 		if keystack {
 			var e serviceExt
 			if i < len(ext) {
