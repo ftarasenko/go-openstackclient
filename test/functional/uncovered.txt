@@ -217,21 +217,6 @@ koc recordset delete
 koc recordset list
 koc recordset set
 koc recordset show
-koc s3 bucket create
-koc s3 bucket delete
-koc s3 bucket list
-koc s3 bucket set
-koc s3 bucket show
-koc s3 copy
-koc s3 download
-koc s3 du
-koc s3 move
-koc s3 object delete
-koc s3 object list
-koc s3 object show
-koc s3 presign
-koc s3 sync
-koc s3 upload
 koc tap mirror create
 koc tap mirror delete
 koc tap mirror list
