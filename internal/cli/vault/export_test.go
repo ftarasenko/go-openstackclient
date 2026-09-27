@@ -27,7 +27,7 @@ func exportFixture(t *testing.T) *vault.Client {
 		case "/v1/kv/data/dev/openrc":
 			_, _ = w.Write([]byte(`{"data":{"data":{"OS_PASSWORD":"s3cret","OS_USERNAME":"admin"}}}`))
 		case "/v1/kv/data/dev/ssl_certificates":
-			_, _ = w.Write([]byte(`{"data":{"data":{"backend_pem":"-----BEGIN CERTIFICATE-----\nAAA\n","backend_key_pem":"-----BEGIN PRIVATE KEY-----\nBBB\n","unused":""}}}`))
+			_, _ = w.Write([]byte(`{"data":{"data":{"backend_pem":"-----BEGIN CERTIFICATE-----\ncert-body-AAA\n","backend_key_pem":"-----BEGIN PRIVATE KEY-----\nkey-body-BBB\n","unused":""}}}`))
 		case "/v1/kv/data/dev/empty":
 			_, _ = w.Write([]byte(`{"data":{"data":{}}}`))
 		case "/v1/kv/data/dev/denied":
@@ -56,7 +56,10 @@ func TestRunKVExport(t *testing.T) {
 
 	// No secret material anywhere in the report, including the cert bodies and the
 	// key names of the ordinary secret's data.
-	for _, leak := range []string{"s3cret", "admin", "BEGIN CERTIFICATE", "BEGIN PRIVATE KEY", "AAA", "BBB", "OS_PASSWORD"} {
+	// Each probe needs a character base64 never emits ("-", " ", "_"), or the
+	// random ciphertext in the report can contain it by chance: "BBB" alone
+	// once turned up inside an encrypted value.
+	for _, leak := range []string{"s3cret", "admin", "BEGIN CERTIFICATE", "BEGIN PRIVATE KEY", "cert-body-AAA", "key-body-BBB", "OS_PASSWORD"} {
 		if strings.Contains(doc, leak) {
 			t.Errorf("report leaked %q:\n%s", leak, doc)
 		}
