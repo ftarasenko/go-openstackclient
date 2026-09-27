@@ -315,7 +315,7 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.ComputeAPIVersion, "os-compute-api-version", envOr("OS_COMPUTE_API_VERSION", defaultComputeMicroversion),
 		"compute (nova) API microversion (env OS_COMPUTE_API_VERSION)")
 	fs.StringVar(&o.VolumeAPIVersion, "os-volume-api-version", envOr("OS_VOLUME_API_VERSION", defaultVolumeMicroversion),
-		"volume (cinder) API microversion (env OS_VOLUME_API_VERSION)")
+		"volume (cinder) API microversion; a bare major version such as 3 means 3.0 (env OS_VOLUME_API_VERSION)")
 	fs.StringVar(&o.PlacementAPIVersion, "os-placement-api-version", envOr("OS_PLACEMENT_API_VERSION", defaultPlacementMicroversion),
 		"placement API microversion (env OS_PLACEMENT_API_VERSION)")
 
