@@ -160,6 +160,16 @@ func ProjectIDInDomain(ctx context.Context, identityClient *gophercloud.ServiceC
 	if err != nil {
 		return "", err
 	}
+	return ProjectIDInDomainID(ctx, identityClient, ref, domainID)
+}
+
+// ProjectIDInDomainID is ProjectIDInDomain for a domain already known by ID
+// (--os-project-domain-id), so the domain needs no lookup — and must not get a
+// by-name one: the default domain's ID is "default", its name "Default".
+func ProjectIDInDomainID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref, domainID string) (string, error) {
+	if domainID == "" {
+		return ProjectID(ctx, identityClient, ref)
+	}
 	return byName(ctx, "project", domainID, ref, func(ctx context.Context) ([]projects.Project, error) {
 		pages, err := projects.List(identityClient, projects.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
 		if err != nil {

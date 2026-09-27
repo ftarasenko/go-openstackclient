@@ -149,6 +149,11 @@ func sessionProjectID(ctx context.Context, session *auth.Client, a *auth.Options
 	if err != nil {
 		return "", err
 	}
+	// The session's own project domain, by ID when the openrc names it that
+	// way (devstack's does), as the token scope does.
+	if a.ProjectDomainID != "" {
+		return resolve.ProjectIDInDomainID(ctx, identity, a.ProjectName, a.ProjectDomainID)
+	}
 	return resolve.ProjectIDInDomain(ctx, identity, a.ProjectName, a.ProjectDomainName)
 }
 

@@ -77,8 +77,15 @@ type Options struct {
 	ProjectDomainName string
 	UserDomainName    string
 	DomainName        string
-	RegionName        string
-	Interface         string
+	// The same three domains named by ID, OSC's --os-*-domain-id. Each pair is
+	// one domain: an ID wins over a name for the same domain unless only the
+	// name was given explicitly (see domainOption).
+	ProjectDomainID string
+	UserDomainID    string
+	DomainID        string
+
+	RegionName string
+	Interface  string
 
 	// SystemScope requests a system-scoped token. OSC spells this
 	// --os-system-scope and only accepts the value "all"; it is mutually
@@ -286,6 +293,14 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"user domain name (env OS_USER_DOMAIN_NAME)")
 	fs.StringVar(&o.DomainName, "os-domain-name", os.Getenv("OS_DOMAIN_NAME"),
 		"domain name for domain-scoped tokens (env OS_DOMAIN_NAME)")
+	// The *-id spellings upstream OSC (keystoneauth) takes alongside the names;
+	// devstack's openrc, for one, exports only OS_{USER,PROJECT}_DOMAIN_ID.
+	fs.StringVar(&o.ProjectDomainID, "os-project-domain-id", os.Getenv("OS_PROJECT_DOMAIN_ID"),
+		"project domain ID (env OS_PROJECT_DOMAIN_ID)")
+	fs.StringVar(&o.UserDomainID, "os-user-domain-id", os.Getenv("OS_USER_DOMAIN_ID"),
+		"user domain ID (env OS_USER_DOMAIN_ID)")
+	fs.StringVar(&o.DomainID, "os-domain-id", os.Getenv("OS_DOMAIN_ID"),
+		"domain ID for domain-scoped tokens (env OS_DOMAIN_ID)")
 	fs.StringVar(&o.RegionName, "os-region-name", os.Getenv("OS_REGION_NAME"),
 		"region name (env OS_REGION_NAME)")
 	fs.StringVar(&o.Interface, "os-interface", os.Getenv("OS_INTERFACE"),
