@@ -163,7 +163,7 @@ if [[ -n "$KOC" ]]; then
         OS_CLOUD=devstack-admin "$KOC" "$@" -f json; }
     check "koc catalog list" koc catalog list
     check "koc network list" koc network list
-    check "koc extension list" koc extension list
+    check "koc network extension list" koc network extension list
     if has_feature core; then
         check "koc server list" koc server list
         check "koc volume list" koc volume list
