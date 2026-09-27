@@ -2,17 +2,6 @@
 # every leaf has one (AGENTS.md "Testing"). TestEveryLeafIsCovered keeps this
 # honest. It only ever shrinks: when a test lands for a leaf, delete its line;
 # a new command lands with its test, never with a line here.
-koc address group create
-koc address group delete
-koc address group list
-koc address group set
-koc address group show
-koc address group unset
-koc address scope create
-koc address scope delete
-koc address scope list
-koc address scope set
-koc address scope show
 koc baremetal allocation create
 koc baremetal allocation delete
 koc baremetal allocation list
@@ -139,17 +128,6 @@ koc firewall group rule unset
 koc firewall group set
 koc firewall group show
 koc firewall group unset
-koc floating ip list
-koc floating ip port forwarding create
-koc floating ip port forwarding delete
-koc floating ip port forwarding list
-koc floating ip port forwarding set
-koc floating ip port forwarding show
-koc floating ip set
-koc floating ip show
-koc floating ip unset
-koc ip availability list
-koc ip availability show
 koc keyvrm app-config set
 koc keyvrm app-config show
 koc keyvrm availability-zone host-aggregate list
@@ -230,81 +208,15 @@ koc loadbalancer set
 koc loadbalancer show
 koc loadbalancer stats show
 koc loadbalancer status show
-koc network agent add network
-koc network agent add router
-koc network agent delete
-koc network agent list
-koc network agent remove network
-koc network agent remove router
-koc network agent router set
-koc network agent set
-koc network agent show
-koc network extension show
-koc network qos policy create
-koc network qos policy delete
-koc network qos policy list
-koc network qos policy set
-koc network qos policy show
-koc network qos rule create
-koc network qos rule delete
-koc network qos rule list
-koc network qos rule set
-koc network qos rule show
-koc network qos rule type list
-koc network qos rule type show
-koc network rbac create
-koc network rbac delete
-koc network rbac list
-koc network rbac set
-koc network rbac show
-koc network segment create
-koc network segment delete
-koc network segment list
-koc network segment set
-koc network segment show
-koc network service provider list
-koc network set
-koc network show
-koc network subport list
-koc network trunk create
-koc network trunk delete
-koc network trunk list
-koc network trunk set
-koc network trunk show
-koc network trunk subport add
-koc network trunk subport list
-koc network trunk subport remove
-koc network trunk unset
-koc network unset
-koc port list
-koc port set
-koc port show
-koc port unset
 koc ptr record list
 koc ptr record set
 koc ptr record show
 koc ptr record unset
-koc quota set
-koc quota show
 koc recordset create
 koc recordset delete
 koc recordset list
 koc recordset set
 koc recordset show
-koc router add gateway
-koc router add port
-koc router add route
-koc router add subnet
-koc router create
-koc router delete
-koc router list
-koc router remove gateway
-koc router remove port
-koc router remove route
-koc router remove subnet
-koc router set
-koc router show
-koc router unset
 koc s3 bucket create
 koc s3 bucket delete
 koc s3 bucket list
@@ -320,25 +232,6 @@ koc s3 object show
 koc s3 presign
 koc s3 sync
 koc s3 upload
-koc security group list
-koc security group rule create
-koc security group rule delete
-koc security group rule list
-koc security group rule show
-koc security group set
-koc security group show
-koc security group unset
-koc subnet delete
-koc subnet list
-koc subnet pool create
-koc subnet pool delete
-koc subnet pool list
-koc subnet pool set
-koc subnet pool show
-koc subnet pool unset
-koc subnet set
-koc subnet show
-koc subnet unset
 koc tap mirror create
 koc tap mirror delete
 koc tap mirror list
