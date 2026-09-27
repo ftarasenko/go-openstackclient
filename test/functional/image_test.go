@@ -115,10 +115,7 @@ func TestImageMembership(t *testing.T) {
 	}
 
 	// Acceptance is the member's own call. devstack's demo user holds demo.
-	asDemo := runner{env: append(baseEnv(),
-		"OS_AUTH_URL="+openrcValue(c, "OS_AUTH_URL"), "OS_REGION_NAME="+openrcValue(c, "OS_REGION_NAME"),
-		"OS_USERNAME=demo", "OS_PASSWORD="+openrcValue(c, "OS_PASSWORD"), "OS_PROJECT_NAME=demo",
-		"OS_USER_DOMAIN_ID=default", "OS_PROJECT_DOMAIN_ID=default")}
+	asDemo := demoRunner(c)
 	asDemo.ok(t, "image", "member", "set", id, demo, "--accept")
 	if rows := r.list(t, "image", "member", "list", id); !in(rows, "accepted") {
 		t.Errorf("after --accept, member list = %v", rows)

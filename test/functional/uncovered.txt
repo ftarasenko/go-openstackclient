@@ -112,9 +112,6 @@ koc bgpvpn router association unset
 koc bgpvpn set
 koc bgpvpn show
 koc bgpvpn unset
-koc block storage cluster list
-koc block storage cluster set
-koc block storage cluster show
 koc dns limit list
 koc dns pool list
 koc dns pool show
@@ -388,52 +385,6 @@ koc tsigkey delete
 koc tsigkey list
 koc tsigkey set
 koc tsigkey show
-koc volume attachment complete
-koc volume attachment create
-koc volume attachment delete
-koc volume attachment list
-koc volume attachment set
-koc volume attachment show
-koc volume backend capability show
-koc volume backend pool list
-koc volume backup create
-koc volume backup delete
-koc volume backup list
-koc volume backup restore
-koc volume backup set
-koc volume backup show
-koc volume backup unset
-koc volume extend
-koc volume migrate
-koc volume qos associate
-koc volume qos create
-koc volume qos delete
-koc volume qos disassociate
-koc volume qos list
-koc volume qos set
-koc volume qos show
-koc volume qos unset
-koc volume service list
-koc volume service set
-koc volume set
-koc volume snapshot create
-koc volume snapshot delete
-koc volume snapshot list
-koc volume snapshot set
-koc volume snapshot show
-koc volume snapshot unset
-koc volume transfer request accept
-koc volume transfer request create
-koc volume transfer request delete
-koc volume transfer request list
-koc volume transfer request show
-koc volume type create
-koc volume type delete
-koc volume type list
-koc volume type set
-koc volume type show
-koc volume type unset
-koc volume unset
 koc vpn endpoint group create
 koc vpn endpoint group delete
 koc vpn endpoint group list
