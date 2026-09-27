@@ -902,3 +902,31 @@ func TestImageList_NameAndNameContainsAreExclusive(t *testing.T) {
 		t.Errorf("error %q should name the conflicting flags", err.Error())
 	}
 }
+
+// --long prints upstream's column set, in its order.
+func TestRunImageList_LongColumns(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/images", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images": [{"id": "11111111-1111-1111-1111-111111111111", "name": "cirros",
+			"status": "active", "visibility": "public", "protected": false, "disk_format": "qcow2",
+			"container_format": "bare", "size": 13287936, "checksum": "b874c39491a2377b8490f5f1e89761a4",
+			"owner": "proj-a", "tags": ["ft"]}]}`))
+	})
+	o := &output.Options{Format: output.FormatCSV}
+	var buf bytes.Buffer
+	if err := runImageList(context.Background(), imageClient(fakeServer), o, &imageListFlags{long: true}, &buf); err != nil {
+		t.Fatalf("runImageList: %v", err)
+	}
+	header, row, _ := strings.Cut(buf.String(), "\n")
+	want := "ID,Name,Disk Format,Container Format,Size,Checksum,Status,Visibility,Protected,Project,Tags"
+	if header != want {
+		t.Errorf("header = %s\nwant     %s", header, want)
+	}
+	for _, v := range []string{"b874c39491a2377b8490f5f1e89761a4", "proj-a", "ft"} {
+		if !strings.Contains(row, v) {
+			t.Errorf("row %q lacks %q", row, v)
+		}
+	}
+}
