@@ -155,8 +155,9 @@ func TestServerLifecycle(t *testing.T) {
 	r.ok(t, "server", "rebuild", id, "--image", c.Image)
 	settle(t, r, id, "ACTIVE")
 
-	// Resize up and confirm, then up again and revert (devstack allows a resize
-	// to the same host).
+	// Resize up and confirm, then again and revert (devstack allows a resize to
+	// the same host). The second target keeps m1.small's disk: libvirt refuses
+	// to shrink one, and rolls the resize back instead of reaching VERIFY_RESIZE.
 	r.ok(t, "server", "resize", id, "--flavor", "m1.small")
 	settle(t, r, id, "VERIFY_RESIZE")
 	r.ok(t, "server", "resize", id, "--confirm")
@@ -164,10 +165,17 @@ func TestServerLifecycle(t *testing.T) {
 	if f := field(r.show(t, "server", "show", id), "flavor"); !strings.Contains(f, "m1.small") {
 		t.Errorf("flavor after resize --confirm = %q", f)
 	}
-	r.ok(t, "server", "resize", id, "--flavor", "m1.tiny")
+	small := r.show(t, "flavor", "show", "m1.small")
+	flavor := uniq("resize")
+	r.ok(t, "flavor", "create", flavor, "--ram", "256", "--vcpus", "1", "--disk", field(small, "disk"))
+	t.Cleanup(func() { r.run(t, "flavor", "delete", flavor) })
+	r.ok(t, "server", "resize", id, "--flavor", flavor)
 	settle(t, r, id, "VERIFY_RESIZE")
 	r.ok(t, "server", "resize", id, "--revert")
 	settle(t, r, id, "ACTIVE")
+	if f := field(r.show(t, "server", "show", id), "flavor"); !strings.Contains(f, "m1.small") {
+		t.Errorf("flavor after resize --revert = %q, want m1.small back", f)
+	}
 
 	// The resizes are migrations. The per-server migration views and actions
 	// only apply to a live migration in progress, which one node never has.

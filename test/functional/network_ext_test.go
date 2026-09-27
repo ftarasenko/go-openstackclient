@@ -69,7 +69,13 @@ func TestNetworkAgents(t *testing.T) {
 			t.Fatalf("ML2/OVS with no DHCP (%q) or L3 (%q) agent: %v", dhcp, l3, agents)
 		}
 		r.ok(t, "network", "agent", "remove", "network", "--dhcp", dhcp, f.net)
-		r.ok(t, "network", "agent", "add", "network", "--dhcp", dhcp, f.net)
+		// neutron's auto-scheduler (network_auto_schedule) may host the network
+		// on the agent again before the add arrives; that refusal is the same
+		// end state, which the listing below checks.
+		if res := r.run(t, "network", "agent", "add", "network", "--dhcp", dhcp, f.net); res.code != 0 &&
+			!strings.Contains(res.stderr, "NetworkHostedByDHCPAgent") {
+			t.Errorf("network agent add network: exit %d: %s", res.code, res.stderr)
+		}
 		if rows := r.list(t, "network", "agent", "list", "--network", f.net); !in(rows, dhcp) {
 			t.Errorf("network agent list --network = %v, want %s", rows, dhcp)
 		}
