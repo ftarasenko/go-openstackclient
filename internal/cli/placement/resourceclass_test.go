@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -605,7 +606,7 @@ func TestRunResourceUsageShow_RequestAndOutput(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"usages": {"INSTANCE": {"VCPU": 5, "consumer_count": 1}}}`))
+		_, _ = w.Write([]byte(`{"usages": {"INSTANCE": {"VCPU": 5, "consumer_count": 1}, "MIGRATION": {"VCPU": 2, "consumer_count": 1}}}`))
 	})
 
 	client := placementClient(fakeServer, "latest")
@@ -620,11 +621,41 @@ func TestRunResourceUsageShow_RequestAndOutput(t *testing.T) {
 	if !strings.Contains(gotQuery, "user_id="+userID) {
 		t.Errorf("query %q missing user_id", gotQuery)
 	}
+	// 1.38 groups usages by consumer type; the view is per class, summed.
 	out := buf.String()
-	for _, want := range []string{"INSTANCE", "VCPU"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q\n---\n%s", want, out)
+	if !strings.Contains(out, "VCPU") || !strings.Contains(out, "7") {
+		t.Errorf("output lacks VCPU's total of 7\n---\n%s", out)
+	}
+	for _, leaked := range []string{"INSTANCE", "MIGRATION", "consumer_count"} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("output shows the consumer grouping (%q) as a class\n---\n%s", leaked, out)
 		}
+	}
+}
+
+// Below 1.38 each value is a class's usage.
+func TestUsageByClass_BothShapes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want map[string]int
+	}{
+		"pre-1.38": {`{"VCPU": 3, "MEMORY_MB": 512}`, map[string]int{"VCPU": 3, "MEMORY_MB": 512}},
+		"1.38 grouped": {`{"INSTANCE": {"VCPU": 3, "consumer_count": 2}, "unknown": {"VCPU": 1, "DISK_GB": 4, "consumer_count": 1}}`,
+			map[string]int{"VCPU": 4, "DISK_GB": 4}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var in map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.body), &in); err != nil {
+				t.Fatal(err)
+			}
+			got, err := usageByClass(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("usageByClass = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

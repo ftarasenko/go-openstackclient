@@ -2,6 +2,7 @@ package placement
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -921,16 +922,49 @@ func newResourceUsageCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runResourceUsageShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	projectID, userID string, w io.Writer,
 ) error {
-	got, err := usages.Get(ctx, client, usages.GetOpts{ProjectID: projectID, UserID: userID}).Extract()
+	var raw struct {
+		Usages map[string]json.RawMessage `json:"usages"`
+	}
+	if err := usages.Get(ctx, client, usages.GetOpts{ProjectID: projectID, UserID: userID}).ExtractInto(&raw); err != nil {
+		return fmt.Errorf("showing resource usage for project %s: %w", projectID, err)
+	}
+	perClass, err := usageByClass(raw.Usages)
 	if err != nil {
 		return fmt.Errorf("showing resource usage for project %s: %w", projectID, err)
 	}
 	t := output.Table{Columns: []string{colResourceClass, "Usage"}}
-	for class, used := range got.Usages {
+	for class, used := range perClass {
 		t.Rows = append(t.Rows, []any{class, used})
 	}
 	sortRowsByFirstColumn(t.Rows)
 	return o.WriteList(w, t)
+}
+
+// usageByClass folds /usages into one total per resource class, the view
+// upstream prints. Before placement 1.38 each value is a class's usage; from
+// 1.38 the classes sit one level down, under each consumer type (INSTANCE,
+// MIGRATION, unknown) beside a consumer_count, so the totals are summed across
+// the types. koc negotiates the latest microversion, so it meets the grouped
+// shape on every supported cloud; upstream defaults to 1.0 and does not.
+func usageByClass(in map[string]json.RawMessage) (map[string]int, error) {
+	out := map[string]int{}
+	for key, v := range in {
+		var n int
+		if err := json.Unmarshal(v, &n); err == nil {
+			out[key] += n
+			continue
+		}
+		var byType map[string]int
+		if err := json.Unmarshal(v, &byType); err != nil {
+			return nil, fmt.Errorf("parsing usages for %q: %w", key, err)
+		}
+		for class, used := range byType {
+			if class != "consumer_count" {
+				out[class] += used
+			}
+		}
+	}
+	return out, nil
 }
 
 // --- trait create / delete / show -------------------------------------------
