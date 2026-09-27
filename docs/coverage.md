@@ -464,7 +464,7 @@ never grew:
   extra call per action. Upstream's only route to the same answer is a
   `server event show` per row.
 
-Two **column sets** deviate. The first: `koc volume backend pool list` shows
+Four **column sets** deviate. The first: `koc volume backend pool list` shows
 `Backend State` and the capacity figures by default, where upstream shows the
 pool `Name` alone and puts everything else behind `--long`. A list of pool
 names cannot answer "does this pool have room", which is the only reason to run
@@ -489,6 +489,16 @@ in both listings matches upstream, `Cluster` (cinder 3.7) and `Backend State`
 (3.49) included: like upstream's, those are gated on the negotiated
 microversion rather than on `--long`, since below it cinder does not report the
 field at all.
+
+The third: `koc availability zone list` shows **Zone Resource** without
+`--long` too, and fills it for nova's and cinder's zones (`compute`, `volume`)
+where upstream leaves it blank and only neutron's say `network`/`router`. The
+merged listing names one zone once per service, and the column is what tells
+those rows apart. Rows, states and `--long`'s host/service breakdown match
+upstream.
+
+The fourth: `koc hypervisor list` appends nova's **Status** (enabled/disabled)
+after upstream's five columns, which say only whether the service is up.
 
 `koc block storage cluster set` deviates in **one edge case**: it requires
 `--enable` or `--disable`. Upstream's parser defaults the enable/disable pair to

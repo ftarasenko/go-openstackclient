@@ -50,38 +50,78 @@ func TestNetworkAvailabilityZones_ReportsNeutronsOwnResource(t *testing.T) {
 	th.AssertEquals(t, "unavailable", zones[1].state)
 }
 
-func TestComputeAvailabilityZones_LongSelectsTheDetailEndpoint(t *testing.T) {
+// Like upstream, the detail listing is always asked for first (it is the one
+// that shows nova's internal zone), and a policy refusal falls back to the
+// plain one a regular user may read.
+func TestComputeAvailabilityZones_DetailThenPlain(t *testing.T) {
 	for _, tc := range []struct {
-		long bool
-		path string
+		detailCode int
+		wantPaths  string
 	}{
-		{false, "/os-availability-zone"},
-		{true, "/os-availability-zone/detail"},
+		{http.StatusOK, "/os-availability-zone/detail"},
+		{http.StatusForbidden, "/os-availability-zone/detail /os-availability-zone"},
 	} {
 		fakeServer := th.SetupHTTP()
-
-		var gotPath string
-		handler := func(w http.ResponseWriter, r *http.Request) {
-			gotPath = r.URL.Path
+		var paths []string
+		fakeServer.Mux.HandleFunc("/os-availability-zone/detail", func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
+			if tc.detailCode != http.StatusOK {
+				w.WriteHeader(tc.detailCode)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"availabilityZoneInfo": [
+			  {"zoneName": "internal", "zoneState": {"available": true}, "hosts": {}},
+			  {"zoneName": "nova", "zoneState": {"available": true}, "hosts": {}}
+			]}`))
+		})
+		fakeServer.Mux.HandleFunc("/os-availability-zone", func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"availabilityZoneInfo": [
 			  {"zoneName": "nova", "zoneState": {"available": true}, "hosts": null}
 			]}`))
-		}
-		fakeServer.Mux.HandleFunc("/os-availability-zone", handler)
-		fakeServer.Mux.HandleFunc("/os-availability-zone/detail", handler)
+		})
 
-		zones, err := computeAvailabilityZones(context.Background(), serviceClient(fakeServer, "compute", "latest"), tc.long)
+		zones, err := computeAvailabilityZones(context.Background(), serviceClient(fakeServer, "compute", "latest"), false)
 		if err != nil {
-			t.Fatalf("computeAvailabilityZones(long=%v) returned error: %v", tc.long, err)
+			t.Fatalf("computeAvailabilityZones (detail %d): %v", tc.detailCode, err)
 		}
-		// The detail endpoint is admin-only, so --long must not be the default.
-		th.AssertEquals(t, tc.path, gotPath)
-		th.AssertEquals(t, 1, len(zones))
-		th.AssertEquals(t, "available", zones[0].state)
+		th.AssertEquals(t, tc.wantPaths, strings.Join(paths, " "))
+		th.AssertEquals(t, "nova", zones[len(zones)-1].name)
 		th.AssertEquals(t, "compute", zones[0].resource)
 		fakeServer.Teardown()
 	}
+}
+
+// --long gives one row per host service, as upstream does, sorted so the
+// output is stable; a zone with no hosts keeps one row.
+func TestRunAvailabilityZoneList_LongHostRows(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/os-availability-zone/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"availabilityZoneInfo": [
+		  {"zoneName": "internal", "zoneState": {"available": true}, "hosts": {"ctl-1": {
+		    "nova-scheduler": {"active": true, "available": true, "updated_at": "2026-09-27T17:13:13.000000"},
+		    "nova-conductor": {"active": false, "available": false, "updated_at": "2026-09-27T17:13:14.000000"}}}},
+		  {"zoneName": "spare", "zoneState": {"available": false}, "hosts": null}
+		]}`))
+	})
+	sc := serviceClient(fakeServer, "compute", "latest")
+	zones, err := computeAvailabilityZones(context.Background(), sc, true)
+	if err != nil {
+		t.Fatalf("computeAvailabilityZones: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writeAvailabilityZones(&output.Options{Format: output.FormatCSV}, zones, true, &buf); err != nil {
+		t.Fatalf("writeAvailabilityZones: %v", err)
+	}
+	want := "Zone Name,Zone Status,Zone Resource,Host Name,Service Name,Service Status\n" +
+		"internal,available,compute,ctl-1,nova-conductor,disabled XXX 2026-09-27T17:13:14.000000\n" +
+		"internal,available,compute,ctl-1,nova-scheduler,enabled :-) 2026-09-27T17:13:13.000000\n" +
+		"spare,not available,compute,,,\n"
+	th.AssertEquals(t, want, buf.String())
 }
 
 func TestZoneState(t *testing.T) {

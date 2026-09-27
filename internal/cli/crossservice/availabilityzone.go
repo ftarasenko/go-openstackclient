@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"net/http"
+	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
 	volumeaz "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/availabilityzones"
@@ -56,11 +59,15 @@ func newAvailabilityZoneListCommand(a *auth.Options, o *output.Options) *cobra.C
 }
 
 // availabilityZone is the merged row: a zone name can appear in more than one
-// service, and the Zone Resource column is what distinguishes them.
+// service, and the Zone Resource column is what distinguishes them. The host
+// fields are set only for a compute zone listed with --long, one row per host
+// service, as upstream does.
 type availabilityZone struct {
 	name     string
 	resource string
 	state    string
+
+	host, service, serviceStatus string
 }
 
 func runAvailabilityZoneList(ctx context.Context, client *auth.Client, o *output.Options,
@@ -104,25 +111,35 @@ func runAvailabilityZoneList(ctx context.Context, client *auth.Client, o *output
 		zones = append(zones, got...)
 	}
 
-	t := output.Table{
-		Columns: []string{"Zone Name", "Zone Status", "Zone Resource"},
-		Rows:    make([][]any, 0, len(zones)),
+	return writeAvailabilityZones(o, zones, f.long, w)
+}
+
+// writeAvailabilityZones renders upstream's columns; koc also keeps Zone
+// Resource without --long, and names it for nova's and cinder's zones too.
+func writeAvailabilityZones(o *output.Options, zones []availabilityZone, long bool, w io.Writer) error {
+	cols := []string{"Zone Name", "Zone Status", "Zone Resource"}
+	if long {
+		cols = append(cols, "Host Name", "Service Name", "Service Status")
 	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(zones))}
 	for _, z := range zones {
-		t.Rows = append(t.Rows, []any{z.name, z.state, z.resource})
+		row := []any{z.name, z.state, z.resource}
+		if long {
+			row = append(row, z.host, z.service, z.serviceStatus)
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }
 
-func computeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient, detail bool) ([]availabilityZone, error) {
-	// The detail endpoint is admin-only and adds the host breakdown; the plain
-	// one is what a regular user can read, so --long selects between them
-	// rather than always paying for the admin call.
-	pager := computeaz.List(sc)
-	if detail {
-		pager = computeaz.ListDetail(sc)
+func computeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient, long bool) ([]availabilityZone, error) {
+	// Like upstream, ask for the detail listing — the one that shows nova's
+	// internal zone and the hosts --long breaks out — and fall back to the
+	// plain one when policy keeps it from this user.
+	pages, err := computeaz.ListDetail(sc).AllPages(ctx)
+	if gophercloud.ResponseCodeIs(err, http.StatusForbidden) {
+		pages, err = computeaz.List(sc).AllPages(ctx)
 	}
-	pages, err := pager.AllPages(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing compute availability zones: %w", err)
 	}
@@ -132,13 +149,33 @@ func computeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient
 	}
 	out := make([]availabilityZone, 0, len(list))
 	for _, z := range list {
-		out = append(out, availabilityZone{
-			name:     z.ZoneName,
-			resource: "compute",
-			state:    zoneState(z.ZoneState.Available),
-		})
+		zone := availabilityZone{name: z.ZoneName, resource: "compute", state: zoneState(z.ZoneState.Available)}
+		if !long || len(z.Hosts) == 0 {
+			out = append(out, zone)
+			continue
+		}
+		for _, host := range slices.Sorted(maps.Keys(z.Hosts)) {
+			svcs := z.Hosts[host]
+			for _, svc := range slices.Sorted(maps.Keys(svcs)) {
+				row := zone
+				row.host, row.service, row.serviceStatus = host, svc, serviceStatus(svcs[svc])
+				out = append(out, row)
+			}
+		}
 	}
 	return out, nil
+}
+
+// serviceStatus is upstream's "enabled :-) <updated_at>" cell.
+func serviceStatus(s computeaz.ServiceState) string {
+	enabled, alive := "disabled", "XXX"
+	if s.Active {
+		enabled = "enabled"
+	}
+	if s.Available {
+		alive = ":-)"
+	}
+	return fmt.Sprintf("%s %s %s", enabled, alive, s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000000"))
 }
 
 func volumeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient) ([]availabilityZone, error) {
