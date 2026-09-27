@@ -453,11 +453,10 @@ func waitForServerDeleted(ctx context.Context, client *gophercloud.ServiceClient
 		case err != nil:
 			return err
 		}
+		// A DELETED status is not the 404 yet: nova can show the record for a
+		// moment before the server is gone.
 		last = s.Status
-		switch s.Status {
-		case "DELETED":
-			return nil
-		case "SOFT_DELETED":
+		if s.Status == "SOFT_DELETED" {
 			return errors.New("server is SOFT_DELETED: nova defers the real delete until its reclaim " +
 				"interval lapses; use --force to delete it now")
 		}

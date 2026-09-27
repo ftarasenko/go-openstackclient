@@ -498,6 +498,39 @@ func TestRunServerDelete_WaitPollsUntilGone(t *testing.T) {
 	}
 }
 
+// nova can still show a deleted server as DELETED for a moment; --wait holds
+// out for the 404, as upstream's wait_for_delete does, since only that says
+// the server's ports and volumes are released.
+func TestRunServerDelete_WaitPastDeletedStatus(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	defer func(prev time.Duration) { statusPollInterval = prev }(statusPollInterval)
+	statusPollInterval = time.Millisecond
+
+	gets := 0
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if gets++; gets <= 2 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"server":{"id":%q,"status":"DELETED"}}`, serverUUID)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	var buf bytes.Buffer
+	f := &serverDeleteFlags{wait: true, waitTimeout: time.Second}
+	if err := runServerDelete(context.Background(), computeClient(fakeServer, "2.79"), []string{serverUUID}, f, &buf); err != nil {
+		t.Fatalf("runServerDelete --wait: %v", err)
+	}
+	if gets != 3 {
+		t.Errorf("GETs = %d, want 3 (two DELETED, then 404)", gets)
+	}
+}
+
 // A soft delete never reaches 404 inside any sensible timeout, so --wait says
 // so immediately instead of spinning out --wait-timeout.
 func TestRunServerDelete_WaitFailsFastOnSoftDelete(t *testing.T) {
