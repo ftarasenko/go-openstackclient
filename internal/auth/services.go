@@ -92,6 +92,59 @@ func (o *Options) NewServiceSession(ctx context.Context,
 // client.Type (ironic → X-OpenStack-Ironic-API-Version; nova/cinder/placement →
 // OpenStack-API-Version).
 
+// The one API major version koc speaks for each microversioned service.
+const (
+	baremetalAPIMajor = 1
+	computeAPIMajor   = 2
+	volumeAPIMajor    = 3
+	placementAPIMajor = 1
+)
+
+// apiMicroversion maps a --os-<service>-api-version value onto the microversion
+// koc sends. Upstream reads a bare major version as "no particular
+// microversion": openrc files routinely export OS_VOLUME_API_VERSION=3 or
+// OS_COMPUTE_API_VERSION=2, and the services reject "volume 3" or "compute 2"
+// on the wire with 400, since a microversion must be "X.Y" or "latest". A bare
+// major therefore means koc's negotiated default, "latest", which is what each
+// upstream client does with it:
+//
+//   - volume, compute: OSC hands the value to openstacksdk as an API version
+//     with no implied microversion, and every request then negotiates the
+//     highest one both sides support (openstack/config/cloud_region.py
+//     _get_version_request, openstack/resource.py _get_microversion). "3" is
+//     also OSC's own volume default.
+//   - placement: osc-placement treats "1" as its negotiate version and asks the
+//     server for the highest (osc_placement/http.py negotiate_api_version).
+//   - baremetal: python-ironicclient documents "1" as "the latest v1 API
+//     version ... identical to 'latest'" (ironicclient/osc/plugin.py).
+//
+// A bare integer naming any other major is an API koc does not speak (cinder
+// v2 was removed before Zed), so it errors here, naming the flag, rather than
+// as an opaque 400 from the service.
+func apiMicroversion(flag string, major int, v string) (string, error) {
+	n, ok := bareMajor(v)
+	if !ok {
+		return v, nil
+	}
+	if n != major {
+		return "", fmt.Errorf("--%s %s: koc speaks only the v%d API; use %d, %d.N or latest", flag, v, major, major, major)
+	}
+	return "latest", nil
+}
+
+// isMajorOnly reports whether v is a bare major version, which apiMicroversion
+// resolves to koc's negotiated default.
+func isMajorOnly(v string, major int) bool {
+	n, ok := bareMajor(v)
+	return ok && n == major
+}
+
+// bareMajor parses v as a bare integer major version ("3", not "3.0").
+func bareMajor(v string) (int, bool) {
+	n, err := strconv.Atoi(v)
+	return n, err == nil
+}
+
 // defaultPlacementMicroversion negotiates the latest placement microversion the
 // endpoint supports. Placement accepts the literal "latest".
 const defaultPlacementMicroversion = "latest"
@@ -101,7 +154,11 @@ const defaultPlacementMicroversion = "latest"
 // secret rather than a Keystone-catalog endpoint.
 func (c *Client) Baremetal() (*gophercloud.ServiceClient, error) {
 	if c.ironic != nil {
-		sc, err := c.ironic.baremetalClient(c.opts.BaremetalAPIVersion)
+		mv, err := apiMicroversion("os-baremetal-api-version", baremetalAPIMajor, c.opts.BaremetalAPIVersion)
+		if err != nil {
+			return nil, err
+		}
+		sc, err := c.ironic.baremetalClient(mv)
 		if err != nil {
 			return nil, wrapService("baremetal", err)
 		}
@@ -111,7 +168,9 @@ func (c *Client) Baremetal() (*gophercloud.ServiceClient, error) {
 	if err != nil {
 		return nil, wrapService("baremetal", err)
 	}
-	sc.Microversion = c.opts.BaremetalAPIVersion
+	if sc.Microversion, err = apiMicroversion("os-baremetal-api-version", baremetalAPIMajor, c.opts.BaremetalAPIVersion); err != nil {
+		return nil, err
+	}
 	return sc, nil
 }
 
@@ -149,7 +208,9 @@ func (c *Client) Compute() (*gophercloud.ServiceClient, error) {
 	if err != nil {
 		return nil, wrapService("compute", err)
 	}
-	sc.Microversion = c.opts.ComputeAPIVersion
+	if sc.Microversion, err = apiMicroversion("os-compute-api-version", computeAPIMajor, c.opts.ComputeAPIVersion); err != nil {
+		return nil, err
+	}
 	return sc, nil
 }
 
@@ -174,23 +235,10 @@ func (c *Client) Volume() (*gophercloud.ServiceClient, error) {
 	if err != nil {
 		return nil, wrapService("volume", err)
 	}
-	sc.Microversion = volumeMicroversion(c.opts.VolumeAPIVersion)
-	return sc, nil
-}
-
-// volumeMicroversion maps --os-volume-api-version / OS_VOLUME_API_VERSION onto
-// the value sent in OpenStack-API-Version. Upstream OSC reads that setting as an
-// API *major* version, and openrc files routinely export
-// OS_VOLUME_API_VERSION=3; cinder answers a bare "volume 3" with 400, since a
-// microversion must be "X.Y" or "latest". A major-only value therefore means
-// that major's baseline, "3" → "3.0", which is what python-cinderclient's
-// get_api_version does with it (it then sends no header at all, and cinder's
-// default for a headerless request is the same 3.0).
-func volumeMicroversion(v string) string {
-	if n, err := strconv.Atoi(v); err == nil && n > 0 {
-		return strconv.Itoa(n) + ".0"
+	if sc.Microversion, err = apiMicroversion("os-volume-api-version", volumeAPIMajor, c.opts.VolumeAPIVersion); err != nil {
+		return nil, err
 	}
-	return v
+	return sc, nil
 }
 
 // DNS returns a designate (dns v2) service client.
@@ -239,7 +287,9 @@ func (c *Client) Placement() (*gophercloud.ServiceClient, error) {
 	if err != nil {
 		return nil, wrapService("placement", err)
 	}
-	sc.Microversion = c.opts.PlacementAPIVersion
+	if sc.Microversion, err = apiMicroversion("os-placement-api-version", placementAPIMajor, c.opts.PlacementAPIVersion); err != nil {
+		return nil, err
+	}
 	return sc, nil
 }
 

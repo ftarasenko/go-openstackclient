@@ -205,6 +205,11 @@ func (o *Options) markForced(flag string) {
 // answers the request. An operator who named a microversion gets exactly that
 // one.
 func (o *Options) ComputeAPIVersionPinnable() bool {
+	// A bare major version ("2", however it was supplied) names no
+	// microversion and resolves to the default — see apiMicroversion.
+	if isMajorOnly(o.ComputeAPIVersion, computeAPIMajor) {
+		return true
+	}
 	if o.explicitlySet("os-compute-api-version") {
 		return false
 	}
@@ -311,13 +316,13 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"whole-exchange HTTP timeout, e.g. 90s; 0 (the default) leaves transfers unbounded — a wedged endpoint is caught by the 60s response-header timeout either way (env OS_TIMEOUT)")
 
 	fs.StringVar(&o.BaremetalAPIVersion, "os-baremetal-api-version", envOr("OS_BAREMETAL_API_VERSION", defaultBaremetalMicroversion),
-		"baremetal (ironic) API microversion (env OS_BAREMETAL_API_VERSION)")
+		"baremetal (ironic) API microversion; a bare major version such as 1 means latest (env OS_BAREMETAL_API_VERSION)")
 	fs.StringVar(&o.ComputeAPIVersion, "os-compute-api-version", envOr("OS_COMPUTE_API_VERSION", defaultComputeMicroversion),
-		"compute (nova) API microversion (env OS_COMPUTE_API_VERSION)")
+		"compute (nova) API microversion; a bare major version such as 2 means latest (env OS_COMPUTE_API_VERSION)")
 	fs.StringVar(&o.VolumeAPIVersion, "os-volume-api-version", envOr("OS_VOLUME_API_VERSION", defaultVolumeMicroversion),
-		"volume (cinder) API microversion; a bare major version such as 3 means 3.0 (env OS_VOLUME_API_VERSION)")
+		"volume (cinder) API microversion; a bare major version such as 3 means latest (env OS_VOLUME_API_VERSION)")
 	fs.StringVar(&o.PlacementAPIVersion, "os-placement-api-version", envOr("OS_PLACEMENT_API_VERSION", defaultPlacementMicroversion),
-		"placement API microversion (env OS_PLACEMENT_API_VERSION)")
+		"placement API microversion; a bare major version such as 1 means latest (env OS_PLACEMENT_API_VERSION)")
 
 	fs.StringVar(&o.KeyVRMEndpoint, "keyvrm-endpoint", os.Getenv("OS_KEYVRM_ENDPOINT_OVERRIDE"),
 		"override the KeyVRM endpoint instead of catalog discovery (env OS_KEYVRM_ENDPOINT_OVERRIDE)")
