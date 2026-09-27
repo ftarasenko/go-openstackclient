@@ -27,4 +27,9 @@ func TestQuota(t *testing.T) {
 	if d := r.show(t, "quota", "show", "--default", "--compute"); field(d, "cores") == "" || field(d, "cores") == "7" {
 		t.Errorf("quota show --default --compute = %v, want the default, not the project's 7", d)
 	}
+	// neutron serves defaults too, so a bare --default covers all three services.
+	if d := r.show(t, "quota", "show", id, "--default"); anyField(d, "network", "networks") == "" ||
+		anyField(d, "network", "networks") == "13" || field(d, "gigabytes") == "" {
+		t.Errorf("quota show --default = %v, want every service's defaults", d)
+	}
 }

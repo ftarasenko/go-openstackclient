@@ -173,6 +173,35 @@ func TestRunQuotaShow_DefaultUsesDefaultsEndpoints(t *testing.T) {
 	}
 }
 
+// Neutron serves its defaults at /quotas/<project>/default; --default covers
+// network quotas like the other two.
+func TestRunQuotaShow_DefaultIncludesNetwork(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotPath string
+	fakeServer.Mux.HandleFunc("/quotas/p1/default", func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		th.TestMethod(t, r, http.MethodGet)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(networkQuotaBody))
+	})
+
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	sel := serviceSelection{network: true}.resolved()
+	err := runQuotaShow(context.Background(), oneServerSession(fakeServer), o, "p1", true, sel, &buf)
+	if err != nil {
+		t.Fatalf("runQuotaShow --default --network error: %v", err)
+	}
+	if gotPath != "/quotas/p1/default" {
+		t.Errorf("path = %q, want /quotas/p1/default", gotPath)
+	}
+	if !strings.Contains(buf.String(), `"networks": 25`) {
+		t.Errorf("default network quotas missing from output\n---\n%s", buf.String())
+	}
+}
+
 // setFlagSet builds the quota set flag surface and parses args against it, the
 // same way the cobra command does.
 func setFlagSet(t *testing.T, args []string) (*quotaSetFlags, *pflag.FlagSet) {

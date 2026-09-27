@@ -32,17 +32,6 @@ func newQuotaShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			sel := f.services.resolved()
-			if f.useDefault && sel.network && !f.services.network {
-				// Neutron has no quota-defaults endpoint, so a bare
-				// "--default" quietly means compute+volume only. Say so rather
-				// than printing a view that silently omits network rows.
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
-					"note: neutron exposes no quota defaults; --default covers compute and volume only")
-				sel.network = false
-			}
-			if f.useDefault && f.services.network {
-				return fmt.Errorf("--default is not available for network quotas: neutron has no quota-defaults endpoint")
-			}
 			ctx := cmd.Context()
 			s, err := newSession(ctx, a)
 			if err != nil {
@@ -100,9 +89,9 @@ func runQuotaShow(ctx context.Context, s *session, o *output.Options, project st
 		if err != nil {
 			return err
 		}
-		q, err := extract.One(networkquotas.Get(ctx, client, project).Extract())
+		q, err := getNetworkQuota(ctx, client, project, useDefault)
 		if err != nil {
-			return fmt.Errorf("showing network quotas for project %q: %w", project, err)
+			return err
 		}
 		f, v := networkQuotaFields(q)
 		fields, values = append(fields, f...), append(values, v...)
@@ -146,6 +135,29 @@ func getVolumeQuota(ctx context.Context, client *gophercloud.ServiceClient, proj
 		return nil, fmt.Errorf("showing %s for project %q: %w", what, project, err)
 	}
 	return qs, nil
+}
+
+func getNetworkQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*networkquotas.Quota, error) {
+	if !useDefault {
+		q, err := extract.One(networkquotas.Get(ctx, client, project).Extract())
+		if err != nil {
+			return nil, fmt.Errorf("showing network quotas for project %q: %w", project, err)
+		}
+		return q, nil
+	}
+	// gophercloud has no call for neutron's quotas/{project}/default either, so
+	// it is fetched raw, like the compute defaults above.
+	var body struct {
+		Quota networkquotas.Quota `json:"quota"`
+	}
+	resp, err := client.Get(ctx, client.ServiceURL("quotas", project, "default"), &body, nil)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+		return nil, fmt.Errorf("showing default network quotas for project %q: %w", project, err)
+	}
+	return &body.Quota, nil
 }
 
 // computeQuotaFields omits injected_files, injected_file_content_bytes and
