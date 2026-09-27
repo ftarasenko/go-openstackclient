@@ -294,6 +294,25 @@ and caracal as designed).
   mixes `unmaintained/zed` and `zed-eol` in one deployment.
 - **Ubuntu per series** (jammy for zed/2024.1, noble after): held.
 
+### On GitHub-hosted runners (nightly workflow)
+
+The first run of `.github/workflows/functional.yml` (run `36314099437`, on
+`71762d6`, 2026-09-27) passed all four cells on the first attempt with `up.sh`
+**unchanged** — no `--gha`-only fix was needed beyond the workarounds already
+in the script. Hosted runners are 4 vCPU / 16 GB with `/dev/kvm` opened by the
+workflow's udev rule; `kvm` was `true` in every `bringup.json`.
+
+| Cell | Runner | `stack_seconds` | RAM peak MB | Disk MB | Server boot | smoke FAIL / WARN | Job wall time |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Z zed | ubuntu-22.04 | 727 | 5846 | 4114 | 11 s | 0 / 1 (tap-mirror) | 870 s |
+| C caracal | ubuntu-22.04 | 430 | 5554 | 3944 | 9 s | 0 / 1 (tap-mirror) | 553 s |
+| E epoxy | ubuntu-24.04 | 698 | 6065 | 4036 | 18 s | 0 / 0 | 836 s |
+| L latest | ubuntu-24.04 | 706 | 7264 | 3942 | 13 s | 0 / 0 | 842 s |
+
+Runners stack faster than the verification VMs (7–12 minutes against 17–18)
+and use a third less disk, so the workflow's 60-minute job and 40-minute
+stack timeouts leave ample room. Peak RAM matches the VMs (≤ 7.3 GB of 16).
+
 ### koc gaps found (not devstack's)
 
 - `OS_VOLUME_API_VERSION=3` (devstack's openrc) is sent verbatim as the cinder
