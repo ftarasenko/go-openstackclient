@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
@@ -58,6 +60,79 @@ type SecGroupSharedAttr struct {
 type secGroupExt struct {
 	groups.SecGroup
 	SecGroupSharedAttr
+
+	// rawRules are the rules as neutron sent them, decoded by extractSecGroup:
+	// upstream renders every key a rule carries, including ones gophercloud's
+	// rule type lacks. Empty for a group read from a listing.
+	rawRules []map[string]any
+}
+
+// extractSecGroup decodes a get, create or update result, rules included.
+func extractSecGroup(r interface{ ExtractIntoStructPtr(any, string) error }) (*secGroupExt, error) {
+	var g secGroupExt
+	if err := r.ExtractIntoStructPtr(&g, secGroupKey); err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Rules []map[string]any `json:"security_group_rules"`
+	}
+	if err := r.ExtractIntoStructPtr(&raw, secGroupKey); err != nil {
+		return nil, err
+	}
+	g.rawRules = raw.Rules
+	return &g, nil
+}
+
+// formatSecGroupRules is upstream's rules cell: one key='value' line per rule,
+// keys sorted, empty values dropped, and the IDs the group itself already
+// names (its own and its project's) left out.
+func formatSecGroupRules(rules []map[string]any) string {
+	lines := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		keys := make([]string, 0, len(rule))
+		for k, v := range rule {
+			switch k {
+			case "security_group_id", "project_id", "tenant_id":
+				continue
+			}
+			if !emptyRuleValue(v) {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		pairs := make([]string, 0, len(keys))
+		for _, k := range keys {
+			pairs = append(pairs, fmt.Sprintf("%s='%s'", k, ruleValue(rule[k])))
+		}
+		lines = append(lines, strings.Join(pairs, ", "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// emptyRuleValue is Python's falsiness, which upstream's formatter filters on.
+func emptyRuleValue(v any) bool {
+	switch v := v.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case bool:
+		return !v
+	case float64:
+		return v == 0
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
+}
+
+func ruleValue(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
 }
 
 // secGroupKey is the envelope of a single security group in neutron's
@@ -65,26 +140,21 @@ type secGroupExt struct {
 // label is passed to ExtractIntoStructPtr directly.
 const secGroupKey = "security_group"
 
-// secGroupShowFields renders upstream's show columns except `rules`, which koc
-// lists with "security group rule list <group>" instead.
+// secGroupShowFields renders upstream's show columns.
 func secGroupShowFields(g *secGroupExt) ([]string, []any) {
 	fields := []string{
-		"id", "name", "description", "stateful", "shared", "project_id", "tags",
+		"id", "name", "description", "stateful", "shared", "project_id", "rules", "tags",
 		"revision_number", "created_at", "updated_at",
 	}
 	values := []any{
-		g.ID, g.Name, g.Description, g.Stateful, derefOrNil(g.Shared), g.ProjectID, g.Tags,
-		g.RevisionNumber, g.CreatedAt, g.UpdatedAt,
+		g.ID, g.Name, g.Description, g.Stateful, derefOrNil(g.Shared), g.ProjectID,
+		formatSecGroupRules(g.rawRules), g.Tags, g.RevisionNumber, g.CreatedAt, g.UpdatedAt,
 	}
 	return fields, values
 }
 
 func getSecGroup(ctx context.Context, client *gophercloud.ServiceClient, id string) (*secGroupExt, error) {
-	var g secGroupExt
-	if err := groups.Get(ctx, client, id).ExtractIntoStructPtr(&g, secGroupKey); err != nil {
-		return nil, err
-	}
-	return &g, nil
+	return extractSecGroup(groups.Get(ctx, client, id))
 }
 
 // secGroupListFlags holds the filters accepted by "security group list".
@@ -295,14 +365,14 @@ func runSecurityGroupCreate(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	var g secGroupExt
-	if err := groups.Create(ctx, client, withSecGroupCreateAttrs(opts, extra)).ExtractIntoStructPtr(&g, secGroupKey); err != nil {
+	g, err := extractSecGroup(groups.Create(ctx, client, withSecGroupCreateAttrs(opts, extra)))
+	if err != nil {
 		return fmt.Errorf("creating security group: %w", err)
 	}
 	if g.Tags, err = applyTagsForSet(ctx, client, tagResourceSecurityGroups, g.ID, g.Tags, &f.tagWriteFlags); err != nil {
 		return err
 	}
-	fields, values := secGroupShowFields(&g)
+	fields, values := secGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -402,8 +472,7 @@ func runSecurityGroupSet(ctx context.Context, client *gophercloud.ServiceClient,
 	}
 	var g *secGroupExt
 	if changed {
-		g = &secGroupExt{}
-		if err := groups.Update(ctx, client, id, withSecGroupUpdateAttrs(opts, extra)).ExtractIntoStructPtr(g, secGroupKey); err != nil {
+		if g, err = extractSecGroup(groups.Update(ctx, client, id, withSecGroupUpdateAttrs(opts, extra))); err != nil {
 			return fmt.Errorf("updating security group %s: %w", nameOrID, err)
 		}
 	} else if g, err = getSecGroup(ctx, client, id); err != nil {
