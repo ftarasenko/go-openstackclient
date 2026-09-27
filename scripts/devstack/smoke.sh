@@ -128,7 +128,9 @@ except urllib.error.HTTPError as e:
 PY
 }
 if has_feature core; then
-    for t in compute image volumev3 placement object-store; do check "catalog: $t" catalog_has "$t"; done
+    # block-storage, not volumev3: devstack registers only block-storage from
+    # 2025.1 (both before).
+    for t in compute image block-storage placement object-store; do check "catalog: $t" catalog_has "$t"; done
     check "cinder scheduler, volume and backup up" volume_services_up
     check "server boots to ACTIVE" boot_server
     openstack server delete --wait ft-smoke >/dev/null 2>&1
