@@ -25,8 +25,9 @@ script's default):
 | E | `epoxy` | `stable/2025.1` — **becomes `unmaintained/2025.1` on 2026-10-02** | 24.04 | If you run after the rename, the script must follow it with no edit; that is part of the test |
 | L | `latest` | the newest `stable/*` devstack branch (2026.2, released 2026-09-30) | 24.04 | — |
 
-What "all-in-one" contains, and why ML2/OVS instead of devstack's default OVN,
-is in the header of `scripts/devstack/up.sh`. Read it before changing anything.
+What "all-in-one" contains, and why the neutron backend is ML2/OVS through
+2024.1 and ML2/OVN from 2025.1, is in the header of `scripts/devstack/up.sh`.
+Read it before changing anything.
 
 Out of scope for now: ironic, octavia (deliberately skipped), KeyVRM,
 `--creds-from-ns`.
@@ -189,15 +190,16 @@ Plus:
 Run 2026-09-27 on nested-KVM VMs (qemu user-mode networking, 4 vCPU / 16 GB /
 40 GB, Ubuntu cloud images fully updated) on one host, with direct egress to
 GitHub and PyPI — **no mirror or proxy**. Every cell below passed on a fresh VM
-with `up.sh` as of `dd81368` (the last `up.sh` change) and `smoke.sh` as of
-`2eab854`.
+with `smoke.sh` as of `2eab854`: zed and caracal with `up.sh` as of `dd81368`,
+epoxy and latest with `8d798a1`, which moved them to ML2/OVN (zed and caracal
+render the same `local.conf` under `8d798a1` as in their verified runs).
 
-| Cell | Attempts | `stack_seconds` | RAM peak MB | Disk MB | kvm | smoke FAIL / WARN | Fixes (commit) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Z zed | 5 | 1084 | 5633 | 6029 | true | 0 / 1 (tap-mirror) | `eb9026f` `6b09af2` `a938406` `c9acee7` `f82e83a` |
-| C caracal | 5 | 1008 ¹ | 5560 | 5857 | true | 0 / 1 (tap-mirror) | `eb9026f` `6b09af2` `2f44087` `a938406` `c9acee7` `f82e83a` `dd81368` |
-| E epoxy | 1 ² | 913 | 6332 | 6230 | true | 0 / 0 | `2eab854` |
-| L latest | 1 ² | 903 | 7253 | 6123 | true | 0 / 0 | `2eab854` |
+| Cell | Backend | Attempts | `stack_seconds` | RAM peak MB | Disk MB | kvm | smoke FAIL / WARN | Fixes (commit) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Z zed | ML2/OVS | 5 | 1084 | 5633 | 6029 | true | 0 / 1 (tap-mirror) | `eb9026f` `6b09af2` `a938406` `c9acee7` `f82e83a` |
+| C caracal | ML2/OVS | 5 | 1008 ¹ | 5560 | 5857 | true | 0 / 1 (tap-mirror) | `eb9026f` `6b09af2` `2f44087` `a938406` `c9acee7` `f82e83a` `dd81368` |
+| E epoxy | ML2/OVN | 2 ² | 1076 | 5544 | 6228 | true | 0 / 0 | `2eab854` `8d798a1` |
+| L latest | ML2/OVN | 2 ² | 1057 | 6613 | 6131 | true | 0 / 0 | `2eab854` `8d798a1` |
 
 Attempts count fresh VMs. On zed and caracal the first was the harness, not the
 script: qemu's default user network is 10.0.2.0/24, inside devstack's
@@ -210,9 +212,13 @@ and surfaced the smoke bugs (and, on caracal, the s3token gap); that changed
 ¹ Includes ~100 s lost to a harness artefact: the VM had an unroutable `fec0::`
 IPv6 address, so the cirros download tried IPv6 first and waited out the TCP
 timeout before falling back. Runners have no IPv6.
-² Epoxy and latest stacked once, cleanly; smoke's only FAIL was the
-`volumev3` catalog probe, fixed in `smoke.sh` and re-run on the same node
-(no re-stack, since `up.sh` did not change).
+² Epoxy and latest first stacked cleanly on ML2/OVS (913 s / 6332 MB and
+903 s / 7253 MB; smoke's only FAIL was the `volumev3` catalog probe, fixed in
+`smoke.sh` and re-run on the same node). They were then moved to ML2/OVN and
+re-proved on fresh VMs; the row shows the OVN run, which is what CI runs.
+Under OVN every agent reports alive (ovn-controller, the OVN metadata/agent,
+`neutron-ovn-vpn-agent`, `neutron-bgp-dragent`, metering), vpnaas and fwaas
+load their OVN drivers, and all 31 smoke checks pass.
 
 Resolved refs (`refs.txt`):
 
@@ -227,22 +233,22 @@ caracal exercised.
 
 DevStack Component Timing (seconds):
 
-| Component | zed | caracal | epoxy | latest |
+| Component | zed (OVS) | caracal (OVS) | epoxy (OVN) | latest (OVN) |
 | --- | --- | --- | --- | --- |
-| pip_install | 297 | 180 | 213 | 164 |
-| osc | 339 | 288 | 242 | 302 |
-| apt-get | 155 | 156 | 152 | 183 |
-| git_timed | 129 | 127 | 146 | 146 |
-| async_wait | 91 | 79 | 73 | 86 |
-| run_process | 36 | 45 | 45 | 41 |
-| wait_for_service | 17 | 27 | 19 | 17 |
-| dbsync / test_with_retry / apt-get-update | 7 | 10 | 9 | 11 |
-| Unaccounted | 13 | 96 ¹ | 14 | −47 |
-| **Total** | **1084** | **1008** | **913** | **903** |
+| pip_install | 297 | 180 | 254 | 171 |
+| osc | 339 | 288 | 292 | 346 |
+| apt-get | 155 | 156 | 175 | 170 |
+| git_timed | 129 | 127 | 146 | 169 |
+| async_wait | 91 | 79 | 82 | 94 |
+| run_process | 36 | 45 | 48 | 62 |
+| wait_for_service | 17 | 27 | 31 | 26 |
+| dbsync / test_with_retry / apt-get-update | 7 | 10 | 19 | 14 |
+| Unaccounted | 13 | 96 ¹ | 29 | 5 |
+| **Total** | **1084** | **1008** | **1076** | **1057** |
 
 **Every cell fits all-in-one**, so §5's split was not needed: peak RAM is at
-most 7.3 GB of 16, disk at most 6.2 GB of a runner's 14, and the slowest
-stack is 18 minutes.
+most 7.3 GB of 16 (6.6 GB on OVN), disk at most 6.2 GB of a runner's 14, and
+the slowest stack is 18 minutes.
 
 ### Skipped features
 
@@ -266,7 +272,8 @@ and caracal as designed).
    ProjectName` — the koc gap this section predicted.
 3. **Boot time with and without `/dev/kvm`**: not measured. Every VM had
    nested KVM; there was no TCG host to compare. With KVM, `server boots to
-   ACTIVE` took 11–18 s (zed 14, caracal 13, epoxy 18, latest 11).
+   ACTIVE` took 11–22 s (zed 14, caracal 13; epoxy 18 on OVS / 22 on OVN,
+   latest 11 / 14).
 
 ### What in `up.sh`'s design was wrong
 
@@ -277,9 +284,12 @@ and caracal as designed).
 - **devstack's s3token configuration** is incomplete on 2024.1 and 2025.1
   (`2f44087`): swift's security backport requires service credentials that
   devstack writes only from 2026.2.
-- **ML2/OVS for all releases, `API_WORKERS=1`**: held. OVS agents are alive
-  and bgp, bgpvpn, vpnaas, fwaas_v2 and taas load together on every release;
-  RAM stays under half the budget.
+- **ML2/OVS for all releases**: works, but replaced by a per-series choice
+  (`8d798a1`) so CI covers both backends the fleet runs: OVS for zed and
+  2024.1, OVN from 2025.1. Both stack every plugin on their releases. Under
+  OVN, taas still loads its OVS-agent RPC driver: the tap API works, but no
+  traffic is mirrored, so tap tests there are API-only.
+- **`API_WORKERS=1`**: held; RAM stays under half the budget.
 - **Ref fallback order** (`stable/` → `unmaintained/` → `-eol`): held; zed
   mixes `unmaintained/zed` and `zed-eol` in one deployment.
 - **Ubuntu per series** (jammy for zed/2024.1, noble after): held.
