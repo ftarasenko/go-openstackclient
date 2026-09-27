@@ -23,6 +23,7 @@ func writeFile(t *testing.T, dir, name, body string) string {
 }
 
 func TestLoadEnv(t *testing.T) {
+	t.Setenv("KOC_FT_AUTH", "") // the nightly sets it per cell; this checks the default
 	dir := t.TempDir()
 	p := writeFile(t, dir, "functional.env", `OS_CLOUD=devstack-admin
 KOC_FT_SERIES=2025.1

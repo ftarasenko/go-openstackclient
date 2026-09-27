@@ -392,7 +392,9 @@ func (r runner) run(t *testing.T, args ...string) result {
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	// Not t.Context(): it is cancelled before t.Cleanup functions run, and
+	// cleanups are where tests delete what they created.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, koc(t), args...)
 	cmd.Env = r.env
