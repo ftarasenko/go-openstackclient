@@ -348,6 +348,16 @@ And by the run that first stacked every suite (`36324712864`):
   `clouds.yaml` cells, where `OS_PROJECT_*` are empty. **Fixed** by `fix(quota):
   default to the token's project when none is given`.
 
+And by the first run with all of those in (`36327991276`), where zed was down
+to two failing tests:
+
+- `server rebuild --image <name>` sent the name as nova's `imageRef`. **Fixed**
+  by `fix(server): resolve image names in server rebuild`.
+- `server add volume` on the latest cell: nova answered 202 (asynchronous
+  attach) and koc, through gophercloud's 200-only `volumeattach.Create`,
+  reported failure. **Fixed** by `fix(server): accept nova's asynchronous
+  answer to server add volume`.
+
 - `OS_VOLUME_API_VERSION=3` (devstack's openrc) is sent verbatim as the cinder
   microversion and cinder answers 400; upstream OSC accepts a major-only
   version. smoke now runs koc from `clouds.yaml` alone (`f82e83a`). **Fixed**
