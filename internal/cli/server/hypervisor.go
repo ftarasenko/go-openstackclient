@@ -251,7 +251,8 @@ func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	return cmd
 }
 
-// runHypervisorList is the plain, OSC-compatible listing.
+// runHypervisorList is the plain, OSC-compatible listing: upstream's columns,
+// plus the service status nova reports alongside the state.
 func runHypervisorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
 	pages, err := hypervisors.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -262,11 +263,11 @@ func runHypervisorList(ctx context.Context, client *gophercloud.ServiceClient, o
 		return fmt.Errorf("parsing hypervisor list: %w", err)
 	}
 	t := output.Table{
-		Columns: []string{"ID", "Hypervisor Hostname", "Type", "State", "Status"},
+		Columns: []string{"ID", "Hypervisor Hostname", "Hypervisor Type", "Host IP", "State", "Status"},
 		Rows:    make([][]any, 0, len(all)),
 	}
 	for _, h := range all {
-		t.Rows = append(t.Rows, []any{h.ID, h.HypervisorHostname, h.HypervisorType, h.State, h.Status})
+		t.Rows = append(t.Rows, []any{h.ID, h.HypervisorHostname, h.HypervisorType, h.HostIP, h.State, h.Status})
 	}
 	return o.WriteList(w, t)
 }

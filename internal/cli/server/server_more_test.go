@@ -1163,12 +1163,20 @@ func TestRunHypervisorList_RequestAndOutput(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"hypervisors":[
-			{"id":"1","hypervisor_hostname":"cmp1","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"up","status":"enabled"},
-			{"id":"2","hypervisor_hostname":"cmp2","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"down","status":"disabled"}
+			{"id":"1","hypervisor_hostname":"cmp1","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"up","status":"enabled","host_ip":"192.0.2.11"},
+			{"id":"2","hypervisor_hostname":"cmp2","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"down","status":"disabled","host_ip":"192.0.2.12"}
 		]}`))
 	})
 
 	client := computeClient(fakeServer, "2.79")
+	var csv bytes.Buffer
+	if err := runHypervisorList(context.Background(), client, &output.Options{Format: output.FormatCSV}, &csv); err != nil {
+		t.Fatalf("runHypervisorList: %v", err)
+	}
+	// Upstream's columns, then koc's Status.
+	if header, _, _ := strings.Cut(csv.String(), "\n"); header != "ID,Hypervisor Hostname,Hypervisor Type,Host IP,State,Status" {
+		t.Errorf("header = %q", header)
+	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	if err := runHypervisorList(context.Background(), client, o, &buf); err != nil {
@@ -1178,7 +1186,7 @@ func TestRunHypervisorList_RequestAndOutput(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	out := buf.String()
-	for _, want := range []string{"Hypervisor Hostname", "cmp1", "cmp2", "QEMU", "up", "down", "enabled", "disabled"} {
+	for _, want := range []string{"Hypervisor Hostname", "cmp1", "cmp2", "QEMU", "192.0.2.11", "up", "down", "enabled", "disabled"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("hypervisor list output missing %q\n---\n%s", want, out)
 		}
