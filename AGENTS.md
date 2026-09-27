@@ -215,6 +215,8 @@ internal/cli/              root.go wires every service's command group onto the 
                            watch.go gives every read verb --watch in the same final pass
 internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
+scripts/devstack/          up.sh (single-node devstack per series, local VM or --gha runner),
+                           smoke.sh (per-feature proof + koc read verbs), collect-logs.sh
 ```
 
 Services: `baremetal` (ironic), `server`+`compute` (nova), `identity` (keystone),
@@ -437,12 +439,12 @@ Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommit
 
 ## Releases & CI
 
-The per-commit checks are split across two workflows along the network boundary,
-and the split is load-bearing: everything in `ci.yml` is **offline**
-(`-mod=vendor`, `GOPROXY=off`), everything that needs network lives in
-`supply-chain.yml`, and **no job in `supply-chain.yml` is ever a dependency of an
-offline job**. That is what keeps the air-gap invariant from being quietly
-weakened by a check that happens to need a proxy.
+The checks are split along the network boundary, and the split is
+load-bearing: everything in `ci.yml` is **offline** (`-mod=vendor`,
+`GOPROXY=off`), everything that needs network lives in its own workflow
+(`supply-chain.yml`, `functional.yml`), and **no network-allowed job is ever a
+dependency of an offline job**. That is what keeps the air-gap invariant from
+being quietly weakened by a check that happens to need a proxy.
 
 - `.github/workflows/ci.yml` — **offline only**, on push to `master`/`claude/**`
   and PRs. Four jobs: `build-test` (vet + static build + `go test`, and it records
@@ -475,6 +477,26 @@ weakened by a check that happens to need a proxy.
   graph. If `vendor-integrity` fails, either a dependency change skipped `make
   tidy` or `vendor/` was hand-edited — which AGENTS.md forbids and this job now
   actually catches.
+- `.github/workflows/functional.yml` — the **nightly devstack run**, also
+  network-allowed: `schedule` (02:23 UTC), `workflow_dispatch`, and a push to
+  `master`/`claude/**` that touches the workflow or `scripts/devstack/**` (so an
+  edit to the bring-up is proved on a runner by the commit that makes it; that
+  push is also what gives a branch its first run, since `workflow_dispatch`
+  reaches a branch only after one). One job per supported cell — zed and
+  caracal on `ubuntu-22.04` (ML2/OVS), epoxy and latest on `ubuntu-24.04`
+  (ML2/OVN) — with `fail-fast: false`, a 60-minute timeout, and a single
+  `concurrency` group so two runs never stack at once. It is a **thin
+  wrapper**: enable `/dev/kvm`, build koc offline, `scripts/devstack/up.sh
+  --series <cell> --gha`, `scripts/devstack/smoke.sh --koc <that binary>`, and
+  on failure `collect-logs.sh` plus a 14-day artifact. Every devstack decision
+  lives in `up.sh`, which was proved on runner-sized VMs first
+  (`docs/verification/2026-09-27-devstack-bringup.md`, "Results"); a fix for a
+  runner-only failure goes into `up.sh` under `--gha`, never into a workflow
+  step, and the results doc changes with it. The artifact is public (so is the
+  repository), so it carries devstack's own output only — the whole-system
+  journal and `functional.env` are excluded at upload. A red cell with a failed
+  "Stack devstack" step is devstack or the runner image; a red "Smoke" step
+  with a `koc …` FAIL line is koc.
 - `.github/dependabot.yml` — weekly `gomod` and `github-actions` updates, each
   grouped into a single PR. Commit-message prefixes are set to `build` (gomod) and
   `ci` (actions) so Dependabot speaks Conventional Commits and
