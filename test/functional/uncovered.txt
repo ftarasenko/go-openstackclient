@@ -13,7 +13,6 @@ koc address scope delete
 koc address scope list
 koc address scope set
 koc address scope show
-koc allocation candidate list
 koc baremetal allocation create
 koc baremetal allocation delete
 koc baremetal allocation list
@@ -292,32 +291,6 @@ koc recordset delete
 koc recordset list
 koc recordset set
 koc recordset show
-koc resource class create
-koc resource class delete
-koc resource class list
-koc resource class set
-koc resource class show
-koc resource provider aggregate list
-koc resource provider aggregate set
-koc resource provider allocation delete
-koc resource provider allocation set
-koc resource provider allocation show
-koc resource provider allocation unset
-koc resource provider create
-koc resource provider delete
-koc resource provider inventory class set
-koc resource provider inventory delete
-koc resource provider inventory list
-koc resource provider inventory set
-koc resource provider inventory show
-koc resource provider list
-koc resource provider set
-koc resource provider show
-koc resource provider trait delete
-koc resource provider trait list
-koc resource provider trait set
-koc resource provider usage show
-koc resource usage show
 koc router add gateway
 koc router add port
 koc router add route
@@ -376,10 +349,6 @@ koc tld delete
 koc tld list
 koc tld set
 koc tld show
-koc trait create
-koc trait delete
-koc trait list
-koc trait show
 koc tsigkey create
 koc tsigkey delete
 koc tsigkey list
