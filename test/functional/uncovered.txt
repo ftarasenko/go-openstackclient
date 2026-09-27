@@ -100,14 +100,6 @@ koc bgpvpn router association unset
 koc bgpvpn set
 koc bgpvpn show
 koc bgpvpn unset
-koc dns limit list
-koc dns pool list
-koc dns pool show
-koc dns quota list
-koc dns quota reset
-koc dns quota set
-koc dns service list
-koc dns service show
 koc firewall group create
 koc firewall group delete
 koc firewall group list
@@ -208,30 +200,11 @@ koc loadbalancer set
 koc loadbalancer show
 koc loadbalancer stats show
 koc loadbalancer status show
-koc ptr record list
-koc ptr record set
-koc ptr record show
-koc ptr record unset
-koc recordset create
-koc recordset delete
-koc recordset list
-koc recordset set
-koc recordset show
 koc tap mirror create
 koc tap mirror delete
 koc tap mirror list
 koc tap mirror show
 koc tap mirror update
-koc tld create
-koc tld delete
-koc tld list
-koc tld set
-koc tld show
-koc tsigkey create
-koc tsigkey delete
-koc tsigkey list
-koc tsigkey set
-koc tsigkey show
 koc vpn endpoint group create
 koc vpn endpoint group delete
 koc vpn endpoint group list
@@ -257,38 +230,3 @@ koc vpn service delete
 koc vpn service list
 koc vpn service set
 koc vpn service show
-koc zone abandon
-koc zone axfr
-koc zone blacklist create
-koc zone blacklist delete
-koc zone blacklist list
-koc zone blacklist set
-koc zone blacklist show
-koc zone create
-koc zone delete
-koc zone export create
-koc zone export delete
-koc zone export list
-koc zone export show
-koc zone export showfile
-koc zone import create
-koc zone import delete
-koc zone import list
-koc zone import show
-koc zone list
-koc zone move
-koc zone nameservers list
-koc zone set
-koc zone share create
-koc zone share delete
-koc zone share list
-koc zone share show
-koc zone show
-koc zone transfer accept list
-koc zone transfer accept request
-koc zone transfer accept show
-koc zone transfer request create
-koc zone transfer request delete
-koc zone transfer request list
-koc zone transfer request set
-koc zone transfer request show

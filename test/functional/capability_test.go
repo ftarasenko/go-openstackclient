@@ -18,9 +18,16 @@ func TestCapabilityMatrix(t *testing.T) {
 	ext := extensions(t)
 
 	// Stacked on every release (up.sh's "net" feature).
-	for _, alias := range []string{"qos", "trunk", "segment", "bgp", "bgpvpn", "vpnaas", "fwaas_v2", "taas"} {
+	for _, alias := range []string{"qos", "trunk", "segment", "floating-ip-port-forwarding",
+		"bgp", "bgpvpn", "vpnaas", "fwaas_v2", "taas"} {
 		if !ext[alias] {
 			t.Errorf("extension %q missing on %s (%s): every cell stacks it", alias, c.Series, c.Backend)
+		}
+	}
+	// Loaded by ML2 itself on both backends, whatever the plugins.
+	for _, alias := range []string{"agent", "rbac-policies", "address-scope", "address-group"} {
+		if !ext[alias] {
+			t.Errorf("extension %q missing on %s (%s): ML2 always loads it", alias, c.Series, c.Backend)
 		}
 	}
 
