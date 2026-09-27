@@ -61,65 +61,6 @@ koc baremetal port delete
 koc baremetal port list
 koc baremetal port set
 koc baremetal port show
-koc bgp dragent add speaker
-koc bgp dragent list
-koc bgp dragent remove speaker
-koc bgp peer create
-koc bgp peer delete
-koc bgp peer list
-koc bgp peer set
-koc bgp peer show
-koc bgp speaker add network
-koc bgp speaker add peer
-koc bgp speaker create
-koc bgp speaker delete
-koc bgp speaker list advertised routes
-koc bgp speaker remove network
-koc bgp speaker remove peer
-koc bgp speaker set
-koc bgp speaker show
-koc bgpvpn create
-koc bgpvpn delete
-koc bgpvpn list
-koc bgpvpn network association create
-koc bgpvpn network association delete
-koc bgpvpn network association list
-koc bgpvpn network association show
-koc bgpvpn port association create
-koc bgpvpn port association delete
-koc bgpvpn port association list
-koc bgpvpn port association set
-koc bgpvpn port association show
-koc bgpvpn port association unset
-koc bgpvpn router association create
-koc bgpvpn router association delete
-koc bgpvpn router association list
-koc bgpvpn router association set
-koc bgpvpn router association show
-koc bgpvpn router association unset
-koc bgpvpn set
-koc bgpvpn show
-koc bgpvpn unset
-koc firewall group create
-koc firewall group delete
-koc firewall group list
-koc firewall group policy add rule
-koc firewall group policy create
-koc firewall group policy delete
-koc firewall group policy list
-koc firewall group policy remove rule
-koc firewall group policy set
-koc firewall group policy show
-koc firewall group policy unset
-koc firewall group rule create
-koc firewall group rule delete
-koc firewall group rule list
-koc firewall group rule set
-koc firewall group rule show
-koc firewall group rule unset
-koc firewall group set
-koc firewall group show
-koc firewall group unset
 koc keyvrm app-config set
 koc keyvrm app-config show
 koc keyvrm availability-zone host-aggregate list
@@ -200,33 +141,3 @@ koc loadbalancer set
 koc loadbalancer show
 koc loadbalancer stats show
 koc loadbalancer status show
-koc tap mirror create
-koc tap mirror delete
-koc tap mirror list
-koc tap mirror show
-koc tap mirror update
-koc vpn endpoint group create
-koc vpn endpoint group delete
-koc vpn endpoint group list
-koc vpn endpoint group set
-koc vpn endpoint group show
-koc vpn ike policy create
-koc vpn ike policy delete
-koc vpn ike policy list
-koc vpn ike policy set
-koc vpn ike policy show
-koc vpn ipsec policy create
-koc vpn ipsec policy delete
-koc vpn ipsec policy list
-koc vpn ipsec policy set
-koc vpn ipsec policy show
-koc vpn ipsec site connection create
-koc vpn ipsec site connection delete
-koc vpn ipsec site connection list
-koc vpn ipsec site connection set
-koc vpn ipsec site connection show
-koc vpn service create
-koc vpn service delete
-koc vpn service list
-koc vpn service set
-koc vpn service show
