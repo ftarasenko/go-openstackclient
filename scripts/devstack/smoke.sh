@@ -44,7 +44,8 @@ has_feature() { [[ ",$KOC_FT_FEATURES," == *",$1,"* ]]; }
 OUT="$LOG_DIR/smoke.txt"
 : >"$OUT"
 FAILED=0
-# check <name> <command...>: run, time, record PASS/FAIL with the first error line.
+# check <name> <command...>: run, time, record PASS/FAIL with the first error
+# line (skipping koc's plain-HTTP warnings, which precede the real error).
 check() {
     local name=$1 start rc err
     shift
@@ -54,7 +55,7 @@ check() {
     if [[ $rc -eq 0 ]]; then
         printf 'PASS %-40s %4ss\n' "$name" $(( $(date +%s) - start )) | tee -a "$OUT"
     else
-        printf 'FAIL %-40s %4ss  %s\n' "$name" $(( $(date +%s) - start )) "$(head -1 <<<"$err")" | tee -a "$OUT"
+        printf 'FAIL %-40s %4ss  %s\n' "$name" $(( $(date +%s) - start )) "$(grep -v -m1 '^WARNING: ' <<<"$err")" | tee -a "$OUT"
         FAILED=1
     fi
 }
@@ -158,9 +159,10 @@ fi
 # --- koc ---------------------------------------------------------------------------
 
 if [[ -n "$KOC" ]]; then
-    koc() { env -u OS_AUTH_URL -u OS_USERNAME -u OS_PASSWORD -u OS_PROJECT_NAME \
-        -u OS_USER_DOMAIN_ID -u OS_PROJECT_DOMAIN_ID -u OS_REGION_NAME \
-        OS_CLOUD=devstack-admin "$KOC" "$@" -f json; }
+    # koc runs from clouds.yaml alone, so drop every OS_* openrc exported
+    # (including OS_VOLUME_API_VERSION=3, which koc would send as a microversion).
+    mapfile -t OPENRC_VARS < <(compgen -e | grep '^OS_')
+    koc() { env "${OPENRC_VARS[@]/#/--unset=}" OS_CLOUD=devstack-admin "$KOC" "$@" -f json; }
     check "koc catalog list" koc catalog list
     check "koc network list" koc network list
     check "koc network extension list" koc network extension list
