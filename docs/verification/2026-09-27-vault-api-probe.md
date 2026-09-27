@@ -60,12 +60,11 @@ it maps every 404 to `ErrNotFound`, so an empty or missing folder is "nothing
 here" for `ListKV`/`WalkKV`, `HasKV` answers false, and folder keys keep the
 trailing `/` that tells a subtree from a leaf.
 
-One gap, recorded by `TestClient_404BodyIsDropped` rather than fixed here: that
-same mapping throws the 404's body away. A wrong `--vault-kv-mount` ("no handler
-for route") or an unknown namespace ("namespace not found") therefore reports as
-a plain "not found" — the operator loses the one message that says what is
-wrong. A soft-deleted secret reads as missing too, though its metadata says
-otherwise.
+One gap, since fixed: that same mapping threw the 404's body away, so a wrong
+`--vault-kv-mount` ("no handler for route") or an unknown namespace ("namespace
+not found") reported as a plain "not found", and a soft-deleted secret read as
+missing. The error still wraps `ErrNotFound`, but now carries the reason
+(`TestClient_404KeepsItsReason`).
 
 ## What neither the fake nor this probe covers
 

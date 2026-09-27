@@ -68,6 +68,15 @@ func TestVaultKV_ListAndGet(t *testing.T) {
 	// 404; both must fail cleanly, not print an empty table.
 	r.fails(t, "vault", "kv", "get", "/reg/nope")
 	r.fails(t, "vault", "kv", "list", "/nope")
+
+	// A mistyped mount or namespace is also a 404, but one whose body says
+	// why; that reason has to reach the operator.
+	if msg := r.fails(t, "vault", "kv", "get", "/reg/a/openrc", "--vault-kv-mount", "secret"); !strings.Contains(msg, "no handler for route") {
+		t.Errorf("wrong --vault-kv-mount: stderr %q, want vault's reason", msg)
+	}
+	if msg := r.fails(t, "vault", "kv", "get", "/reg/a/openrc", "--vault-namespace", "nosuch"); !strings.Contains(msg, "namespace not found") {
+		t.Errorf("unknown --vault-namespace: stderr %q, want vault's reason", msg)
+	}
 }
 
 func TestVaultKV_AppRole(t *testing.T) {

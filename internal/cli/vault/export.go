@@ -125,6 +125,9 @@ func exportSecret(ctx context.Context, c *vault.Client, pub *rsa.PublicKey, moun
 		msg := err.Error()
 		if errors.Is(err, vault.ErrNotFound) {
 			msg = "secret not found or has no readable version"
+			if why := vault.NotFoundReason(err); why != "" {
+				msg += " (vault: " + why + ")"
+			}
 		}
 		return []junitCase{{
 			Classname: classKV, Name: path, Time: caseTime,

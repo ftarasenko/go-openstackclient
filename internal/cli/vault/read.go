@@ -17,7 +17,7 @@ func runKVList(ctx context.Context, c *vault.Client, o *output.Options, path str
 	keys, err := c.ListKV(ctx, c.KVMount(), path)
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
-			return fmt.Errorf("no keys under %q in mount %q", path, c.KVMount())
+			return withReason(fmt.Errorf("no keys under %q in mount %q", path, c.KVMount()), err)
 		}
 		return err
 	}
@@ -35,7 +35,7 @@ func runKVGet(ctx context.Context, c *vault.Client, o *output.Options, path stri
 	data, err := c.ReadKVDataAt(ctx, c.KVMount(), path, version)
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
-			return fmt.Errorf("no secret at %q in mount %q", path, c.KVMount())
+			return withReason(fmt.Errorf("no secret at %q in mount %q", path, c.KVMount()), err)
 		}
 		return err
 	}
@@ -50,4 +50,14 @@ func runKVGet(ctx context.Context, c *vault.Client, o *output.Options, path stri
 		values[i] = data[f]
 	}
 	return o.WriteSingle(w, fields, values)
+}
+
+// withReason appends why Vault answered 404 — a mistyped mount ("no handler for
+// route …"), an unknown namespace, a deleted version — to koc's own not-found
+// message. A plain missing secret has no reason and keeps the message as is.
+func withReason(msg, err error) error {
+	if why := vault.NotFoundReason(err); why != "" {
+		return fmt.Errorf("%w (vault: %s)", msg, why)
+	}
+	return msg
 }

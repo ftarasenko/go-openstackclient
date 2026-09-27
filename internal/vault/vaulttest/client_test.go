@@ -11,8 +11,7 @@ import (
 )
 
 // koc's own Vault client against the fake: what each probed behaviour turns
-// into on koc's side. Where koc loses information today (a 404 whose body says
-// why), the test records the current behaviour so a fix shows up as a diff.
+// into on koc's side.
 
 func tokenClient(t *testing.T, s *vaulttest.Server, cfg vault.Config) *vault.Client {
 	t.Helper()
@@ -129,18 +128,41 @@ func TestClient_NamespaceIsolatesSecrets(t *testing.T) {
 	}
 }
 
-// A wrong namespace or mount is a 404 whose body says so, but koc keeps only
-// the status: both read as a plain "not found". Recorded as today's behaviour.
-func TestClient_404BodyIsDropped(t *testing.T) {
+// A wrong namespace or mount is a 404 whose body says so, and so is a deleted
+// version. The error still matches ErrNotFound — walkers rely on that — but
+// now carries the reason, where it used to read as a bare "not found".
+func TestClient_404KeepsItsReason(t *testing.T) {
 	s := vaulttest.New(t)
 	s.Put("", "secret_v2", "x", map[string]any{"k": "v"})
+	s.Put("", "secret_v2", "gone", map[string]any{"k": "v"})
+	s.SoftDelete("", "secret_v2", "gone")
 
-	c := tokenClient(t, s, vault.Config{Namespace: "nosuch"})
-	if _, err := c.ReadKVData(t.Context(), "x"); !errors.Is(err, vault.ErrNotFound) {
-		t.Errorf("unknown namespace = %v, want ErrNotFound", err)
-	}
-	c = tokenClient(t, s, vault.Config{KVMount: "nosuch"})
-	if _, err := c.ReadKVData(t.Context(), "x"); !errors.Is(err, vault.ErrNotFound) {
-		t.Errorf("unknown mount = %v, want ErrNotFound", err)
+	for _, tc := range []struct {
+		name string
+		cfg  vault.Config
+		path string
+		want string
+	}{
+		{"unknown namespace", vault.Config{Namespace: "nosuch"}, "x", "namespace not found"},
+		{"unknown mount", vault.Config{KVMount: "nosuch"}, "x", `no handler for route "nosuch/data/x"`},
+		{"deleted latest version", vault.Config{}, "gone", "version 1 was deleted at "},
+		{"missing secret", vault.Config{}, "absent", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tokenClient(t, s, tc.cfg)
+			_, err := c.ReadKVData(t.Context(), tc.path)
+			if !errors.Is(err, vault.ErrNotFound) {
+				t.Fatalf("err = %v, want ErrNotFound", err)
+			}
+			if tc.want == "" {
+				if !strings.HasSuffix(err.Error(), vault.ErrNotFound.Error()) {
+					t.Errorf("a plain missing secret: err = %q, want it to end at %q", err, vault.ErrNotFound)
+				}
+				return
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want it to say %q", err, tc.want)
+			}
+		})
 	}
 }
