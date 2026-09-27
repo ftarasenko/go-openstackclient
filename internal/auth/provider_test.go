@@ -476,3 +476,58 @@ func TestComputeAPIVersionPinnable(t *testing.T) {
 		})
 	}
 }
+
+// gophercloud v2.15's clouds.Parse returns an explicit Scope, and gophercloud
+// reads the project from Scope whenever it is set — so --os-project-name or
+// --os-project-id over a named cloud used to be dropped, and the token stayed
+// on the cloud's project. Found by the devstack functional run
+// (TestAuthPrecedence); upstream OSC re-scopes.
+func TestOverride_ProjectFlagRescopesNamedCloud(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want map[string]any
+	}{
+		{"by name keeps the cloud's project domain", []string{"--os-project-name", "demo"},
+			map[string]any{"name": "demo", "domain": map[string]any{"name": "CloudsDom"}}},
+		{"by id needs no domain", []string{"--os-project-id", "p-123"},
+			map[string]any{"id": "p-123"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &Options{}
+			fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
+			o.AddFlags(fs)
+			if err := fs.Parse(append([]string{"--os-cloud", "named"}, tc.args...)); err != nil {
+				t.Fatal(err)
+			}
+			ao, _ := cloudsYAMLResult()
+			ao.Scope = &gophercloud.AuthScope{ProjectName: "cloudsproject", DomainName: "CloudsDom"}
+			o.applyAuthOverrides(&ao)
+
+			got, _ := scopeJSON(t, &ao)["project"].(map[string]any)
+			gb, _ := json.Marshal(got)
+			wb, _ := json.Marshal(tc.want)
+			if string(gb) != string(wb) {
+				t.Errorf("project scope = %s, want %s", gb, wb)
+			}
+		})
+	}
+}
+
+// Leftover OS_PROJECT_* in the environment must not re-scope a named cloud:
+// only an explicit flag does.
+func TestOverride_EnvProjectDoesNotRescopeNamedCloud(t *testing.T) {
+	t.Setenv("OS_PROJECT_NAME", "leftover")
+	o := &Options{}
+	fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
+	o.AddFlags(fs)
+	if err := fs.Parse([]string{"--os-cloud", "named"}); err != nil {
+		t.Fatal(err)
+	}
+	ao, _ := cloudsYAMLResult()
+	ao.Scope = &gophercloud.AuthScope{ProjectName: "cloudsproject", DomainName: "CloudsDom"}
+	o.applyAuthOverrides(&ao)
+	if ao.Scope.ProjectName != "cloudsproject" {
+		t.Errorf("scope project = %q, want the named cloud's", ao.Scope.ProjectName)
+	}
+}

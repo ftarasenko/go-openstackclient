@@ -198,8 +198,33 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf(&ao.ApplicationCredentialName, o.override("os-application-credential-name", o.AppCredName))
 	setIf(&ao.ApplicationCredentialSecret, o.override("os-application-credential-secret", o.AppCredSecret))
 
+	o.applyProjectScope(ao)
 	o.applyDomainScope(ao)
 	o.applySystemScope(ao)
+}
+
+// applyProjectScope moves an explicit project scope to the project the operator
+// named. gophercloud reads the project from ao.Scope whenever it is set, and
+// clouds.Parse (v2.15.0) always sets it for a cloud with a project, so the
+// TenantName/TenantID applyAuthOverrides just wrote were never consulted:
+// `--os-cloud x --os-project-name demo` stayed on the cloud's project. Upstream
+// OSC re-scopes. Only a value that may override reaches here (see override), so
+// leftover OS_PROJECT_* under a named cloud still does not.
+//
+// By name, the scope keeps its domain — the cloud's project domain, unless a
+// domain flag replaces it in applyDomainScope. By ID, it needs none. A system or
+// trust scope is not a project scope and is left alone.
+func (o *Options) applyProjectScope(ao *gophercloud.AuthOptions) {
+	if ao.Scope == nil || ao.Scope.System || ao.Scope.TrustID != "" {
+		return
+	}
+	if id := o.override(flagOSProjectID, o.ProjectID); id != "" {
+		ao.Scope = &gophercloud.AuthScope{ProjectID: id}
+		return
+	}
+	if name := o.override(flagOSProjectName, o.ProjectName); name != "" {
+		ao.Scope.ProjectName, ao.Scope.ProjectID = name, ""
+	}
 }
 
 // systemScopeAll is the only system-scope value Keystone defines. OSC accepts
