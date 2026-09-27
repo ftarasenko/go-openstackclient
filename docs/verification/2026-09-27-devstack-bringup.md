@@ -183,3 +183,111 @@ Plus:
 - Anything in `up.sh`'s design that turned out to be wrong: ML2/OVS for all
   releases, `GIT_DEPTH=1`, `API_WORKERS=1`, the ref fallback order
   (`stable/` → `unmaintained/` → `-eol`), the Ubuntu-per-series table.
+
+## Results
+
+Run 2026-09-27 on nested-KVM VMs (qemu user-mode networking, 4 vCPU / 16 GB /
+40 GB, Ubuntu cloud images fully updated) on one host, with direct egress to
+GitHub and PyPI — **no mirror or proxy**. Every cell below passed on a fresh VM
+with `up.sh` as of `dd81368` (the last `up.sh` change) and `smoke.sh` as of
+`2eab854`.
+
+| Cell | Attempts | `stack_seconds` | RAM peak MB | Disk MB | kvm | smoke FAIL / WARN | Fixes (commit) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Z zed | 5 | 1084 | 5633 | 6029 | true | 0 / 1 (tap-mirror) | `eb9026f` `6b09af2` `a938406` `c9acee7` `f82e83a` |
+| C caracal | 5 | 1008 ¹ | 5560 | 5857 | true | 0 / 1 (tap-mirror) | `eb9026f` `6b09af2` `2f44087` `a938406` `c9acee7` `f82e83a` `dd81368` |
+| E epoxy | 1 ² | 913 | 6332 | 6230 | true | 0 / 0 | `2eab854` |
+| L latest | 1 ² | 903 | 7253 | 6123 | true | 0 / 0 | `2eab854` |
+
+Attempts count fresh VMs. On zed and caracal the first was the harness, not the
+script: qemu's default user network is 10.0.2.0/24, inside devstack's
+`FIXED_RANGE` (10.0.0.0/22), so devstack could not pick a `HOST_IP`. Moving
+the VMs to 192.168.76.0/24 fixed it; runners are not affected. The second
+failed on `GIT_DEPTH=1`, the third on the ec2 `read`, and the fourth stacked
+and surfaced the smoke bugs (and, on caracal, the s3token gap); that changed
+`up.sh`, so the fifth re-proved both cells under the final script.
+
+¹ Includes ~100 s lost to a harness artefact: the VM had an unroutable `fec0::`
+IPv6 address, so the cirros download tried IPv6 first and waited out the TCP
+timeout before falling back. Runners have no IPv6.
+² Epoxy and latest stacked once, cleanly; smoke's only FAIL was the
+`volumev3` catalog probe, fixed in `smoke.sh` and re-run on the same node
+(no re-stack, since `up.sh` did not change).
+
+Resolved refs (`refs.txt`):
+
+| Project | zed | caracal | epoxy | latest |
+| --- | --- | --- | --- | --- |
+| devstack, neutron, designate, networking-bgpvpn, neutron-dynamic-routing, tap-as-a-service | `unmaintained/zed` | `unmaintained/2024.1` | `stable/2025.1` | `stable/2026.2` |
+| neutron-fwaas, neutron-vpnaas | `zed-eol` | `unmaintained/2024.1` | `stable/2025.1` | `stable/2026.2` |
+
+Epoxy ran before the 2026-10-02 rename, so the `unmaintained/2025.1` follow is
+still unproven by a run; the fallback order it relies on is the one zed and
+caracal exercised.
+
+DevStack Component Timing (seconds):
+
+| Component | zed | caracal | epoxy | latest |
+| --- | --- | --- | --- | --- |
+| pip_install | 297 | 180 | 213 | 164 |
+| osc | 339 | 288 | 242 | 302 |
+| apt-get | 155 | 156 | 152 | 183 |
+| git_timed | 129 | 127 | 146 | 146 |
+| async_wait | 91 | 79 | 73 | 86 |
+| run_process | 36 | 45 | 45 | 41 |
+| wait_for_service | 17 | 27 | 19 | 17 |
+| dbsync / test_with_retry / apt-get-update | 7 | 10 | 9 | 11 |
+| Unaccounted | 13 | 96 ¹ | 14 | −47 |
+| **Total** | **1084** | **1008** | **913** | **903** |
+
+**Every cell fits all-in-one**, so §5's split was not needed: peak RAM is at
+most 7.3 GB of 16, disk at most 6.2 GB of a runner's 14, and the slowest
+stack is 18 minutes.
+
+### Skipped features
+
+None. Every feature stacks on every release. The only per-release absence is
+`tap-mirror`, which tap-as-a-service first ships on 2025.1 (smoke WARNs on zed
+and caracal as designed).
+
+### §6 measurements
+
+1. **Warm pip cache** (latest): **not worth caching.** Seeding a fresh VM with
+   the 91 MB `~/.cache/pip` of a finished run cut `pip_install` from 164 / 158 s
+   (two cold runs) to 124 s, but `stack_seconds` was 880 against 903 / 858
+   cold — inside run-to-run noise, far below the ~3 minutes that would justify
+   a cache. Wheels are small next to `osc` (~280–340 s) and apt/git, which a pip
+   cache does not touch. CI stays cache-free.
+2. **Vault round trip** (zed): with the domain given by name, `koc
+   --creds-from-vault /koc-ft/openrc --vault-kv-mount secret network list`
+   returns the same networks (same IDs) as `openstack network list`, and `koc
+   vault kv list` shows `openrc`. A `*_DOMAIN_ID`-only secret **fails**: `You
+   must provide exactly one of DomainID or DomainName in a Scope with
+   ProjectName` — the koc gap this section predicted.
+3. **Boot time with and without `/dev/kvm`**: not measured. Every VM had
+   nested KVM; there was no TCG host to compare. With KVM, `server boots to
+   ACTIVE` took 11–18 s (zed 14, caracal 13, epoxy 18, latest 11).
+
+### What in `up.sh`'s design was wrong
+
+- **`GIT_DEPTH=1` — wrong** (`eb9026f`). Tagless clones make pbr version every
+  source project 0.0.0: networking-bgpvpn became unresolvable (bagpipe needs
+  `>=12`) and pip silently replaced the source neutron with a PyPI wheel. Full
+  clones cost `git_timed` ≈ 130–146 s.
+- **devstack's s3token configuration** is incomplete on 2024.1 and 2025.1
+  (`2f44087`): swift's security backport requires service credentials that
+  devstack writes only from 2026.2.
+- **ML2/OVS for all releases, `API_WORKERS=1`**: held. OVS agents are alive
+  and bgp, bgpvpn, vpnaas, fwaas_v2 and taas load together on every release;
+  RAM stays under half the budget.
+- **Ref fallback order** (`stable/` → `unmaintained/` → `-eol`): held; zed
+  mixes `unmaintained/zed` and `zed-eol` in one deployment.
+- **Ubuntu per series** (jammy for zed/2024.1, noble after): held.
+
+### koc gaps found (not devstack's)
+
+- `OS_VOLUME_API_VERSION=3` (devstack's openrc) is sent verbatim as the cinder
+  microversion and cinder answers 400; upstream OSC accepts a major-only
+  version. smoke now runs koc from `clouds.yaml` alone (`f82e83a`).
+- The Vault openrc parser ignores `OS_{USER,PROJECT}_DOMAIN_ID` (above).
+- `-f value` separates columns with a tab; `openstack` uses a space.
