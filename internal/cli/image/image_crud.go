@@ -167,14 +167,16 @@ func imageListTable(list []images.Image, long bool) output.Table {
 	cols := []string{"ID", "Name", "Status"}
 	if long {
 		cols = []string{"ID", "Name", "Disk Format", "Container Format", "Size", "Checksum",
-			"Status", "Visibility", "Protected", "Project", "Tags"}
+			"Status", "Visibility", "Protected", "Project", "Hash Algorithm", "Hash Value", "Tags"}
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, img := range list {
 		row := []any{img.ID, img.Name, string(img.Status)}
 		if long {
+			// gophercloud models neither hash field; they land in Properties.
 			row = []any{img.ID, img.Name, img.DiskFormat, img.ContainerFormat, img.SizeBytes, img.Checksum,
-				string(img.Status), string(img.Visibility), img.Protected, img.Owner, img.Tags}
+				string(img.Status), string(img.Visibility), img.Protected, img.Owner,
+				img.Properties["os_hash_algo"], img.Properties["os_hash_value"], img.Tags}
 		}
 		t.Rows = append(t.Rows, row)
 	}

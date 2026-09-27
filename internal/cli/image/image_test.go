@@ -912,7 +912,7 @@ func TestRunImageList_LongColumns(t *testing.T) {
 		_, _ = w.Write([]byte(`{"images": [{"id": "11111111-1111-1111-1111-111111111111", "name": "cirros",
 			"status": "active", "visibility": "public", "protected": false, "disk_format": "qcow2",
 			"container_format": "bare", "size": 13287936, "checksum": "b874c39491a2377b8490f5f1e89761a4",
-			"owner": "proj-a", "tags": ["ft"]}]}`))
+			"owner": "proj-a", "tags": ["ft"], "os_hash_algo": "sha512", "os_hash_value": "c0ffee"}]}`))
 	})
 	o := &output.Options{Format: output.FormatCSV}
 	var buf bytes.Buffer
@@ -920,11 +920,11 @@ func TestRunImageList_LongColumns(t *testing.T) {
 		t.Fatalf("runImageList: %v", err)
 	}
 	header, row, _ := strings.Cut(buf.String(), "\n")
-	want := "ID,Name,Disk Format,Container Format,Size,Checksum,Status,Visibility,Protected,Project,Tags"
+	want := "ID,Name,Disk Format,Container Format,Size,Checksum,Status,Visibility,Protected,Project,Hash Algorithm,Hash Value,Tags"
 	if header != want {
 		t.Errorf("header = %s\nwant     %s", header, want)
 	}
-	for _, v := range []string{"b874c39491a2377b8490f5f1e89761a4", "proj-a", "ft"} {
+	for _, v := range []string{"b874c39491a2377b8490f5f1e89761a4", "proj-a", "sha512", "c0ffee", "ft"} {
 		if !strings.Contains(row, v) {
 			t.Errorf("row %q lacks %q", row, v)
 		}
