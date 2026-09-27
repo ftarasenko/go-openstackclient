@@ -11,7 +11,7 @@ export GOFLAGS     := -mod=vendor
 # CI cross-compile matrix stay in sync with the release matrix.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
-.PHONY: all build static test race cover sonar crossbuild vet lint fmt tidy vendor completions size clean
+.PHONY: all build static test functional race cover sonar crossbuild vet lint fmt tidy vendor completions size clean
 
 all: build
 
@@ -25,6 +25,15 @@ static:
 ## test: run unit tests
 test:
 	go test ./...
+
+## functional: the koc functional tests in test/functional (build tag
+## "functional"). Against a devstack from scripts/devstack/up.sh, pass
+## KOC_FT_ENV=<log-dir>/functional.env, optionally KOC_BIN=<koc> and
+## KOC_FT_AUTH=clouds|env. Without KOC_FT_ENV only the no-cloud tests run (the
+## harness's own, and the Vault CLI against the fake server). Still offline.
+FUNCTIONAL_TIMEOUT ?= 20m
+functional:
+	GOPROXY=off go test -tags functional -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -v ./test/functional/...
 
 ## race: run unit tests under the race detector (needs cgo; shipped binaries
 ## stay CGO_ENABLED=0). Still offline — vendor/ only, no module proxy.

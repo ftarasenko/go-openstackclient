@@ -84,6 +84,13 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # test/functional sits behind the "functional" build tag. With no
+      # KOC_FT_ENV its cloud tests skip, and what runs is offline: the
+      # harness's own tests and the Vault CLI against the in-process fake
+      # server (internal/vault/vaulttest). The devstack run is functional.yml.
+      - name: Functional tests (no cloud)
+        run: go test -tags functional -count=1 ./test/functional/...
+
   # The release ships six targets; CI used to compile one. A build-tag or
   # syscall mistake in a darwin/windows path was therefore first discovered at
   # release time. Build-only (no test binaries can run cross-platform), and
