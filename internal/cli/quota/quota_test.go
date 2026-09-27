@@ -415,3 +415,23 @@ func TestQuotaShow_AllFlag(t *testing.T) {
 		t.Errorf("error %q should name the conflicting flags", err.Error())
 	}
 }
+
+// With no project argument the token's own project is the target: clouds.yaml
+// names the project without setting OS_PROJECT_*, and asking keystone to look up
+// a name the options happen to carry is neither needed nor safe.
+func TestResolveProject_DefaultsToTheTokenProject(t *testing.T) {
+	s := &session{
+		project: func() string { return "p-token" },
+		identity: func() (*gophercloud.ServiceClient, error) {
+			t.Fatal("resolveProject looked the project up although the token names it")
+			return nil, nil
+		},
+	}
+	got, err := s.resolveProject(context.Background(), &auth.Options{ProjectName: "elsewhere"}, nil)
+	if err != nil || got != "p-token" {
+		t.Errorf("resolveProject() = %q, %v; want p-token", got, err)
+	}
+	if got, _ := s.resolveProject(context.Background(), &auth.Options{}, []string{"8c0f1e4a-3d2b-4c5e-9f6a-7b8c9d0e1f2a"}); got != "8c0f1e4a-3d2b-4c5e-9f6a-7b8c9d0e1f2a" {
+		t.Errorf("an explicit project must win: got %q", got)
+	}
+}

@@ -45,6 +45,8 @@ type session struct {
 	volume   func() (*gophercloud.ServiceClient, error)
 	network  func() (*gophercloud.ServiceClient, error)
 	identity func() (*gophercloud.ServiceClient, error)
+	// project is the token's scoped project ID ("" when unscoped to one).
+	project func() string
 }
 
 func newSession(ctx context.Context, a *auth.Options) (*session, error) {
@@ -57,6 +59,7 @@ func newSession(ctx context.Context, a *auth.Options) (*session, error) {
 		volume:   client.Volume,
 		network:  client.Network,
 		identity: client.Identity,
+		project:  client.ScopedProjectID,
 	}, nil
 }
 
@@ -64,12 +67,15 @@ func newSession(ctx context.Context, a *auth.Options) (*session, error) {
 // ID. All three quota APIs key on the project ID and — nova most notably —
 // quietly answer with the *default* quotas for an unrecognised string, so a name
 // that is not resolved would silently report the wrong numbers. When no
-// reference is given the invocation's own project is used.
+// reference is given the invocation's own project is used: the one its token is
+// scoped to, since OS_PROJECT_* are empty when clouds.yaml names the project.
 func (s *session) resolveProject(ctx context.Context, a *auth.Options, args []string) (string, error) {
 	var ref string
 	switch {
 	case len(args) == 1:
 		ref = args[0]
+	case s.project != nil && s.project() != "":
+		return s.project(), nil
 	case a.ProjectID != "":
 		ref = a.ProjectID
 	default:
