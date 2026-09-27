@@ -310,10 +310,32 @@ workflow's udev rule; `kvm` was `true` in every `bringup.json`.
 | L latest | ubuntu-24.04 | 706 | 7264 | 3942 | 13 s | 0 / 0 | 842 s |
 
 Runners stack faster than the verification VMs (7–12 minutes against 17–18)
-and use a third less disk, so the workflow's 60-minute job and 40-minute
-stack timeouts leave ample room. Peak RAM matches the VMs (≤ 7.3 GB of 16).
+and use a third less disk, so the workflow's job (now 75 minutes, for the Go
+suites) and 40-minute stack timeouts leave ample room. Peak RAM matches the VMs
+(≤ 7.3 GB of 16).
+
+The first runner-only failure came later (run `36323792743`, zed): stack.sh's
+single `wget` of cirros from download.cirros-cloud.net timed out on IPv4 after
+two minutes and the cell failed with `stack_rc` 4. `up.sh --gha` now
+prefetches the image stack.sh would fetch into `files/`, which stack.sh then
+skips, from cirros's GitHub release mirror with the original host as a
+fallback and retries on both (`prefetch_cirros`). A fresh VM keeps stack.sh's
+own fetch.
 
 ### koc gaps found (not devstack's)
+
+Found by the Go functional suites on the runners, identically on every cell
+that stacked (run `36323792743`):
+
+- `hypervisor show <id>` answered "not found" for the ID `hypervisor list`
+  prints: the list runs at the negotiated microversion (UUIDs from 2.53), the
+  show looks up at 2.1 (integer IDs). **Fixed** by `fix(server): resolve a
+  hypervisor UUID taken from hypervisor list`.
+- `server add/remove volume <server> <name>` sent the name to nova, which takes
+  only a UUID. **Fixed** by `fix(server): resolve volume names in server
+  add/remove volume`.
+- `user create --project` set the default project but did not print it.
+  **Fixed** by `fix(identity): print the default project user create sets`.
 
 - `OS_VOLUME_API_VERSION=3` (devstack's openrc) is sent verbatim as the cinder
   microversion and cinder answers 400; upstream OSC accepts a major-only

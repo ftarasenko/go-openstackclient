@@ -295,6 +295,31 @@ if [[ ! -d "$DEVSTACK_DIR/.git" ]]; then
 fi
 printf '%s\n' "$LOCAL_CONF" >"$DEVSTACK_DIR/local.conf"
 
+# stack.sh fetches cirros from download.cirros-cloud.net with one wget and no
+# retry, and that host timing out has failed a whole cell. It skips the fetch
+# when the file is already in files/, so on a runner put it there first, from
+# cirros's GitHub release mirror (the host runners reach most reliably) with
+# the original as a fallback, retrying both.
+prefetch_cirros() {
+    local version file url
+    version=$(grep -m1 '^CIRROS_VERSION=' "$DEVSTACK_DIR/stackrc" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+    [[ -n $version ]] || { echo "up.sh: no CIRROS_VERSION in stackrc; leaving the fetch to stack.sh"; return 0; }
+    file=cirros-$version-$(uname -m)-disk.img
+    mkdir -p "$DEVSTACK_DIR/files"
+    [[ -f $DEVSTACK_DIR/files/$file ]] && return 0
+    for url in "https://github.com/cirros-dev/cirros/releases/download/$version/$file" \
+        "https://download.cirros-cloud.net/$version/$file"; do
+        if curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$DEVSTACK_DIR/files/$file.part" "$url"; then
+            mv "$DEVSTACK_DIR/files/$file.part" "$DEVSTACK_DIR/files/$file"
+            echo "up.sh: prefetched $file from $url"
+            return 0
+        fi
+    done
+    rm -f "$DEVSTACK_DIR/files/$file.part"
+    echo "up.sh: could not prefetch $file; leaving the fetch to stack.sh"
+}
+if [[ "$GHA" == true && $FEATURES == *core* ]]; then prefetch_cirros; fi
+
 disk_used_mb() { df -B1M --output=used / | tail -1 | tr -d ' '; }
 DISK_BEFORE=$(disk_used_mb)
 # Peak RAM: sample every 10s for the length of the stack. `free` is coarse but
