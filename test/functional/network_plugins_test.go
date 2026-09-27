@@ -5,6 +5,7 @@ package functional
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // The neutron service plugins up.sh's "net" feature stacks: dynamic routing
@@ -264,6 +265,22 @@ func TestVPNaaS(t *testing.T) {
 	svc := r.show(t, "vpn", "service", "create", uniq("vpnsvc"), "--router", router)
 	svcID := field(svc, "id")
 	t.Cleanup(func() { r.run(t, "vpn", "service", "delete", svcID) })
+	conn := r.show(t, "vpn", "ipsec", "site", "connection", "create", uniq("conn"), "--vpnservice", svcID,
+		"--ikepolicy", ikeID, "--ipsecpolicy", ipsecID, "--peer-address", "192.0.2.40", "--peer-id", "192.0.2.40",
+		"--psk", "ft-preshared", "--local-endpoint-group", localID, "--peer-endpoint-group", peerID)
+	connID := field(conn, "id")
+	t.Cleanup(func() { r.run(t, "vpn", "ipsec", "site", "connection", "delete", connID) })
+	// neutron refuses to update a service or a connection still PENDING_*;
+	// the VPN agent moves both on once it has processed the connection (to
+	// DOWN, since the peer never answers).
+	notPending := func(what string, show ...string) {
+		t.Helper()
+		waitFor(t, what+" to leave PENDING", 3*time.Minute, func() bool {
+			return !strings.HasPrefix(field(r.show(t, show...), "status"), "PENDING")
+		})
+	}
+	notPending("the VPN service", "vpn", "service", "show", svcID)
+	notPending("the site connection", "vpn", "ipsec", "site", "connection", "show", connID)
 	r.ok(t, "vpn", "service", "set", svcID, "--description", "functional")
 	if got := r.show(t, "vpn", "service", "show", svcID); field(got, "description") != "functional" {
 		t.Errorf("vpn service show after set = %v", got)
@@ -272,11 +289,6 @@ func TestVPNaaS(t *testing.T) {
 		t.Errorf("vpn service list does not list %s", svcID)
 	}
 
-	conn := r.show(t, "vpn", "ipsec", "site", "connection", "create", uniq("conn"), "--vpnservice", svcID,
-		"--ikepolicy", ikeID, "--ipsecpolicy", ipsecID, "--peer-address", "192.0.2.40", "--peer-id", "192.0.2.40",
-		"--psk", "ft-preshared", "--local-endpoint-group", localID, "--peer-endpoint-group", peerID)
-	connID := field(conn, "id")
-	t.Cleanup(func() { r.run(t, "vpn", "ipsec", "site", "connection", "delete", connID) })
 	r.ok(t, "vpn", "ipsec", "site", "connection", "set", connID, "--mtu", "1400", "--description", "functional")
 	if got := r.show(t, "vpn", "ipsec", "site", "connection", "show", connID); field(got, "mtu") != "1400" {
 		t.Errorf("site connection show after set = %v", got)

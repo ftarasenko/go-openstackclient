@@ -160,11 +160,19 @@ func TestImageStageAndImport(t *testing.T) {
 	})
 
 	// The import ran as a glance task.
-	tasks := r.list(t, "image", "task", "list", "--type", "api_image_import")
-	if len(tasks) == 0 {
-		t.Fatalf("image task list --type api_image_import is empty after an import")
+	// glance's type filter only knows the legacy "import" task; the
+	// interoperable import's api_image_import tasks are found in the full list.
+	r.ok(t, "image", "task", "list", "--type", "import")
+	var taskID string
+	for _, tk := range r.list(t, "image", "task", "list") {
+		if field(tk, "type") == "api_image_import" {
+			taskID = field(tk, "id")
+		}
 	}
-	task := r.show(t, "image", "task", "show", field(tasks[0], "id"))
+	if taskID == "" {
+		t.Fatalf("image task list has no api_image_import task after an import")
+	}
+	task := r.show(t, "image", "task", "show", taskID)
 	if field(task, "type") != "api_image_import" {
 		t.Errorf("image task show = %v", task)
 	}

@@ -67,7 +67,7 @@ func TestServerLifecycle(t *testing.T) {
 		"--user-data", userData, "--config-drive")
 
 	s := r.show(t, "server", "show", id)
-	if field(s, "key_name") != key || !strings.Contains(field(s, "metadata"), "ft") {
+	if field(s, "key_name") != key || !strings.Contains(field(s, "properties"), "ft") {
 		t.Errorf("server show = %v", s)
 	}
 	// --user-data writes the decoded script raw, for a pipe, whatever -f says.
@@ -84,7 +84,7 @@ func TestServerLifecycle(t *testing.T) {
 		t.Errorf("after server set: %v", s)
 	}
 	r.ok(t, "server", "unset", id, "--property", "ft2", "--tag", "ft-tag")
-	if s = r.show(t, "server", "show", id); strings.Contains(field(s, "metadata"), "ft2") || strings.Contains(field(s, "tags"), "ft-tag") {
+	if s = r.show(t, "server", "show", id); strings.Contains(field(s, "properties"), "ft2") || strings.Contains(field(s, "tags"), "ft-tag") {
 		t.Errorf("after server unset: %v", s)
 	}
 
@@ -132,7 +132,11 @@ func TestServerLifecycle(t *testing.T) {
 	}
 	consoleOK(r.run(t, "console", "url", "show", id, "--novnc"))
 	consoleOK(r.run(t, "server", "console", "url", "show", id, "--novnc"))
-	r.ok(t, "server", "password", "show", id) // cirros sets none: empty, not an error
+	// cirros posts no admin password, which koc reports rather than printing
+	// an empty one.
+	if msg := r.fails(t, "server", "password", "show", id); !strings.Contains(msg, "no stored admin password") {
+		t.Errorf("server password show on a guest that posted none: %q", msg)
+	}
 
 	// Every action above is an instance action.
 	events := r.list(t, "server", "event", "list", id)
