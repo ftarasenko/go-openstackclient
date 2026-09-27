@@ -177,10 +177,12 @@ func TestDNSTransfer(t *testing.T) {
 	acc := demo.show(t, "zone", "transfer", "accept", "request", "--transfer-id", reqID, "--key", key)
 	accID := field(acc, "id")
 	t.Cleanup(func() { demo.run(t, "zone", "delete", id) })
+	// An accept belongs to the project that made it; the offering admin's
+	// project-scoped token does not see it.
 	waitFor(t, "the transfer to complete", dnsTimeout, func() bool {
-		return field(r.show(t, "zone", "transfer", "accept", "show", accID), "status") == "COMPLETE"
+		return field(demo.show(t, "zone", "transfer", "accept", "show", accID), "status") == "COMPLETE"
 	})
-	if !in(r.list(t, "zone", "transfer", "accept", "list"), accID) {
+	if !in(demo.list(t, "zone", "transfer", "accept", "list"), accID) {
 		t.Errorf("transfer accept list does not list %s", accID)
 	}
 	if z := demo.show(t, "zone", "show", id); field(z, "project_id") != demoID {
@@ -330,12 +332,15 @@ func TestDNSAdminViews(t *testing.T) {
 	proj := r.show(t, "project", "create", uniq("dnsquota"))
 	pid := field(proj, "id")
 	t.Cleanup(func() { r.run(t, "project", "delete", pid) })
-	r.ok(t, "dns", "quota", "set", pid, "--zones", "3", "--zone-recordsets", "40")
-	if q := r.show(t, "dns", "quota", "list", pid); field(q, "zones") != "3" || field(q, "zone_recordsets") != "40" {
+	// Another project's quotas are a system administrator's: from 2025.1
+	// designate enforces the new policy defaults and refuses a project-scoped
+	// admin, while the older cells accept either token.
+	r.ok(t, "--os-system-scope", "all", "dns", "quota", "set", pid, "--zones", "3", "--zone-recordsets", "40")
+	if q := r.show(t, "--os-system-scope", "all", "dns", "quota", "list", pid); field(q, "zones") != "3" || field(q, "zone_recordsets") != "40" {
 		t.Errorf("dns quota list after set = %v", q)
 	}
-	r.ok(t, "dns", "quota", "reset", pid)
-	if q := r.show(t, "dns", "quota", "list", pid); field(q, "zones") == "3" {
+	r.ok(t, "--os-system-scope", "all", "dns", "quota", "reset", pid)
+	if q := r.show(t, "--os-system-scope", "all", "dns", "quota", "list", pid); field(q, "zones") == "3" {
 		t.Errorf("dns quota list after reset = %v, want the default", q)
 	}
 }

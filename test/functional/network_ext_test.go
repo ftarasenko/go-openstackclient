@@ -54,7 +54,7 @@ func TestNetworkAgents(t *testing.T) {
 
 	agentOf := func(kind string) string {
 		for _, ag := range agents {
-			if strings.Contains(strings.ToLower(field(ag, "agent_type")), kind) {
+			if strings.Contains(strings.ToLower(anyField(ag, "agent_type", "Agent Type")), kind) {
 				return field(ag, "id")
 			}
 		}
@@ -252,11 +252,14 @@ func TestAddressScopesAndSubnetPools(t *testing.T) {
 	s := r.show(t, "address", "scope", "create", scope, "--ip-version", "4")
 	sid := field(s, "id")
 	t.Cleanup(func() { r.run(t, "address", "scope", "delete", sid) })
+	// --no-share first, while it is still a no-op: neutron never unshares a
+	// shared scope.
+	r.ok(t, "address", "scope", "set", sid, "--no-share")
 	r.ok(t, "address", "scope", "set", sid, "--name", scope+"-renamed", "--share")
 	if s = r.show(t, "address", "scope", "show", sid); field(s, "name") != scope+"-renamed" || field(s, "shared") != "true" {
 		t.Errorf("after address scope set: %v", s)
 	}
-	r.ok(t, "address", "scope", "set", sid, "--no-share")
+	r.fails(t, "address", "scope", "set", sid, "--no-share")
 	if !slices.Contains(column(r.list(t, "address", "scope", "list", "--ip-version", "4"), "id"), sid) {
 		t.Errorf("address scope list does not list %s", sid)
 	}

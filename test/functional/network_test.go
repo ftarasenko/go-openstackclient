@@ -47,18 +47,20 @@ func TestNetworkAndSubnet(t *testing.T) {
 	}
 	r.ok(t, "network", "unset", f.net, "--all-tag")
 
+	// --allocation-pool adds a pool; with --no-allocation-pool it replaces the
+	// one the subnet was created with, which would overlap it.
 	r.ok(t, "subnet", "set", f.subnet, "--description", "functional", "--dns-nameserver", "192.0.2.53",
-		"--allocation-pool", "start=203.0.113.100,end=203.0.113.150",
-		"--host-route", "destination=192.0.2.0/24,gateway=203.0.113.1", "--tag", "ft-sub")
+		"--no-allocation-pool", "--allocation-pool", "start=203.0.113.100,end=203.0.113.150",
+		"--host-route", "destination=192.0.2.0/24,gateway=203.0.113.1", "--tag", "ft-subtag")
 	s := r.ok(t, "subnet", "show", f.subnet, "-f", "json")
-	for _, want := range []string{"192.0.2.53", "203.0.113.150", "192.0.2.0/24", "ft-sub", "functional"} {
+	for _, want := range []string{"192.0.2.53", "203.0.113.150", "192.0.2.0/24", "ft-subtag", "functional"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("subnet show after set lacks %q: %s", want, s)
 		}
 	}
 	r.ok(t, "subnet", "unset", f.subnet, "--dns-nameserver", "192.0.2.53",
-		"--host-route", "destination=192.0.2.0/24,gateway=203.0.113.1", "--tag", "ft-sub")
-	if s = r.ok(t, "subnet", "show", f.subnet, "-f", "json"); strings.Contains(s, "192.0.2.53") || strings.Contains(s, "ft-sub") {
+		"--host-route", "destination=192.0.2.0/24,gateway=203.0.113.1", "--tag", "ft-subtag")
+	if s = r.ok(t, "subnet", "show", f.subnet, "-f", "json"); strings.Contains(s, "192.0.2.53") || strings.Contains(s, "ft-subtag") {
 		t.Errorf("subnet show after unset: %s", s)
 	}
 	if rows := r.list(t, "subnet", "list", "--network", f.net, "--long"); len(rows) != 1 || field(rows[0], "id") != f.subnetID {
@@ -87,9 +89,9 @@ func TestPorts(t *testing.T) {
 
 	r.ok(t, "port", "set", id, "--name", name+"-renamed", "--description", "functional", "--no-fixed-ip",
 		"--fixed-ip", "subnet="+f.subnetID+",ip-address=203.0.113.20",
-		"--allowed-address", "ip-address=192.0.2.99", "--tag", "ft-port", "--disable")
+		"--allowed-address", "ip-address=192.0.2.99", "--tag", "ft-porttag", "--disable")
 	got := r.ok(t, "port", "show", id, "-f", "json")
-	for _, want := range []string{name + "-renamed", "203.0.113.20", "192.0.2.99", "ft-port"} {
+	for _, want := range []string{name + "-renamed", "203.0.113.20", "192.0.2.99", "ft-porttag"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("port show after set lacks %q: %s", want, got)
 		}
@@ -97,8 +99,8 @@ func TestPorts(t *testing.T) {
 	if field(r.show(t, "port", "show", id), "admin_state_up") != "false" {
 		t.Error("port set --disable left the port up")
 	}
-	r.ok(t, "port", "unset", id, "--allowed-address", "ip-address=192.0.2.99", "--tag", "ft-port")
-	if got = r.ok(t, "port", "show", id, "-f", "json"); strings.Contains(got, "192.0.2.99") || strings.Contains(got, "ft-port") {
+	r.ok(t, "port", "unset", id, "--allowed-address", "ip-address=192.0.2.99", "--tag", "ft-porttag")
+	if got = r.ok(t, "port", "show", id, "-f", "json"); strings.Contains(got, "192.0.2.99") || strings.Contains(got, "ft-porttag") {
 		t.Errorf("port show after unset: %s", got)
 	}
 	if rows := r.list(t, "port", "list", "--network", f.net, "--fixed-ip", "ip-address=203.0.113.20"); len(rows) != 1 {

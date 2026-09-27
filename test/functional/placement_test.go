@@ -116,7 +116,14 @@ func TestPlacementProvidersAndInventory(t *testing.T) {
 	if a := r.list(t, "resource", "provider", "allocation", "show", ftConsumer); len(a) != 0 {
 		t.Errorf("allocation show after unset = %v", a)
 	}
+	// Unsetting the only class left the consumer with nothing; allocate again
+	// so delete has something to remove.
+	r.ok(t, "resource", "provider", "allocation", "set", ftConsumer, "--allocation", "rp="+rp+","+class+"=1",
+		"--project-id", who.project, "--user-id", who.user, "--consumer-type", "INSTANCE")
 	r.ok(t, "resource", "provider", "allocation", "delete", ftConsumer)
+	if a := r.list(t, "resource", "provider", "allocation", "show", ftConsumer); len(a) != 0 {
+		t.Errorf("allocation show after delete = %v", a)
+	}
 	r.ok(t, "resource", "provider", "delete", rp)
 	r.fails(t, "resource", "provider", "show", rp)
 }

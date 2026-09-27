@@ -337,6 +337,17 @@ that stacked (run `36323792743`):
 - `user create --project` set the default project but did not print it.
   **Fixed** by `fix(identity): print the default project user create sets`.
 
+And by the run that first stacked every suite (`36324712864`):
+
+- `zone move` without `--pool-id` posted no body and designate answered 415.
+  **Fixed** by `fix(dns): send a JSON body with zone move`.
+- `resource usage show` printed placement 1.38's consumer-type grouping as if
+  `INSTANCE` were a resource class. **Fixed** by `fix(placement): report
+  resource usage per class from placement 1.38`.
+- `quota show` (and `dns`/`loadbalancer quota`) with no project failed on the
+  `clouds.yaml` cells, where `OS_PROJECT_*` are empty. **Fixed** by `fix(quota):
+  default to the token's project when none is given`.
+
 - `OS_VOLUME_API_VERSION=3` (devstack's openrc) is sent verbatim as the cinder
   microversion and cinder answers 400; upstream OSC accepts a major-only
   version. smoke now runs koc from `clouds.yaml` alone (`f82e83a`). **Fixed**
