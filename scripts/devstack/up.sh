@@ -208,6 +208,27 @@ enable_service designate designate-central designate-api designate-worker design
 EOF
         if has_feature net; then echo "enable_service neutron-dns"; fi
     fi
+
+    # Meta sections end localrc, so they go last.
+    if has_feature core; then
+        # swift's s3token now authenticates to keystone's /v3/s3tokens with a
+        # service token (swift ec975b1c7, backported to 2024.1 and 2025.1);
+        # devstack only writes these credentials from 2026.2, so on older
+        # branches every S3 request is a 401. Mirrors devstack 2026.2's
+        # lib/swift; older s3token ignores the extra keys.
+        cat <<EOF
+
+[[post-config|/etc/swift/proxy-server.conf]]
+[filter:s3token]
+auth_type = password
+auth_url = http://\$SERVICE_HOST/identity
+project_name = service
+project_domain_name = Default
+username = swift
+user_domain_name = Default
+password = secret
+EOF
+    fi
 }
 
 LOCAL_CONF=$(write_local_conf)
