@@ -10,22 +10,23 @@
 #   scripts/devstack/up.sh --series <zed|caracal|epoxy|latest|YYYY.N> \
 #       [--features core,net,dns] [--dest DIR] [--log-dir DIR] [--dry-run]
 #
-# Features (keystone + neutron ML2/OVS are always on):
+# Features (keystone + neutron are always on):
 #   core  nova, glance, cinder (+ backup to swift), placement, swift + s3api
 #   net   neutron's own devstack plugin (qos, trunk, segments, port forwarding,
 #         ...) plus neutron-dynamic-routing, networking-bgpvpn, neutron-vpnaas,
 #         neutron-fwaas and tap-as-a-service
 #   dns   designate (bind9 backend); with "net" also neutron's dns integration
 #
-# ML2/OVS rather than devstack's default OVN: fwaas, vpnaas and bgp dynamic
-# routing all need the L3 agent on Zed, and OVS is what python-openstackclient's
-# own functional job runs, so one backend serves every release we test.
+# Neutron backend by series: ML2/OVS through 2024.1, where fwaas, vpnaas and
+# bgp dynamic routing need the L3 agent; ML2/OVN, devstack's default, from
+# 2025.1, where vpnaas and fwaas ship OVN drivers. That covers both backends
+# the fleet runs.
 #
 # Outputs, all under --log-dir:
 #   stack.sh.log       devstack's own log (ends with its component timing table)
 #   local.conf         the exact configuration used
 #   refs.txt           the git ref resolved for devstack and every plugin
-#   bringup.json       series, refs, host, durations, peak RAM, disk used, result
+#   bringup.json       series, backend, refs, host, durations, peak RAM, disk used, result
 #   functional.env     OS_CLOUD, S3 credentials and fixture names for the tests
 #
 # The GitHub-runner workarounds (--gha, automatic when GITHUB_ACTIONS=true) are
@@ -128,6 +129,13 @@ if [[ "${ID:-}" != ubuntu || " $WANT_UBUNTU " != *" ${VERSION_ID:-} "* ]]; then
     if $DRY_RUN; then echo "up.sh: warning: $msg" >&2; else die "$msg"; fi
 fi
 
+# Neutron backend (see the header): OVS before 2025.1, OVN from it.
+if [[ "$SERIES" == zed || "$(printf '%s\n' "$SERIES" 2025.1 | sort -V | head -1)" != 2025.1 ]]; then
+    BACKEND=ovs
+else
+    BACKEND=ovn
+fi
+
 # --- local.conf ------------------------------------------------------------
 
 mkdir -p "$LOG_DIR"
@@ -163,14 +171,29 @@ INSTALL_TEMPEST=False
 API_WORKERS=1
 SERVICE_TIMEOUT=120
 disable_service horizon dstat tempest
+EOF
 
-# ML2/OVS, not OVN (see the header).
+    if [[ $BACKEND == ovs ]]; then
+        cat <<EOF
+
+# ML2/OVS (see the header).
 Q_AGENT=openvswitch
 Q_ML2_PLUGIN_MECHANISM_DRIVERS=openvswitch
 Q_ML2_TENANT_NETWORK_TYPE=vxlan
 disable_service ovn-controller ovn-northd ovs-vswitchd ovsdb-server q-ovn-metadata-agent q-ovn-agent br-ex-tcpdump br-int-flows
 enable_service q-svc q-agt q-dhcp q-l3 q-meta
 EOF
+    else
+        # devstack's defaults already are OVN; spelled out because the vpnaas
+        # and fwaas plugin settings pick their drivers from Q_AGENT.
+        cat <<EOF
+
+# ML2/OVN (see the header).
+Q_AGENT=ovn
+Q_ML2_PLUGIN_MECHANISM_DRIVERS=ovn
+Q_ML2_TENANT_NETWORK_TYPE=geneve
+EOF
+    fi
 
     if has_feature core; then
         cat <<EOF
@@ -197,6 +220,8 @@ $(plugin neutron-fwaas)
 $(plugin tap-as-a-service)
 enable_service taas tap_mirror
 EOF
+        # Under OVN, IPsec runs in vpnaas's own agent instead of the L3 agent.
+        if [[ $BACKEND == ovn ]]; then echo "enable_service q-ovn-vpn-agent"; fi
     fi
 
     if has_feature dns; then
@@ -235,7 +260,7 @@ LOCAL_CONF=$(write_local_conf)
 printf '%s\n' "$LOCAL_CONF" >"$LOG_DIR/local.conf"
 for p in "${!REFS[@]}"; do echo "$p ${REFS[$p]}"; done | sort >"$LOG_DIR/refs.txt"
 
-echo "== series $SERIES, features $FEATURES, devstack $DEVSTACK_REF"
+echo "== series $SERIES, features $FEATURES, backend $BACKEND, devstack $DEVSTACK_REF"
 cat "$LOG_DIR/refs.txt"
 if $DRY_RUN; then
     cat "$LOG_DIR/local.conf"
@@ -297,6 +322,7 @@ if [[ $RC -eq 0 ]]; then
         echo "OS_CLOUD=devstack-admin"
         echo "KOC_FT_SERIES=$SERIES"
         echo "KOC_FT_FEATURES=$FEATURES"
+        echo "KOC_FT_BACKEND=$BACKEND"
         if has_feature core; then
             echo "KOC_FT_IMAGE=$(openstack image list -f value -c Name | grep -m1 -i cirros)"
             # S3 goes to swift's proxy through the s3api middleware, with EC2
@@ -314,6 +340,7 @@ cat >"$LOG_DIR/bringup.json" <<EOF
 {
   "series": "$SERIES",
   "features": "$FEATURES",
+  "backend": "$BACKEND",
   "devstack_ref": "$DEVSTACK_REF",
   "os": "${PRETTY_NAME:-unknown}",
   "kvm": $([[ -e /dev/kvm ]] && echo true || echo false),
