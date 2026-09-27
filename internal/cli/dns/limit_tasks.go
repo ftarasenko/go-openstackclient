@@ -217,12 +217,8 @@ func newZoneMoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var body map[string]any
-			if poolID != "" {
-				body = map[string]any{"pool_id": poolID}
-			}
 			return runZoneTask(ctx, client, args[0],
-				zoneTask{task: "pool_move", message: "Scheduled move for zone", body: body, common: common},
+				zoneTask{task: "pool_move", message: "Scheduled move for zone", body: poolMoveBody(poolID), common: common},
 				cmd.OutOrStdout())
 		},
 	}
@@ -230,6 +226,16 @@ func newZoneMoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.Flags().StringVar(&poolID, "pool-id", "", "target pool ID (default: let designate choose)")
 	common.bind(cmd)
 	return cmd
+}
+
+// poolMoveBody is the pool_move request body. It is always a JSON object:
+// designate refuses a bodyless pool_move with 415 ("Content-type must be
+// application/json"), so an empty {} is what lets its scheduler pick the pool.
+func poolMoveBody(poolID string) map[string]any {
+	if poolID == "" {
+		return map[string]any{}
+	}
+	return map[string]any{"pool_id": poolID}
 }
 
 // zoneTask names one of the /zones/{zone}/tasks/<task> endpoints and the line
