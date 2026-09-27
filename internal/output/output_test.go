@@ -743,3 +743,58 @@ func TestSelectedColumns(t *testing.T) {
 		})
 	}
 }
+
+// TestTSV_RoundTrip holds -f tsv to its contract: one line per row, one tab
+// per cell boundary, and every cell recoverable exactly by undoing the three
+// escapes — which -f value cannot promise for a cell holding a tab or newline.
+func TestTSV_RoundTrip(t *testing.T) {
+	cells := [][]any{
+		{"plain", "two words"},
+		{"tab", "a\tb"},
+		{"newline", "one\ntwo"},
+		{`backslash-n`, `C:\temp\n`},
+		{`\`, "\t\\\n"},
+		{"", ""},
+	}
+	var buf bytes.Buffer
+	o := &Options{Format: FormatTSV}
+	if err := o.WriteList(&buf, Table{Columns: []string{"A", "B"}, Rows: cells}); err != nil {
+		t.Fatal(err)
+	}
+
+	unescape := func(s string) string {
+		var b strings.Builder
+		for i := 0; i < len(s); i++ {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+				switch s[i] {
+				case 't':
+					b.WriteByte('\t')
+				case 'n':
+					b.WriteByte('\n')
+				default:
+					b.WriteByte(s[i])
+				}
+				continue
+			}
+			b.WriteByte(s[i])
+		}
+		return b.String()
+	}
+
+	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+	if len(lines) != len(cells) {
+		t.Fatalf("got %d lines for %d rows:\n%s", len(lines), len(cells), buf.String())
+	}
+	for i, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 {
+			t.Fatalf("row %d: %d cells in %q, want 2", i, len(fields), line)
+		}
+		for j, f := range fields {
+			if got, want := unescape(f), cells[i][j].(string); got != want {
+				t.Errorf("row %d cell %d: round-trips to %q, want %q", i, j, got, want)
+			}
+		}
+	}
+}

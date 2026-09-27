@@ -304,6 +304,9 @@ case-insensitive, order-preserving); `--sort-column` sorts list output
 - `yaml`
 - `value` — plain, **tab-separated**, no headers, for scripting
 - `csv` — RFC 4180 with a header row
+- `tsv` — koc-native: tab-separated, no headers, with `\\`, `\t` and `\n`
+  escaped inside a cell, so every line is exactly one row and every tab one
+  cell boundary (undo the three escapes to recover a cell verbatim)
 
 **`-f value` is tab-separated, where `openstack` uses a single space.** Most
 values that appear in it contain spaces (status strings, flavor names, fixed-IP
@@ -312,9 +315,9 @@ The consequence for scripts: `openstack … -f value | cut -d' ' -f2` picks the
 wrong field under `koc`. Use `cut -f2` (tab is `cut`'s default), `awk '{print
 $2}'`, or `-c <column>` to select one column outright. Cells are otherwise
 unquoted in both clients, so a value that itself contains a tab or a newline
-breaks the one-cell-per-tab, one-row-per-line contract — prefer `-f csv` or `-f
-json` for fields that may hold arbitrary text (image descriptions, `properties`,
-server metadata). Newlines are passed through on purpose so that `koc zone export
+breaks the one-cell-per-tab, one-row-per-line contract — prefer `-f tsv`, `-f
+csv` or `-f json` for fields that may hold arbitrary text (image descriptions,
+`properties`, server metadata). Newlines are passed through on purpose so that `koc zone export
 showfile <id> -f value > zone.txt` yields a zonefile `zone import create` can read
 back; control characters and ANSI escapes are stripped regardless.
 

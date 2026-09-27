@@ -328,6 +328,24 @@ func TestGolden_WriteList(t *testing.T) {
 				},
 			},
 		},
+		{name: "list_tsv", opts: Options{Format: FormatTSV}, table: goldenServers()},
+		{name: "list_tsv_no_rows", opts: Options{Format: FormatTSV}, table: Table{Columns: []string{"ID", "Name"}}},
+		{
+			// The same awkward cells as list_value_unescaped: tsv escapes the
+			// backslash, tab and newline, so every row stays one line of two cells.
+			name: "list_tsv_escaped",
+			opts: Options{Format: FormatTSV},
+			table: Table{
+				Columns: []string{"Name", "Value"},
+				Rows: [][]any{
+					{"comma", "a,b"},
+					{"quote", `say "hi"`},
+					{"newline", "one\ntwo"},
+					{"tab", "a\tb"},
+					{"backslash", `C:\temp\n`},
+				},
+			},
+		},
 		{
 			// Machine formats never elide, so the full blob is always reachable.
 			name: "list_yaml_no_elision",
@@ -411,6 +429,7 @@ func TestGolden_WriteSingle(t *testing.T) {
 			// field names and no escaping (a multi-line value spills over lines).
 			name: "single_value", opts: Options{Format: FormatValue}, fields: fields, values: values,
 		},
+		{name: "single_tsv", opts: Options{Format: FormatTSV}, fields: fields, values: values},
 		{
 			name: "single_table_elide", opts: Options{Format: FormatTable},
 			fields: []string{"name", "user_data"},

@@ -1,0 +1,5 @@
+comma	a,b
+quote	say "hi"
+newline	one\ntwo
+tab	a\tb
+backslash	C:\\temp\\n
