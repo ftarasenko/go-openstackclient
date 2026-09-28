@@ -302,21 +302,29 @@ case-insensitive, order-preserving); `--sort-column` sorts list output
 - `table` (default) — human-readable ASCII table
 - `json` — array (list) / object (single resource)
 - `yaml`
-- `value` — plain, **tab-separated**, no headers, for scripting
+- `value` — plain, space-separated, no headers, for scripting — byte for byte
+  what `openstack … -f value` prints
 - `csv` — RFC 4180 with a header row
+- `tsv` — koc-native: tab-separated, no headers, with `\\`, `\t` and `\n`
+  escaped inside a cell, so every line is exactly one row and every tab one
+  cell boundary (undo the three escapes to recover a cell verbatim)
 
-**`-f value` is tab-separated, where `openstack` uses a single space.** Most
-values that appear in it contain spaces (status strings, flavor names, fixed-IP
-lists), so a space-joined row cannot be split back into its cells; a tab can.
-The consequence for scripts: `openstack … -f value | cut -d' ' -f2` picks the
-wrong field under `koc`. Use `cut -f2` (tab is `cut`'s default), `awk '{print
-$2}'`, or `-c <column>` to select one column outright. Cells are otherwise
-unquoted in both clients, so a value that itself contains a tab or a newline
-breaks the one-cell-per-tab, one-row-per-line contract — prefer `-f csv` or `-f
-json` for fields that may hold arbitrary text (image descriptions, `properties`,
-server metadata). Newlines are passed through on purpose so that `koc zone export
-showfile <id> -f value > zone.txt` yields a zonefile `zone import create` can read
-back; control characters and ANSI escapes are stripped regardless.
+**`-f value` joins a row's cells with a single space, exactly like
+`openstack`**, so scripts written for it (`cut -d' ' -f2`, `while read id
+name`) run unchanged. The catch is upstream's too: most values contain spaces
+(status strings, flavor names, fixed-IP lists), so a multi-column row cannot be
+split back into its cells. When you need that, use **`-f tsv`** (koc-native):
+tab-separated, with a tab, newline or backslash inside a cell escaped, so every
+line is one row and every tab one cell boundary. `-c <column>` selects a single
+column and sidesteps the question in either format. `-f value` cells are not
+escaped, so a value holding a newline spills across lines — on purpose: `koc zone
+export showfile <id> -f value > zone.txt` yields a zonefile `zone import create`
+can read back. Prefer `-f tsv`, `-f csv` or `-f json` for fields that may hold
+arbitrary text (image descriptions, `properties`, server metadata); control
+characters and ANSI escapes are stripped in every text format.
+
+Earlier koc releases joined `-f value` cells with a tab; a script that relied
+on that moves by renaming the format to `-f tsv`.
 
 Table output fits the terminal width: over-long cells wrap across lines when
 stdout is a TTY (piped output stays unbounded, matching `openstack`). `--max-width
@@ -350,8 +358,8 @@ it as the opt-in `Image ID`. Below nova 2.47 the flavor's name comes from a
 single flavor listing per invocation, and only when the column is actually
 being rendered — so `-c Name -c Status` does not pay for it.
 
-A few columns are **opt-in**: they are in neither the default nor the `--long`
-table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
+A few columns are **opt-in**: they are not in the default table, and naming
+one in `-c/--column` (or `--sort-column`) materialises it.
 `server list` carries eleven — `Created At`, `Image ID`, `Flavor ID`,
 `Availability Zone`, `Host`, `Task State`, `Power State`, `Project ID`,
 `User ID`, `Security Groups`, `Properties` — mirroring the extras upstream's
@@ -362,8 +370,11 @@ koc server list --all-projects -c Name -c "Created At" --sort-column "Created At
 ```
 
 without which reading creation time costs one `server show` per server. Naming
-one adds it for that invocation only — the default and `--long` tables are not
-otherwise widened, so nothing that reads either positionally is affected.
+one adds it for that invocation only — the default table is not otherwise
+widened, so nothing that reads it positionally is affected. `--long` already
+carries the ones upstream's `--long` does (`Availability Zone`, `Host`,
+`Task State`, `Power State`, `Properties`, plus koc's `Project ID` and
+`User ID`), so naming one of those alongside it adds nothing.
 `server list --help` names the full set.
 
 ### Live refresh (`--watch`)

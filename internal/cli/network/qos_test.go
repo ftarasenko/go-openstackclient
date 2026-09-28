@@ -81,7 +81,7 @@ func TestRunQoSRuleList_ReadsRulesOffThePolicy(t *testing.T) {
 	handleQoSPolicyLookup(t, fakeServer)
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	if err := runQoSRuleList(context.Background(), networkClient(fakeServer), o, "gold", &out); err != nil {
 		t.Fatalf("runQoSRuleList returned error: %v", err)
 	}

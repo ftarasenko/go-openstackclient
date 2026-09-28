@@ -56,13 +56,18 @@ func newHypervisorShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 // (2.1) rather than the negotiated "latest": nova removed the usage fields
 // (vcpus, memory_mb, local_gb, cpu_info, host_ip, …) at microversion 2.88, so a
 // negotiated-latest request would report them as 0. 2.1 keeps every field and is
-// supported by every nova, which also avoids the UUID-vs-integer hypervisor ID
-// split introduced at 2.53.
+// supported by every nova.
+//
+// 2.1 also names the hypervisor and its service by nova's integer IDs, where
+// "hypervisor list" and upstream's show, at the negotiated microversion, print
+// the UUIDs nova has used since 2.53. So id and service_id come from the same
+// hypervisor at the client's microversion, and the usage fields from 2.1.
 func runHypervisorShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
 	h, err := findHypervisor(ctx, client, ref)
 	if err != nil {
 		return err
 	}
+	id, serviceID := hypervisorIDs(ctx, client, h)
 	aggrs := hostAggregates(ctx, client)[h.HypervisorHostname]
 
 	fields := []string{
@@ -75,15 +80,45 @@ func runHypervisorShow(ctx context.Context, client *gophercloud.ServiceClient, o
 		"service_host", "service_id", "service_disabled_reason",
 	}
 	values := []any{
-		h.ID, h.HypervisorHostname, h.HypervisorType, h.HypervisorVersion,
+		id, h.HypervisorHostname, h.HypervisorType, h.HypervisorVersion,
 		h.HostIP, h.State, h.Status, strings.Join(aggrs, ", "),
 		h.VCPUs, h.VCPUsUsed, h.MemoryMB, h.MemoryMBUsed, h.FreeRamMB,
 		h.LocalGB, h.LocalGBUsed, h.FreeDiskGB, h.DiskAvailableLeast,
 		h.RunningVMs, h.CurrentWorkload,
 		h.CPUInfo.Vendor, h.CPUInfo.Arch, h.CPUInfo.Model,
-		h.Service.Host, h.Service.ID, h.Service.DisabledReason,
+		h.Service.Host, serviceID, h.Service.DisabledReason,
 	}
 	return o.WriteSingle(w, fields, values)
+}
+
+// hypervisorIDs returns the IDs of h, a hypervisor read at 2.1, and of its
+// service, as nova names them at the client's microversion: UUIDs from 2.53.
+// The hypervisor is matched on hostname and service host, as findHypervisor
+// matches a UUID. The lookup is best-effort — on a failed listing, a pinned
+// pre-2.53 client or no unique match, the 2.1 IDs are what there is.
+func hypervisorIDs(ctx context.Context, client *gophercloud.ServiceClient, h hypervisors.Hypervisor) (id, serviceID string) {
+	id, serviceID = h.ID, h.Service.ID
+	if client.Microversion == "" {
+		return id, serviceID
+	}
+	pages, err := hypervisors.List(client, nil).AllPages(ctx)
+	if err != nil {
+		return id, serviceID
+	}
+	all, err := hypervisors.ExtractHypervisors(pages)
+	if err != nil {
+		return id, serviceID
+	}
+	var match []hypervisors.Hypervisor
+	for _, cand := range all {
+		if cand.HypervisorHostname == h.HypervisorHostname && cand.Service.Host == h.Service.Host {
+			match = append(match, cand)
+		}
+	}
+	if len(match) != 1 {
+		return id, serviceID
+	}
+	return match[0].ID, match[0].Service.ID
 }
 
 // findHypervisor resolves a hypervisor by ID or hostname.
@@ -109,10 +144,20 @@ func findHypervisor(ctx context.Context, client *gophercloud.ServiceClient, ref 
 		return hypervisors.Hypervisor{}, fmt.Errorf("parsing hypervisor list: %w", err)
 	}
 
-	var matches []hypervisors.Hypervisor
-	for _, h := range all {
-		if h.ID == ref || h.HypervisorHostname == ref {
-			matches = append(matches, h)
+	matches := matchHypervisors(all, ref)
+	if len(matches) == 0 && client.Microversion != "" {
+		// "hypervisor list" runs at the negotiated microversion, where nova has
+		// named hypervisors by UUID since 2.53, while 2.1 still names them by
+		// integer. Map a UUID copied from that listing to its hostname and
+		// service host, and match those in the 2.1 list.
+		if h, ok, err := hypervisorAtMicroversion(ctx, client, ref); err != nil {
+			return hypervisors.Hypervisor{}, err
+		} else if ok {
+			for _, cand := range all {
+				if cand.HypervisorHostname == h.HypervisorHostname && cand.Service.Host == h.Service.Host {
+					matches = append(matches, cand)
+				}
+			}
 		}
 	}
 	switch len(matches) {
@@ -123,6 +168,35 @@ func findHypervisor(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	default:
 		return hypervisors.Hypervisor{}, fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, len(matches))
 	}
+}
+
+func matchHypervisors(all []hypervisors.Hypervisor, ref string) []hypervisors.Hypervisor {
+	var matches []hypervisors.Hypervisor
+	for _, h := range all {
+		if h.ID == ref || h.HypervisorHostname == ref {
+			matches = append(matches, h)
+		}
+	}
+	return matches
+}
+
+// hypervisorAtMicroversion finds the hypervisor whose ID is ref in a listing at
+// the client's own microversion.
+func hypervisorAtMicroversion(ctx context.Context, client *gophercloud.ServiceClient, ref string) (hypervisors.Hypervisor, bool, error) {
+	pages, err := hypervisors.List(client, nil).AllPages(ctx)
+	if err != nil {
+		return hypervisors.Hypervisor{}, false, fmt.Errorf("listing hypervisors: %w", err)
+	}
+	all, err := hypervisors.ExtractHypervisors(pages)
+	if err != nil {
+		return hypervisors.Hypervisor{}, false, fmt.Errorf("parsing hypervisor list: %w", err)
+	}
+	for _, h := range all {
+		if h.ID == ref {
+			return h, true, nil
+		}
+	}
+	return hypervisors.Hypervisor{}, false, nil
 }
 
 // hostAggregates maps each compute host to the names of the aggregates holding
@@ -212,7 +286,8 @@ func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	return cmd
 }
 
-// runHypervisorList is the plain, OSC-compatible listing.
+// runHypervisorList is the plain, OSC-compatible listing: upstream's columns,
+// plus the service status nova reports alongside the state.
 func runHypervisorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
 	pages, err := hypervisors.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -223,11 +298,11 @@ func runHypervisorList(ctx context.Context, client *gophercloud.ServiceClient, o
 		return fmt.Errorf("parsing hypervisor list: %w", err)
 	}
 	t := output.Table{
-		Columns: []string{"ID", "Hypervisor Hostname", "Type", "State", "Status"},
+		Columns: []string{"ID", "Hypervisor Hostname", "Hypervisor Type", "Host IP", "State", "Status"},
 		Rows:    make([][]any, 0, len(all)),
 	}
 	for _, h := range all {
-		t.Rows = append(t.Rows, []any{h.ID, h.HypervisorHostname, h.HypervisorType, h.State, h.Status})
+		t.Rows = append(t.Rows, []any{h.ID, h.HypervisorHostname, h.HypervisorType, h.HostIP, h.State, h.Status})
 	}
 	return o.WriteList(w, t)
 }

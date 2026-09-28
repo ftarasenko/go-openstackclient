@@ -124,27 +124,28 @@ func TestRunZoneTask(t *testing.T) {
 	}
 }
 
-// "zone move" with no --pool-id sends no body at all, letting designate's scheduler
-// pick the target.
-func TestZoneMove_NoPoolIDSendsNoBody(t *testing.T) {
+// "zone move" with no --pool-id sends an empty JSON object, letting designate's
+// scheduler pick the target: a bodyless POST is refused with 415.
+func TestZoneMove_NoPoolIDSendsAnEmptyObject(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
 	stubZoneList(fakeServer)
-	var gotLength int64
+	var gotType string
 	fakeServer.Mux.HandleFunc("/zones/z1/tasks/pool_move", func(w http.ResponseWriter, r *http.Request) {
-		gotLength = r.ContentLength
+		gotType = r.Header.Get("Content-Type")
+		th.TestJSONRequest(t, r, `{}`)
 		w.WriteHeader(http.StatusAccepted)
 	})
 
 	var buf bytes.Buffer
 	if err := runZoneTask(context.Background(), dnsShareClient(fakeServer), "example.com",
-		zoneTask{task: "pool_move", message: "Scheduled move for zone", common: &commonOptions{}},
+		zoneTask{task: "pool_move", message: "Scheduled move for zone", body: poolMoveBody(""), common: &commonOptions{}},
 		&buf); err != nil {
 		t.Fatalf("runZoneTask error: %v", err)
 	}
-	if gotLength > 0 {
-		t.Errorf("request body length = %d, want no body", gotLength)
+	if gotType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotType)
 	}
 }
 

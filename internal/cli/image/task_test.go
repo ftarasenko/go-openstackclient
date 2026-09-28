@@ -28,7 +28,7 @@ func TestRunImageTaskList_TypeFilterReachesTheQuery(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	f := &imageTaskListFlags{status: "success", typ: "import"}
 	client := imageClient(fakeServer)
 	if err := runImageTaskList(context.Background(), client, o, f, &out); err != nil {
@@ -156,7 +156,7 @@ func TestRunImageStoresList_AcceptsQuotedBooleans(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := imageClient(fakeServer)
 	if err := runImageStoresList(context.Background(), client, o, false, &out); err != nil {
 		t.Fatalf("runImageStoresList returned error: %v", err)

@@ -532,3 +532,36 @@ func TestExec_SubnetPoolUnset_IsWired(t *testing.T) {
 		t.Error("--all-tag with --tag was accepted")
 	}
 }
+
+// subnet show carries the subnet-external-network extension's router:external
+// when neutron sends it (2024.2 on), and leaves it out on an older cloud
+// rather than claiming false.
+func TestRunSubnetShow_RouterExternal(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       string
+		absent     bool
+	}{
+		{"external", `{"subnet":{"id":"sub-1","router:external":true}}`, `"router:external": true`, false},
+		{"internal", `{"subnet":{"id":"sub-1","router:external":false}}`, `"router:external": false`, false},
+		{"pre-2024.2", `{"subnet":{"id":"sub-1"}}`, "router:external", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			echoLookup(t, fakeServer, "/subnets", "subnets")
+			fakeServer.Mux.HandleFunc("/subnets/sub-1", func(w http.ResponseWriter, r *http.Request) {
+				th.TestMethod(t, r, http.MethodGet)
+				writeJSON(t, w, http.StatusOK, tc.body)
+			})
+			var buf bytes.Buffer
+			if err := runSubnetShow(context.Background(), networkClient(fakeServer),
+				&output.Options{Format: output.FormatJSON}, "sub-1", &buf); err != nil {
+				t.Fatalf("runSubnetShow: %v", err)
+			}
+			if got := strings.Contains(buf.String(), tc.want); got == tc.absent {
+				t.Errorf("output contains %s = %v, want %v:\n%s", tc.want, got, !tc.absent, buf.String())
+			}
+		})
+	}
+}

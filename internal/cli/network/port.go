@@ -125,7 +125,7 @@ func portShowFields(p *portExt) ([]string, []any) {
 		"data_plane_status", "dns_assignment", "dns_domain", "dns_name", "extra_dhcp_opts",
 		"propagate_uplink_status", "qos_network_policy_id", "qos_policy_id",
 		"device_profile", "hardware_offload_type", "hints", "ip_allocation", "numa_affinity_policy",
-		"pvlan_type", "pvlan_community", "resource_request", "trusted", "revision_number",
+		"pvlan_type", "pvlan_community", "resource_request", "trunk_details", "trusted", "revision_number",
 		"description", "project_id", "tags", "created_at", "updated_at",
 	}
 	values := []any{
@@ -137,7 +137,7 @@ func portShowFields(p *portExt) ([]string, []any) {
 		p.PropagateUplinkStatus, p.QoSNetworkPolicyID, p.QoSPolicyID,
 		p.DeviceProfile, p.HardwareOffloadType, mapOrNil(p.Hints), p.IPAllocation, p.NUMAAffinityPolicy,
 		optionalString(p.PVLANType), optionalString(p.PVLANCommunity), mapOrNil(p.ResourceRequest),
-		optionalBool(p.Trusted), p.RevisionNumber,
+		trunkDetailsOrNil(p.TrunkDetails), optionalBool(p.Trusted), p.RevisionNumber,
 		p.Description, p.ProjectID, p.Tags, p.CreatedAt, p.UpdatedAt,
 	}
 	return fields, values
@@ -372,6 +372,19 @@ type TrunkDetailsExt struct {
 type trunkDetails struct {
 	TrunkID  string         `json:"trunk_id"`
 	SubPorts []trunkSubPort `json:"sub_ports"`
+}
+
+// trunkDetailsOrNil renders a port's trunk_details for show: the trunk and
+// its subports on a trunk's parent port, and null on any other port, where
+// neutron omits the attribute (upstream prints its None).
+func trunkDetailsOrNil(d trunkDetails) any {
+	if d.TrunkID == "" {
+		return nil
+	}
+	if d.SubPorts == nil {
+		d.SubPorts = []trunkSubPort{}
+	}
+	return d
 }
 
 type trunkSubPort struct {

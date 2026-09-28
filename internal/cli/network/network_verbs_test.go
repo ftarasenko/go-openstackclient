@@ -1035,6 +1035,27 @@ func TestRunAgentShow_RequestAndOutput(t *testing.T) {
 	}
 }
 
+// agent show carries upstream's configuration and last_heartbeat_at fields.
+func TestRunAgentShow_ConfigurationAndHeartbeat(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/agents/agent-1", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"agent":{"id":"agent-1","agent_type":"DHCP agent",
+			"configurations":{"networks":2,"dhcp_driver":"neutron.agent.linux.dhcp.Dnsmasq"},
+			"heartbeat_timestamp":"2026-09-27 17:16:15"}}`)
+	})
+	o := &output.Options{Format: output.FormatJSON, Columns: []string{"configuration", "last_heartbeat_at"}}
+	var buf bytes.Buffer
+	if err := runAgentShow(context.Background(), networkClient(fakeServer), o, "agent-1", &buf); err != nil {
+		t.Fatalf("runAgentShow: %v", err)
+	}
+	for _, want := range []string{`"networks": 2`, `"dhcp_driver"`, `"last_heartbeat_at": "2026-09-27T17:16:15+00:00"`} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("agent show missing %s\n%s", want, buf.String())
+		}
+	}
+}
+
 func TestRunAgentDelete(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
@@ -1134,7 +1155,7 @@ func TestRunSecurityGroupList_SendsEveryFilter(t *testing.T) {
 			tags: []string{"a"}, anyTags: []string{"b"}, notTags: []string{"c"}, notAnyTags: []string{"d"},
 		},
 	}
-	o := &output.Options{Format: output.FormatValue}
+	o := &output.Options{Format: output.FormatTSV}
 	var buf bytes.Buffer
 	if err := runSecurityGroupList(context.Background(), networkClient(fakeServer), o, f, "p1", &buf); err != nil {
 		t.Fatalf("runSecurityGroupList: %v", err)
@@ -1167,7 +1188,7 @@ func TestRunSecurityGroupList_Share(t *testing.T) {
 			})
 
 			f := &secGroupListFlags{name: "web", shared: &tc.shared}
-			o := &output.Options{Format: output.FormatValue, Columns: []string{"ID", "Shared"}}
+			o := &output.Options{Format: output.FormatTSV, Columns: []string{"ID", "Shared"}}
 			var buf bytes.Buffer
 			if err := runSecurityGroupList(context.Background(), networkClient(fakeServer), o, f, "", &buf); err != nil {
 				t.Fatalf("runSecurityGroupList: %v", err)

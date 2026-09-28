@@ -185,6 +185,31 @@ func TestRunSecurityGroupShow_SharedAndRevision(t *testing.T) {
 	}
 }
 
+// rules render as upstream's formatter does: one key='value' line per rule,
+// sorted keys, empty values and the IDs the group already names dropped.
+func TestRunSecurityGroupShow_Rules(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	echoLookup(t, fakeServer, "/security-groups", "security_groups")
+	fakeServer.Mux.HandleFunc("/security-groups/sg-1", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"security_group":{"id":"sg-1","name":"web","security_group_rules":[
+			{"id":"r1","direction":"egress","ethertype":"IPv4","protocol":null,"port_range_min":null,
+			 "remote_ip_prefix":null,"security_group_id":"sg-1","project_id":"p1","tenant_id":"p1","description":""},
+			{"id":"r2","direction":"ingress","ethertype":"IPv4","protocol":"tcp","port_range_min":22,
+			 "port_range_max":22,"remote_ip_prefix":"192.0.2.0/24","security_group_id":"sg-1","tags":[]}]}}`)
+	})
+	o := &output.Options{Format: output.FormatValue, Columns: []string{"rules"}}
+	var buf bytes.Buffer
+	if err := runSecurityGroupShow(context.Background(), networkClient(fakeServer), o, "sg-1", &buf); err != nil {
+		t.Fatalf("runSecurityGroupShow: %v", err)
+	}
+	want := "direction='egress', ethertype='IPv4', id='r1'\n" +
+		"direction='ingress', ethertype='IPv4', id='r2', port_range_max='22', port_range_min='22', protocol='tcp', remote_ip_prefix='192.0.2.0/24'\n"
+	if got := buf.String(); got != want {
+		t.Errorf("rules = %q, want %q", got, want)
+	}
+}
+
 // --- security group rule create ---------------------------------------------
 
 // --icmp-type/--icmp-code map onto port_range_min/max, and 0 is a real value

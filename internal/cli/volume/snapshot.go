@@ -53,6 +53,7 @@ type snapshotListFlags struct {
 	volume      string
 	limit       int
 	marker      string
+	long        bool
 }
 
 func newSnapshotListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -80,6 +81,7 @@ func newSnapshotListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.volume, "volume", "", "filter by source volume ID")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of snapshots to return")
 	fl.StringVar(&f.marker, "marker", "", "list snapshots after this ID (pagination)")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
 
@@ -97,11 +99,30 @@ func runSnapshotList(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return fmt.Errorf("listing snapshots: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Description", "Status", "Size"}}
-	for _, s := range all {
-		t.Rows = append(t.Rows, []any{s.ID, s.Name, s.Description, s.Status, s.Size})
+	var names map[string]string
+	if f.long {
+		names = volumeNamesForTable(ctx, client, o)
 	}
-	return o.WriteList(w, t)
+	return o.WriteList(w, snapshotListTable(all, f.long, names))
+}
+
+// snapshotListTable renders the listing. --long adds upstream's Created At,
+// Volume and Properties (python-openstackclient 10.3.0,
+// volume/v3/volume_snapshot.py ListVolumeSnapshot), in its order.
+func snapshotListTable(list []snapshots.Snapshot, long bool, volumeNames map[string]string) output.Table {
+	cols := []string{"ID", "Name", "Description", "Status", "Size"}
+	if long {
+		cols = append(cols, "Created At", "Volume", "Properties")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
+	for _, s := range list {
+		row := []any{s.ID, s.Name, s.Description, s.Status, s.Size}
+		if long {
+			row = append(row, s.CreatedAt, volumeLabel(s.VolumeID, volumeNames), s.Metadata)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	return t
 }
 
 func newSnapshotShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

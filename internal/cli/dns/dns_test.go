@@ -946,3 +946,40 @@ func TestZoneAndRecordSetList_ProjectColumnOnlyWhenCrossProject(t *testing.T) {
 		})
 	}
 }
+
+// A recordset with no TTL of its own inherits the zone's; designate says null,
+// and koc must not print 0, a TTL that forbids caching.
+func TestRunRecordSet_InheritedTTL(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	registerZoneList(fakeServer)
+	const rs = `{"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "name": "www.example.com.", "type": "A",
+		"records": ["192.0.2.1"], "ttl": null, "zone_id": "11111111-1111-1111-1111-111111111111"}`
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"recordsets": [` + rs + `], "links": {}}`))
+	})
+	fakeServer.Mux.HandleFunc("/zones/11111111-1111-1111-1111-111111111111/recordsets/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(rs))
+	})
+
+	client := dnsClient(fakeServer)
+	var show bytes.Buffer
+	o := &output.Options{Format: output.FormatJSON, Columns: []string{"ttl"}}
+	if err := runRecordSetShow(context.Background(), client, o, "example.com", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", &show); err != nil {
+		t.Fatalf("runRecordSetShow: %v", err)
+	}
+	if !strings.Contains(show.String(), `"ttl": null`) {
+		t.Errorf("recordset show ttl = %s, want null", show.String())
+	}
+	var list bytes.Buffer
+	o = &output.Options{Format: output.FormatJSON, Columns: []string{"TTL"}}
+	if err := runRecordSetList(context.Background(), client, o, "example.com", &recordSetListFlags{}, false, &list); err != nil {
+		t.Fatalf("runRecordSetList: %v", err)
+	}
+	if !strings.Contains(list.String(), `"TTL": null`) {
+		t.Errorf("recordset list TTL = %s, want null", list.String())
+	}
+}

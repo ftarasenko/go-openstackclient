@@ -32,7 +32,7 @@ func TestRunNodeValidate_RendersEveryInterface(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := baremetalClient(fakeServer, "latest")
 	if err := runNodeValidate(context.Background(), client, o, readoutNodeID, &out); err != nil {
 		t.Fatalf("runNodeValidate returned error: %v", err)
@@ -151,7 +151,7 @@ func TestRunNodeBIOSSettingList_DetailQueryAndBlankOptionals(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := baremetalClient(fakeServer, "latest")
 	if err := runNodeBIOSSettingList(context.Background(), client, o, readoutNodeID, true, &out); err != nil {
 		t.Fatalf("runNodeBIOSSettingList returned error: %v", err)
@@ -202,7 +202,7 @@ func TestRunNodeFirmwareList_RendersComponents(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	client := baremetalClient(fakeServer, "latest")
 	if err := runNodeFirmwareList(context.Background(), client, o, readoutNodeID, &out); err != nil {
 		t.Fatalf("runNodeFirmwareList returned error: %v", err)

@@ -213,3 +213,30 @@ func TestRunVolumeCreate_Wait(t *testing.T) {
 		})
 	}
 }
+
+// --long ends with upstream's Properties, the volume's metadata: key='value'
+// in the table, an object in json.
+func TestRunVolumeList_LongProperties(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volumes": [{"id": "v1", "name": "data", "status": "available", "size": 1,
+		  "metadata": {"env": "prod", "role": "db"}}]}`))
+	})
+	for _, tc := range []struct{ format, want string }{
+		{output.FormatCSV, `,Host,Properties` + "\n"},
+		{output.FormatCSV, `,"env='prod', role='db'"` + "\n"},
+		{output.FormatJSON, `"Properties": {`},
+	} {
+		o := &output.Options{Format: tc.format}
+		var buf bytes.Buffer
+		if err := runVolumeList(context.Background(), volumeClient(fakeServer, "3.70"), o,
+			&volumeListFlags{long: true}, "", "", &buf); err != nil {
+			t.Fatalf("runVolumeList: %v", err)
+		}
+		if !strings.Contains(buf.String(), tc.want) {
+			t.Errorf("%s: volume list --long missing %q\n---\n%s", tc.format, tc.want, buf.String())
+		}
+	}
+}

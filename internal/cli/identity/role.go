@@ -7,6 +7,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -367,23 +368,76 @@ func runRoleAssignmentList(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return fmt.Errorf("parsing role assignment list: %w", err)
 	}
-	t := output.Table{Columns: []string{"Role", "User", "Group", "Project", "Domain"}, Rows: make([][]any, 0, len(all))}
-	for _, ra := range all {
+	extra, err := extractAssignmentExtras(pages)
+	if err != nil {
+		return fmt.Errorf("parsing role assignment list: %w", err)
+	}
+	t := output.Table{
+		Columns: []string{"Role", "User", "Group", "Project", "Domain", "System", "Inherited"},
+		Rows:    make([][]any, 0, len(all)),
+	}
+	for i, ra := range all {
+		var x assignmentExtra
+		if i < len(extra) {
+			x = extra[i]
+		}
 		role := ra.Role.ID
 		user := ra.User.ID
 		group := ra.Group.ID
 		project := ra.Scope.Project.ID
 		domain := ra.Scope.Domain.ID
 		if f.names {
-			role = firstNonEmpty(ra.Role.Name, role)
-			user = firstNonEmpty(ra.User.Name, user)
-			group = firstNonEmpty(ra.Group.Name, group)
-			project = firstNonEmpty(ra.Scope.Project.Name, project)
+			// Upstream qualifies every name but the scope domain's own with the
+			// domain it lives in: admin@Default.
+			role = qualified(ra.Role.Name, x.Role.Domain.Name, role)
+			user = qualified(ra.User.Name, ra.User.Domain.Name, user)
+			group = qualified(ra.Group.Name, ra.Group.Domain.Name, group)
+			project = qualified(ra.Scope.Project.Name, ra.Scope.Project.Domain.Name, project)
 			domain = firstNonEmpty(ra.Scope.Domain.Name, domain)
 		}
-		t.Rows = append(t.Rows, []any{role, user, group, project, domain})
+		system := ""
+		if ra.Scope.System != nil && ra.Scope.System.All {
+			system = "all"
+		}
+		t.Rows = append(t.Rows, []any{role, user, group, project, domain, system, x.Scope.InheritedTo != ""})
 	}
 	return o.WriteList(w, t)
+}
+
+// assignmentExtra is what gophercloud's RoleAssignment leaves out: the
+// OS-INHERIT marker on an inherited assignment's scope, and a domain-specific
+// role's domain.
+type assignmentExtra struct {
+	Role struct {
+		Domain roles.Domain `json:"domain"`
+	} `json:"role"`
+	Scope struct {
+		InheritedTo string `json:"OS-INHERIT:inherited_to"`
+	} `json:"scope"`
+}
+
+// extractAssignmentExtras reads assignmentExtra from the same page, in order.
+func extractAssignmentExtras(page pagination.Page) ([]assignmentExtra, error) {
+	p, ok := page.(roles.RoleAssignmentPage)
+	if !ok {
+		return nil, fmt.Errorf("unexpected role assignment page type %T", page)
+	}
+	var out []assignmentExtra
+	if err := p.ExtractIntoSlicePtr(&out, "role_assignments"); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// qualified renders name@domain, or the fallback when keystone sent no name.
+func qualified(name, domain, fallback string) string {
+	switch {
+	case name == "":
+		return fallback
+	case domain == "":
+		return name
+	}
+	return name + "@" + domain
 }
 
 func firstNonEmpty(vals ...string) string {

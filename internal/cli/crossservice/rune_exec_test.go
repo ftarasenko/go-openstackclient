@@ -200,7 +200,7 @@ func TestExec_AvailabilityZoneList_MergesThreeServicesAndFiltersToOne(t *testing
 			fakeServer := th.SetupHTTP()
 			defer fakeServer.Teardown()
 
-			c, _ := serve(t, fakeServer, "/compute/os-availability-zone", computeBody)
+			c, _ := serve(t, fakeServer, "/compute/os-availability-zone/detail", computeBody)
 			v, _ := serve(t, fakeServer, "/block-storage/os-availability-zone", volumeBody)
 			n, _ := serve(t, fakeServer, "/network/v2.0/availability_zones", networkBody)
 
@@ -222,23 +222,5 @@ func TestExec_AvailabilityZoneList_MergesThreeServicesAndFiltersToOne(t *testing
 				}
 			}
 		})
-	}
-}
-
-// --long swaps nova's plain listing for the admin detail endpoint; it must not
-// change which services are asked.
-func TestExec_AvailabilityZoneList_LongUsesTheDetailEndpoint(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
-
-	plain, _ := serve(t, fakeServer, "/compute/os-availability-zone", `{"availabilityZoneInfo":[]}`)
-	detail, _ := serve(t, fakeServer, "/compute/os-availability-zone/detail",
-		`{"availabilityZoneInfo":[{"zoneName":"nova","zoneState":{"available":true}}]}`)
-
-	if _, err := execCrossservice(t, fakeServer, "availability", "zone", "list", "--compute", "--long"); err != nil {
-		t.Fatal(err)
-	}
-	if *detail != 1 || *plain != 0 {
-		t.Errorf("detail hit %d times, plain %d; want 1 and 0", *detail, *plain)
 	}
 }

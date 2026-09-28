@@ -1,0 +1,143 @@
+# Leaf commands with no functional test yet — debt from before the rule that
+# every leaf has one (AGENTS.md "Testing"). TestEveryLeafIsCovered keeps this
+# honest. It only ever shrinks: when a test lands for a leaf, delete its line;
+# a new command lands with its test, never with a line here.
+koc baremetal allocation create
+koc baremetal allocation delete
+koc baremetal allocation list
+koc baremetal allocation set
+koc baremetal allocation show
+koc baremetal allocation unset
+koc baremetal conductor list
+koc baremetal conductor show
+koc baremetal driver list
+koc baremetal driver property list
+koc baremetal driver raid property list
+koc baremetal driver show
+koc baremetal introspection abort
+koc baremetal introspection data save
+koc baremetal introspection interface list
+koc baremetal introspection list
+koc baremetal introspection start
+koc baremetal introspection status
+koc baremetal node abort
+koc baremetal node adopt
+koc baremetal node bios setting list
+koc baremetal node bios setting show
+koc baremetal node boot device set
+koc baremetal node boot device show
+koc baremetal node clean
+koc baremetal node create
+koc baremetal node delete
+koc baremetal node deploy
+koc baremetal node firmware list
+koc baremetal node inject nmi
+koc baremetal node inspect
+koc baremetal node inventory save
+koc baremetal node inventory show
+koc baremetal node list
+koc baremetal node maintenance set
+koc baremetal node maintenance unset
+koc baremetal node manage
+koc baremetal node power off
+koc baremetal node power on
+koc baremetal node power reboot
+koc baremetal node provide
+koc baremetal node rebuild
+koc baremetal node rescue
+koc baremetal node service
+koc baremetal node set
+koc baremetal node show
+koc baremetal node undeploy
+koc baremetal node unhold
+koc baremetal node unrescue
+koc baremetal node unset
+koc baremetal node validate
+koc baremetal node vif attach
+koc baremetal node vif detach
+koc baremetal node vif list
+koc baremetal port create
+koc baremetal port delete
+koc baremetal port list
+koc baremetal port set
+koc baremetal port show
+koc keyvrm app-config set
+koc keyvrm app-config show
+koc keyvrm availability-zone host-aggregate list
+koc keyvrm availability-zone list
+koc keyvrm event list
+koc keyvrm event recommendation list
+koc keyvrm event recommendation run
+koc keyvrm event show
+koc keyvrm host-aggregate-config event list
+koc keyvrm host-aggregate-config list
+koc keyvrm host-aggregate-config markers
+koc keyvrm host-aggregate-config set
+koc keyvrm host-aggregate-config show
+koc keyvrm recommendation list
+koc keyvrm recommendation operation list
+koc keyvrm recommendation run
+koc keyvrm recommendation show
+koc keyvrm recommendation stop
+koc loadbalancer amphora configure
+koc loadbalancer amphora delete
+koc loadbalancer amphora failover
+koc loadbalancer amphora list
+koc loadbalancer amphora show
+koc loadbalancer amphora stats show
+koc loadbalancer create
+koc loadbalancer delete
+koc loadbalancer failover
+koc loadbalancer flavor create
+koc loadbalancer flavor delete
+koc loadbalancer flavor list
+koc loadbalancer flavor set
+koc loadbalancer flavor show
+koc loadbalancer flavorprofile create
+koc loadbalancer flavorprofile delete
+koc loadbalancer flavorprofile list
+koc loadbalancer flavorprofile set
+koc loadbalancer flavorprofile show
+koc loadbalancer healthmonitor create
+koc loadbalancer healthmonitor delete
+koc loadbalancer healthmonitor list
+koc loadbalancer healthmonitor set
+koc loadbalancer healthmonitor show
+koc loadbalancer l7policy create
+koc loadbalancer l7policy delete
+koc loadbalancer l7policy list
+koc loadbalancer l7policy set
+koc loadbalancer l7policy show
+koc loadbalancer l7rule create
+koc loadbalancer l7rule delete
+koc loadbalancer l7rule list
+koc loadbalancer l7rule set
+koc loadbalancer l7rule show
+koc loadbalancer list
+koc loadbalancer listener create
+koc loadbalancer listener delete
+koc loadbalancer listener list
+koc loadbalancer listener set
+koc loadbalancer listener show
+koc loadbalancer member create
+koc loadbalancer member delete
+koc loadbalancer member list
+koc loadbalancer member set
+koc loadbalancer member show
+koc loadbalancer pool create
+koc loadbalancer pool delete
+koc loadbalancer pool list
+koc loadbalancer pool set
+koc loadbalancer pool show
+koc loadbalancer provider capability list
+koc loadbalancer provider list
+koc loadbalancer quota defaults show
+koc loadbalancer quota list
+koc loadbalancer quota reset
+koc loadbalancer quota set
+koc loadbalancer quota show
+koc loadbalancer quota unset
+koc loadbalancer set
+koc loadbalancer show
+koc loadbalancer stats show
+koc loadbalancer status show

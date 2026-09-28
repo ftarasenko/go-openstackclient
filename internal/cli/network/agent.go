@@ -34,12 +34,12 @@ func newAgentCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func agentShowFields(ag *agents.Agent) ([]string, []any) {
 	fields := []string{
 		"id", "agent_type", "binary", "host", "availability_zone",
-		"admin_state_up", "alive", "topic", "description",
-		"heartbeat_timestamp", "started_at", "created_at",
+		"admin_state_up", "alive", "topic", "description", "configuration",
+		"last_heartbeat_at", "started_at", "created_at",
 	}
 	values := []any{
 		ag.ID, ag.AgentType, ag.Binary, ag.Host, ag.AvailabilityZone,
-		ag.AdminStateUp, ag.Alive, ag.Topic, ag.Description,
+		ag.AdminStateUp, ag.Alive, ag.Topic, ag.Description, ag.Configurations,
 		ag.HeartbeatTimestamp, ag.StartedAt, ag.CreatedAt,
 	}
 	return fields, values

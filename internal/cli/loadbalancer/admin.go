@@ -67,6 +67,9 @@ func resolveQuotaProject(ctx context.Context, session *auth.Client, a *auth.Opti
 	switch {
 	case len(args) == 1:
 		ref = args[0]
+	case session.ScopedProjectID() != "":
+		// The token's project: OS_PROJECT_* are empty when clouds.yaml names it.
+		return session.ScopedProjectID(), nil
 	case a.ProjectID != "":
 		ref = a.ProjectID
 	default:

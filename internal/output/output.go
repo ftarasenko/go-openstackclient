@@ -8,8 +8,13 @@
 //	table  human-readable ASCII table (default)
 //	json   JSON (array for lists, object for a single resource)
 //	yaml   YAML
-//	value  plain, tab-separated values, no headers (for scripting)
+//	value  plain, space-separated values, no headers (for scripting)
 //	csv    RFC 4180 CSV with a header row
+//
+// plus one koc-native format with no upstream equivalent:
+//
+//	tsv    tab-separated, no headers, with \\, \t and \n escaped inside a
+//	       cell, so one line is always one row and one tab one cell
 package output
 
 import (
@@ -38,9 +43,10 @@ const (
 	FormatYAML  = "yaml"
 	FormatValue = "value"
 	FormatCSV   = "csv"
+	FormatTSV   = "tsv"
 )
 
-var allFormats = []string{FormatTable, FormatJSON, FormatYAML, FormatValue, FormatCSV}
+var allFormats = []string{FormatTable, FormatJSON, FormatYAML, FormatValue, FormatCSV, FormatTSV}
 
 // maxTableCell caps how many runes a single table cell may hold before the
 // table formatter elides it to a "<N bytes; …>" placeholder. Oversized opaque
@@ -236,6 +242,8 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 		return writeCSV(w, cols, rows)
 	case FormatValue:
 		return writeValue(w, rows)
+	case FormatTSV:
+		return writeTSV(w, rows)
 	default:
 		frame, styles := o.highlight(cols, rows)
 		return writeTable(w, cols, frame, tableLayout{
@@ -426,10 +434,15 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 		return writeYAML(w, fieldMap(fields, values))
 	case FormatCSV:
 		return writeCSV(w, []string{"Field", "Value"}, fieldRows(fields, values))
-	case FormatValue:
+	case FormatValue, FormatTSV:
+		// One value per line, no field names — cliff's shape for a single
+		// resource, kept by tsv so both scripting formats read the same way.
 		rows := make([][]any, len(values))
 		for i := range values {
 			rows[i] = []any{values[i]}
+		}
+		if o.Format == FormatTSV {
+			return writeTSV(w, rows)
 		}
 		return writeValue(w, rows)
 	default:
@@ -621,8 +634,12 @@ func writeCSV(w io.Writer, cols []string, rows [][]any) error {
 	return nil
 }
 
-// writeValue emits tab-separated values with no header, one row per line, for
-// scripting (`-f value`).
+// writeValue emits `-f value`: a row's cells joined by a single space, no
+// header, one row per line — byte for byte what cliff's ValueFormatter writes,
+// so a script written for `openstack … -f value` (cut -d' ', read a b) runs
+// unchanged. Because most values contain spaces, a multi-column row cannot be
+// split back into its cells; that is upstream's contract too, and -f tsv is
+// the format for it.
 //
 // Values are written verbatim, embedded newlines included: `-f value` is the
 // format scripts pipe into a file, so collapsing them would corrupt the payload
@@ -637,8 +654,33 @@ func writeValue(w io.Writer, rows [][]any) error {
 		for i, v := range r {
 			cells[i] = cell(v)
 		}
-		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
+		if _, err := fmt.Fprintln(w, strings.Join(cells, " ")); err != nil {
 			return fmt.Errorf("writing value output: %w", err)
+		}
+	}
+	return nil
+}
+
+// tsvEscaper writes the three characters that could break a tsv record as
+// backslash escapes — the convention of `mysql --batch` and PostgreSQL's COPY
+// text format. Carriage returns and every other control character never get
+// here: cell drops them for all text formats (see stripControl).
+var tsvEscaper = strings.NewReplacer(`\`, `\\`, "\t", `\t`, "\n", `\n`)
+
+// writeTSV emits `-f tsv`: tab-separated cells, no header, one row per line.
+// It is koc-native (cliff has no tsv) and exists for the case -f value cannot
+// serve: splitting a multi-column row back into its cells. Unlike -f value it
+// holds that contract for every cell, because a backslash, tab or newline
+// inside one is escaped rather than written raw. A script that must keep a
+// multi-line value verbatim (a zonefile) wants -f value, or -f json.
+func writeTSV(w io.Writer, rows [][]any) error {
+	for _, r := range rows {
+		cells := make([]string, len(r))
+		for i, v := range r {
+			cells[i] = tsvEscaper.Replace(cell(v))
+		}
+		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
+			return fmt.Errorf("writing tsv output: %w", err)
 		}
 	}
 	return nil

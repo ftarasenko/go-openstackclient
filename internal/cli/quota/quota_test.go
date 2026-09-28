@@ -173,6 +173,35 @@ func TestRunQuotaShow_DefaultUsesDefaultsEndpoints(t *testing.T) {
 	}
 }
 
+// Neutron serves its defaults at /quotas/<project>/default; --default covers
+// network quotas like the other two.
+func TestRunQuotaShow_DefaultIncludesNetwork(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	var gotPath string
+	fakeServer.Mux.HandleFunc("/quotas/p1/default", func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		th.TestMethod(t, r, http.MethodGet)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(networkQuotaBody))
+	})
+
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	sel := serviceSelection{network: true}.resolved()
+	err := runQuotaShow(context.Background(), oneServerSession(fakeServer), o, "p1", true, sel, &buf)
+	if err != nil {
+		t.Fatalf("runQuotaShow --default --network error: %v", err)
+	}
+	if gotPath != "/quotas/p1/default" {
+		t.Errorf("path = %q, want /quotas/p1/default", gotPath)
+	}
+	if !strings.Contains(buf.String(), `"networks": 25`) {
+		t.Errorf("default network quotas missing from output\n---\n%s", buf.String())
+	}
+}
+
 // setFlagSet builds the quota set flag surface and parses args against it, the
 // same way the cobra command does.
 func setFlagSet(t *testing.T, args []string) (*quotaSetFlags, *pflag.FlagSet) {
@@ -413,5 +442,80 @@ func TestQuotaShow_AllFlag(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "all") || !strings.Contains(err.Error(), "compute") {
 		t.Errorf("error %q should name the conflicting flags", err.Error())
+	}
+}
+
+// With no project argument the token's own project is the target: clouds.yaml
+// names the project without setting OS_PROJECT_*, and asking keystone to look up
+// a name the options happen to carry is neither needed nor safe.
+func TestResolveProject_DefaultsToTheTokenProject(t *testing.T) {
+	s := &session{
+		project: func() string { return "p-token" },
+		identity: func() (*gophercloud.ServiceClient, error) {
+			t.Fatal("resolveProject looked the project up although the token names it")
+			return nil, nil
+		},
+	}
+	got, err := s.resolveProject(context.Background(), &auth.Options{ProjectName: "elsewhere"}, nil)
+	if err != nil || got != "p-token" {
+		t.Errorf("resolveProject() = %q, %v; want p-token", got, err)
+	}
+	if got, _ := s.resolveProject(context.Background(), &auth.Options{}, []string{"8c0f1e4a-3d2b-4c5e-9f6a-7b8c9d0e1f2a"}); got != "8c0f1e4a-3d2b-4c5e-9f6a-7b8c9d0e1f2a" {
+		t.Errorf("an explicit project must win: got %q", got)
+	}
+}
+
+// Cinder keeps a quota per volume type too — gigabytes_<type>, volumes_<type>
+// and snapshots_<type>, one of each for every type — and upstream's quota show
+// prints them with the rest. They follow the project-wide volume quotas.
+func TestRunQuotaShow_PerVolumeTypeQuotas(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/os-quota-sets/p1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodGet)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"quota_set": {
+		  "id": "p1", "volumes": 10, "snapshots": 10, "gigabytes": 1000,
+		  "per_volume_gigabytes": -1, "backups": 10, "backup_gigabytes": 1000, "groups": 10,
+		  "gigabytes___DEFAULT__": -1, "volumes___DEFAULT__": -1, "snapshots___DEFAULT__": -1,
+		  "gigabytes_lvmdriver-1": 500, "volumes_lvmdriver-1": 5, "snapshots_lvmdriver-1": 7
+		}}`))
+	})
+
+	o := &output.Options{Format: output.FormatCSV}
+	var buf bytes.Buffer
+	if err := runQuotaShow(context.Background(), oneServerSession(fakeServer), o, "p1", false,
+		serviceSelection{volume: true}.resolved(), &buf); err != nil {
+		t.Fatalf("runQuotaShow: %v", err)
+	}
+	want := "Field,Value\n" +
+		"volumes,10\nsnapshots,10\ngigabytes,1000\nper_volume_gigabytes,-1\n" +
+		"backups,10\nbackup_gigabytes,1000\ngroups,10\n" +
+		"gigabytes___DEFAULT__,-1\ngigabytes_lvmdriver-1,500\n" +
+		"snapshots___DEFAULT__,-1\nsnapshots_lvmdriver-1,7\n" +
+		"volumes___DEFAULT__,-1\nvolumes_lvmdriver-1,5\n"
+	if got := buf.String(); got != want {
+		t.Errorf("quota show --volume =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// quota set renders what cinder answers, per-volume-type quotas included.
+func TestRunQuotaSet_RendersPerVolumeTypeQuotas(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/os-quota-sets/p1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPut)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"quota_set": {"volumes": 20, "gigabytes_lvmdriver-1": 500}}`))
+	})
+	f, fl := setFlagSet(t, []string{"--volumes=20"})
+	f.fl, f.given = fl, f.givenBy(fl)
+	o := &output.Options{Format: output.FormatCSV}
+	var buf bytes.Buffer
+	if err := runQuotaSet(context.Background(), oneServerSession(fakeServer), o, "p1", f, &buf); err != nil {
+		t.Fatalf("runQuotaSet: %v", err)
+	}
+	if !strings.Contains(buf.String(), "gigabytes_lvmdriver-1,500\n") {
+		t.Errorf("quota set output lacks the per-type quota\n---\n%s", buf.String())
 	}
 }

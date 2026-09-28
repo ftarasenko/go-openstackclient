@@ -476,3 +476,49 @@ func TestRunPortShow_RendersPostZedAttributes(t *testing.T) {
 		}
 	}
 }
+
+// trunk_details is a trunk parent's trunk and subports; neutron omits it on
+// every other port, which renders null rather than an empty trunk.
+func TestRunPortShow_TrunkDetails(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+	}{
+		{
+			name: "parent port",
+			body: `{"port":{"id":"port-1","trunk_details":{"trunk_id":"trunk-1","sub_ports":[
+			  {"port_id":"sub-1","segmentation_type":"vlan","segmentation_id":101,"mac_address":"fa:16:3e:00:00:01"}]}}}`,
+			want: []string{`"trunk_details": {`, `"trunk_id": "trunk-1"`, `"port_id": "sub-1"`, `"segmentation_id": 101`},
+		},
+		{
+			name: "parent of a trunk without subports",
+			body: `{"port":{"id":"port-1","trunk_details":{"trunk_id":"trunk-1","sub_ports":[]}}}`,
+			want: []string{`"trunk_id": "trunk-1"`, `"sub_ports": []`},
+		},
+		{
+			name: "ordinary port",
+			body: `{"port":{"id":"port-1"}}`,
+			want: []string{`"trunk_details": null`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			echoLookup(t, fakeServer, "/ports", "ports")
+			fakeServer.Mux.HandleFunc("/ports/port-1", func(w http.ResponseWriter, r *http.Request) {
+				th.TestMethod(t, r, http.MethodGet)
+				writeJSON(t, w, http.StatusOK, tc.body)
+			})
+			var buf bytes.Buffer
+			if err := runPortShow(context.Background(), networkClient(fakeServer), &output.Options{Format: output.FormatJSON},
+				"port-1", &buf); err != nil {
+				t.Fatalf("runPortShow: %v", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("output missing %s:\n%s", want, buf.String())
+				}
+			}
+		})
+	}
+}

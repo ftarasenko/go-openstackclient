@@ -301,7 +301,8 @@ func TestRouterWrites_ExplainMissingExtension(t *testing.T) {
 }
 
 // show renders enable_ndp_proxy always (empty on an older cloud, as upstream)
-// and evpn_vni / the default-route switches only when neutron sent them.
+// and evpn_vni / the default-route switches / 2026.1's read-only enable_snat
+// only when neutron sent them.
 func TestRunRouterShow_PostZedFields(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body       string
@@ -311,13 +312,13 @@ func TestRunRouterShow_PostZedFields(t *testing.T) {
 		"zed": {
 			body:       `{"router":{"id":"r1"}}`,
 			want:       []string{`"enable_ndp_proxy": null`},
-			wantAbsent: []string{"evpn_vni", "enable_default_route_bfd", "enable_default_route_ecmp"},
+			wantAbsent: []string{"evpn_vni", "enable_default_route_bfd", "enable_default_route_ecmp", "enable_snat"},
 		},
 		"current": {
 			body: `{"router":{"id":"r1","enable_ndp_proxy":true,"evpn_vni":42,
-			  "enable_default_route_bfd":false,"enable_default_route_ecmp":true}}`,
+			  "enable_default_route_bfd":false,"enable_default_route_ecmp":true,"enable_snat":false}}`,
 			want: []string{`"enable_ndp_proxy": true`, `"evpn_vni": 42`,
-				`"enable_default_route_bfd": false`, `"enable_default_route_ecmp": true`},
+				`"enable_default_route_bfd": false`, `"enable_default_route_ecmp": true`, `"enable_snat": false`},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

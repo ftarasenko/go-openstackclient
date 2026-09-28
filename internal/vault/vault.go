@@ -29,6 +29,34 @@ import (
 // tolerate it rather than treat it as a failure.
 var ErrNotFound = errors.New("not found")
 
+// NotFoundError is a 404 from Vault. It matches ErrNotFound, so callers that
+// only care whether something is there keep using errors.Is; Reason is what the
+// response body said about it, empty for a plain missing secret.
+type NotFoundError struct {
+	Method, Path string
+	Reason       string
+}
+
+func (e *NotFoundError) Error() string {
+	if e.Reason == "" {
+		return fmt.Sprintf("vault %s %s: %s", e.Method, e.Path, ErrNotFound)
+	}
+	return fmt.Sprintf("vault %s %s: %s: %s", e.Method, e.Path, ErrNotFound, e.Reason)
+}
+
+// Is makes a NotFoundError match ErrNotFound.
+func (e *NotFoundError) Is(target error) bool { return target == ErrNotFound }
+
+// NotFoundReason returns why err is a Vault 404, or "" when it is not one or
+// the server gave no reason (a plain missing secret).
+func NotFoundReason(err error) string {
+	var nf *NotFoundError
+	if errors.As(err, &nf) {
+		return nf.Reason
+	}
+	return ""
+}
+
 // Config holds Vault connection and auth settings. Either Token (a pre-issued
 // token) or RoleID+SecretID (AppRole) must be provided.
 type Config struct {
@@ -407,7 +435,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	}
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("vault %s %s: %w", method, path, ErrNotFound)
+		return &NotFoundError{Method: method, Path: path, Reason: notFoundDetail(payload)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("vault %s %s: %s: %s", method, path, resp.Status, vaultError(payload))
@@ -418,6 +446,40 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 		}
 	}
 	return nil
+}
+
+// notFoundDetail says why a 404 is a 404, when the body says so. Vault answers
+// 404 for a missing secret with no message at all — the common case, left as
+// a plain ErrNotFound — but the same status also means a mount that does not
+// exist ("no handler for route …"), an unknown namespace ("namespace not
+// found"), or a secret whose requested version was deleted (a KV v2 body with
+// data:null and the version's deletion time). Dropping those left an operator
+// with a bare "not found" for a mistyped --vault-kv-mount or --vault-namespace.
+// The shapes are the ones internal/vault/vaulttest pins to a real server.
+func notFoundDetail(body []byte) string {
+	var e struct {
+		Errors []string `json:"errors"`
+		Data   struct {
+			Metadata struct {
+				Version      int    `json:"version"`
+				DeletionTime string `json:"deletion_time"`
+				Destroyed    bool   `json:"destroyed"`
+			} `json:"metadata"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &e) != nil {
+		return ""
+	}
+	if len(e.Errors) > 0 {
+		return strings.Join(e.Errors, "; ")
+	}
+	switch m := e.Data.Metadata; {
+	case m.Destroyed:
+		return fmt.Sprintf("version %d was destroyed", m.Version)
+	case m.DeletionTime != "":
+		return fmt.Sprintf("version %d was deleted at %s", m.Version, m.DeletionTime)
+	}
+	return ""
 }
 
 // vaultError extracts the first message from a Vault {"errors":[...]} body.

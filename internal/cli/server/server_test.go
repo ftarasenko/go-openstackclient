@@ -284,6 +284,9 @@ func TestRunComputeServiceList_RequestAndOutput(t *testing.T) {
 			t.Errorf("service list output missing %q\n---\n%s", want, out)
 		}
 	}
+	if !strings.Contains(out, "2026-07-11T00:00:00+00:00") || strings.Contains(out, "UTC") {
+		t.Errorf("Updated At is not RFC 3339\n---\n%s", out)
+	}
 	// Vanilla nova returns no admin_state/error_details, so those KeyStack
 	// columns must not appear.
 	for _, absent := range []string{"Admin State", "Error Details"} {

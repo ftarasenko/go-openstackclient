@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
@@ -542,15 +544,19 @@ func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command 
 				return fmt.Errorf("--image is required")
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRebuild(ctx, client, o, args[0], f, cmd.OutOrStdout())
+			// nova's imageRef takes only a UUID; a name goes through glance.
+			if f.image, err = resolveImageRef(ctx, s.auth, f.image); err != nil {
+				return err
+			}
+			return runServerRebuild(ctx, s.client, o, args[0], f, cmd.OutOrStdout())
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.image, "image", "", "image ID to rebuild from (required; pass an ID)")
+	fl.StringVar(&f.image, "image", "", "image (name or ID) to rebuild from (required)")
 	fl.StringVar(&f.name, "name", "", "rename the server as part of the rebuild")
 	fl.StringVar(&f.userData, "user-data", "",
 		"path to a cloud-init/user-data file to replace the server's own (nova 2.57 or later)")
@@ -660,29 +666,59 @@ func newServerAddVolumeCommand(a *auth.Options, o *output.Options) *cobra.Comman
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerAddVolume(ctx, client, args[0], args[1], device, cmd.OutOrStdout())
+			volumeClient, err := s.auth.Volume()
+			if err != nil {
+				return err
+			}
+			return runServerAddVolume(ctx, s.client, volumeClient, args[0], args[1], device, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&device, "device", "", "device name to expose the volume as (default auto)")
 	return cmd
 }
 
-func runServerAddVolume(ctx context.Context, client *gophercloud.ServiceClient, ref, volumeID, device string, w io.Writer) error {
+// runServerAddVolume attaches a volume, named or by ID: nova takes only the ID,
+// so a name is resolved through cinder first.
+func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.ServiceClient,
+	ref, volumeRef, device string, w io.Writer,
+) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	if _, err := volumeattach.Create(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}).Extract(); err != nil {
-		return fmt.Errorf("attaching volume %q to server %q: %w", volumeID, ref, err)
+	volumeID, err := resolve.VolumeID(ctx, volumeClient, volumeRef)
+	if err != nil {
+		return err
 	}
-	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeID, ref); err != nil {
+	if err := attachVolume(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}); err != nil {
+		return fmt.Errorf("attaching volume %q to server %q: %w", volumeRef, ref, err)
+	}
+	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeRef, ref); err != nil {
 		return err
 	}
 	return nil
+}
+
+// attachVolume is volumeattach.Create accepting both answers nova gives. The
+// attach used to be synchronous, 200 with the attachment; a current nova
+// (seen on 2026.2) answers 202 with no body and finishes the attach
+// asynchronously, which gophercloud's Create (200 only) reports as a failure.
+// Callers that need the attachment read it back.
+func attachVolume(ctx context.Context, client *gophercloud.ServiceClient, serverID string, opts volumeattach.CreateOpts) error {
+	body, err := opts.ToVolumeAttachmentCreateMap()
+	if err != nil {
+		return err
+	}
+	resp, err := client.Post(ctx, client.ServiceURL("servers", serverID, "os-volume_attachments"), body, nil,
+		&gophercloud.RequestOpts{OkCodes: []int{http.StatusOK, http.StatusAccepted}})
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	return err
 }
 
 func newServerRemoveVolumeCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -695,25 +731,36 @@ func newServerRemoveVolumeCommand(a *auth.Options, o *output.Options) *cobra.Com
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerRemoveVolume(ctx, client, args[0], args[1], cmd.OutOrStdout())
+			volumeClient, err := s.auth.Volume()
+			if err != nil {
+				return err
+			}
+			return runServerRemoveVolume(ctx, s.client, volumeClient, args[0], args[1], cmd.OutOrStdout())
 		},
 	}
 	return cmd
 }
 
-func runServerRemoveVolume(ctx context.Context, client *gophercloud.ServiceClient, ref, volumeID string, w io.Writer) error {
+// runServerRemoveVolume detaches a volume, named or by ID (see runServerAddVolume).
+func runServerRemoveVolume(ctx context.Context, client, volumeClient *gophercloud.ServiceClient,
+	ref, volumeRef string, w io.Writer,
+) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	if err := volumeattach.Delete(ctx, client, id, volumeID).ExtractErr(); err != nil {
-		return fmt.Errorf("detaching volume %q from server %q: %w", volumeID, ref, err)
+	volumeID, err := resolve.VolumeID(ctx, volumeClient, volumeRef)
+	if err != nil {
+		return err
 	}
-	if _, err := fmt.Fprintf(w, "Detached volume %s from server %s\n", volumeID, ref); err != nil {
+	if err := volumeattach.Delete(ctx, client, id, volumeID).ExtractErr(); err != nil {
+		return fmt.Errorf("detaching volume %q from server %q: %w", volumeRef, ref, err)
+	}
+	if _, err := fmt.Fprintf(w, "Detached volume %s from server %s\n", volumeRef, ref); err != nil {
 		return err
 	}
 	return nil

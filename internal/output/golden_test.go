@@ -292,8 +292,8 @@ func TestGolden_WriteList(t *testing.T) {
 		{name: "list_yaml", opts: Options{Format: FormatYAML}, table: goldenServers()},
 		{name: "list_csv", opts: Options{Format: FormatCSV}, table: goldenServers()},
 		{
-			// KNOWN DEVIATION: -f value joins cells with a TAB where upstream cliff
-			// uses a single space, and cells are not escaped.
+			// Byte for byte cliff's ValueFormatter: cells joined by one space, not
+			// escaped. (Unambiguous tab-separated output is -f tsv.)
 			name: "list_value", opts: Options{Format: FormatValue}, table: goldenServers(),
 		},
 		{name: "list_json_no_rows", opts: Options{Format: FormatJSON}, table: Table{Columns: []string{"ID", "Name"}}},
@@ -325,6 +325,24 @@ func TestGolden_WriteList(t *testing.T) {
 					{"quote", `say "hi"`},
 					{"newline", "one\ntwo"},
 					{"tab", "a\tb"},
+				},
+			},
+		},
+		{name: "list_tsv", opts: Options{Format: FormatTSV}, table: goldenServers()},
+		{name: "list_tsv_no_rows", opts: Options{Format: FormatTSV}, table: Table{Columns: []string{"ID", "Name"}}},
+		{
+			// The same awkward cells as list_value_unescaped: tsv escapes the
+			// backslash, tab and newline, so every row stays one line of two cells.
+			name: "list_tsv_escaped",
+			opts: Options{Format: FormatTSV},
+			table: Table{
+				Columns: []string{"Name", "Value"},
+				Rows: [][]any{
+					{"comma", "a,b"},
+					{"quote", `say "hi"`},
+					{"newline", "one\ntwo"},
+					{"tab", "a\tb"},
+					{"backslash", `C:\temp\n`},
 				},
 			},
 		},
@@ -407,10 +425,11 @@ func TestGolden_WriteSingle(t *testing.T) {
 		{name: "single_yaml", opts: Options{Format: FormatYAML}, fields: fields, values: values},
 		{name: "single_csv", opts: Options{Format: FormatCSV}, fields: fields, values: values},
 		{
-			// KNOWN DEVIATION: -f value prints the values only, one per line, with no
-			// field names and no escaping (a multi-line value spills over lines).
+			// -f value prints the values only, one per line, with no field names and
+			// no escaping (a multi-line value spills over lines) — as cliff does.
 			name: "single_value", opts: Options{Format: FormatValue}, fields: fields, values: values,
 		},
+		{name: "single_tsv", opts: Options{Format: FormatTSV}, fields: fields, values: values},
 		{
 			name: "single_table_elide", opts: Options{Format: FormatTable},
 			fields: []string{"name", "user_data"},

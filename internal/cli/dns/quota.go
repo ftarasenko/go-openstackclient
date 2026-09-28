@@ -67,6 +67,9 @@ func resolveDNSQuotaProject(ctx context.Context, session *auth.Client, a *auth.O
 	switch {
 	case len(args) == 1:
 		ref = args[0]
+	case session.ScopedProjectID() != "":
+		// The token's project: OS_PROJECT_* are empty when clouds.yaml names it.
+		return session.ScopedProjectID(), nil
 	case a.ProjectID != "":
 		ref = a.ProjectID
 	default:
@@ -131,11 +134,15 @@ func (t *dnsQuotaTarget) resolve(ctx context.Context, session *auth.Client, a *a
 	return target, nil
 }
 
-// sessionProjectID resolves the project the invocation is scoped to, without a
-// round trip when OS_PROJECT_ID is already an ID. An unscoped session (neither
-// set) yields "", which disables the cross-project auto-detection rather than
-// guessing.
+// sessionProjectID resolves the project the invocation is scoped to: the
+// token's own when it names one (from clouds.yaml, OS_PROJECT_* are empty),
+// otherwise OS_PROJECT_*, without a round trip when that is already an ID. An
+// unscoped session yields "", which disables the cross-project auto-detection
+// rather than guessing.
 func sessionProjectID(ctx context.Context, session *auth.Client, a *auth.Options) (string, error) {
+	if id := session.ScopedProjectID(); id != "" {
+		return id, nil
+	}
 	if a.ProjectID != "" {
 		return a.ProjectID, nil
 	}
@@ -148,6 +155,11 @@ func sessionProjectID(ctx context.Context, session *auth.Client, a *auth.Options
 	identity, err := session.Identity()
 	if err != nil {
 		return "", err
+	}
+	// The session's own project domain, by ID when the openrc names it that
+	// way (devstack's does), as the token scope does.
+	if a.ProjectDomainID != "" {
+		return resolve.ProjectIDInDomainID(ctx, identity, a.ProjectName, a.ProjectDomainID)
 	}
 	return resolve.ProjectIDInDomain(ctx, identity, a.ProjectName, a.ProjectDomainName)
 }

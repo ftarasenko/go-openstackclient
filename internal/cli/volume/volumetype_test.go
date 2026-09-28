@@ -50,7 +50,7 @@ func TestRunTypeList_RequestAndTableOutput(t *testing.T) {
 	client := volumeClient(fakeServer, "3.59")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runTypeList(context.Background(), client, o, &buf); err != nil {
+	if err := runTypeList(context.Background(), client, o, false, &buf); err != nil {
 		t.Fatalf("runTypeList returned error: %v", err)
 	}
 	if gotMethod != http.MethodGet {
@@ -235,5 +235,33 @@ func TestRunTypeSet_NameOnlySkipsExtraSpecs(t *testing.T) {
 	f := &typeSetFlags{name: "gold"}
 	if err := runTypeSet(context.Background(), volumeClient(fakeServer, "3.70"), "t-1", f); err != nil {
 		t.Fatalf("runTypeSet error: %v", err)
+	}
+}
+
+// --long adds upstream's Properties: the type's extra specs.
+func TestRunTypeList_Long(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/types", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(typeListBody))
+	})
+	for _, tc := range []struct {
+		format string
+		want   string
+	}{
+		{output.FormatTable, "k='v'"},
+		{output.FormatJSON, `"Properties": {
+      "k": "v"
+    }`},
+	} {
+		o := &output.Options{Format: tc.format}
+		var buf bytes.Buffer
+		if err := runTypeList(context.Background(), volumeClient(fakeServer, "3.59"), o, true, &buf); err != nil {
+			t.Fatalf("runTypeList: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Properties") || !strings.Contains(buf.String(), tc.want) {
+			t.Errorf("%s: type list --long missing %q\n---\n%s", tc.format, tc.want, buf.String())
+		}
 	}
 }

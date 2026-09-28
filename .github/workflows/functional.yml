@@ -1,0 +1,183 @@
+name: functional
+
+# NETWORK-ALLOWED, like supply-chain.yml: devstack clones ~15 repositories from
+# GitHub and installs from PyPI and apt. So this workflow is kept OUT of
+# ci.yml, and none of its jobs is a dependency of an offline job. koc itself is
+# still built offline (-mod=vendor, GOPROXY=off) — the network is devstack's,
+# never koc's.
+#
+# A thin wrapper by design. Every devstack decision (refs, backend, plugins,
+# runner workarounds under --gha) lives in scripts/devstack/up.sh, which was
+# proved on runner-sized VMs before this workflow existed; see
+# docs/verification/2026-09-27-devstack-bringup.md "## Results". A fix for a
+# runner-only failure goes into up.sh under --gha, not into a step here, so the
+# script stays the single source of truth for local and CI bring-up.
+on:
+  schedule:
+    # Nightly, off the hour: scheduled runs are delayed (and can be dropped)
+    # under load, worst at the top of every hour.
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+  # Also on a push that changes the bring-up itself, so an edit to up.sh or
+  # smoke.sh is proved on a runner by the commit that makes it. It also gives
+  # the workflow its first run on a branch: workflow_dispatch can target a
+  # branch only once the workflow has run at least once.
+  push:
+    branches:
+      - master
+      - "claude/**"
+    paths:
+      - .github/workflows/functional.yml
+      - scripts/devstack/**
+      - test/functional/**
+      - internal/vault/vaulttest/**
+
+permissions:
+  contents: read
+
+# One devstack run at a time across the repository: each cell holds a 16 GB
+# runner for ~25 minutes, and a nightly racing a dispatched run would only
+# double the queue. A newer run waits instead of cancelling one mid-stack.
+concurrency:
+  group: functional
+  cancel-in-progress: false
+
+jobs:
+  devstack:
+    name: devstack ${{ matrix.series }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # stack.sh takes 7-12 minutes on a runner and smoke ~1; the Go suites
+    # (servers resized, shelved and snapshotted) get up to 30. This leaves
+    # room for a slow runner without letting a hung step hold one for
+    # GitHub's 6-hour default.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # The Ubuntu per series is devstack's, recorded in up.sh's host check:
+        # jammy only through 2024.1, noble from 2026.1 (2025.1 takes either;
+        # noble is what it was verified on).
+        #
+        # auth is the credential path the test suites run under (KOC_FT_AUTH).
+        # env openrc and clouds.yaml are both how operators run koc, so each
+        # takes two cells; the auth tests cover every path on every cell.
+        include:
+          - series: zed
+            os: ubuntu-22.04
+            auth: env
+          - series: caracal
+            os: ubuntu-22.04
+            auth: env
+          - series: epoxy
+            os: ubuntu-24.04
+            auth: clouds
+          - series: latest
+            os: ubuntu-24.04
+            auth: clouds
+    steps:
+      # Outside the checkout, so nothing devstack writes can dirty the tree.
+      # (The runner context is not available in a job-level env: block.)
+      - name: Paths
+        run: |
+          echo "LOG_DIR=$RUNNER_TEMP/devstack-logs" >>"$GITHUB_ENV"
+          echo "DEVSTACK_DIR=$RUNNER_TEMP/devstack" >>"$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same toolchain resolution as ci.yml (see the comment there).
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+          cache: false
+
+      # Hosted Linux runners have /dev/kvm but only root can open it; without
+      # this, nova falls back to QEMU TCG and every server boot is minutes, not
+      # the 11-22 s measured with KVM.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          stat -c 'kvm: %A %U:%G %n' /dev/kvm | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build koc (offline, from vendor/)
+        env:
+          GOFLAGS: -mod=vendor
+          GOPROXY: "off"
+          CGO_ENABLED: "0"
+          GOTOOLCHAIN: local
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/koc" ./cmd/koc
+          "$RUNNER_TEMP/koc" --version
+
+      - name: Stack devstack
+        timeout-minutes: 40
+        env:
+          SERIES: ${{ matrix.series }}
+        run: scripts/devstack/up.sh --series "$SERIES" --gha --log-dir "$LOG_DIR" --devstack-dir "$DEVSTACK_DIR"
+
+      - name: Smoke
+        timeout-minutes: 15
+        run: scripts/devstack/smoke.sh --log-dir "$LOG_DIR" --devstack-dir "$DEVSTACK_DIR" --koc "$RUNNER_TEMP/koc"
+
+      # The Go functional tests (test/functional), with the binary smoke just
+      # used, offline: only devstack needs the network. The -v log lands in
+      # the log dir so a failure's artifact carries it.
+      - name: Functional tests
+        timeout-minutes: 35
+        env:
+          KOC_FT_AUTH: ${{ matrix.auth }}
+          GOTOOLCHAIN: local
+        run: |
+          set -o pipefail
+          make functional KOC_FT_ENV="$LOG_DIR/functional.env" KOC_BIN="$RUNNER_TEMP/koc" FUNCTIONAL_TIMEOUT=30m |
+            tee "$LOG_DIR/functional.log"
+
+      # Timings and the smoke table for every run, green or not: this is where
+      # the nightly's numbers are read, without downloading anything.
+      - name: Summary
+        if: always()
+        env:
+          SERIES: ${{ matrix.series }}
+          AUTH: ${{ matrix.auth }}
+        run: |
+          {
+            echo "### devstack $SERIES"
+            for f in bringup.json refs.txt smoke.txt; do
+              if [[ -f "$LOG_DIR/$f" ]]; then printf '\n**%s**\n\n~~~\n' "$f"; cat "$LOG_DIR/$f"; echo '~~~'; fi
+            done
+            if [[ -f "$LOG_DIR/functional.log" ]]; then
+              printf '\n**functional tests** (auth=%s): ' "$AUTH"
+              for r in PASS FAIL SKIP; do printf '%s %s  ' "$(grep -c "^\s*--- $r" "$LOG_DIR/functional.log")" "$r"; done
+              echo
+              grep -E '^\s*--- FAIL' "$LOG_DIR/functional.log" | sed 's/^/    /' || true
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Collect logs
+        if: failure()
+        run: scripts/devstack/collect-logs.sh --log-dir "$LOG_DIR" --devstack-dir "$DEVSTACK_DIR"
+
+      # The repository is public, so the artifact is too. It holds devstack's
+      # own output from a disposable runner and nothing else: the whole-system
+      # journal (runner agent and provisioning logs) is left out — each devstack
+      # service's journal is in units/ — and so are functional.env and
+      # openrc.env, whose EC2 secret and devstack password are worthless once
+      # the runner is gone but have no debugging value.
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: devstack-logs-${{ matrix.series }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/devstack-logs
+            !${{ runner.temp }}/devstack-logs/journal.log
+            !${{ runner.temp }}/devstack-logs/functional.env
+            !${{ runner.temp }}/devstack-logs/openrc.env
+          retention-days: 14
+          if-no-files-found: warn

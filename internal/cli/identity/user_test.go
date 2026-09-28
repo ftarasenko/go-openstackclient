@@ -124,6 +124,31 @@ func TestRunUserCreate_ResolvesDomainAndBody(t *testing.T) {
 	}
 }
 
+// create prints the default project it set, as user show and upstream do.
+func TestRunUserCreate_PrintsDefaultProject(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/projects", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"projects":[{"id":"p1","name":"proj","domain_id":"default"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+		th.TestJSONRequest(t, r, `{"user":{"name":"bob","default_project_id":"p1"}}`)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"user":{"id":"u-new","name":"bob","domain_id":"default","enabled":true,"default_project_id":"p1"}}`))
+	})
+
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	if err := runUserCreate(context.Background(), identityClient(fakeServer), o, "bob", &userWriteFlags{project: "proj"}, &buf); err != nil {
+		t.Fatalf("runUserCreate error: %v", err)
+	}
+	if !strings.Contains(buf.String(), `"Default Project ID": "p1"`) {
+		t.Errorf("output lacks the default project\n---\n%s", buf.String())
+	}
+}
+
 func TestRunUserDelete_ResolvesNameThenDeletes(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()

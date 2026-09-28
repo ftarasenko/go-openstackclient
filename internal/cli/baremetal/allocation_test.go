@@ -37,7 +37,7 @@ func TestRunAllocationList_FiltersAndColumns(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	o := &output.Options{Format: "value"}
+	o := &output.Options{Format: output.FormatTSV}
 	f := &allocationListFlags{resourceClass: "baremetal.small", state: "active"}
 	client := baremetalClient(fakeServer, "latest")
 	if err := runAllocationList(context.Background(), client, o, f, &out); err != nil {

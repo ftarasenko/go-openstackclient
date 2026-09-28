@@ -14,7 +14,49 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
+	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
+
+// volumeNamesForTable maps volume ID to name for a listing's Volume column, or
+// returns nil when the column is to show IDs.
+//
+// Upstream's column (VolumeIdColumn, volume/v3/volume_snapshot.py, shared by
+// the snapshot and backup listings) swaps the ID for the volume's name in its
+// human-readable form only — the table — while json, yaml, value and csv get
+// the ID. It fills its cache from one listing of the caller's own volumes and
+// ignores a failure of it, falling back to the ID. koc does the same, and skips
+// the listing when -c leaves the column out.
+func volumeNamesForTable(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options) map[string]string {
+	if o.Format != output.FormatTable {
+		return nil
+	}
+	if len(o.Columns) > 0 && len(o.SelectedColumns("Volume")) == 0 {
+		return nil
+	}
+	pages, err := volumes.List(client, volumes.ListOpts{}).AllPages(ctx)
+	if err != nil {
+		return nil
+	}
+	all, err := volumes.ExtractVolumes(pages)
+	if err != nil {
+		return nil
+	}
+	names := make(map[string]string, len(all))
+	for _, v := range all {
+		names[v.ID] = v.Name
+	}
+	return names
+}
+
+// volumeLabel is the Volume column's cell: the volume's name when names has
+// one for it, else its ID. A volume whose name is empty is shown by name —
+// blank — as upstream shows it.
+func volumeLabel(id string, names map[string]string) string {
+	if name, ok := names[id]; ok {
+		return name
+	}
+	return id
+}
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may
 // itself contain '=' signs; only the first is treated as the separator.

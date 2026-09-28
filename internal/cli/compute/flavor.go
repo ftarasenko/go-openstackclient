@@ -125,7 +125,7 @@ func flavorListTable(list []flavors.Flavor, long bool) output.Table {
 	for _, fl := range list {
 		row := []any{fl.ID, fl.Name, fl.RAM, fl.Disk, fl.Ephemeral, fl.VCPUs, fl.IsPublic}
 		if long {
-			row = append(row, fl.Swap, fl.RxTxFactor, fl.ExtraSpecs)
+			row = append(row, fl.Swap, rxtxFactor(fl.RxTxFactor), fl.ExtraSpecs)
 		}
 		t.Rows = append(t.Rows, row)
 	}
@@ -200,8 +200,17 @@ func flavorAccessProjectIDs(ctx context.Context, client *gophercloud.ServiceClie
 
 func flavorSingle(fl *flavors.Flavor) ([]string, []any) {
 	fields := []string{"ID", "Name", "RAM", "Disk", "Ephemeral", "VCPUs", "Swap", "RXTX Factor", "Is Public", "Description", "Properties"}
-	values := []any{fl.ID, fl.Name, fl.RAM, fl.Disk, fl.Ephemeral, fl.VCPUs, fl.Swap, fl.RxTxFactor, fl.IsPublic, fl.Description, fl.ExtraSpecs}
+	values := []any{fl.ID, fl.Name, fl.RAM, fl.Disk, fl.Ephemeral, fl.VCPUs, fl.Swap, rxtxFactor(fl.RxTxFactor), fl.IsPublic, fl.Description, fl.ExtraSpecs}
 	return fields, values
+}
+
+// rxtxFactor is null when nova sent none: from 2.102 flavors carry no
+// rxtx_factor, gophercloud then decodes 0, and nova never allows a factor of 0.
+func rxtxFactor(f float64) any {
+	if f == 0 {
+		return nil
+	}
+	return f
 }
 
 // ---------------------------------------------------------------------------

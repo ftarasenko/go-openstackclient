@@ -183,6 +183,35 @@ func TestProjectIDInDomain_NarrowsTheListing(t *testing.T) {
 	}
 }
 
+// TestProjectIDInDomainID_SkipsTheDomainLookup: a domain already given by ID
+// (--os-project-domain-id) narrows the project listing directly. A by-name
+// domain lookup would be a wasted round trip, and wrong for the default
+// domain, whose ID ("default") is not its name ("Default").
+func TestProjectIDInDomainID_SkipsTheDomainLookup(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/domains", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("a domain given by ID must not be looked up")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domains":[]}`))
+	})
+	var gotDomainID string
+	fakeServer.Mux.HandleFunc("/projects", func(w http.ResponseWriter, r *http.Request) {
+		gotDomainID = r.URL.Query().Get("domain_id")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"projects":[{"id":"proj-5","name":"admin"}]}`))
+	})
+
+	id, err := ProjectIDInDomainID(context.Background(), projectFakeClient(fakeServer), "admin", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDomainID != "default" || id != "proj-5" {
+		t.Errorf("got id %q with domain_id=%q, want proj-5 with default", id, gotDomainID)
+	}
+}
+
 // An empty domain reference must behave exactly like the undomained resolver,
 // and a UUID must still short-circuit before either listing — the in-domain
 // wrappers are the one place where the passthrough could be lost to the extra

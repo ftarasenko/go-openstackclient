@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
@@ -497,6 +499,39 @@ func TestRunServerDelete_WaitPollsUntilGone(t *testing.T) {
 	}
 }
 
+// nova can still show a deleted server as DELETED for a moment; --wait holds
+// out for the 404, as upstream's wait_for_delete does, since only that says
+// the server's ports and volumes are released.
+func TestRunServerDelete_WaitPastDeletedStatus(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	defer func(prev time.Duration) { statusPollInterval = prev }(statusPollInterval)
+	statusPollInterval = time.Millisecond
+
+	gets := 0
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if gets++; gets <= 2 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"server":{"id":%q,"status":"DELETED"}}`, serverUUID)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	var buf bytes.Buffer
+	f := &serverDeleteFlags{wait: true, waitTimeout: time.Second}
+	if err := runServerDelete(context.Background(), computeClient(fakeServer, "2.79"), []string{serverUUID}, f, &buf); err != nil {
+		t.Fatalf("runServerDelete --wait: %v", err)
+	}
+	if gets != 3 {
+		t.Errorf("GETs = %d, want 3 (two DELETED, then 404)", gets)
+	}
+}
+
 // A soft delete never reaches 404 inside any sensible timeout, so --wait says
 // so immediately instead of spinning out --wait-timeout.
 func TestRunServerDelete_WaitFailsFastOnSoftDelete(t *testing.T) {
@@ -851,6 +886,27 @@ func TestRunServerRebuild_RequestAndOutput(t *testing.T) {
 	}
 }
 
+const vol9UUID = "9a9a9a9a-0b0b-4c0c-8d0d-0e0e0e0e0e0e"
+
+// volumeClient is a cinder client on the same fake server.
+func volumeClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
+	sc := fakeclient.ServiceClient(fakeServer)
+	sc.Type = "block-storage"
+	return sc
+}
+
+// handleVolumeByName answers cinder's name lookup with one volume.
+func handleVolumeByName(t *testing.T, fakeServer th.FakeServer, name, id string) {
+	t.Helper()
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("name"); got != name {
+			t.Errorf("volume lookup name = %q, want %q", got, name)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volumes": [{"id": "` + id + `", "name": "` + name + `"}]}`))
+	})
+}
+
 func TestRunServerAddVolume_RequestAndOutput(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
@@ -862,23 +918,44 @@ func TestRunServerAddVolume_RequestAndOutput(t *testing.T) {
 		gotBody = decodeBody(t, r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"volumeAttachment":{"id":"att-1","serverId":"` + serverUUID + `","volumeId":"vol-9","device":"/dev/vdb"}}`))
+		_, _ = w.Write([]byte(`{"volumeAttachment":{"id":"att-1","serverId":"` + serverUUID + `","volumeId":"` + vol9UUID + `","device":"/dev/vdb"}}`))
 	})
+	handleVolumeByName(t, fakeServer, "vol-9", vol9UUID)
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerAddVolume(context.Background(), client, serverUUID, "vol-9", "/dev/vdb", &buf); err != nil {
+	if err := runServerAddVolume(context.Background(), client, volumeClient(fakeServer), serverUUID, "vol-9", "/dev/vdb", &buf); err != nil {
 		t.Fatalf("runServerAddVolume: %v", err)
 	}
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
 	}
 	att, _ := gotBody["volumeAttachment"].(map[string]any)
-	if att["volumeId"] != "vol-9" || att["device"] != "/dev/vdb" {
-		t.Errorf("volumeAttachment body = %v, want volumeId=vol-9 device=/dev/vdb", att)
+	// nova takes only an ID: the name went through cinder first.
+	if att["volumeId"] != vol9UUID || att["device"] != "/dev/vdb" {
+		t.Errorf("volumeAttachment body = %v, want volumeId=%s device=/dev/vdb", att, vol9UUID)
 	}
 	if !strings.Contains(buf.String(), "Attached volume vol-9 to server "+serverUUID) {
 		t.Errorf("output = %q, want attach confirmation", buf.String())
+	}
+}
+
+// A current nova answers the attach with 202 and no body; that is success.
+func TestRunServerAddVolume_Accepts202(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/os-volume_attachments", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPost)
+		th.TestJSONRequest(t, r, `{"volumeAttachment": {"volumeId": "`+vol9UUID+`"}}`)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	var buf bytes.Buffer
+	if err := runServerAddVolume(context.Background(), computeClient(fakeServer, "latest"), volumeClient(fakeServer),
+		serverUUID, vol9UUID, "", &buf); err != nil {
+		t.Fatalf("runServerAddVolume with a 202: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Attached volume "+vol9UUID) {
+		t.Errorf("output = %q, want the attach confirmation", buf.String())
 	}
 }
 
@@ -887,14 +964,15 @@ func TestRunServerRemoveVolume_RequestAndOutput(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	var gotMethod string
-	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/os-volume_attachments/vol-9", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers/"+serverUUID+"/os-volume_attachments/"+vol9UUID, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		w.WriteHeader(http.StatusAccepted)
 	})
+	handleVolumeByName(t, fakeServer, "vol-9", vol9UUID)
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerRemoveVolume(context.Background(), client, serverUUID, "vol-9", &buf); err != nil {
+	if err := runServerRemoveVolume(context.Background(), client, volumeClient(fakeServer), serverUUID, "vol-9", &buf); err != nil {
 		t.Fatalf("runServerRemoveVolume: %v", err)
 	}
 	if gotMethod != http.MethodDelete {
@@ -1119,12 +1197,20 @@ func TestRunHypervisorList_RequestAndOutput(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"hypervisors":[
-			{"id":"1","hypervisor_hostname":"cmp1","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"up","status":"enabled"},
-			{"id":"2","hypervisor_hostname":"cmp2","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"down","status":"disabled"}
+			{"id":"1","hypervisor_hostname":"cmp1","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"up","status":"enabled","host_ip":"192.0.2.11"},
+			{"id":"2","hypervisor_hostname":"cmp2","hypervisor_type":"QEMU","hypervisor_version":2010000,"state":"down","status":"disabled","host_ip":"192.0.2.12"}
 		]}`))
 	})
 
 	client := computeClient(fakeServer, "2.79")
+	var csv bytes.Buffer
+	if err := runHypervisorList(context.Background(), client, &output.Options{Format: output.FormatCSV}, &csv); err != nil {
+		t.Fatalf("runHypervisorList: %v", err)
+	}
+	// Upstream's columns, then koc's Status.
+	if header, _, _ := strings.Cut(csv.String(), "\n"); header != "ID,Hypervisor Hostname,Hypervisor Type,Host IP,State,Status" {
+		t.Errorf("header = %q", header)
+	}
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
 	if err := runHypervisorList(context.Background(), client, o, &buf); err != nil {
@@ -1134,7 +1220,7 @@ func TestRunHypervisorList_RequestAndOutput(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	out := buf.String()
-	for _, want := range []string{"Hypervisor Hostname", "cmp1", "cmp2", "QEMU", "up", "down", "enabled", "disabled"} {
+	for _, want := range []string{"Hypervisor Hostname", "cmp1", "cmp2", "QEMU", "192.0.2.11", "up", "down", "enabled", "disabled"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("hypervisor list output missing %q\n---\n%s", want, out)
 		}
@@ -1157,10 +1243,11 @@ func TestRunHypervisorShow_ByHostname(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	var gotMethod, gotVer string
+	var gotMethod string
+	var gotVers []string
 	fakeServer.Mux.HandleFunc("/os-hypervisors/detail", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
-		gotVer = r.Header.Get("OpenStack-API-Version")
+		gotVers = append(gotVers, r.Header.Get("OpenStack-API-Version"))
 		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1183,9 +1270,10 @@ func TestRunHypervisorShow_ByHostname(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	// Usage fields were dropped at nova 2.88; the detail request must pin the
-	// default microversion so they come back populated.
-	if gotVer != "" {
-		t.Errorf("OpenStack-API-Version = %q, want empty (default 2.1)", gotVer)
+	// default microversion so they come back populated. The second, at the
+	// client's microversion, is for the IDs.
+	if want := []string{"", "compute 2.79"}; !reflect.DeepEqual(gotVers, want) {
+		t.Errorf("OpenStack-API-Version per request = %q, want %q (default 2.1, then the client's)", gotVers, want)
 	}
 	out := buf.String()
 	for _, want := range []string{"cmp1", "QEMU", "10.0.0.11", "az-1", "Skylake", "Intel", "x86_64", "131072", "maintenance"} {

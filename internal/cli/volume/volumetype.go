@@ -40,6 +40,7 @@ func typeShowFields(t *volumetypes.VolumeType) ([]string, []any) {
 }
 
 func newTypeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	var long bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List volume types",
@@ -53,13 +54,18 @@ func newTypeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTypeList(ctx, client, o, cmd.OutOrStdout())
+			return runTypeList(ctx, client, o, long, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().BoolVar(&long, "long", false, "list additional fields in output")
 	return cmd
 }
 
-func runTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
+// runTypeList lists volume types. --long adds upstream's Properties, the
+// type's extra specs (python-openstackclient 10.3.0, volume/v3/volume_type.py
+// ListVolumeType); Description is in the default listing already, where
+// upstream shows it only under --long, so --long's columns are upstream's.
+func runTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
 	pages, err := volumetypes.List(client, volumetypes.ListOpts{}).AllPages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing volume types: %w", err)
@@ -68,9 +74,17 @@ func runTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return fmt.Errorf("parsing volume type list: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Is Public", "Description"}}
+	cols := []string{"ID", "Name", "Is Public", "Description"}
+	if long {
+		cols = append(cols, "Properties")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(all))}
 	for _, vt := range all {
-		t.Rows = append(t.Rows, []any{vt.ID, vt.Name, vt.IsPublic, vt.Description})
+		row := []any{vt.ID, vt.Name, vt.IsPublic, vt.Description}
+		if long {
+			row = append(row, vt.ExtraSpecs)
+		}
+		t.Rows = append(t.Rows, row)
 	}
 	return o.WriteList(w, t)
 }

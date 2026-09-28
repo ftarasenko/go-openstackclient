@@ -235,7 +235,7 @@ func runServerRescue(ctx context.Context, client *gophercloud.ServiceClient, ac 
 	if err != nil {
 		return err
 	}
-	imageID, err := resolveRescueImageID(ctx, ac, f.image)
+	imageID, err := resolveImageRef(ctx, ac, f.image)
 	if err != nil {
 		return err
 	}
@@ -249,10 +249,11 @@ func runServerRescue(ctx context.Context, client *gophercloud.ServiceClient, ac 
 	return o.WriteSingle(w, []string{"adminPass"}, []any{adminPass})
 }
 
-// resolveRescueImageID turns an image name into an ID via glance, since nova
-// takes only a reference. An empty flag stays empty: nova then rescues with the
-// server's own image.
-func resolveRescueImageID(ctx context.Context, ac *auth.Client, ref string) (string, error) {
+// resolveImageRef turns an image name into an ID via glance, since nova takes
+// only a UUID (rescue's rescue_image_ref, rebuild's imageRef); an ID passes
+// through untouched. An empty flag stays empty: rescue then uses the server's
+// own image.
+func resolveImageRef(ctx context.Context, ac *auth.Client, ref string) (string, error) {
 	if ref == "" {
 		return "", nil
 	}
@@ -452,11 +453,10 @@ func waitForServerDeleted(ctx context.Context, client *gophercloud.ServiceClient
 		case err != nil:
 			return err
 		}
+		// A DELETED status is not the 404 yet: nova can show the record for a
+		// moment before the server is gone.
 		last = s.Status
-		switch s.Status {
-		case "DELETED":
-			return nil
-		case "SOFT_DELETED":
+		if s.Status == "SOFT_DELETED" {
 			return errors.New("server is SOFT_DELETED: nova defers the real delete until its reclaim " +
 				"interval lapses; use --force to delete it now")
 		}

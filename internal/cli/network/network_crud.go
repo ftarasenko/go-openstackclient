@@ -57,8 +57,12 @@ type networkExt struct {
 }
 
 // networkShowFields renders the attributes upstream's "network show" prints,
-// under the same keys (is_vlan_transparent and is_vlan_qinq are the SDK's
-// names for vlan_transparent and qinq).
+// under the same keys. is_vlan_transparent is the SDK's name for
+// vlan_transparent, and is_vlan_qinq its name for vlan_qinq — a key neutron
+// does not define, so upstream always prints it null and koc does too.
+// Neutron's own qinq, like l2_adjacency, is not an attribute the SDK models;
+// upstream prints either when neutron sends it, because its SDK keeps any
+// attribute neutron returns, and koc appends them on the same condition.
 func networkShowFields(n *networkExt) ([]string, []any) {
 	fields := []string{
 		"id", "name", "status", "admin_state_up", "shared", "router:external",
@@ -73,10 +77,18 @@ func networkShowFields(n *networkExt) ([]string, []any) {
 		n.ID, n.Name, n.Status, n.AdminStateUp, n.Shared, n.External,
 		n.IsDefault, n.MTU, n.Subnets, n.NetworkType,
 		n.PhysicalNetwork, n.SegmentationID, n.PortSecurityEnabled,
-		n.QoSPolicyID, n.DNSDomain, n.VLANTransparent, n.QinQ, n.PVLAN,
+		n.QoSPolicyID, n.DNSDomain, n.VLANTransparent, n.VLANQinQ, n.PVLAN,
 		n.IPv4AddressScope, n.IPv6AddressScope,
 		n.AvailabilityZoneHints, n.AvailabilityZones, n.Description,
 		n.ProjectID, n.Tags, n.RevisionNumber, n.CreatedAt, n.UpdatedAt,
+	}
+	if n.QinQ != nil {
+		fields = append(fields, netAttrQinQ)
+		values = append(values, *n.QinQ)
+	}
+	if n.L2Adjacency != nil {
+		fields = append(fields, "l2_adjacency")
+		values = append(values, *n.L2Adjacency)
 	}
 	return fields, values
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 )
 
 // authenticated is Authenticate, or the test hook when one is installed, and
@@ -362,3 +363,26 @@ func (e *ServiceError) Error() string {
 }
 
 func (e *ServiceError) Unwrap() error { return e.Err }
+
+// ScopedProjectID is the project the invocation's token is scoped to, read from
+// the authentication result keystone already returned: "" for a domain- or
+// system-scoped token, and outside keystone (--creds-from-ns). A command that
+// defaults to "the current project" wants this rather than OS_PROJECT_ID or
+// OS_PROJECT_NAME, which are empty when the project comes from clouds.yaml or
+// an application credential.
+func (c *Client) ScopedProjectID() string {
+	if c == nil || c.Provider == nil {
+		return ""
+	}
+	r, ok := c.Provider.GetAuthResult().(interface {
+		ExtractProject() (*tokens.Project, error)
+	})
+	if !ok {
+		return ""
+	}
+	p, err := r.ExtractProject()
+	if err != nil || p == nil {
+		return ""
+	}
+	return p.ID
+}

@@ -553,3 +553,27 @@ func TestEnableDisable_NamedPairs(t *testing.T) {
 		})
 	}
 }
+
+// default_quota is null until set, and must not render as a quota of 0.
+func TestRunSubnetPoolShow_DefaultQuota(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{`"default_quota": null`, "null"},
+		{`"default_quota": 0`, "0"},
+		{`"default_quota": 4`, "4"},
+	} {
+		fakeServer := th.SetupHTTP()
+		echoLookup(t, fakeServer, "/subnetpools", "subnetpools")
+		fakeServer.Mux.HandleFunc("/subnetpools/sp1", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusOK, `{"subnetpool": {"id": "sp1", "prefixes": ["192.0.2.0/24"], "default_prefixlen": "26", "min_prefixlen": "8", "max_prefixlen": "32", `+tc.body+`}}`)
+		})
+		o := &output.Options{Format: output.FormatJSON, Columns: []string{"default_quota"}}
+		var buf bytes.Buffer
+		if err := runSubnetPoolShow(context.Background(), networkClient(fakeServer), o, "sp1", &buf); err != nil {
+			t.Fatalf("runSubnetPoolShow: %v", err)
+		}
+		if want := `"default_quota": ` + tc.want; !strings.Contains(buf.String(), want) {
+			t.Errorf("%s: output = %s, want %s", tc.body, buf.String(), want)
+		}
+		fakeServer.Teardown()
+	}
+}

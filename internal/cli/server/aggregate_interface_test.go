@@ -91,6 +91,31 @@ func TestRunAggregateShow_NumericID(t *testing.T) {
 	}
 }
 
+// Timestamps render as RFC 3339, and one nova has not set yet as null, not as
+// Go's time.String() of the zero time.
+func TestRunAggregateShow_Timestamps(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/os-aggregates/9", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"aggregate":{"id":9,"name":"agg-9","hosts":[],
+			"created_at":"2026-09-27T16:06:16.000000","updated_at":null}}`))
+	})
+
+	o := &output.Options{Format: output.FormatJSON}
+	var buf bytes.Buffer
+	if err := runAggregateShow(context.Background(), computeClient(fakeServer, "latest"), o, "9", &buf); err != nil {
+		t.Fatalf("runAggregateShow: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{`"Created At": "2026-09-27T16:06:16+00:00"`, `"Updated At": null`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("aggregate show -f json missing %s\n---\n%s", want, out)
+		}
+	}
+}
+
 func TestRunAggregateShow_ByName_ResolvesThenGets(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
@@ -470,7 +495,7 @@ func TestRunServerRescue_GeneratedPasswordNoImage(t *testing.T) {
 	o := &output.Options{Format: output.FormatValue}
 	f := &rescueFlags{}
 	var buf bytes.Buffer
-	// f.image is empty, so resolveRescueImageID never touches ac: nil is safe.
+	// f.image is empty, so resolveImageRef never touches ac: nil is safe.
 	if err := runServerRescue(context.Background(), client, nil, o, serverUUID, f, &buf); err != nil {
 		t.Fatalf("runServerRescue: %v", err)
 	}

@@ -161,18 +161,22 @@ func filterImagesByNameSubstring(list []images.Image, sub string) []images.Image
 	return kept
 }
 
-// imageListTable builds the output table. The default column set matches
-// `openstack image list`; --long adds the operationally useful extras.
+// imageListTable builds the output table: `openstack image list`'s columns,
+// and with --long its long set, in its order.
 func imageListTable(list []images.Image, long bool) output.Table {
 	cols := []string{"ID", "Name", "Status"}
 	if long {
-		cols = append(cols, "Visibility", "Protected", "Disk Format", "Container Format", "Size", "Owner")
+		cols = []string{"ID", "Name", "Disk Format", "Container Format", "Size", "Checksum",
+			"Status", "Visibility", "Protected", "Project", "Hash Algorithm", "Hash Value", "Tags"}
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, img := range list {
 		row := []any{img.ID, img.Name, string(img.Status)}
 		if long {
-			row = append(row, string(img.Visibility), img.Protected, img.DiskFormat, img.ContainerFormat, img.SizeBytes, img.Owner)
+			// gophercloud models neither hash field; they land in Properties.
+			row = []any{img.ID, img.Name, img.DiskFormat, img.ContainerFormat, img.SizeBytes, img.Checksum,
+				string(img.Status), string(img.Visibility), img.Protected, img.Owner,
+				img.Properties["os_hash_algo"], img.Properties["os_hash_value"], img.Tags}
 		}
 		t.Rows = append(t.Rows, row)
 	}

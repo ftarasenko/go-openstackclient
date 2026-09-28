@@ -56,6 +56,7 @@ type backupListFlags struct {
 	volume      string
 	limit       int
 	marker      string
+	long        bool
 }
 
 func newBackupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -83,6 +84,7 @@ func newBackupListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.volume, "volume", "", "filter by source volume ID")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of backups to return")
 	fl.StringVar(&f.marker, "marker", "", "list backups after this ID (pagination)")
+	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	return cmd
 }
 
@@ -96,15 +98,54 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Marker:     f.marker,
 	}
 	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, backups.List(client, opts), f.limit, backups.ExtractBackups)
+	all, err := paging.Collect(ctx, backups.ListDetail(client, backupListDetailOpts{opts}), f.limit, backups.ExtractBackups)
 	if err != nil {
 		return fmt.Errorf("listing backups: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Description", "Status", "Size"}}
-	for _, b := range all {
-		t.Rows = append(t.Rows, []any{b.ID, b.Name, b.Description, b.Status, b.Size})
+	var names map[string]string
+	if f.long {
+		names = volumeNamesForTable(ctx, client, o)
 	}
-	return o.WriteList(w, t)
+	return o.WriteList(w, backupListTable(all, f.long, names))
+}
+
+// backupListTable renders the listing in upstream's columns
+// (python-openstackclient 10.3.0, volume/v3/volume_backup.py
+// ListVolumeBackup): Incremental and Created At by default, and --long adds
+// Availability Zone, Volume and Container.
+func backupListTable(list []backups.Backup, long bool, volumeNames map[string]string) output.Table {
+	cols := []string{"ID", "Name", "Description", "Status", "Size", "Incremental", "Created At"}
+	if long {
+		cols = append(cols, "Availability Zone", "Volume", "Container")
+	}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
+	for _, b := range list {
+		row := []any{b.ID, b.Name, b.Description, b.Status, b.Size, b.IsIncremental, b.CreatedAt}
+		if long {
+			// availability_zone is absent below cinder 3.51; a nil pointer
+			// renders as null rather than as a JSON-quoted string.
+			var az any
+			if b.AvailabilityZone != nil {
+				az = *b.AvailabilityZone
+			}
+			row = append(row, az, volumeLabel(b.VolumeID, volumeNames), b.Container)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	return t
+}
+
+// backupListDetailOpts sends ListOpts's filters to cinder's detail listing.
+//
+// GET /backups is cinder's summary view — id, name and links, nothing else
+// (cinder/api/views/backups.py summary) — so a listing read from it showed an
+// empty Description, Status and Size for every backup. /backups/detail takes
+// the same name, status and volume_id filters, but gophercloud's
+// ListDetailOpts does not model them, hence this adapter over ListOpts.
+type backupListDetailOpts struct{ backups.ListOpts }
+
+func (opts backupListDetailOpts) ToBackupListDetailQuery() (string, error) {
+	return opts.ToBackupListQuery()
 }
 
 func newBackupShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

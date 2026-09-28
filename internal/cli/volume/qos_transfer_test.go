@@ -38,6 +38,12 @@ func TestRunQoSList_RendersRowsAndRespectsLimit(t *testing.T) {
 		  {"id": "` + qosSpecID3 + `", "name": "bronze", "consumer": "both", "specs": {}}
 		]}`))
 	})
+	for _, id := range []string{qosSpecID, qosSpecID2} {
+		fakeServer.Mux.HandleFunc("/qos-specs/"+id+"/associations", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"qos_associations": []}`))
+		})
+	}
 
 	var out bytes.Buffer
 	o := &output.Options{Format: "json"}
@@ -54,6 +60,71 @@ func TestRunQoSList_RendersRowsAndRespectsLimit(t *testing.T) {
 		t.Fatalf("got %d rows, want 2 (limit not enforced): %s", len(rows), out.String())
 	}
 	th.AssertEquals(t, "gold", rows[0]["Name"])
+}
+
+// The listing carries upstream's Associations column, before Properties: the
+// names of the volume types each spec is associated with, read from its
+// associations endpoint. -c without the column skips those requests.
+func TestRunQoSList_Associations(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	fakeServer.Mux.HandleFunc("/qos-specs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"qos_specs": [
+		  {"id": "` + qosSpecID + `", "name": "gold", "consumer": "both", "specs": {"read_iops_sec": "100"}},
+		  {"id": "` + qosSpecID2 + `", "name": "silver", "consumer": "front-end", "specs": {}}
+		]}`))
+	})
+	var lookups int
+	assoc := map[string]string{
+		qosSpecID: `{"qos_associations": [
+		  {"association_type": "volume_type", "name": "ssd", "id": "t1"},
+		  {"association_type": "volume_type", "name": "nvme", "id": "t2"}]}`,
+		qosSpecID2: `{"qos_associations": []}`,
+	}
+	for id, body := range assoc {
+		fakeServer.Mux.HandleFunc("/qos-specs/"+id+"/associations", func(w http.ResponseWriter, r *http.Request) {
+			lookups++
+			th.TestMethod(t, r, http.MethodGet)
+			assertVolumeMicroversion(t, r, "3.59")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		})
+	}
+
+	for _, tc := range []struct {
+		format      string
+		columns     []string
+		wantLookups int
+		want        []string
+	}{
+		{output.FormatCSV, nil, 2, []string{
+			"ID,Name,Consumer,Associations,Properties\n",
+			qosSpecID + `,gold,both,"ssd, nvme",read_iops_sec='100'` + "\n",
+			qosSpecID2 + ",silver,front-end,,\n",
+		}},
+		{output.FormatJSON, nil, 2, []string{`"Associations": [
+      "ssd",
+      "nvme"
+    ]`, `"Associations": []`}},
+		{output.FormatCSV, []string{"Name"}, 0, []string{"gold"}},
+	} {
+		lookups = 0
+		var out bytes.Buffer
+		o := &output.Options{Format: tc.format, Columns: tc.columns}
+		if err := runQoSList(context.Background(), volumeClient(fakeServer, "3.59"), o, 0, &out); err != nil {
+			t.Fatalf("runQoSList: %v", err)
+		}
+		if lookups != tc.wantLookups {
+			t.Errorf("%s %v: %d association lookups, want %d", tc.format, tc.columns, lookups, tc.wantLookups)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%s: output missing %q\n---\n%s", tc.format, want, out.String())
+			}
+		}
+	}
 }
 
 func TestRunQoSList_ErrorPropagates(t *testing.T) {

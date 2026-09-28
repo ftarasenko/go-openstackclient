@@ -198,8 +198,33 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	setIf(&ao.ApplicationCredentialName, o.override("os-application-credential-name", o.AppCredName))
 	setIf(&ao.ApplicationCredentialSecret, o.override("os-application-credential-secret", o.AppCredSecret))
 
+	o.applyProjectScope(ao)
 	o.applyDomainScope(ao)
 	o.applySystemScope(ao)
+}
+
+// applyProjectScope moves an explicit project scope to the project the operator
+// named. gophercloud reads the project from ao.Scope whenever it is set, and
+// clouds.Parse (v2.15.0) always sets it for a cloud with a project, so the
+// TenantName/TenantID applyAuthOverrides just wrote were never consulted:
+// `--os-cloud x --os-project-name demo` stayed on the cloud's project. Upstream
+// OSC re-scopes. Only a value that may override reaches here (see override), so
+// leftover OS_PROJECT_* under a named cloud still does not.
+//
+// By name, the scope keeps its domain — the cloud's project domain, unless a
+// domain flag replaces it in applyDomainScope. By ID, it needs none. A system or
+// trust scope is not a project scope and is left alone.
+func (o *Options) applyProjectScope(ao *gophercloud.AuthOptions) {
+	if ao.Scope == nil || ao.Scope.System || ao.Scope.TrustID != "" {
+		return
+	}
+	if id := o.override(flagOSProjectID, o.ProjectID); id != "" {
+		ao.Scope = &gophercloud.AuthScope{ProjectID: id}
+		return
+	}
+	if name := o.override(flagOSProjectName, o.ProjectName); name != "" {
+		ao.Scope.ProjectName, ao.Scope.ProjectID = name, ""
+	}
 }
 
 // systemScopeAll is the only system-scope value Keystone defines. OSC accepts
@@ -225,7 +250,7 @@ func (o *Options) validateSystemScope() error {
 	if o.fs == nil || !o.fs.Changed("os-system-scope") {
 		return nil
 	}
-	for _, name := range []string{flagOSProjectName, flagOSProjectID, "os-domain-name"} {
+	for _, name := range []string{flagOSProjectName, flagOSProjectID, "os-domain-name", "os-domain-id"} {
 		if o.fs.Changed(name) {
 			return fmt.Errorf("--os-system-scope and --%s are mutually exclusive: a token is scoped to the system, a domain or a project, not several", name)
 		}
@@ -256,21 +281,24 @@ func (o *Options) applySystemScope(ao *gophercloud.AuthOptions) {
 // conflates the two. We therefore set ao.Scope explicitly whenever a domain flag
 // is supplied. When no koc domain flag is given we leave scoping untouched so
 // the clouds.yaml / AuthOptionsFromEnv defaults are preserved.
+//
+// Each of the three domains may be named by ID or by name (OSC's
+// --os-*-domain-id / --os-*-domain-name); the fallbacks between them are the
+// same either way.
 func (o *Options) applyDomainScope(ao *gophercloud.AuthOptions) {
-	userDomainName := o.override("os-user-domain-name", o.UserDomainName)
-	projectDomainName := o.override("os-project-domain-name", o.ProjectDomainName)
-	domainName := o.override("os-domain-name", o.DomainName)
+	user := o.domainOption("os-user-domain-id", o.UserDomainID, "os-user-domain-name", o.UserDomainName)
+	project := o.domainOption("os-project-domain-id", o.ProjectDomainID, "os-project-domain-name", o.ProjectDomainName)
+	domain := o.domainOption("os-domain-id", o.DomainID, "os-domain-name", o.DomainName)
 
-	if userDomainName == "" && projectDomainName == "" && domainName == "" {
+	if user.empty() && project.empty() && domain.empty() {
 		return
 	}
 
 	// The user's identity domain qualifies the username/user-id. Prefer an
-	// explicit user domain, then a lone --os-domain-name, then the project
+	// explicit user domain, then a lone --os-domain-*, then the project
 	// domain (single-domain clouds set only one of these).
-	if userDomain := firstNonEmpty(userDomainName, domainName, projectDomainName); userDomain != "" {
-		ao.DomainName = userDomain
-		ao.DomainID = ""
+	if ud := firstDomain(user, domain, project); !ud.empty() {
+		ao.DomainID, ao.DomainName = ud.ID, ud.Name
 	}
 
 	projectName := firstNonEmpty(o.override(flagOSProjectName, o.ProjectName), ao.TenantName)
@@ -282,14 +310,45 @@ func (o *Options) applyDomainScope(ao *gophercloud.AuthOptions) {
 		ao.Scope = &gophercloud.AuthScope{ProjectID: projectID}
 	case projectName != "":
 		// Project-by-name must be qualified by the project's own domain.
-		ao.Scope = &gophercloud.AuthScope{
-			ProjectName: projectName,
-			DomainName:  firstNonEmpty(projectDomainName, userDomainName, domainName),
-		}
-	case domainName != "":
+		pd := firstDomain(project, user, domain)
+		ao.Scope = &gophercloud.AuthScope{ProjectName: projectName, DomainID: pd.ID, DomainName: pd.Name}
+	case !domain.empty():
 		// Domain-scoped token (no project).
-		ao.Scope = &gophercloud.AuthScope{DomainName: domainName}
+		ao.Scope = &gophercloud.AuthScope{DomainID: domain.ID, DomainName: domain.Name}
 	}
+}
+
+// domainRef is one Keystone domain, named by exactly one of ID or Name —
+// gophercloud rejects a scope or user carrying both ("exactly one of DomainID
+// or DomainName").
+type domainRef struct{ ID, Name string }
+
+func (d domainRef) empty() bool { return d.ID == "" && d.Name == "" }
+
+// domainOption reads one domain from its -id/-name flag pair. When both are
+// present the ID wins — it cannot be ambiguous — unless the name was given
+// explicitly and the ID only came from the environment: a sourced openrc
+// exporting OS_USER_DOMAIN_ID must not outrank --os-user-domain-name typed on
+// the command line.
+func (o *Options) domainOption(idFlag, id, nameFlag, name string) domainRef {
+	d := domainRef{ID: o.override(idFlag, id), Name: o.override(nameFlag, name)}
+	if d.ID != "" && d.Name != "" {
+		if o.explicitlySet(nameFlag) && !o.explicitlySet(idFlag) {
+			d.ID = ""
+		} else {
+			d.Name = ""
+		}
+	}
+	return d
+}
+
+func firstDomain(refs ...domainRef) domainRef {
+	for _, d := range refs {
+		if !d.empty() {
+			return d
+		}
+	}
+	return domainRef{}
 }
 
 func firstNonEmpty(vals ...string) string {

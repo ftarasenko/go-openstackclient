@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 )
 
 func TestAPIMicroversion(t *testing.T) {
@@ -107,5 +108,28 @@ func TestVolume_ForeignMajorVersionNamesTheFlag(t *testing.T) {
 	_, err := clientAt(srv, &Options{VolumeAPIVersion: "2"}).Volume()
 	if err == nil || !strings.Contains(err.Error(), "--os-volume-api-version 2") {
 		t.Fatalf("Volume() error = %v, want one naming --os-volume-api-version 2", err)
+	}
+}
+
+// The current project is the token's, however the credentials named it.
+func TestScopedProjectID(t *testing.T) {
+	scoped := func(token map[string]any) *Client {
+		t.Helper()
+		var r tokens.CreateResult
+		r.Body = map[string]any{"token": token}
+		pc := &gophercloud.ProviderClient{}
+		if err := pc.SetTokenAndAuthResult(r); err != nil {
+			t.Fatal(err)
+		}
+		return &Client{Provider: pc}
+	}
+	if got := scoped(map[string]any{"project": map[string]any{"id": "p1", "name": "demo"}}).ScopedProjectID(); got != "p1" {
+		t.Errorf("project-scoped token: ScopedProjectID() = %q, want p1", got)
+	}
+	if got := scoped(map[string]any{"domain": map[string]any{"id": "d1"}}).ScopedProjectID(); got != "" {
+		t.Errorf("domain-scoped token: ScopedProjectID() = %q, want empty", got)
+	}
+	if got := (&Client{}).ScopedProjectID(); got != "" {
+		t.Errorf("no keystone provider: ScopedProjectID() = %q, want empty", got)
 	}
 }

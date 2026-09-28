@@ -202,8 +202,8 @@ func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return fmt.Errorf("creating user %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", colDomainID, "Enabled", "Description"},
-		[]any{u.ID, u.Name, u.DomainID, u.Enabled, u.Description})
+		[]string{"ID", "Name", colDomainID, "Enabled", "Description", "Default Project ID"},
+		[]any{u.ID, u.Name, u.DomainID, u.Enabled, u.Description, u.DefaultProjectID})
 }
 
 func newUserDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
