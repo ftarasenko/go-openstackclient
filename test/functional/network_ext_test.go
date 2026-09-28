@@ -207,6 +207,15 @@ func TestNetworkTrunks(t *testing.T) {
 	if subs := r.list(t, "network", "trunk", "subport", "list", id); !in(subs, sub1) || !in(subs, sub2) {
 		t.Errorf("trunk subport list = %v, want %s and %s", subs, sub1, sub2)
 	}
+	// port show: the parent's trunk_details name the trunk and both subports;
+	// a subport is no trunk's parent, so it has none.
+	if td := field(r.show(t, "port", "show", parent), "trunk_details"); !strings.Contains(td, id) ||
+		!strings.Contains(td, sub1) || !strings.Contains(td, sub2) {
+		t.Errorf("port show %s trunk_details = %q, want trunk %s with %s and %s", parent, td, id, sub1, sub2)
+	}
+	if td := field(r.show(t, "port", "show", sub1), "trunk_details"); td != "" {
+		t.Errorf("port show %s (a subport) trunk_details = %q, want null", sub1, td)
+	}
 	r.ok(t, "network", "trunk", "subport", "remove", id, sub2)
 	r.ok(t, "network", "trunk", "unset", id, "--subport", sub1)
 	if subs := r.list(t, "network", "subport", "list", "--trunk", id); len(subs) != 0 {
