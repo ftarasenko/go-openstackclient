@@ -332,6 +332,7 @@ func TestWatchAuthenticatesOnce(t *testing.T) {
 	defer srv.Close()
 	base = srv.URL
 
+	clearOSEnv(t)
 	t.Setenv("OS_AUTH_URL", srv.URL+"/v3")
 	t.Setenv("OS_USERNAME", "alice")
 	t.Setenv("OS_PASSWORD", "pw")

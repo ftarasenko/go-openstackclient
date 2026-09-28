@@ -243,9 +243,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 
 	ns := strings.Trim(r.Header.Get("X-Vault-Namespace"), "/")
+	token := r.Header.Get("X-Vault-Token")
 	s.requests = append(s.requests, Request{
 		Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery,
-		Namespace: ns, HasToken: r.Header.Get("X-Vault-Token") != "",
+		Namespace: ns, HasToken: token != "",
 	})
 	if !s.namespaces[ns] {
 		writeErrors(w, http.StatusNotFound, "namespace not found")
@@ -261,8 +262,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tok, ok := s.tokens[s.nsToken(ns, r.Header.Get("X-Vault-Token"))]
-	if !ok || r.Header.Get("X-Vault-Token") == "" {
+	tok, ok := s.tokens[s.nsToken(ns, token)]
+	if !ok || token == "" {
 		writeErrors(w, http.StatusForbidden, denied)
 		return
 	}

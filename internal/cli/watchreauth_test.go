@@ -3,6 +3,7 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,12 +99,25 @@ func (k *keystoneFleet) refuseAuth() {
 	k.mu.Unlock()
 }
 
+// clearOSEnv unsets every inherited OS_* variable for the test, so a shell with
+// a sourced openrc (OS_REGION_NAME, OS_INTERFACE) cannot steer the mock catalog.
+func clearOSEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "OS_") {
+			t.Setenv(k, "") // registers the restore
+			os.Unsetenv(k)  //nolint:errcheck // cannot fail for a valid name
+		}
+	}
+}
+
 func startFleet(t *testing.T, k *keystoneFleet) {
 	t.Helper()
 	srv := httptest.NewServer(k.handler(t))
 	t.Cleanup(srv.Close)
 	k.base = srv.URL
 
+	clearOSEnv(t)
 	t.Setenv("OS_AUTH_URL", srv.URL+"/v3")
 	t.Setenv("OS_USERNAME", "alice")
 	t.Setenv("OS_PASSWORD", "pw")
