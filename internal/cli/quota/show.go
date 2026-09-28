@@ -2,8 +2,11 @@ package quota
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	volumequotas "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/quotasets"
@@ -77,11 +80,11 @@ func runQuotaShow(ctx context.Context, s *session, o *output.Options, project st
 		if err != nil {
 			return err
 		}
-		qs, err := getVolumeQuota(ctx, client, project, useDefault)
+		qs, perType, err := getVolumeQuota(ctx, client, project, useDefault)
 		if err != nil {
 			return err
 		}
-		f, v := volumeQuotaFields(qs)
+		f, v := volumeQuotaFields(qs, perType)
 		fields, values = append(fields, f...), append(values, v...)
 	}
 	if sel.network {
@@ -123,18 +126,83 @@ func getComputeQuota(ctx context.Context, client *gophercloud.ServiceClient, pro
 	return &body.QuotaSet, nil
 }
 
-func getVolumeQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*volumequotas.QuotaSet, error) {
+// getVolumeQuota reads a project's cinder quota set: the typed quotas, and the
+// per-volume-type ones cinder adds for every volume type
+// (gigabytes_<type>, volumes_<type>, snapshots_<type>), which QuotaSet does
+// not model.
+func getVolumeQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*volumequotas.QuotaSet, []typedQuota, error) {
 	get := volumequotas.Get
 	what := "volume quotas"
 	if useDefault {
 		get = volumequotas.GetDefaults
 		what = "default volume quotas"
 	}
-	qs, err := extract.One(get(ctx, client, project).Extract())
+	qs, perType, err := extractVolumeQuota(get(ctx, client, project))
 	if err != nil {
-		return nil, fmt.Errorf("showing %s for project %q: %w", what, project, err)
+		return nil, nil, fmt.Errorf("showing %s for project %q: %w", what, project, err)
 	}
-	return qs, nil
+	return qs, perType, nil
+}
+
+// volumeQuotaResult is what quotasets.Get, GetDefaults and Update return.
+type volumeQuotaResult interface {
+	Extract() (*volumequotas.QuotaSet, error)
+	ExtractInto(to any) error
+}
+
+// extractVolumeQuota decodes a cinder quota set twice: into QuotaSet, and raw
+// for the per-volume-type quotas QuotaSet has no fields for.
+func extractVolumeQuota(res volumeQuotaResult) (*volumequotas.QuotaSet, []typedQuota, error) {
+	qs, err := extract.One(res.Extract())
+	if err != nil {
+		return nil, nil, err
+	}
+	var raw struct {
+		QuotaSet map[string]json.RawMessage `json:"quota_set"`
+	}
+	if err := res.ExtractInto(&raw); err != nil {
+		return nil, nil, err
+	}
+	return qs, perVolumeTypeQuotas(raw.QuotaSet), nil
+}
+
+// typedQuota is one of cinder's per-volume-type quotas.
+type typedQuota struct {
+	key   string
+	value int
+}
+
+// perVolumeTypePrefixes are the resources cinder keeps a quota for per volume
+// type, as <resource>_<type name> (cinder/quota.py VolumeTypeQuotaEngine).
+var perVolumeTypePrefixes = []string{"gigabytes_", "snapshots_", "volumes_"}
+
+// perVolumeTypeQuotas picks the per-volume-type quotas out of a raw quota set,
+// sorted by key so the listing is stable. Upstream's quota show prints every
+// key of the quota set, these included; a value that is not an integer is not
+// a quota and is skipped.
+func perVolumeTypeQuotas(set map[string]json.RawMessage) []typedQuota {
+	var out []typedQuota
+	for k, v := range set {
+		if !hasAnyPrefix(k, perVolumeTypePrefixes) {
+			continue
+		}
+		var n int
+		if err := json.Unmarshal(v, &n); err != nil {
+			continue
+		}
+		out = append(out, typedQuota{key: k, value: n})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
+	return out
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) && len(s) > len(p) {
+			return true
+		}
+	}
+	return false
 }
 
 func getNetworkQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*networkquotas.Quota, error) {
@@ -174,15 +242,22 @@ func computeQuotaFields(qs *computequotas.QuotaSet) ([]string, []any) {
 		}
 }
 
-func volumeQuotaFields(qs *volumequotas.QuotaSet) ([]string, []any) {
-	return []string{
-			"volumes", "snapshots", "gigabytes", "per_volume_gigabytes",
-			"backups", "backup_gigabytes", "groups",
-		},
-		[]any{
-			qs.Volumes, qs.Snapshots, qs.Gigabytes, qs.PerVolumeGigabytes,
-			qs.Backups, qs.BackupGigabytes, qs.Groups,
-		}
+// volumeQuotaFields renders cinder's quotas, the per-volume-type ones after
+// the project-wide ones.
+func volumeQuotaFields(qs *volumequotas.QuotaSet, perType []typedQuota) ([]string, []any) {
+	fields := []string{
+		"volumes", "snapshots", "gigabytes", "per_volume_gigabytes",
+		"backups", "backup_gigabytes", "groups",
+	}
+	values := []any{
+		qs.Volumes, qs.Snapshots, qs.Gigabytes, qs.PerVolumeGigabytes,
+		qs.Backups, qs.BackupGigabytes, qs.Groups,
+	}
+	for _, q := range perType {
+		fields = append(fields, q.key)
+		values = append(values, q.value)
+	}
+	return fields, values
 }
 
 func networkQuotaFields(q *networkquotas.Quota) ([]string, []any) {

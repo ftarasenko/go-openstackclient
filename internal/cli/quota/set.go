@@ -251,11 +251,11 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			Groups:             ptr(flagVolumeGroups, &f.volumeGroups),
 			Force:              f.force,
 		}
-		qs, err := extract.One(volumequotas.Update(ctx, client, project, opts).Extract())
+		qs, perType, err := extractVolumeQuota(volumequotas.Update(ctx, client, project, opts))
 		if err != nil {
 			return partialError(applied, "volume", project, err)
 		}
-		vf, vv := volumeQuotaFields(qs)
+		vf, vv := volumeQuotaFields(qs, perType)
 		fields, values = append(fields, vf...), append(values, vv...)
 		applied = append(applied, "volume")
 	}
