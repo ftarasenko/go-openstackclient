@@ -185,6 +185,15 @@ func TestVolumeBackups(t *testing.T) {
 			field(row, "description") != "changed") {
 			t.Errorf("volume backup list row for %s = %v", bid, row)
 		}
+		if field(row, "id") == incID && field(row, "incremental") != "true" {
+			t.Errorf("volume backup list does not mark %s incremental: %v", incID, row)
+		}
+	}
+	// --long: the source volume is its ID in json, the container is swift's.
+	for _, row := range r.list(t, "volume", "backup", "list", "--volume", vol, "--long") {
+		if field(row, "volume") != vol || field(row, "container") == "" {
+			t.Errorf("volume backup list --long row = %v", row)
+		}
 	}
 
 	// Restore into a new volume, which the restore creates.

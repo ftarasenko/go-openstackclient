@@ -239,3 +239,69 @@ func TestRunBackupRestore_ToExistingVolume(t *testing.T) {
 		}
 	}
 }
+
+// The listing carries upstream's Incremental and Created At by default, and
+// --long adds Availability Zone, Volume and Container. Volume is the volume's
+// name in the table and its ID in json.
+func TestRunBackupList_UpstreamColumns(t *testing.T) {
+	const body = `{"backups": [
+	  {"id": "b1", "name": "bk-a", "status": "available", "size": 10, "volume_id": "v1",
+	   "is_incremental": true, "created_at": "2026-01-02T03:04:05.000000",
+	   "availability_zone": "nova", "container": "volumebackups"},
+	  {"id": "b2", "name": "bk-b", "status": "available", "size": 10, "volume_id": "v-gone",
+	   "is_incremental": false, "created_at": "2026-01-03T03:04:05.000000"}
+	]}`
+	for _, tc := range []struct {
+		name   string
+		format string
+		long   bool
+		want   []string
+		absent []string
+	}{
+		{
+			name: "default", format: output.FormatCSV,
+			want: []string{
+				"ID,Name,Description,Status,Size,Incremental,Created At\n",
+				"b1,bk-a,,available,10,true,2026-01-02T03:04:05+00:00\n",
+			},
+			absent: []string{"Container"},
+		},
+		{
+			name: "long table names the volume", format: output.FormatTable, long: true,
+			want: []string{"Availability Zone", "Volume", "Container", "nova", "data-vol", "v-gone", "volumebackups"},
+		},
+		{
+			name: "long json keeps the volume id", format: output.FormatJSON, long: true,
+			want: []string{`"Volume": "v1"`, `"Availability Zone": "nova"`, `"Availability Zone": null`, `"Incremental": true`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			fakeServer.Mux.HandleFunc("/backups/detail", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			})
+			fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"volumes": [{"id": "v1", "name": "data-vol"}]}`))
+			})
+			o := &output.Options{Format: tc.format}
+			var buf bytes.Buffer
+			if err := runBackupList(context.Background(), volumeClient(fakeServer, "3.59"), o,
+				&backupListFlags{long: tc.long}, &buf); err != nil {
+				t.Fatalf("runBackupList: %v", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("output missing %q\n---\n%s", want, buf.String())
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(buf.String(), absent) {
+					t.Errorf("output unexpectedly carries %q\n---\n%s", absent, buf.String())
+				}
+			}
+		})
+	}
+}
