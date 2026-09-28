@@ -129,7 +129,9 @@ can no longer count as covered while lacking upstream's filters, which is how
 cloud they fail with the missing neutron extension named. One is sent under a
 different attribute than upstream sends: `network create --qinq-vlan` sends
 neutron's `qinq` (neutron-lib `QINQ_FIELD`, neutron's `db/qinq_db.py`), where
-upstream 10.3.0 sends `vlan_qinq`, which neutron does not define.
+upstream 10.3.0 sends `vlan_qinq`, which neutron does not define. `network show`
+follows upstream on the read side: `is_vlan_qinq` is the SDK's `vlan_qinq` and
+so always null, and neutron's `qinq` is shown under its own name when sent.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
 `image.v1` are excluded as legacy) plus the five plugins above, and since the

@@ -143,13 +143,13 @@ func TestPZNetworkCreate_PVLANAndQinQBody(t *testing.T) {
 				writeJSON(t, w, http.StatusCreated, `{"network":{"id":"`+pzNetID+`","name":"n1","pvlan":true,"qinq":true}}`)
 			})
 			var buf bytes.Buffer
-			o := &output.Options{Format: "json", Columns: []string{"pvlan", "is_vlan_qinq"}}
+			o := &output.Options{Format: "json", Columns: []string{"pvlan", "qinq", "is_vlan_qinq"}}
 			if err := runNetworkCreate(context.Background(), networkClient(fakeServer), o, "n1", tc.f, &buf); err != nil {
 				t.Fatalf("runNetworkCreate: %v", err)
 			}
 			got := pzJSONSingle(t, &buf)
-			if got["pvlan"] != true || got["is_vlan_qinq"] != true {
-				t.Errorf("show fields = %v, want pvlan and is_vlan_qinq true", got)
+			if got["pvlan"] != true || got["qinq"] != true || got["is_vlan_qinq"] != nil {
+				t.Errorf("show fields = %v, want pvlan and qinq true, is_vlan_qinq null", got)
 			}
 		})
 	}
@@ -295,21 +295,36 @@ func TestPZNetworkShow_PostZedFieldsEmptyWhenAbsent(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-1","name":"old"}}`)
 	})
 	fakeServer.Mux.HandleFunc("/networks/net-2", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-2","pvlan":false,"qinq":true}}`)
+		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-2","pvlan":false,"qinq":true,"l2_adjacency":true}}`)
 	})
-	o := &output.Options{Format: "json", Columns: []string{"pvlan", "is_vlan_qinq"}}
-	for id, want := range map[string]map[string]any{
-		"net-1": {"pvlan": nil, "is_vlan_qinq": nil},
-		"net-2": {"pvlan": false, "is_vlan_qinq": true},
+	fakeServer.Mux.HandleFunc("/networks/net-3", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"network":{"id":"net-3","qinq":false,"l2_adjacency":false}}`)
+	})
+	o := &output.Options{Format: "json"}
+	for _, tc := range []struct {
+		id     string
+		want   map[string]any
+		absent []string
+	}{
+		// is_vlan_qinq is openstacksdk's vlan_qinq, which neutron never sends;
+		// neutron's qinq and l2_adjacency appear only when it sends them.
+		{"net-1", map[string]any{"pvlan": nil, "is_vlan_qinq": nil}, []string{"qinq", "l2_adjacency"}},
+		{"net-2", map[string]any{"pvlan": false, "is_vlan_qinq": nil, "qinq": true, "l2_adjacency": true}, nil},
+		{"net-3", map[string]any{"is_vlan_qinq": nil, "qinq": false, "l2_adjacency": false}, nil},
 	} {
 		var buf bytes.Buffer
-		if err := runNetworkShow(context.Background(), networkClient(fakeServer), o, id, &buf); err != nil {
-			t.Fatalf("runNetworkShow %s: %v", id, err)
+		if err := runNetworkShow(context.Background(), networkClient(fakeServer), o, tc.id, &buf); err != nil {
+			t.Fatalf("runNetworkShow %s: %v", tc.id, err)
 		}
 		got := pzJSONSingle(t, &buf)
-		for k, v := range want {
-			if got[k] != v {
-				t.Errorf("%s: %s = %#v, want %#v (all: %v)", id, k, got[k], v, got)
+		for k, v := range tc.want {
+			if gv, ok := got[k]; !ok || gv != v {
+				t.Errorf("%s: %s = %#v (present %v), want %#v (all: %v)", tc.id, k, gv, ok, v, got)
+			}
+		}
+		for _, k := range tc.absent {
+			if _, ok := got[k]; ok {
+				t.Errorf("%s: shows %s although neutron did not send it (all: %v)", tc.id, k, got)
 			}
 		}
 	}

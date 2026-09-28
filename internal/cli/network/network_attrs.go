@@ -48,20 +48,28 @@ const (
 // networks.Network does not model: qos_policy_id (qos), dns_domain
 // (dns-integration), is_default (auto-allocated-topology),
 // port_security_enabled (port-security), vlan_transparent, pvlan, qinq,
-// availability_zones and the address-scope pair. The booleans are pointers so
+// l2_adjacency, availability_zones and the address-scope pair. The booleans are pointers so
 // a cloud without the extension renders an empty cell rather than "false".
 // Exported and flat for the same reason as MTUExt.
 type NetExtAttrs struct {
-	QoSPolicyID         string   `json:"qos_policy_id"`
-	DNSDomain           string   `json:"dns_domain"`
-	IsDefault           *bool    `json:"is_default"`
-	PortSecurityEnabled *bool    `json:"port_security_enabled"`
-	VLANTransparent     *bool    `json:"vlan_transparent"`
-	PVLAN               *bool    `json:"pvlan"`
-	QinQ                *bool    `json:"qinq"`
-	AvailabilityZones   []string `json:"availability_zones"`
-	IPv4AddressScope    string   `json:"ipv4_address_scope"`
-	IPv6AddressScope    string   `json:"ipv6_address_scope"`
+	QoSPolicyID         string `json:"qos_policy_id"`
+	DNSDomain           string `json:"dns_domain"`
+	IsDefault           *bool  `json:"is_default"`
+	PortSecurityEnabled *bool  `json:"port_security_enabled"`
+	VLANTransparent     *bool  `json:"vlan_transparent"`
+	PVLAN               *bool  `json:"pvlan"`
+	QinQ                *bool  `json:"qinq"`
+	// VLANQinQ is the key openstacksdk reads is_vlan_qinq from. Neutron does
+	// not define it, so it is absent from every response and the field null,
+	// as upstream prints it; neutron's own attribute is QinQ.
+	VLANQinQ *bool `json:"vlan_qinq"`
+	// L2Adjacency is the l2_adjacency extension's read-only flag (loaded with
+	// the segments plugin): false once a network has segments that are not
+	// mutually reachable at layer 2.
+	L2Adjacency       *bool    `json:"l2_adjacency"`
+	AvailabilityZones []string `json:"availability_zones"`
+	IPv4AddressScope  string   `json:"ipv4_address_scope"`
+	IPv6AddressScope  string   `json:"ipv6_address_scope"`
 }
 
 // pairBool turns an upstream store_true pair (cobra keeps the two exclusive)

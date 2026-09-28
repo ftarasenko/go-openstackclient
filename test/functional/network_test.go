@@ -41,6 +41,20 @@ func TestNetworkAndSubnet(t *testing.T) {
 		!strings.Contains(field(n, "tags"), "ft-a") {
 		t.Errorf("after network set: %v", n)
 	}
+	// l2_adjacency and neutron's qinq are shown where neutron runs their
+	// extensions; is_vlan_qinq is openstacksdk's vlan_qinq, which it never
+	// sends, so it is null everywhere, as upstream prints it.
+	for alias, key := range map[string]string{"l2_adjacency": "l2_adjacency", "qinq": "qinq"} {
+		if _, ok := n[key]; ok != extensions(t)[alias] {
+			t.Errorf("network show carries %s = %v, want %v (extension %s)", key, ok, extensions(t)[alias], alias)
+		}
+	}
+	if v, ok := n["is_vlan_qinq"]; !ok || v != nil {
+		t.Errorf("network show is_vlan_qinq = %v (present %v), want null", v, ok)
+	}
+	if n["l2_adjacency"] != nil && n["l2_adjacency"] != true {
+		t.Errorf("network show l2_adjacency = %v on a single-segment network, want true", n["l2_adjacency"])
+	}
 	r.ok(t, "network", "unset", f.net, "--tag", "ft-a")
 	if tags := field(r.show(t, "network", "show", f.net), "tags"); strings.Contains(tags, "ft-a") || !strings.Contains(tags, "ft-b") {
 		t.Errorf("tags after unset --tag ft-a = %s", tags)

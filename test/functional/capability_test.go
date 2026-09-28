@@ -18,7 +18,8 @@ func TestCapabilityMatrix(t *testing.T) {
 	ext := extensions(t)
 
 	// Stacked on every release (up.sh's "net" feature).
-	for _, alias := range []string{"qos", "trunk", "segment", "floating-ip-port-forwarding",
+	// l2_adjacency is the segments plugin's.
+	for _, alias := range []string{"qos", "trunk", "segment", "l2_adjacency", "floating-ip-port-forwarding",
 		"bgp", "bgpvpn", "vpnaas", "fwaas_v2", "taas"} {
 		if !ext[alias] {
 			t.Errorf("extension %q missing on %s (%s): every cell stacks it", alias, c.Series, c.Backend)
