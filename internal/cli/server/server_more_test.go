@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1242,10 +1243,11 @@ func TestRunHypervisorShow_ByHostname(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
-	var gotMethod, gotVer string
+	var gotMethod string
+	var gotVers []string
 	fakeServer.Mux.HandleFunc("/os-hypervisors/detail", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
-		gotVer = r.Header.Get("OpenStack-API-Version")
+		gotVers = append(gotVers, r.Header.Get("OpenStack-API-Version"))
 		th.TestHeader(t, r, "X-Auth-Token", fakeclient.TokenID)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1268,9 +1270,10 @@ func TestRunHypervisorShow_ByHostname(t *testing.T) {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
 	// Usage fields were dropped at nova 2.88; the detail request must pin the
-	// default microversion so they come back populated.
-	if gotVer != "" {
-		t.Errorf("OpenStack-API-Version = %q, want empty (default 2.1)", gotVer)
+	// default microversion so they come back populated. The second, at the
+	// client's microversion, is for the IDs.
+	if want := []string{"", "compute 2.79"}; !reflect.DeepEqual(gotVers, want) {
+		t.Errorf("OpenStack-API-Version per request = %q, want %q (default 2.1, then the client's)", gotVers, want)
 	}
 	out := buf.String()
 	for _, want := range []string{"cmp1", "QEMU", "10.0.0.11", "az-1", "Skylake", "Intel", "x86_64", "131072", "maintenance"} {

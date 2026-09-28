@@ -1,13 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+
+	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
 const twoHypervisorsBody = `{
@@ -217,6 +221,65 @@ func TestHostAggregates_BestEffortOnFailure(t *testing.T) {
 			got := hostAggregates(context.Background(), computeClient(fakeServer, "latest"))
 			if len(got) != 0 {
 				t.Errorf("hostAggregates() = %v, want an empty map", got)
+			}
+		})
+	}
+}
+
+// hypervisor show prints the IDs "hypervisor list" does: nova's UUIDs for the
+// hypervisor and its service at the negotiated microversion, while the usage
+// fields still come from the 2.1 record, which names both by integer.
+func TestRunHypervisorShow_UUIDsFromTheNegotiatedMicroversion(t *testing.T) {
+	const hvUUID, svcUUID = "7d6d747d-40a3-4460-a949-abe57e48621f", "5b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+	for _, tc := range []struct {
+		name, mv, latestBody string
+		wantID, wantSvc      string
+	}{
+		{
+			name: "2.53 and later name them by UUID", mv: "2.93",
+			latestBody: `{"hypervisors": [
+			  {"id": "0c9d7e1a-5b3f-4f60-8a2e-1d4c6b8a9f00", "hypervisor_version": 2010000, "hypervisor_hostname": "cmp-01", "service": {"host": "cmp-01", "id": "x"}},
+			  {"id": "` + hvUUID + `", "hypervisor_version": 2010000, "hypervisor_hostname": "cmp-02", "service": {"host": "cmp-02", "id": "` + svcUUID + `"}}]}`,
+			wantID: hvUUID, wantSvc: svcUUID,
+		},
+		{
+			name: "a failing listing keeps the 2.1 IDs", mv: "2.93",
+			wantID: "2", wantSvc: "6",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			fakeServer.Mux.HandleFunc("/os-hypervisors/detail", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Header.Get("OpenStack-API-Version") == "" {
+					_, _ = w.Write([]byte(`{"hypervisors": [
+					  {"id": 1, "hypervisor_version": 2010000, "hypervisor_hostname": "cmp-01", "service": {"host": "cmp-01", "id": 5}, "vcpus": 8},
+					  {"id": 2, "hypervisor_version": 2010000, "hypervisor_hostname": "cmp-02", "service": {"host": "cmp-02", "id": 6}, "vcpus": 16,
+					   "memory_mb": 65536, "running_vms": 3}]}`))
+					return
+				}
+				if tc.latestBody == "" {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				_, _ = w.Write([]byte(tc.latestBody))
+			})
+			var buf bytes.Buffer
+			o := &output.Options{Format: output.FormatJSON}
+			if err := runHypervisorShow(context.Background(), computeClient(fakeServer, tc.mv), o, "cmp-02", &buf); err != nil {
+				t.Fatalf("runHypervisorShow: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("decoding %s: %v", buf.String(), err)
+			}
+			if got["id"] != tc.wantID || got["service_id"] != tc.wantSvc {
+				t.Errorf("id, service_id = %v, %v, want %s, %s", got["id"], got["service_id"], tc.wantID, tc.wantSvc)
+			}
+			// The pre-2.88 usage fields are the 2.1 record's.
+			if got["vcpus"] != float64(16) || got["memory_mb"] != float64(65536) || got["running_vms"] != float64(3) {
+				t.Errorf("usage fields = %v", got)
 			}
 		})
 	}

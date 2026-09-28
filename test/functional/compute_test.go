@@ -172,6 +172,15 @@ func TestComputeServicesAndHosts(t *testing.T) {
 	if anyField(h, "hypervisor hostname", "hypervisor_hostname") == "" {
 		t.Errorf("hypervisor show = %v", h)
 	}
+	// show names the hypervisor as list does (a UUID from nova 2.53), and still
+	// carries the usage fields nova dropped at 2.88.
+	if field(h, "id") != field(hv[0], "id") || field(h, "vcpus") == "" || field(h, "vcpus") == "0" {
+		t.Errorf("hypervisor show %s: id %q, vcpus %q; want the listed id and nova's vcpus",
+			field(hv[0], "id"), field(h, "id"), field(h, "vcpus"))
+	}
+	if byName := r.show(t, "hypervisor", "show", anyField(h, "hypervisor hostname", "hypervisor_hostname")); field(byName, "id") != field(hv[0], "id") {
+		t.Errorf("hypervisor show by hostname: id %q, want %q", field(byName, "id"), field(hv[0], "id"))
+	}
 
 	zones := r.list(t, "availability", "zone", "list", "--long")
 	if !in(zones, "nova") {
