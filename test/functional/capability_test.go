@@ -45,6 +45,14 @@ func TestCapabilityMatrix(t *testing.T) {
 			ext["l3-agent-scheduler-ha-chassis-priority"], c.Series, c.Backend, want)
 	}
 
+	// ML2/OVN exposes the router's read-only top-level enable_snat from 2026.1
+	// (neutron 28.0.0, common/ovn/extensions.py); the OVS L3 plugin does not
+	// load it. TestRouters asserts router show carries it.
+	if want := c.Backend == "ovn" && c.Series.atLeast("2026.1"); ext["router-enable-snat"] != want {
+		t.Errorf("router-enable-snat present = %v on %s (%s), want %v",
+			ext["router-enable-snat"], c.Series, c.Backend, want)
+	}
+
 	// The backend follows the series (up.sh): OVS through 2024.1, OVN after.
 	if want := map[bool]string{true: "ovn", false: "ovs"}[c.Series.atLeast("2025.1")]; c.Backend != want {
 		t.Errorf("backend %q on %s, want %q", c.Backend, c.Series, want)

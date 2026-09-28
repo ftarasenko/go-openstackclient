@@ -59,7 +59,9 @@ func routerShowFields(r *routers.Router) ([]string, []any) {
 // l3-ext-ndp-proxy, as upstream), then evpn_vni only when set (upstream hides
 // it when None) and the post-Zed default-route BFD/ECMP switches only when
 // neutron sent them — upstream's SDK does not model those two, so on a cloud
-// without the extensions nothing changes. The router verbs this file owns
+// without the extensions nothing changes. So is 2026.1's read-only
+// enable_snat, which upstream prints because its SDK keeps any attribute
+// neutron sends. The router verbs this file owns
 // render through it; the extraroute verbs in extensions.go keep the plain
 // field set.
 func routerDetailFields(r *routers.Router, ext routerExtAttrs) ([]string, []any) {
@@ -79,6 +81,7 @@ func routerDetailFields(r *routers.Router, ext routerExtAttrs) ([]string, []any)
 		{"enable_default_route_bfd", derefOrNil(ext.EnableDefaultRouteBFD), ext.EnableDefaultRouteBFD != nil},
 		{"enable_default_route_ecmp", derefOrNil(ext.EnableDefaultRouteECMP), ext.EnableDefaultRouteECMP != nil},
 		{"evpn_vni", derefOrNil(ext.EVPNVNI), ext.EVPNVNI != nil},
+		{"enable_snat", derefOrNil(ext.EnableSNAT), ext.EnableSNAT != nil},
 	} {
 		if opt.set {
 			fields = append(fields, opt.name)
@@ -198,6 +201,10 @@ type routerExtAttrs struct {
 	EnableDefaultRouteBFD  *bool `json:"enable_default_route_bfd"`
 	EnableDefaultRouteECMP *bool `json:"enable_default_route_ecmp"`
 	EVPNVNI                *int  `json:"evpn_vni"`
+	// EnableSNAT is the router-enable-snat extension's read-only top-level
+	// copy of the gateway's SNAT switch (neutron-lib
+	// api/definitions/router_enable_snat.py, 2026.1).
+	EnableSNAT *bool `json:"enable_snat"`
 }
 
 // routerListRow pairs a router with its routerExtAttrs. The page is decoded

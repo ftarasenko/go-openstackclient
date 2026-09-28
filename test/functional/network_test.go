@@ -177,8 +177,16 @@ func TestRouters(t *testing.T) {
 	}
 
 	r.ok(t, "router", "add", "gateway", id, "public")
-	if gw := field(r.show(t, "router", "show", id), "external_gateway_info"); gw == "" {
+	rt = r.show(t, "router", "show", id)
+	if gw := field(rt, "external_gateway_info"); gw == "" {
 		t.Error("router has no external gateway after add gateway")
+	}
+	// router-enable-snat mirrors the gateway's SNAT switch at the top level;
+	// devstack keeps neutron's enable_snat_by_default.
+	if snat, ok := rt["enable_snat"]; extensions(t)["router-enable-snat"] && (!ok || snat != true) {
+		t.Errorf("router show enable_snat = %v (present %v), want true", snat, ok)
+	} else if !extensions(t)["router-enable-snat"] && ok {
+		t.Errorf("router show carries enable_snat = %v without the router-enable-snat extension", snat)
 	}
 
 	// Static routes, added and removed by add/remove route, then by set/unset.
