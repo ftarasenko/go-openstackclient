@@ -204,6 +204,13 @@ func TestDNSSharesAndMoves(t *testing.T) {
 	r := defaultRunner(c)
 	demoID := issue(t, demoRunner(c)).project
 	_, id := newZone(t, r)
+	zoneShared := func(want string) {
+		t.Helper()
+		if got := field(r.show(t, "zone", "show", id), "shared"); got != want {
+			t.Errorf("zone show shared = %q, want %s", got, want)
+		}
+	}
+	zoneShared("false")
 
 	sh := r.show(t, "zone", "share", "create", id, demoID)
 	shID := field(sh, "id")
@@ -214,7 +221,9 @@ func TestDNSSharesAndMoves(t *testing.T) {
 	if !in(r.list(t, "zone", "share", "list", id), shID) {
 		t.Errorf("zone share list does not list %s", shID)
 	}
+	zoneShared("true")
 	r.ok(t, "zone", "share", "delete", id, shID)
+	zoneShared("false")
 
 	// One pool: designate either moves the zone onto the pool it is in, or
 	// refuses; both are its answer to a request koc made.

@@ -40,9 +40,43 @@ func newZoneCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// zoneResult is what zones.Get, Create and Update return.
+type zoneResult interface {
+	Extract() (*zones.Zone, error)
+	ExtractInto(to any) error
+}
+
+// zoneDetail is a zone plus the attributes zones.Zone does not model. Shared is
+// designate's zone-sharing flag (2023.2 on): true once the zone is shared with
+// another project. A pointer, so an older designate, which does not send it,
+// leaves the field out rather than claiming false.
+type zoneDetail struct {
+	*zones.Zone
+	Shared *bool
+}
+
+// extractZone decodes a single-zone response into a zoneDetail. The body is
+// read twice because zones.Zone's UnmarshalJSON would swallow the extra key.
+func extractZone(r zoneResult) (*zoneDetail, error) {
+	z, err := r.Extract()
+	if err != nil {
+		return nil, err
+	}
+	var ext struct {
+		Shared *bool `json:"shared"`
+	}
+	if err := r.ExtractInto(&ext); err != nil {
+		return nil, err
+	}
+	return &zoneDetail{Zone: z, Shared: ext.Shared}, nil
+}
+
 // zoneShowFields is the curated Field/Value view for a single zone, matching the
-// most operationally useful attributes shown by `openstack zone show`.
-func zoneShowFields(z *zones.Zone) ([]string, []any) {
+// most operationally useful attributes shown by `openstack zone show`. shared
+// follows them whenever designate sends it, as upstream prints every key the
+// response carries.
+func zoneShowFields(d *zoneDetail) ([]string, []any) {
+	z := d.Zone
 	fields := []string{
 		"id", "name", "type", "email", "ttl", "serial", "status", "action",
 		"description", "masters", "pool_id", "project_id", "version",
@@ -52,6 +86,10 @@ func zoneShowFields(z *zones.Zone) ([]string, []any) {
 		z.ID, z.Name, z.Type, z.Email, z.TTL, z.Serial, z.Status, z.Action,
 		z.Description, z.Masters, z.PoolID, z.ProjectID, z.Version,
 		dnsTime(z.CreatedAt), dnsTime(z.UpdatedAt), dnsTime(z.TransferredAt),
+	}
+	if d.Shared != nil {
+		fields = append(fields, "shared")
+		values = append(values, *d.Shared)
 	}
 	return fields, values
 }
@@ -170,7 +208,7 @@ func runZoneShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	z, err := zones.Get(ctx, client, id).Extract()
+	z, err := extractZone(zones.Get(ctx, client, id))
 	if err != nil {
 		return fmt.Errorf("getting dns zone %s: %w", ref, err)
 	}
@@ -271,7 +309,7 @@ func runZoneCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Type:        zoneType(f.typ),
 		Masters:     f.masters,
 	}
-	z, err := zones.Create(ctx, client, opts).Extract()
+	z, err := extractZone(zones.Create(ctx, client, opts))
 	if err != nil {
 		return fmt.Errorf("creating dns zone: %w", err)
 	}
@@ -391,7 +429,7 @@ func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if f.descSet {
 		body["description"] = f.description
 	}
-	z, err := zones.Update(ctx, client, id, body).Extract()
+	z, err := extractZone(zones.Update(ctx, client, id, body))
 	if err != nil {
 		return fmt.Errorf("updating dns zone %s: %w", ref, err)
 	}

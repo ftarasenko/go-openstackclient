@@ -242,3 +242,39 @@ func TestRunZoneShow_NullTransferredAtRendersEmpty(t *testing.T) {
 		}
 	}
 }
+
+// zone show carries designate's shared flag (2023.2 on) and leaves it out for
+// an older designate, which does not send it.
+func TestRunZoneShow_Shared(t *testing.T) {
+	for _, tc := range []struct {
+		name, extra string
+		want        string
+		absent      bool
+	}{
+		{"shared", `,"shared":true`, `"shared": true`, false},
+		{"not shared", `,"shared":false`, `"shared": false`, false},
+		{"pre-2023.2", ``, `"shared"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			stubZoneList(fakeServer)
+			fakeServer.Mux.HandleFunc("/zones/z1", func(w http.ResponseWriter, r *http.Request) {
+				th.TestMethod(t, r, http.MethodGet)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"z1","name":"example.com.","type":"PRIMARY","status":"ACTIVE"` + tc.extra + `}`))
+			})
+			var buf bytes.Buffer
+			if err := runZoneShow(context.Background(), dnsShareClient(fakeServer),
+				&output.Options{Format: output.FormatJSON}, "z1", &buf); err != nil {
+				t.Fatalf("runZoneShow: %v", err)
+			}
+			if got := strings.Contains(buf.String(), tc.want); got == tc.absent {
+				t.Errorf("output contains %s = %v, want %v\n---\n%s", tc.want, got, !tc.absent, buf.String())
+			}
+			if !strings.Contains(buf.String(), `"name": "example.com."`) {
+				t.Errorf("the typed fields went missing\n---\n%s", buf.String())
+			}
+		})
+	}
+}
