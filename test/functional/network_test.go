@@ -66,6 +66,14 @@ func TestNetworkAndSubnet(t *testing.T) {
 	if rows := r.list(t, "subnet", "list", "--network", f.net, "--long"); len(rows) != 1 || field(rows[0], "id") != f.subnetID {
 		t.Errorf("subnet list --network = %v", rows)
 	}
+	// subnet-external-network: router:external is false on a tenant subnet and
+	// true on one of devstack's public network, and absent without it.
+	subnetExternal(t, r, f.subnetID, false)
+	if pub := r.list(t, "subnet", "list", "--network", "public"); len(pub) > 0 {
+		subnetExternal(t, r, field(pub[0], "id"), true)
+	} else {
+		t.Error("subnet list --network public is empty")
+	}
 
 	// How much of the network is in use.
 	if a := r.ok(t, "ip", "availability", "show", f.net, "-f", "json"); !strings.Contains(a, f.subnetID) {
@@ -75,6 +83,19 @@ func TestNetworkAndSubnet(t *testing.T) {
 
 	r.ok(t, "subnet", "delete", f.subnetID)
 	r.fails(t, "subnet", "show", f.subnetID)
+}
+
+// subnetExternal asserts subnet show's router:external: want where neutron
+// runs subnet-external-network, and no such key where it does not.
+func subnetExternal(t *testing.T, r runner, subnetID string, want bool) {
+	t.Helper()
+	got, ok := r.show(t, "subnet", "show", subnetID)["router:external"]
+	switch {
+	case extensions(t)["subnet-external-network"] && (!ok || got != want):
+		t.Errorf("subnet show %s router:external = %v (present %v), want %v", subnetID, got, ok, want)
+	case !extensions(t)["subnet-external-network"] && ok:
+		t.Errorf("subnet show %s carries router:external = %v without subnet-external-network", subnetID, got)
+	}
 }
 
 func TestPorts(t *testing.T) {

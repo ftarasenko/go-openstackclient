@@ -51,10 +51,21 @@ type SubnetLeakExt struct {
 	LeakRoutes *bool `json:"leak_routes"`
 }
 
+// SubnetExternalExt carries the subnet-external-network extension's
+// read-only router:external (neutron-lib
+// api/definitions/subnet_external_network.py, loaded by ML2 from 2024.2): true
+// on a subnet of an external network. A pointer, so a cloud without the
+// extension leaves the field out rather than claiming "false". Exported for
+// the same reason as MTUExt.
+type SubnetExternalExt struct {
+	RouterExternal *bool `json:"router:external"`
+}
+
 // subnetExt is a Subnet decorated with the extension attributes koc renders.
 type subnetExt struct {
 	subnets.Subnet
 	SubnetLeakExt
+	SubnetExternalExt
 }
 
 // extractSubnet decodes a subnet GET/POST/PUT result into a subnetExt.
@@ -129,6 +140,13 @@ func subnetShowFields(s *subnetExt) ([]string, []any) {
 		s.HostRoutes, s.ServiceTypes, s.IPv6AddressMode, s.IPv6RAMode,
 		s.SubnetPoolID, s.SegmentID, s.LeakRoutes, s.Description, s.ProjectID, s.Tags,
 		s.RevisionNumber, s.CreatedAt, s.UpdatedAt,
+	}
+	// router:external only when neutron sent it, as upstream shows it: its SDK
+	// keeps whatever attributes neutron returns, and a cloud before 2024.2
+	// returns none.
+	if s.RouterExternal != nil {
+		fields = append(fields, "router:external")
+		values = append(values, *s.RouterExternal)
 	}
 	return fields, values
 }

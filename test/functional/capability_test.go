@@ -45,6 +45,13 @@ func TestCapabilityMatrix(t *testing.T) {
 			ext["l3-agent-scheduler-ha-chassis-priority"], c.Series, c.Backend, want)
 	}
 
+	// ML2 reports router:external on subnets from 2024.2 (neutron 25.0.0), on
+	// both backends; TestNetworkAndSubnet asserts subnet show carries it.
+	if want := c.Series.atLeast("2024.2"); ext["subnet-external-network"] != want {
+		t.Errorf("subnet-external-network present = %v on %s, want %v (ML2 loads it from 2024.2)",
+			ext["subnet-external-network"], c.Series, want)
+	}
+
 	// ML2/OVN exposes the router's read-only top-level enable_snat from 2026.1
 	// (neutron 28.0.0, common/ovn/extensions.py); the OVS L3 plugin does not
 	// load it. TestRouters asserts router show carries it.
