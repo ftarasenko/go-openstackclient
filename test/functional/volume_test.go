@@ -126,6 +126,16 @@ func TestVolumeSnapshots(t *testing.T) {
 	if rows := r.list(t, "volume", "snapshot", "list", "--volume", vol); len(rows) != 1 || field(rows[0], "id") != sid {
 		t.Errorf("volume snapshot list --volume = %v", rows)
 	}
+	// --long: the source volume is its ID in json and its name in the table.
+	long := r.list(t, "volume", "snapshot", "list", "--volume", vol, "--long")
+	if len(long) != 1 || field(long[0], "volume") != vol || !strings.Contains(field(long[0], "properties"), "ft2") ||
+		field(long[0], "created at") == "" {
+		t.Errorf("volume snapshot list --long = %v", long)
+	}
+	volName := field(r.show(t, "volume", "show", vol), "name")
+	if out := r.ok(t, "volume", "snapshot", "list", "--volume", vol, "--long", "-c", "Volume"); !strings.Contains(out, volName) {
+		t.Errorf("volume snapshot list --long table does not name volume %s:\n%s", volName, out)
+	}
 
 	// A volume made from the snapshot, then the snapshot goes.
 	clone := newVolume(t, r, "--snapshot", sid)

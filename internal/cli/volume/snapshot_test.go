@@ -196,3 +196,93 @@ func TestRunSnapshotDelete_ByID(t *testing.T) {
 		t.Errorf("delete output missing confirmation:\n%s", buf.String())
 	}
 }
+
+// --long adds upstream's Created At, Volume and Properties. Volume is the
+// source volume's name in the table and its ID in every machine format, the
+// way upstream's VolumeIdColumn renders it; a volume the caller's own listing
+// does not contain falls back to its ID.
+func TestRunSnapshotList_Long(t *testing.T) {
+	const body = `{"snapshots": [
+	  {"id": "s1", "name": "snap-a", "description": "", "status": "available", "size": 10,
+	   "volume_id": "v1", "created_at": "2026-01-02T03:04:05.000000", "metadata": {"k": "v"}},
+	  {"id": "s2", "name": "snap-b", "description": "", "status": "available", "size": 20,
+	   "volume_id": "v-foreign", "created_at": "2026-01-03T03:04:05.000000", "metadata": {}}
+	]}`
+	for _, tc := range []struct {
+		name        string
+		format      string
+		columns     []string
+		wantVolumes bool
+		want        []string
+	}{
+		{
+			name: "table shows the volume name", format: output.FormatTable, wantVolumes: true,
+			want: []string{"Created At", "Volume", "Properties", "data-vol", "v-foreign", "k='v'", "2026-01-02T03:04:05+00:00"},
+		},
+		{
+			name: "json keeps the volume id", format: output.FormatJSON,
+			want: []string{`"Volume": "v1"`, `"Properties": {`, `"Created At": "2026-01-02T03:04:05+00:00"`},
+		},
+		{
+			name: "table without the Volume column skips the lookup", format: output.FormatTable,
+			columns: []string{"ID", "Properties"}, want: []string{"k='v'"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := th.SetupHTTP()
+			defer fakeServer.Teardown()
+			fakeServer.Mux.HandleFunc("/snapshots", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			})
+			var listedVolumes bool
+			fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+				listedVolumes = true
+				th.TestMethod(t, r, http.MethodGet)
+				if r.URL.Query().Has("all_tenants") {
+					t.Errorf("volume lookup should list the caller's own volumes, got %q", r.URL.RawQuery)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"volumes": [{"id": "v1", "name": "data-vol"}]}`))
+			})
+
+			o := &output.Options{Format: tc.format, Columns: tc.columns}
+			var buf bytes.Buffer
+			if err := runSnapshotList(context.Background(), volumeClient(fakeServer, "3.59"), o,
+				&snapshotListFlags{long: true}, &buf); err != nil {
+				t.Fatalf("runSnapshotList: %v", err)
+			}
+			if listedVolumes != tc.wantVolumes {
+				t.Errorf("listed volumes = %v, want %v", listedVolumes, tc.wantVolumes)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("output missing %q\n---\n%s", want, buf.String())
+				}
+			}
+		})
+	}
+}
+
+// A failing volume lookup costs the names, not the listing: upstream ignores
+// the error and shows IDs.
+func TestRunSnapshotList_LongVolumeLookupFailureShowsIDs(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	fakeServer.Mux.HandleFunc("/snapshots", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"snapshots": [{"id": "s1", "name": "snap-a", "volume_id": "v1"}]}`))
+	})
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	o := &output.Options{Format: output.FormatTable}
+	var buf bytes.Buffer
+	if err := runSnapshotList(context.Background(), volumeClient(fakeServer, "3.59"), o,
+		&snapshotListFlags{long: true}, &buf); err != nil {
+		t.Fatalf("runSnapshotList: %v", err)
+	}
+	if !strings.Contains(buf.String(), "v1") {
+		t.Errorf("output should fall back to the volume ID\n---\n%s", buf.String())
+	}
+}
