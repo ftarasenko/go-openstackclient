@@ -96,7 +96,7 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Marker:     f.marker,
 	}
 	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, backups.List(client, opts), f.limit, backups.ExtractBackups)
+	all, err := paging.Collect(ctx, backups.ListDetail(client, backupListDetailOpts{opts}), f.limit, backups.ExtractBackups)
 	if err != nil {
 		return fmt.Errorf("listing backups: %w", err)
 	}
@@ -105,6 +105,19 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		t.Rows = append(t.Rows, []any{b.ID, b.Name, b.Description, b.Status, b.Size})
 	}
 	return o.WriteList(w, t)
+}
+
+// backupListDetailOpts sends ListOpts's filters to cinder's detail listing.
+//
+// GET /backups is cinder's summary view — id, name and links, nothing else
+// (cinder/api/views/backups.py summary) — so a listing read from it showed an
+// empty Description, Status and Size for every backup. /backups/detail takes
+// the same name, status and volume_id filters, but gophercloud's
+// ListDetailOpts does not model them, hence this adapter over ListOpts.
+type backupListDetailOpts struct{ backups.ListOpts }
+
+func (opts backupListDetailOpts) ToBackupListDetailQuery() (string, error) {
+	return opts.ToBackupListQuery()
 }
 
 func newBackupShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

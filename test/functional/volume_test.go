@@ -175,8 +175,16 @@ func TestVolumeBackups(t *testing.T) {
 	if b = r.show(t, "volume", "backup", "show", bid); field(b, "name") != name+"-renamed" || field(b, "description") != "changed" {
 		t.Errorf("after backup set: %v", b)
 	}
-	if ids := column(r.list(t, "volume", "backup", "list", "--volume", vol), "id"); !slices.Contains(ids, bid) || !slices.Contains(ids, incID) {
+	backups := r.list(t, "volume", "backup", "list", "--volume", vol)
+	if ids := column(backups, "id"); !slices.Contains(ids, bid) || !slices.Contains(ids, incID) {
 		t.Errorf("volume backup list --volume = %v, want %s and %s", ids, bid, incID)
+	}
+	// The listing reads cinder's detail view: the summary has no status or size.
+	for _, row := range backups {
+		if field(row, "id") == bid && (field(row, "status") != "available" || field(row, "size") != "1" ||
+			field(row, "description") != "changed") {
+			t.Errorf("volume backup list row for %s = %v", bid, row)
+		}
 	}
 
 	// Restore into a new volume, which the restore creates.

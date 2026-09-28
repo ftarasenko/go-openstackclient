@@ -41,7 +41,9 @@ func TestRunBackupList_RequestAndTableOutput(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	var gotMethod string
-	fakeServer.Mux.HandleFunc("/backups", func(w http.ResponseWriter, r *http.Request) {
+	// The detail view: GET /backups is cinder's summary, which carries no
+	// description, status or size.
+	fakeServer.Mux.HandleFunc("/backups/detail", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		assertVolumeMicroversion(t, r, "3.59")
 		th.TestFormValues(t, r, map[string]string{
