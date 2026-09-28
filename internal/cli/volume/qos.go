@@ -71,11 +71,40 @@ func runQoSList(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if err != nil {
 		return fmt.Errorf("listing volume QoS specifications: %w", err)
 	}
-	t := output.Table{Columns: []string{"ID", "Name", "Consumer", "Properties"}, Rows: make([][]any, 0, len(all))}
+	// Associations costs one request per spec, as upstream's does, so it is
+	// only paid for when the column is going to be rendered.
+	wantAssoc := len(o.Columns) == 0 || len(o.SelectedColumns("Associations")) > 0
+	t := output.Table{Columns: []string{"ID", "Name", "Consumer", "Associations", "Properties"}, Rows: make([][]any, 0, len(all))}
 	for _, q := range all {
-		t.Rows = append(t.Rows, []any{q.ID, q.Name, q.Consumer, q.Specs})
+		assoc := []string{}
+		if wantAssoc {
+			if assoc, err = qosAssociationNames(ctx, client, q.ID); err != nil {
+				return err
+			}
+		}
+		t.Rows = append(t.Rows, []any{q.ID, q.Name, q.Consumer, assoc, q.Specs})
 	}
 	return o.WriteList(w, t)
+}
+
+// qosAssociationNames returns the names of the volume types a QoS spec is
+// associated with — upstream's Associations column (python-openstackclient
+// 10.3.0, volume/v3/qos_specs.py ListQos), which it reads from the spec's
+// associations endpoint, one request per spec.
+func qosAssociationNames(ctx context.Context, client *gophercloud.ServiceClient, id string) ([]string, error) {
+	pages, err := qos.ListAssociations(client, id).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing the associations of volume QoS specification %q: %w", id, err)
+	}
+	all, err := qos.ExtractAssociations(pages)
+	if err != nil {
+		return nil, fmt.Errorf("parsing the associations of volume QoS specification %q: %w", id, err)
+	}
+	names := make([]string, 0, len(all))
+	for _, a := range all {
+		names = append(names, a.Name)
+	}
+	return names, nil
 }
 
 func newQoSShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

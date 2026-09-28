@@ -348,6 +348,16 @@ func TestVolumeTypesAndQoS(t *testing.T) {
 	if field(r.show(t, "volume", "type", "show", tid), "qos_specs_id") != qid {
 		t.Errorf("type %s does not carry qos %s after associate", tid, qid)
 	}
+	// qos list names the associated type, as upstream's Associations.
+	var assoc string
+	for _, row := range r.list(t, "volume", "qos", "list") {
+		if field(row, "id") == qid {
+			assoc = field(row, "associations")
+		}
+	}
+	if !strings.Contains(assoc, name+"-renamed") {
+		t.Errorf("volume qos list associations for %s = %q, want %s", qid, assoc, name+"-renamed")
+	}
 	r.fails(t, "volume", "qos", "delete", qid) // still associated
 	r.ok(t, "volume", "qos", "disassociate", qid, "--volume-type", tid)
 	if got := field(r.show(t, "volume", "type", "show", tid), "qos_specs_id"); got != "" {
