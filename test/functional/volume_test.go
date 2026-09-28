@@ -303,6 +303,19 @@ func TestVolumeTypesAndQoS(t *testing.T) {
 	if !slices.Contains(column(r.list(t, "volume", "type", "list"), "id"), tid) {
 		t.Errorf("volume type list does not list %s", tid)
 	}
+	// --long: the extra specs, as upstream's Properties.
+	var listed bool
+	for _, row := range r.list(t, "volume", "type", "list", "--long") {
+		if field(row, "id") == tid {
+			listed = true
+			if p := field(row, "properties"); !strings.Contains(p, "ft:two") || strings.Contains(p, "ft:one") {
+				t.Errorf("volume type list --long properties for %s = %q", tid, p)
+			}
+		}
+	}
+	if !listed {
+		t.Errorf("volume type list --long does not list %s", tid)
+	}
 
 	// Retype onto the same backend needs no migration.
 	vol := newVolume(t, r)
