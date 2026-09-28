@@ -84,6 +84,11 @@ func TestVolumeLifecycle(t *testing.T) {
 		strings.Contains(field(v, "metadata"), "ft:1") {
 		t.Errorf("after volume set/unset: %v", v)
 	}
+	// volume list --long carries the metadata as upstream's Properties.
+	if rows := r.list(t, "volume", "list", "--long", "--name", renamed); len(rows) != 1 ||
+		!strings.Contains(field(rows[0], "properties"), "ft2") || strings.Contains(field(rows[0], "properties"), "ft:1") {
+		t.Errorf("volume list --long --name %s = %v", renamed, rows)
+	}
 
 	r.ok(t, "volume", "extend", id, "2")
 	statusIs(t, r, "available", "volume", "show", id)

@@ -234,17 +234,19 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 // os-vol-host-attr:host — because without it there is no way to tell which pool
 // a volume landed on, which is what a capacity or a drain decision turns on.
 // Cinder renders the attribute for admin tokens only, so the column is blank
-// for an ordinary user.
+// for an ordinary user. Properties, the volume's metadata, is upstream's last
+// --long column (python-openstackclient 10.3.0, volume/v3/volume.py
+// ListVolume); it is appended so the columns before it keep their positions.
 func volumeListTable(list []volumes.Volume, long bool) output.Table {
 	cols := []string{"ID", "Name", "Status", "Size", "Attached to"}
 	if long {
-		cols = append(cols, "Type", "Bootable", "Availability Zone", "Host")
+		cols = append(cols, "Type", "Bootable", "Availability Zone", "Host", "Properties")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, v := range list {
 		row := []any{v.ID, v.Name, v.Status, v.Size, attachedTo(v)}
 		if long {
-			row = append(row, v.VolumeType, v.Bootable, v.AvailabilityZone, v.Host)
+			row = append(row, v.VolumeType, v.Bootable, v.AvailabilityZone, v.Host, v.Metadata)
 		}
 		t.Rows = append(t.Rows, row)
 	}
