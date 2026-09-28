@@ -438,7 +438,7 @@ func serverListTable(list []servers.Server, long bool, flavorNames map[string]st
 		row := []any{s.ID, s.Name, s.Status, formatNetworks(s.Addresses)}
 		if long {
 			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone,
-				s.Host, s.TaskState, s.PowerState, s.TenantID, s.UserID)
+				s.Host, s.TaskState, s.PowerState, s.TenantID, s.UserID, formatServerMetadata(s.Metadata))
 		} else {
 			row = append(row, flavorName(s.Flavor, flavorNames))
 		}
@@ -472,9 +472,12 @@ func serverListColumns(long bool) []string {
 		return append(cols, "Flavor")
 	}
 	// --long keeps the column order it has always had: it is the listing
-	// scripts read positionally, and Flavor is already in it.
+	// scripts read positionally, and Flavor is already in it. Properties, the
+	// server's metadata, is upstream's last --long column below 2.96 (the
+	// pinned-AZ and scheduler-hint columns after it are above the Zed cap), so
+	// it is appended rather than slotted in.
 	return append(cols, "Image", "Flavor", "Availability Zone", "Host",
-		"Task State", "Power State", "Project ID", "User ID")
+		"Task State", "Power State", "Project ID", "User ID", "Properties")
 }
 
 func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {

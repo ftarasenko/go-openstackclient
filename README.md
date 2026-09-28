@@ -358,8 +358,8 @@ it as the opt-in `Image ID`. Below nova 2.47 the flavor's name comes from a
 single flavor listing per invocation, and only when the column is actually
 being rendered — so `-c Name -c Status` does not pay for it.
 
-A few columns are **opt-in**: they are in neither the default nor the `--long`
-table, and naming one in `-c/--column` (or `--sort-column`) materialises it.
+A few columns are **opt-in**: they are not in the default table, and naming
+one in `-c/--column` (or `--sort-column`) materialises it.
 `server list` carries eleven — `Created At`, `Image ID`, `Flavor ID`,
 `Availability Zone`, `Host`, `Task State`, `Power State`, `Project ID`,
 `User ID`, `Security Groups`, `Properties` — mirroring the extras upstream's
@@ -370,8 +370,11 @@ koc server list --all-projects -c Name -c "Created At" --sort-column "Created At
 ```
 
 without which reading creation time costs one `server show` per server. Naming
-one adds it for that invocation only — the default and `--long` tables are not
-otherwise widened, so nothing that reads either positionally is affected.
+one adds it for that invocation only — the default table is not otherwise
+widened, so nothing that reads it positionally is affected. `--long` already
+carries the ones upstream's `--long` does (`Availability Zone`, `Host`,
+`Task State`, `Power State`, `Properties`, plus koc's `Project ID` and
+`User ID`), so naming one of those alongside it adds nothing.
 `server list --help` names the full set.
 
 ### Live refresh (`--watch`)

@@ -208,6 +208,14 @@ func TestServerList_OptInColumns(t *testing.T) {
 			want: []string{"2026-01-02T03:04:05+00:00"},
 		},
 		{
+			// Upstream's --long carries Properties, the server's metadata, as
+			// its last column below 2.96.
+			name:   "long carries properties",
+			long:   true,
+			want:   []string{",User ID,Properties\n", `,"env='prod', role='web'"`},
+			absent: []string{"Properties,Properties"},
+		},
+		{
 			// --long already renders Project ID; selecting it must not duplicate
 			// the header.
 			name:    "column --long already carries is not duplicated",
@@ -258,7 +266,13 @@ func TestServerList_OptInColumnsAreAbsentUnlessAsked(t *testing.T) {
 			&serverListFlags{long: long}, "", "", &buf); err != nil {
 			t.Fatalf("runServerList(long=%v): %v", long, err)
 		}
-		for _, absent := range []string{"Created At", "Security Groups", "Properties", "Image ID"} {
+		absents := []string{"Created At", "Security Groups", "Image ID"}
+		if !long {
+			// Properties is upstream's last --long column, so only the
+			// default listing leaves it out.
+			absents = append(absents, "Properties")
+		}
+		for _, absent := range absents {
 			if strings.Contains(buf.String(), absent) {
 				t.Errorf("listing (long=%v) unexpectedly carries %q\n---\n%s", long, absent, buf.String())
 			}

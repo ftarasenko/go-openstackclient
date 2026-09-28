@@ -19,10 +19,10 @@ type serverColumn struct {
 // serverListOptional are the columns "server list" renders only when
 // -c/--column (or --sort-column) names one, mirroring the opt-in extras
 // upstream's ListServer appends (`compute/v2/server.py`, the
-// `if parsed_args.columns:` block). They are deliberately outside both the
-// default and the --long listing: upstream's --long does not carry them either,
-// and widening the default table would change every script that reads it
-// positionally.
+// `if parsed_args.columns:` block). They are deliberately outside the default
+// listing — widening it would change every script that reads it positionally —
+// and --long carries the ones upstream's --long does too, which
+// serverListExtraColumns then skips.
 //
 // Creation time is the one that matters most in practice — without it there is
 // no way to get a server's age from a listing at all, and the fallback is one

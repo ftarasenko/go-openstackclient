@@ -70,6 +70,11 @@ func TestServerLifecycle(t *testing.T) {
 	if field(s, "key_name") != key || !strings.Contains(field(s, "properties"), "ft") {
 		t.Errorf("server show = %v", s)
 	}
+	// server list --long carries the metadata as upstream's Properties.
+	if rows := r.list(t, "server", "list", "--long", "--name", name); len(rows) != 1 ||
+		!strings.Contains(field(rows[0], "properties"), "ft='1'") {
+		t.Errorf("server list --long --name %s = %v", name, rows)
+	}
 	// --user-data writes the decoded script raw, for a pipe, whatever -f says.
 	if ud := r.ok(t, "server", "show", id, "--user-data"); ud != "#cloud-config\nhostname: ft\n" {
 		t.Errorf("server show --user-data = %q", ud)
