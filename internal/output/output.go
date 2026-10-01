@@ -20,6 +20,7 @@ package output
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -213,7 +214,7 @@ func (o *Options) highlight(cols []string, rows [][]any) ([][]any, [][]CellStyle
 // WriteList renders a multi-row result (e.g. "node list") in the selected format.
 func (o *Options) WriteList(w io.Writer, t Table) error {
 	if err := o.validateColumns(t.Columns); err != nil {
-		return err
+		return renderColumnError(err, nil, nil)
 	}
 	// Sorting happens against the FULL column set, before -c narrows it, so a
 	// sort key does not have to be one of the displayed columns — matching how
@@ -412,7 +413,7 @@ func (o *Options) WriteSingle(w io.Writer, fields []string, values []any) error 
 		return fmt.Errorf("internal error: %d field(s) but %d value(s)", len(fields), len(values))
 	}
 	if err := o.validateColumns(fields); err != nil {
-		return err
+		return renderColumnError(err, fields, values)
 	}
 	// Canonicalize before the format branch so every format renders one value
 	// (see normalize). Copied rather than done in place: values belongs to the
@@ -520,6 +521,32 @@ func matchesAnyColumn(want string, available []string) bool {
 	return false
 }
 
+// ColumnError reports -c/--column names that match none of a result's columns.
+type ColumnError struct {
+	Unknown   []string
+	Available []string
+
+	// Rendering is true when the error came from rendering a result rather than
+	// from CheckColumns, i.e. after the command had already done its work.
+	Rendering bool
+	// ID is the rendered resource's id, when it had one.
+	ID string
+}
+
+func (e *ColumnError) Error() string {
+	return fmt.Sprintf("unknown column(s): %s (available: %s)",
+		strings.Join(e.Unknown, ", "), strings.Join(e.Available, ", "))
+}
+
+// CheckColumns rejects a -c/--column name that matches none of available. A
+// command that changes something calls it before its first write, with every
+// column it could render, so a typo fails with nothing done; otherwise the
+// selection is only checked once the result is rendered, and a create that
+// looks failed gets retried.
+func (o *Options) CheckColumns(available ...string) error {
+	return o.validateColumns(available)
+}
+
 // validateColumns errors when a requested -c/--column name matches none of the
 // available headers (case-insensitively), matching OSC, which rejects unknown
 // columns rather than silently dropping them.
@@ -534,10 +561,28 @@ func (o *Options) validateColumns(all []string) error {
 		}
 	}
 	if len(unknown) > 0 {
-		return fmt.Errorf("unknown column(s): %s (available: %s)",
-			strings.Join(unknown, ", "), strings.Join(all, ", "))
+		return &ColumnError{Unknown: unknown, Available: all}
 	}
 	return nil
+}
+
+// renderColumnError marks a column error raised while rendering, and records
+// the resource's id so the caller can say what was already done.
+func renderColumnError(err error, fields []string, values []any) error {
+	var ce *ColumnError
+	if !errors.As(err, &ce) {
+		return err
+	}
+	ce.Rendering = true
+	for i, f := range fields {
+		if i < len(values) && (strings.EqualFold(f, "id") || strings.EqualFold(f, "uuid")) {
+			if id, ok := values[i].(string); ok {
+				ce.ID = id
+				break
+			}
+		}
+	}
+	return ce
 }
 
 // selectColumns returns the effective column headers and the indices into the

@@ -510,10 +510,25 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	// Show every attribute nova returns, matching the breadth of `openstack
-	// server show`. The typed servers.Server struct exposes only a curated
-	// subset (and drops the OS-EXT-* admin attributes), so decode the raw
-	// object instead. Narrow the view with -c/--column or -f json/yaml.
+	server, err := getServerRaw(ctx, client, id)
+	if err != nil {
+		return fmt.Errorf("showing server %q: %w", ref, err)
+	}
+	if userData {
+		return writeServerUserData(server, w)
+	}
+	// json/yaml keep the raw structured values so they can be parsed; the
+	// text views (table/csv/value) flatten them OSC-style.
+	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
+	fields, values := showServerFields(server, flatten)
+	return o.WriteSingle(w, fields, values)
+}
+
+// getServerRaw fetches every attribute nova returns, matching the breadth of
+// `openstack server show`. The typed servers.Server struct exposes only a
+// curated subset (and drops the OS-EXT-* admin attributes), so decode the raw
+// object instead.
+func getServerRaw(ctx context.Context, client *gophercloud.ServiceClient, id string) (map[string]any, error) {
 	var body struct {
 		Server map[string]any `json:"server"`
 	}
@@ -522,16 +537,9 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		defer func() { _ = resp.Body.Close() }()
 	}
 	if err != nil {
-		return fmt.Errorf("showing server %q: %w", ref, err)
+		return nil, err
 	}
-	if userData {
-		return writeServerUserData(body.Server, w)
-	}
-	// json/yaml keep the raw structured values so they can be parsed; the
-	// text views (table/csv/value) flatten them OSC-style.
-	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
-	fields, values := showServerFields(body.Server, flatten)
-	return o.WriteSingle(w, fields, values)
+	return body.Server, nil
 }
 
 // writeServerUserData decodes the server's base64 user_data and writes it raw.
@@ -814,6 +822,12 @@ func serverCreateUserData(f *serverCreateFlags, warn io.Writer) (string, error) 
 func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string,
 	f *serverCreateFlags, w, warn io.Writer,
 ) error {
+	// -c is checked before anything is sent: once nova has the request the
+	// server exists, and an error then reads as a failed create.
+	aliasServerCreateColumns(o)
+	if err := o.CheckColumns(serverCreateColumns...); err != nil {
+		return err
+	}
 	if err := validateServerCreate(f); err != nil {
 		return err
 	}
@@ -893,24 +907,34 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	// batch is not named in the response.
 	if f.wait {
 		if err := waitForServerStatus(ctx, client, s.ID, "ACTIVE", f.waitTimeout); err != nil {
-			return fmt.Errorf("waiting for server %q to become ACTIVE: %w", name, err)
+			return fmt.Errorf("server %q was created (id %s) but did not become ACTIVE: %w", name, s.ID, err)
 		}
 	}
-	// Nova's create response carries only the ID and the generated admin
-	// password — name, status and networks are absent, so the raw response
-	// renders a table with blank Name/Status. Re-fetch the server to show a
-	// meaningful summary, preserving the admin password (Get never returns it).
-	// A failed follow-up Get is non-fatal: the create already succeeded, so fall
-	// back to the fields we hold.
-	adminPass := s.AdminPass
-	detail, gerr := servers.Get(ctx, client, s.ID).Extract()
-	if gerr != nil {
-		return o.WriteSingle(w, []string{"ID", "Name", "Admin Password"}, []any{s.ID, name, adminPass})
+	return writeCreatedServer(ctx, client, o, s, name, w)
+}
+
+// writeCreatedServer renders the new server with `server show`'s columns plus
+// adminPass, as upstream does. Nova's create response carries only the ID and
+// the generated password, so the server is re-fetched; a failed re-fetch is not
+// fatal, since the create already succeeded.
+func writeCreatedServer(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	s *servers.Server, name string, w io.Writer,
+) error {
+	server, err := getServerRaw(ctx, client, s.ID)
+	if err != nil {
+		server = map[string]any{"id": s.ID, "name": name}
 	}
-	fields := []string{"ID", "Name", "Status", "Networks", "Image", "Flavor", "Admin Password"}
-	values := []any{
-		detail.ID, detail.Name, detail.Status, formatNetworks(detail.Addresses),
-		imageID(detail.Image), flavorName(detail.Flavor, nil), adminPass,
+	server["adminPass"] = s.AdminPass
+	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
+	fields, values := showServerFields(server, flatten)
+	// A column -c passed the catalog check but nova left out — an admin-only
+	// attribute under a member token, or one a build has not set yet — renders
+	// empty rather than failing a create that has already happened.
+	for _, c := range o.Columns {
+		if !containsFold(fields, c) {
+			fields = append(fields, canonicalColumn(serverCreateColumns, c))
+			values = append(values, nil)
+		}
 	}
 	return o.WriteSingle(w, fields, values)
 }

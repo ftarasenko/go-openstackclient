@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -797,5 +799,35 @@ func TestTSV_RoundTrip(t *testing.T) {
 				t.Errorf("row %d cell %d: round-trips to %q, want %q", i, j, got, want)
 			}
 		}
+	}
+}
+
+func TestCheckColumns(t *testing.T) {
+	o := &Options{Columns: []string{"ID", "bogus"}}
+	err := o.CheckColumns("id", "name")
+	var ce *ColumnError
+	if !errors.As(err, &ce) || ce.Rendering || len(ce.Unknown) != 1 || ce.Unknown[0] != "bogus" {
+		t.Fatalf("err = %v, want a pre-flight ColumnError for bogus", err)
+	}
+	if err := (&Options{Columns: []string{" Name "}}).CheckColumns("id", "name"); err != nil {
+		t.Errorf("CheckColumns: %v", err)
+	}
+	if err := (&Options{}).CheckColumns(); err != nil {
+		t.Errorf("CheckColumns with no -c: %v", err)
+	}
+}
+
+// A column error raised while rendering is marked as such and carries the
+// resource's id, so a write verb can say what it already did.
+func TestWriteSingle_ColumnErrorCarriesID(t *testing.T) {
+	o := &Options{Format: FormatValue, Columns: []string{"bogus"}}
+	err := o.WriteSingle(io.Discard, []string{"id", "name"}, []any{"abc", "web"})
+	var ce *ColumnError
+	if !errors.As(err, &ce) || !ce.Rendering || ce.ID != "abc" {
+		t.Fatalf("err = %#v, want a rendering ColumnError with ID abc", err)
+	}
+	err = o.WriteList(io.Discard, Table{Columns: []string{"ID"}, Rows: [][]any{{"abc"}}})
+	if !errors.As(err, &ce) || !ce.Rendering || ce.ID != "" {
+		t.Fatalf("err = %#v, want a rendering ColumnError with no ID", err)
 	}
 }
