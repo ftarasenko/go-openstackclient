@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -134,5 +135,24 @@ func TestAggregateCommandPaths(t *testing.T) {
 		if err := leaf.Args(leaf, rest); err != nil {
 			t.Errorf("Find(%v) left args %v, which fail the leaf's Args check: %v", tc.path, rest, err)
 		}
+	}
+}
+
+// A malformed --property fails before the aggregate is created.
+func TestRunAggregateCreate_BadPropertySendsNothing(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	var calls int
+	fakeServer.Mux.HandleFunc("/os-aggregates", func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	})
+	err := runAggregateCreate(context.Background(), computeClient(fakeServer, "2.93"), &output.Options{},
+		"agg-new", &aggregateCreateFlags{properties: []string{"no-equals-sign"}}, io.Discard)
+	if err == nil {
+		t.Fatal("want an error for a property without '='")
+	}
+	if calls != 0 {
+		t.Errorf("%d create request(s) sent, want none", calls)
 	}
 }

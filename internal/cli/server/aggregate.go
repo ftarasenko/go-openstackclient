@@ -225,23 +225,25 @@ func runAggregateCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err := o.CheckColumns(aggregateColumns...); err != nil {
 		return err
 	}
+	// --property is parsed before the create, so a malformed one leaves no
+	// aggregate behind.
+	meta, err := parseKeyValStrings(f.properties)
+	if err != nil {
+		return err
+	}
 	agg, err := aggregates.Create(ctx, client, aggregates.CreateOpts{Name: name, AvailabilityZone: f.zone}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating aggregate %q: %w", name, err)
 	}
 	// Metadata (properties) is not part of the create body; apply it as a
 	// follow-up set_metadata action, then re-fetch so the shown table reflects it.
-	if len(f.properties) > 0 {
-		meta, err := parseKeyValStrings(f.properties)
-		if err != nil {
-			return err
-		}
+	if len(meta) > 0 {
 		body := make(map[string]any, len(meta))
 		for k, v := range meta {
 			body[k] = v
 		}
 		if _, err := aggregates.SetMetadata(ctx, client, agg.ID, aggregates.SetMetadataOpts{Metadata: body}).Extract(); err != nil {
-			return fmt.Errorf("setting properties on aggregate %q: %w", name, err)
+			return fmt.Errorf("aggregate %q was created (id %d) but setting its properties failed: %w", name, agg.ID, err)
 		}
 		agg, err = aggregates.Get(ctx, client, agg.ID).Extract()
 		if err != nil {
