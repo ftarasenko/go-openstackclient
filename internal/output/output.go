@@ -548,8 +548,18 @@ func (e *ColumnError) Error() string {
 // column it could render, so a typo fails with nothing done; otherwise the
 // selection is only checked once the result is rendered, and a create that
 // looks failed gets retried.
+//
+// --sort-column is checked too, since a list is sorted only as it renders.
 func (o *Options) CheckColumns(available ...string) error {
-	return o.validateColumns(available)
+	if err := o.validateColumns(available); err != nil {
+		return err
+	}
+	for _, name := range o.SortColumns {
+		if !matchesAnyColumn(name, available) {
+			return &ColumnError{Unknown: []string{name}, Available: available, Sort: true}
+		}
+	}
+	return nil
 }
 
 // validateColumns errors when a requested -c/--column name matches none of the

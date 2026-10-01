@@ -841,3 +841,14 @@ func TestWriteList_SortColumnErrorIsRendering(t *testing.T) {
 		t.Fatalf("err = %v, want a rendering sort ColumnError", err)
 	}
 }
+
+func TestCheckColumns_SortColumn(t *testing.T) {
+	err := (&Options{SortColumns: []string{"bogus"}}).CheckColumns("id", "name")
+	var ce *ColumnError
+	if !errors.As(err, &ce) || ce.Rendering || !ce.Sort {
+		t.Fatalf("err = %v, want a pre-flight sort ColumnError", err)
+	}
+	if err := (&Options{SortColumns: []string{"Name"}}).CheckColumns("id", "name"); err != nil {
+		t.Errorf("CheckColumns: %v", err)
+	}
+}
