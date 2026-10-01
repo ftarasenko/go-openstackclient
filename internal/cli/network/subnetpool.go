@@ -97,6 +97,8 @@ func subnetPoolFields(p *subnetPoolExt) ([]string, []any) {
 	return fields, values
 }
 
+var subnetPoolColumns = fieldNames(subnetPoolFields(&subnetPoolExt{}))
+
 // --- list ------------------------------------------------------------------
 
 type subnetPoolListFlags struct {
@@ -353,6 +355,9 @@ func newSubnetPoolCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runSubnetPoolCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *subnetPoolWriteFlags, projectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(subnetPoolColumns...); err != nil {
+		return err
+	}
 	opts := subnetpools.CreateOpts{
 		Name:             name,
 		Prefixes:         f.prefixes,
@@ -432,6 +437,9 @@ func newSubnetPoolSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *subnetPoolWriteFlags, changed interface{ Changed(string) bool }, w io.Writer,
 ) error {
+	if err := o.CheckColumns(subnetPoolColumns...); err != nil {
+		return err
+	}
 	opts, touched := subnetPoolSetScalars(f, changed)
 	var attrs map[string]any
 	if f.noAddressScope {
@@ -548,6 +556,9 @@ func newSubnetPoolUnsetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runSubnetPoolUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *tagWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(subnetPoolColumns...); err != nil {
+		return err
+	}
 	if !f.given() {
 		return fmt.Errorf("subnet pool unset requires --tag or --all-tag")
 	}

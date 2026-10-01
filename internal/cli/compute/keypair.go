@@ -295,7 +295,13 @@ func newKeypairCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
+// keypairCreateColumns are the fields keypair create renders for an imported key.
+var keypairCreateColumns = []string{"Name", "Fingerprint", "Type", colUserID}
+
 func runKeypairCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *keypairCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(keypairCreateColumns...); err != nil {
+		return err
+	}
 	opts := keypairs.CreateOpts{Name: name}
 	imported := f.publicKey != ""
 	if imported {
@@ -320,7 +326,7 @@ func runKeypairCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return nil
 	}
 
-	fields := []string{"Name", "Fingerprint", "Type", colUserID}
+	fields := keypairCreateColumns
 	values := []any{k.Name, k.Fingerprint, k.Type, k.UserID}
 	return o.WriteSingle(w, fields, values)
 }

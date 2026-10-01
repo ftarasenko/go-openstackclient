@@ -173,6 +173,9 @@ type drainOutput struct {
 func runHostDrain(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	host string, f *hostDrainFlags, mode *drainMode, out drainOutput,
 ) error {
+	if err := o.CheckColumns(drainTable(nil).Columns...); err != nil {
+		return err
+	}
 	if mode.precheck != nil {
 		if err := mode.precheck(ctx, client, host); err != nil {
 			return err

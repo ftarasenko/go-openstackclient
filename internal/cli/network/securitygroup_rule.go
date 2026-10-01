@@ -58,6 +58,8 @@ func secGroupRuleShowFields(r *rules.SecGroupRule) ([]string, []any) {
 	return fields, values
 }
 
+var secGroupRuleColumns = fieldNames(secGroupRuleShowFields(&rules.SecGroupRule{}))
+
 // secGroupRuleListFlags mirrors upstream ListSecurityGroupRule
 // (network/v2/security_group_rule.py). --long is deprecated upstream and does
 // nothing there either; it is accepted so scripts written for osc keep working.
@@ -323,6 +325,9 @@ func newSecurityGroupRuleCreateCommand(a *auth.Options, o *output.Options) *cobr
 }
 
 func runSecurityGroupRuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, groupArg string, f *secGroupRuleCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(secGroupRuleColumns...); err != nil {
+		return err
+	}
 	opts, attrs, err := buildSecGroupRuleCreate(f)
 	if err != nil {
 		return err

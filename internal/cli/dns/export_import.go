@@ -108,6 +108,9 @@ func newZoneExportCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runZoneExportCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	zoneRef string, common *commonOptions, w io.Writer,
 ) error {
+	if err := o.CheckColumns(zoneExportColumns...); err != nil {
+		return err
+	}
 	headers := common.headers()
 	zoneID, err := resolveZoneID(ctx, withCommonHeaders(client, common), zoneRef)
 	if err != nil {
@@ -375,6 +378,9 @@ func parseZoneAttributes(items []string) (map[string]string, error) {
 func runZoneImportCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	zonefile string, attributes map[string]string, common *commonOptions, w io.Writer,
 ) error {
+	if err := o.CheckColumns(zoneImportColumns...); err != nil {
+		return err
+	}
 	var record zoneImport
 	url := client.ServiceURL("zones", "tasks", "imports")
 	headers := common.headers()

@@ -419,6 +419,9 @@ func resolveVolumeSources(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *volumeCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(volumeColumns...); err != nil {
+		return err
+	}
 	// Cinder derives the size from the source snapshot/volume/backup, so --size is
 	// only required for image-from and blank creates.
 	if f.snapshot == "" && f.source == "" && f.backup == "" && f.size <= 0 {

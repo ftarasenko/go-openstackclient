@@ -198,8 +198,11 @@ func flavorAccessProjectIDs(ctx context.Context, client *gophercloud.ServiceClie
 	return projects, nil
 }
 
+// flavorColumns are the fields of a single flavor.
+var flavorColumns = []string{"ID", "Name", "RAM", "Disk", "Ephemeral", "VCPUs", "Swap", "RXTX Factor", "Is Public", "Description", "Properties"}
+
 func flavorSingle(fl *flavors.Flavor) ([]string, []any) {
-	fields := []string{"ID", "Name", "RAM", "Disk", "Ephemeral", "VCPUs", "Swap", "RXTX Factor", "Is Public", "Description", "Properties"}
+	fields := flavorColumns
 	values := []any{fl.ID, fl.Name, fl.RAM, fl.Disk, fl.Ephemeral, fl.VCPUs, fl.Swap, rxtxFactor(fl.RxTxFactor), fl.IsPublic, fl.Description, fl.ExtraSpecs}
 	return fields, values
 }
@@ -302,6 +305,9 @@ func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *flavorCreateFlags, projectID string, w io.Writer) error {
+	if err := o.CheckColumns(flavorColumns...); err != nil {
+		return err
+	}
 	specs, err := parseProperties(f.properties)
 	if err != nil {
 		return err

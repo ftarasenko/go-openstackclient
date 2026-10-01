@@ -271,6 +271,9 @@ func newDNSQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	project string, f *dnsQuotaSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(dnsQuotaColumns...); err != nil {
+		return err
+	}
 	var opts quotas.UpdateOpts
 	bindings := f.bindings(&opts)
 	names := make([]string, 0, len(bindings))
@@ -571,6 +574,9 @@ func newTSIGKeyCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runTSIGKeyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *tsigKeyWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(tsigKeyColumns...); err != nil {
+		return err
+	}
 	k, err := tsigkeys.Create(ctx, client, tsigkeys.CreateOpts{
 		Name:       name,
 		Algorithm:  f.algorithm,
@@ -624,6 +630,9 @@ func newTSIGKeySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTSIGKeySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *tsigKeyWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(tsigKeyColumns...); err != nil {
+		return err
+	}
 	id, err := resolveTSIGKeyID(ctx, client, ref)
 	if err != nil {
 		return err

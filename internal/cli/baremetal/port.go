@@ -218,7 +218,13 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// portColumns are the columns a port write verb renders.
+var portColumns = fieldNames(portShowFields(&ports.Port{}))
+
 func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(portColumns...); err != nil {
+		return err
+	}
 	extra, err := parseKeyValMap(f.extra)
 	if err != nil {
 		return fmt.Errorf("parsing --extra: %w", err)
@@ -325,6 +331,9 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *portSetFlags, w io.Writer) error {
+	if err := o.CheckColumns(portColumns...); err != nil {
+		return err
+	}
 	var ops ports.UpdateOpts
 	if f.node != "" {
 		ops = append(ops, ports.UpdateOperation{Op: ports.ReplaceOp, Path: "/node_uuid", Value: f.node})

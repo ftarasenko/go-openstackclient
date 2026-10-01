@@ -95,6 +95,9 @@ func newPortUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runPortUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	nameOrID string, f *portUnsetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(portColumns...); err != nil {
+		return err
+	}
 	id, err := resolvePortID(ctx, client, nameOrID)
 	if err != nil {
 		return err

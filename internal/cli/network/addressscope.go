@@ -153,7 +153,7 @@ func runAddressScopeShow(ctx context.Context, client *gophercloud.ServiceClient,
 
 func writeAddressScope(o *output.Options, w io.Writer, sc *addressscopes.AddressScope) error {
 	return o.WriteSingle(w,
-		[]string{"id", "name", "ip_version", "shared", "project_id"},
+		addressScopeColumns,
 		[]any{sc.ID, sc.Name, sc.IPVersion, sc.Shared, sc.ProjectID})
 }
 
@@ -203,6 +203,9 @@ func newAddressScopeCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 func runAddressScopeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *addressScopeCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(addressScopeColumns...); err != nil {
+		return err
+	}
 	// CreateOpts drops a false Shared as a zero value; upstream sends
 	// --no-share as an explicit false.
 	var attrs map[string]any
@@ -268,6 +271,9 @@ func newAddressScopeSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runAddressScopeSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *addressScopeSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(addressScopeColumns...); err != nil {
+		return err
+	}
 	id, err := resolveAddressScopeID(ctx, client, id)
 	if err != nil {
 		return err
@@ -411,7 +417,7 @@ func runAddressGroupShow(ctx context.Context, client *gophercloud.ServiceClient,
 
 func writeAddressGroup(o *output.Options, w io.Writer, g *addressgroups.AddressGroup) error {
 	return o.WriteSingle(w,
-		[]string{"id", "name", "description", "addresses", "project_id"},
+		addressGroupColumns,
 		[]any{g.ID, g.Name, g.Description, g.Addresses, g.ProjectID})
 }
 
@@ -459,6 +465,9 @@ func newAddressGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 func runAddressGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *addressGroupCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(addressGroupColumns...); err != nil {
+		return err
+	}
 	// Neutron requires the addresses key even when empty, and gophercloud tags
 	// it `required` — so a nil slice has to become an empty one.
 	addresses := f.addresses
@@ -624,3 +633,7 @@ func runAddressGroupRemoveAddresses(ctx context.Context, client *gophercloud.Ser
 	}
 	return runAddressGroupShow(ctx, client, o, id, w)
 }
+
+var addressScopeColumns = []string{"id", "name", "ip_version", "shared", "project_id"}
+
+var addressGroupColumns = []string{"id", "name", "description", "addresses", "project_id"}

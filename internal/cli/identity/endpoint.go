@@ -216,9 +216,15 @@ type endpointRef struct {
 	url     string
 }
 
+// endpointCreateColumns are the fields endpoint create renders.
+var endpointCreateColumns = []string{"ID", "Region", "Service ID", "Interface", "Enabled", "URL"}
+
 func runEndpointCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref endpointRef, f *endpointWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(endpointCreateColumns...); err != nil {
+		return err
+	}
 	avail, err := availability(ref.iface)
 	if err != nil {
 		return err
@@ -240,7 +246,7 @@ func runEndpointCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 		return fmt.Errorf("creating endpoint: %w", err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Region", "Service ID", "Interface", "Enabled", "URL"},
+		endpointCreateColumns,
 		[]any{e.ID, e.Region, e.ServiceID, string(e.Availability), e.Enabled, e.URL})
 }
 

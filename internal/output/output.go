@@ -220,7 +220,7 @@ func (o *Options) WriteList(w io.Writer, t Table) error {
 	// sort key does not have to be one of the displayed columns — matching how
 	// upstream's --sort-column behaves.
 	if err := o.sortRows(t); err != nil {
-		return err
+		return renderColumnError(err, nil, nil)
 	}
 	cols, idx := o.selectColumns(t.Columns)
 	rows := make([][]any, len(t.Rows))
@@ -279,8 +279,7 @@ func (o *Options) sortRows(t Table) error {
 			}
 		}
 		if idx < 0 {
-			return fmt.Errorf("unknown sort column %q: available columns are %s",
-				name, strings.Join(t.Columns, ", "))
+			return &ColumnError{Unknown: []string{name}, Available: t.Columns, Sort: true}
 		}
 		keys = append(keys, idx)
 	}
@@ -525,6 +524,8 @@ func matchesAnyColumn(want string, available []string) bool {
 type ColumnError struct {
 	Unknown   []string
 	Available []string
+	// Sort is true when the name came from --sort-column.
+	Sort bool
 
 	// Rendering is true when the error came from rendering a result rather than
 	// from CheckColumns, i.e. after the command had already done its work.
@@ -534,6 +535,10 @@ type ColumnError struct {
 }
 
 func (e *ColumnError) Error() string {
+	if e.Sort {
+		return fmt.Sprintf("unknown sort column %q: available columns are %s",
+			strings.Join(e.Unknown, ", "), strings.Join(e.Available, ", "))
+	}
 	return fmt.Sprintf("unknown column(s): %s (available: %s)",
 		strings.Join(e.Unknown, ", "), strings.Join(e.Available, ", "))
 }

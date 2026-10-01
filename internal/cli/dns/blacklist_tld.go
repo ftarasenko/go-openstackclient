@@ -217,6 +217,9 @@ func newZoneBlacklistCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runZoneBlacklistCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	pattern, description string, common *commonOptions, w io.Writer,
 ) error {
+	if err := o.CheckColumns(blacklistColumns...); err != nil {
+		return err
+	}
 	body := map[string]any{"pattern": pattern}
 	if description != "" {
 		body["description"] = description
@@ -273,6 +276,9 @@ func newZoneBlacklistSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runZoneBlacklistSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *blacklistSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(blacklistColumns...); err != nil {
+		return err
+	}
 	headers := f.common.headers()
 	id, err := resolveBlacklistID(ctx, client, ref, headers)
 	if err != nil {
@@ -527,6 +533,9 @@ func newTLDCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTLDCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, description string, common *commonOptions, w io.Writer,
 ) error {
+	if err := o.CheckColumns(tldColumns...); err != nil {
+		return err
+	}
 	body := map[string]any{"name": name}
 	if description != "" {
 		body["description"] = description
@@ -580,6 +589,9 @@ func newTLDSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTLDSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *tldSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(tldColumns...); err != nil {
+		return err
+	}
 	headers := f.common.headers()
 	id, err := resolveTLDID(ctx, client, ref, headers)
 	if err != nil {

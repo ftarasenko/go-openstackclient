@@ -292,6 +292,9 @@ func newMemberCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runMemberCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	poolRef, name string, f *memberWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(memberColumns...); err != nil {
+		return err
+	}
 	changed := f.changed
 	poolID, err := resolvePoolID(ctx, client, poolRef)
 	if err != nil {
@@ -367,6 +370,9 @@ func newMemberSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runMemberSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	poolRef, memberRef string, f *memberWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(memberColumns...); err != nil {
+		return err
+	}
 	changed := f.changed
 	opts := pools.UpdateMemberOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil

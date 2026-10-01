@@ -333,3 +333,7 @@ func splitKV(s string) (string, string, error) {
 	}
 	return strings.TrimSpace(k), v, nil
 }
+
+// fieldNames keeps a field builder's columns and drops its values. Builders
+// called on a zero value give the catalog -c is checked against before a write.
+func fieldNames(fields []string, _ []any) []string { return fields }

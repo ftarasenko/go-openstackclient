@@ -161,8 +161,11 @@ func runAggregateShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	return o.WriteSingle(w, fields, values)
 }
 
+// aggregateColumns are the fields of a single aggregate.
+var aggregateColumns = []string{"ID", "Name", "Availability Zone", "Hosts", "Properties", "UUID", "Created At", "Updated At"}
+
 func aggregateShowFields(agg *aggregates.Aggregate) ([]string, []any) {
-	fields := []string{"ID", "Name", "Availability Zone", "Hosts", "Properties", "UUID", "Created At", "Updated At"}
+	fields := aggregateColumns
 	values := []any{
 		agg.ID, agg.Name, agg.AvailabilityZone, strings.Join(agg.Hosts, ", "),
 		formatAggregateMetadata(agg.Metadata), agg.UUID,
@@ -219,6 +222,9 @@ func newAggregateCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runAggregateCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *aggregateCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(aggregateColumns...); err != nil {
+		return err
+	}
 	agg, err := aggregates.Create(ctx, client, aggregates.CreateOpts{Name: name, AvailabilityZone: f.zone}).Extract()
 	if err != nil {
 		return fmt.Errorf("creating aggregate %q: %w", name, err)
@@ -405,6 +411,9 @@ func newAggregateAddHostCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runAggregateAddHost(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, host string, w io.Writer) error {
+	if err := o.CheckColumns(aggregateColumns...); err != nil {
+		return err
+	}
 	id, err := resolveAggregateID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -438,6 +447,9 @@ func newAggregateRemoveHostCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runAggregateRemoveHost(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, host string, w io.Writer) error {
+	if err := o.CheckColumns(aggregateColumns...); err != nil {
+		return err
+	}
 	id, err := resolveAggregateID(ctx, client, ref)
 	if err != nil {
 		return err

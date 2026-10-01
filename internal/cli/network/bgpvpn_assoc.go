@@ -213,12 +213,15 @@ func newBGPVPNNetworkAssocCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func writeBGPVPNNetworkAssoc(o *output.Options, w io.Writer, n *bgpvpns.NetworkAssociation) error {
-	return o.WriteSingle(w, []string{"id", "network_id", "project_id"}, []any{n.ID, n.NetworkID, n.ProjectID})
+	return o.WriteSingle(w, bgpvpnNetworkAssocColumns, []any{n.ID, n.NetworkID, n.ProjectID})
 }
 
 func runBGPVPNNetworkAssocCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref bgpvpnAssocRef, projectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnNetworkAssocColumns...); err != nil {
+		return err
+	}
 	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
@@ -355,13 +358,16 @@ func newBGPVPNRouterAssocCommand(a *auth.Options, o *output.Options) *cobra.Comm
 
 func writeBGPVPNRouterAssoc(o *output.Options, w io.Writer, r *bgpvpns.RouterAssociation) error {
 	return o.WriteSingle(w,
-		[]string{"advertise_extra_routes", "id", "project_id", "router_id"},
+		bgpvpnRouterAssocColumns,
 		[]any{r.AdvertiseExtraRoutes, r.ID, r.ProjectID, r.RouterID})
 }
 
 func runBGPVPNRouterAssocCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref bgpvpnAssocRef, projectID string, adv bgpvpnAdvertiseFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnRouterAssocColumns...); err != nil {
+		return err
+	}
 	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
@@ -410,6 +416,9 @@ func newBGPVPNRouterAssocSetCommand(a *auth.Options, o *output.Options, unset bo
 func runBGPVPNRouterAssocUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref bgpvpnAssocRef, adv bgpvpnAdvertiseFlags, unset bool, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnRouterAssocColumns...); err != nil {
+		return err
+	}
 	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
@@ -470,3 +479,7 @@ func runBGPVPNRouterAssocList(ctx context.Context, client *gophercloud.ServiceCl
 	}
 	return o.WriteList(w, t)
 }
+
+var bgpvpnNetworkAssocColumns = []string{"id", "network_id", "project_id"}
+
+var bgpvpnRouterAssocColumns = []string{"advertise_extra_routes", "id", "project_id", "router_id"}

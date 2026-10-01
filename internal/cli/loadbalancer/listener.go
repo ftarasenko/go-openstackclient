@@ -301,6 +301,9 @@ func newListenerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runListenerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *listenerWriteFlags, projectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(listenerColumns...); err != nil {
+		return err
+	}
 	lbID, err := resolveLoadBalancerID(ctx, client, f.loadBalancer)
 	if err != nil {
 		return err
@@ -381,6 +384,9 @@ func newListenerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runListenerSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *listenerWriteFlags, changed changedSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(listenerColumns...); err != nil {
+		return err
+	}
 	opts := listeners.UpdateOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 

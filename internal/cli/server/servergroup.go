@@ -140,13 +140,16 @@ func runServerGroupShow(ctx context.Context, client *gophercloud.ServiceClient, 
 	return writeServerGroup(o, w, g)
 }
 
+// serverGroupColumns are the fields of a single server group.
+var serverGroupColumns = []string{"id", "name", "policy", "rules_max_server_per_host", "members", "project_id", "user_id"}
+
 func writeServerGroup(o *output.Options, w io.Writer, g *servergroups.ServerGroup) error {
 	var maxPerHost any = ""
 	if g.Rules != nil {
 		maxPerHost = g.Rules.MaxServerPerHost
 	}
 	return o.WriteSingle(w,
-		[]string{"id", "name", "policy", "rules_max_server_per_host", "members", "project_id", "user_id"},
+		serverGroupColumns,
 		[]any{g.ID, g.Name, serverGroupPolicy(*g), maxPerHost, g.Members, g.ProjectID, g.UserID})
 }
 
@@ -214,6 +217,9 @@ func newServerGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runServerGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, policy string, rules []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(serverGroupColumns...); err != nil {
+		return err
+	}
 	opts := servergroups.CreateOpts{Name: name}
 	parsedRules, err := parseServerGroupRules(rules)
 	if err != nil {

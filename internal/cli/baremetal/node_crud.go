@@ -93,7 +93,13 @@ func newNodeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// nodeColumns are the columns a node write verb renders.
+var nodeColumns = fieldNames(nodeShowFields(&nodes.Node{}))
+
 func runNodeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *nodeCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(nodeColumns...); err != nil {
+		return err
+	}
 	props, err := parseKeyValMap(f.property)
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)
@@ -231,6 +237,9 @@ func newNodeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *nodeSetFlags, w io.Writer) error {
+	if err := o.CheckColumns(nodeColumns...); err != nil {
+		return err
+	}
 	var ops nodes.UpdateOpts
 	scalar := func(_, path, val string) {
 		ops = append(ops, nodes.UpdateOperation{Op: nodes.ReplaceOp, Path: path, Value: val})
@@ -348,6 +357,9 @@ func newNodeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *nodeUnsetFlags, w io.Writer) error {
+	if err := o.CheckColumns(nodeColumns...); err != nil {
+		return err
+	}
 	var ops nodes.UpdateOpts
 	remove := func(path string) {
 		ops = append(ops, nodes.UpdateOperation{Op: nodes.RemoveOp, Path: path})

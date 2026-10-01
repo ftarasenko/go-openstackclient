@@ -168,6 +168,8 @@ func bgpvpnShowFields(b *bgpvpns.BGPVPN) ([]string, []any) {
 	}
 }
 
+var bgpvpnColumns = fieldNames(bgpvpnShowFields(&bgpvpns.BGPVPN{}))
+
 func newBGPVPNShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show " + bgpvpnRefArg,
@@ -348,6 +350,9 @@ func newBGPVPNCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runBGPVPNCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *bgpvpnCreateFlags, flags flagSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnColumns...); err != nil {
+		return err
+	}
 	if f.bgpvpnType != bgpvpnTypeL2 && f.bgpvpnType != bgpvpnTypeL3 {
 		return fmt.Errorf("--type must be %s or %s, got %q", bgpvpnTypeL2, bgpvpnTypeL3, f.bgpvpnType)
 	}
@@ -469,6 +474,9 @@ func newBGPVPNSetCommand(a *auth.Options, o *output.Options, unset bool) *cobra.
 func runBGPVPNUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *bgpvpnUpdateFlags, flags flagSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnColumns...); err != nil {
+		return err
+	}
 	id, err := resolveBGPVPNID(ctx, client, ref)
 	if err != nil {
 		return err

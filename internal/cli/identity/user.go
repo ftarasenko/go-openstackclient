@@ -180,7 +180,13 @@ func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// userCreateColumns are the fields user create renders.
+var userCreateColumns = []string{"ID", "Name", colDomainID, "Enabled", "Description", "Default Project ID"}
+
 func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *userWriteFlags, w io.Writer) error {
+	if err := o.CheckColumns(userCreateColumns...); err != nil {
+		return err
+	}
 	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
 		return err
@@ -202,7 +208,7 @@ func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return fmt.Errorf("creating user %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", colDomainID, "Enabled", "Description", "Default Project ID"},
+		userCreateColumns,
 		[]any{u.ID, u.Name, u.DomainID, u.Enabled, u.Description, u.DefaultProjectID})
 }
 

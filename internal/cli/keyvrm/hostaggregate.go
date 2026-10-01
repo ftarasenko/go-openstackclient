@@ -157,6 +157,9 @@ func newHASet(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runHASet(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, id string, body map[string]any, w io.Writer) error {
+	if err := o.CheckColumns(haConfigDetailColumns...); err != nil {
+		return err
+	}
 	h, err := updateHostAggregate(ctx, sc, id, body)
 	if err != nil {
 		return err

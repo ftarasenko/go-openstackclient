@@ -274,6 +274,9 @@ func newLBCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runLBCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *lbCreateFlags, refs resolvedLBRefs, w io.Writer,
 ) error {
+	if err := o.CheckColumns(lbColumns...); err != nil {
+		return err
+	}
 	opts := loadbalancers.CreateOpts{
 		Name:             name,
 		Description:      f.description,
@@ -373,6 +376,9 @@ func newLBSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runLBSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *lbSetFlags, changed changedSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(lbColumns...); err != nil {
+		return err
+	}
 	opts := loadbalancers.UpdateOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 	if changed["name"] {

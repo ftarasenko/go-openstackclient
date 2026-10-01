@@ -41,6 +41,9 @@ const (
 // skip-existing) so a --dry-run reports exactly the writes the real run would
 // perform.
 func runKVCopy(ctx context.Context, src, dst *vault.Client, o *output.Options, opts copyOptions, w io.Writer) error {
+	if err := o.CheckColumns(kvCopyColumns...); err != nil {
+		return err
+	}
 	srcMount, dstMount := src.KVMount(), dst.KVMount()
 	if err := guardSelfCopy(src, dst, opts); err != nil {
 		return err
@@ -72,11 +75,12 @@ func runKVCopy(ctx context.Context, src, dst *vault.Client, o *output.Options, o
 	fmt.Fprintf(os.Stderr, "%s: %d secret(s) %s, %d skipped\n",
 		describeTarget(src, dst), len(rows)-skipped, copyVerb(opts.dryRun), skipped)
 
-	return o.WriteList(w, output.Table{
-		Columns: []string{"Source", "Destination", "Keys", "Status"},
-		Rows:    rows,
-	})
+	return o.WriteList(w, output.Table{Columns: kvCopyColumns, Rows: rows})
 }
+
+// kvCopyColumns is what kv copy renders, checked against -c before the first
+// write: once a secret has landed, an error reads as a failed copy.
+var kvCopyColumns = []string{"Source", "Destination", "Keys", "Status"}
 
 // copySession is the per-run state copying one secret needs: both clients, the
 // KV mount each of them resolved, and the flags. It exists so copyOne is a

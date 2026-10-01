@@ -62,6 +62,8 @@ func bgpPeerShowFields(p *peers.BGPPeer) ([]string, []any) {
 	return fields, values
 }
 
+var bgpPeerColumns = fieldNames(bgpPeerShowFields(&peers.BGPPeer{}))
+
 type bgpPeerCreateFlags struct {
 	peerIP        string
 	remoteAS      string
@@ -137,6 +139,9 @@ func bgpPeerCreateAttrs(name string, f *bgpPeerCreateFlags, flags flagSet) (map[
 }
 
 func runBGPPeerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *bgpPeerCreateFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(bgpPeerColumns...); err != nil {
+		return err
+	}
 	attrs, err := bgpPeerCreateAttrs(name, f, flags)
 	if err != nil {
 		return err
@@ -250,6 +255,9 @@ func newBGPPeerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // "password": None into every set, which neutron-dynamic-routing applies —
 // renaming an md5 peer that way would also clear its password.
 func runBGPPeerSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *bgpPeerSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(bgpPeerColumns...); err != nil {
+		return err
+	}
 	attrs := map[string]any{}
 	if flags.Changed(bgpFlagName) {
 		attrs["name"] = f.name

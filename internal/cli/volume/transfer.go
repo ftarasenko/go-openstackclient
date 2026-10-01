@@ -156,6 +156,9 @@ func newTransferCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runTransferCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	volumeRef, name string, noSnapshots bool, w io.Writer,
 ) error {
+	if err := o.CheckColumns(transferColumns...); err != nil {
+		return err
+	}
 	volumeID, err := resolveVolumeID(ctx, client, volumeRef)
 	if err != nil {
 		return err
@@ -268,6 +271,9 @@ func newTransferAcceptCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runTransferAccept(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, authKey string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(transferColumns...); err != nil {
+		return err
+	}
 	tr, err := transfers.Accept(ctx, client, id, transfers.AcceptOpts{AuthKey: authKey}).Extract()
 	if err != nil {
 		return fmt.Errorf("accepting volume transfer request %s: %w", id, err)

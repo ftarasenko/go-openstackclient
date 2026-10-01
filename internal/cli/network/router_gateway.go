@@ -50,6 +50,9 @@ func newRouterAddGatewayCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runRouterAddGateway(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	routerArg, networkArg string, fixedIPs []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(routerColumns...); err != nil {
+		return err
+	}
 	routerID, err := resolveRouterID(ctx, client, routerArg)
 	if err != nil {
 		return err
@@ -114,6 +117,9 @@ func newRouterRemoveGatewayCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runRouterRemoveGateway(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	routerArg, networkArg string, fixedIPs []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(routerColumns...); err != nil {
+		return err
+	}
 	routerID, err := resolveRouterID(ctx, client, routerArg)
 	if err != nil {
 		return err

@@ -68,6 +68,8 @@ func ipsecSiteConnectionShowFields(s *siteconnections.Connection) ([]string, []a
 	}
 }
 
+var ipsecSiteConnectionColumns = fieldNames(ipsecSiteConnectionShowFields(&siteconnections.Connection{}))
+
 func runIPsecSiteConnectionList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
 	pages, err := siteconnections.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -274,6 +276,9 @@ func newIPsecSiteConnectionCreateCommand(a *auth.Options, o *output.Options) *co
 // including its two cross-flag checks: both endpoint groups or neither, and
 // either endpoint groups or peer CIDRs.
 func runIPsecSiteConnectionCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *ipsecSiteConnectionFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(ipsecSiteConnectionColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	if (f.localEndpointGroup == "") != (f.peerEndpointGroup == "") {
 		return errors.New("you must specify both --local-endpoint-group and --peer-endpoint-group")
@@ -321,6 +326,9 @@ func newIPsecSiteConnectionSetCommand(a *auth.Options, o *output.Options) *cobra
 }
 
 func runIPsecSiteConnectionSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *ipsecSiteConnectionFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(ipsecSiteConnectionColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := ipsecSiteConnectionAttrs(ctx, client, f)
 	if err != nil {

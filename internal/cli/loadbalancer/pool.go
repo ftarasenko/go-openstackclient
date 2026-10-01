@@ -292,6 +292,9 @@ func newPoolCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runPoolCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *poolWriteFlags, projectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(poolColumns...); err != nil {
+		return err
+	}
 	persistence, err := parseSessionPersistence(f.sessionPersistence)
 	if err != nil {
 		return err
@@ -398,6 +401,9 @@ func newPoolSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *poolWriteFlags, changed changedSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(poolColumns...); err != nil {
+		return err
+	}
 	opts := pools.UpdateOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 

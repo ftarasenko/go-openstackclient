@@ -302,6 +302,9 @@ func newHealthMonitorCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runHealthMonitorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	poolRef, name string, f *healthMonitorWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(healthMonitorColumns...); err != nil {
+		return err
+	}
 	poolID, err := resolvePoolID(ctx, client, poolRef)
 	if err != nil {
 		return err
@@ -368,6 +371,9 @@ func newHealthMonitorSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runHealthMonitorSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *healthMonitorWriteFlags, changed changedSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(healthMonitorColumns...); err != nil {
+		return err
+	}
 	opts := monitors.UpdateOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 

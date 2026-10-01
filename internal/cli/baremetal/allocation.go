@@ -315,9 +315,15 @@ func newAllocationCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	return cmd
 }
 
+// allocationColumns are the columns an allocation write verb renders.
+var allocationColumns = fieldNames(allocationShowFields(&allocation{}))
+
 func runAllocationCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *allocationCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(allocationColumns...); err != nil {
+		return err
+	}
 	extra, err := parseStringKV(f.extra)
 	if err != nil {
 		return fmt.Errorf("parsing --extra: %w", err)
@@ -487,6 +493,9 @@ type allocationPatchOp struct {
 func patchAllocation(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, ops []allocationPatchOp, w io.Writer,
 ) error {
+	if err := o.CheckColumns(allocationColumns...); err != nil {
+		return err
+	}
 	var al allocation
 	resp, err := client.Patch(ctx, client.ServiceURL("allocations", id), ops, &al, &gophercloud.RequestOpts{
 		OkCodes: []int{200},

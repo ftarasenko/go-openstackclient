@@ -72,6 +72,8 @@ func floatingIPShowFields(f *floatingIPExt) ([]string, []any) {
 	return fields, values
 }
 
+var floatingIPColumns = fieldNames(floatingIPShowFields(&floatingIPExt{}))
+
 func getFloatingIP(ctx context.Context, client *gophercloud.ServiceClient, id string) (*floatingIPExt, error) {
 	var f floatingIPExt
 	if err := floatingips.Get(ctx, client, id).ExtractInto(&f); err != nil {
@@ -309,6 +311,9 @@ func newFloatingIPCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runFloatingIPCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, networkArg string, f *floatingIPCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(floatingIPColumns...); err != nil {
+		return err
+	}
 	networkID, err := resolveNetworkID(ctx, client, networkArg)
 	if err != nil {
 		return err
@@ -443,6 +448,9 @@ func newFloatingIPSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runFloatingIPSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, addrOrID string, f *floatingIPSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(floatingIPColumns...); err != nil {
+		return err
+	}
 	id, err := resolveFloatingIPID(ctx, client, addrOrID)
 	if err != nil {
 		return err
@@ -557,6 +565,9 @@ func newFloatingIPUnsetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runFloatingIPUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, addrOrID string, f *floatingIPUnsetFlags, w io.Writer) error {
+	if err := o.CheckColumns(floatingIPColumns...); err != nil {
+		return err
+	}
 	id, err := resolveFloatingIPID(ctx, client, addrOrID)
 	if err != nil {
 		return err

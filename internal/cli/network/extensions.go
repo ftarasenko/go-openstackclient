@@ -313,7 +313,7 @@ func runRBACShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 
 func writeRBAC(o *output.Options, w io.Writer, p *rbacpolicies.RBACPolicy) error {
 	return o.WriteSingle(w,
-		[]string{"id", "object_type", "object_id", "action", "target_project", "project_id"},
+		rbacColumns,
 		[]any{p.ID, p.ObjectType, p.ObjectID, p.Action, p.TargetTenant, p.ProjectID})
 }
 
@@ -429,6 +429,9 @@ func resolveRBACObject(ctx context.Context, client *gophercloud.ServiceClient, o
 func runRBACCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	objectRef string, f *rbacCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(rbacColumns...); err != nil {
+		return err
+	}
 	objectID, err := resolveRBACObject(ctx, client, f.objectType, objectRef)
 	if err != nil {
 		return err
@@ -503,6 +506,9 @@ func newRBACSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runRBACSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *rbacSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(rbacColumns...); err != nil {
+		return err
+	}
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
 		return err
@@ -660,7 +666,7 @@ func runSegmentShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 
 func writeSegment(o *output.Options, w io.Writer, seg *segments.Segment) error {
 	return o.WriteSingle(w,
-		[]string{"id", "name", "description", "network_id", "network_type", "physical_network", "segmentation_id"},
+		segmentColumns,
 		[]any{seg.ID, seg.Name, seg.Description, seg.NetworkID, seg.NetworkType, seg.PhysicalNetwork, seg.SegmentationID})
 }
 
@@ -705,6 +711,9 @@ func newSegmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *segmentCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(segmentColumns...); err != nil {
+		return err
+	}
 	networkID, err := resolveNetworkID(ctx, client, f.network)
 	if err != nil {
 		return err
@@ -770,6 +779,9 @@ func newSegmentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runSegmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *segmentSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(segmentColumns...); err != nil {
+		return err
+	}
 	opts := segments.UpdateOpts{}
 	if f.nameSet {
 		opts.Name = &f.name
@@ -950,8 +962,7 @@ func runPortForwardingShow(ctx context.Context, client *gophercloud.ServiceClien
 
 func writePortForwarding(o *output.Options, w io.Writer, pf *portforwarding.PortForwarding) error {
 	return o.WriteSingle(w,
-		[]string{"id", "protocol", "internal_port_id", "internal_ip_address", "internal_port",
-			"internal_port_range", "external_port", "external_port_range", "description"},
+		portForwardingColumns,
 		[]any{pf.ID, pf.Protocol, pf.InternalPortID, pf.InternalIPAddress, pf.InternalPort,
 			pf.InternalPortRange, pf.ExternalPort, pf.ExternalPortRange, pf.Description})
 }
@@ -1129,6 +1140,9 @@ func newPortForwardingCreateCommand(a *auth.Options, o *output.Options) *cobra.C
 func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	fipRef string, f *portForwardingFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(portForwardingColumns...); err != nil {
+		return err
+	}
 	if err := f.resolvePorts(); err != nil {
 		return err
 	}
@@ -1188,6 +1202,9 @@ func newPortForwardingSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	fipRef, id string, f *portForwardingFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(portForwardingColumns...); err != nil {
+		return err
+	}
 	if err := f.resolvePorts(); err != nil {
 		return err
 	}
@@ -1310,6 +1327,9 @@ func newRouterRemoveRouteCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runRouterRoute(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	routerRef string, specs []string, add bool, w io.Writer,
 ) error {
+	if err := o.CheckColumns(routerRouteColumns...); err != nil {
+		return err
+	}
 	routerID, err := resolveRouterID(ctx, client, routerRef)
 	if err != nil {
 		return err
@@ -1361,3 +1381,15 @@ func parseRouterRoutes(specs []string) ([]routers.Route, error) {
 	}
 	return out, nil
 }
+
+var rbacColumns = []string{"id", "object_type", "object_id", "action", "target_project", "project_id"}
+
+var segmentColumns = []string{"id", "name", "description", "network_id", "network_type", "physical_network", "segmentation_id"}
+
+var portForwardingColumns = []string{
+	"id", "protocol", "internal_port_id", "internal_ip_address", "internal_port",
+	"internal_port_range", "external_port", "external_port_range", "description",
+}
+
+// routerRouteColumns is what router add/remove route renders.
+var routerRouteColumns = fieldNames(routerShowFields(&routers.Router{}))

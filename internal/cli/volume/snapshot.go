@@ -190,6 +190,9 @@ func newSnapshotCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runSnapshotCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *snapshotCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(snapshotColumns...); err != nil {
+		return err
+	}
 	if f.volume == "" {
 		return fmt.Errorf("--volume is required")
 	}

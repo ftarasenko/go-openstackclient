@@ -165,6 +165,9 @@ func runCopy(ctx context.Context, client *s3.Client, o *output.Options,
 	if f.recursive || hasGlob(src.Key) {
 		return runCopyRecursive(ctx, client, src, dst, f, w)
 	}
+	if err := o.CheckColumns(copyColumns...); err != nil {
+		return err
+	}
 
 	// A destination ending in "/" — or naming only a bucket — takes the
 	// source's basename, the same rule "upload" follows.
@@ -180,8 +183,12 @@ func runCopy(ctx context.Context, client *s3.Client, o *output.Options,
 	}
 	// One object, one summary row — the per-object progress lines belong to the
 	// recursive form, where there is more than one to follow.
-	return o.WriteSingle(w, []string{"Source", "Destination"}, []any{src.String(), dst.String()})
+	return o.WriteSingle(w, copyColumns, []any{src.String(), dst.String()})
 }
+
+// copyColumns is what a single-object copy or move renders, checked against -c
+// before anything is sent.
+var copyColumns = []string{"Source", "Destination"}
 
 // runCopyRecursive copies every matching object under a prefix.
 func runCopyRecursive(ctx context.Context, client *s3.Client, src, dst s3.ObjectRef,

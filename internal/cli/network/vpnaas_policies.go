@@ -221,6 +221,8 @@ func ikePolicyShowFields(p *ikepolicies.Policy) ([]string, []any) {
 	}
 }
 
+var ikePolicyColumns = fieldNames(ikePolicyShowFields(&ikepolicies.Policy{}))
+
 func runIKEPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
 	pages, err := ikepolicies.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -265,6 +267,9 @@ func runIKEPolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 }
 
 func runIKEPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *vpnPolicyFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(ikePolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := vpnPolicyAttrs(f)
 	if err != nil {
@@ -279,6 +284,9 @@ func runIKEPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 }
 
 func runIKEPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *vpnPolicyFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(ikePolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := vpnPolicyAttrs(f)
 	if err != nil {
@@ -333,6 +341,8 @@ func ipsecPolicyShowFields(p *ipsecpolicies.Policy) ([]string, []any) {
 	}
 }
 
+var ipsecPolicyColumns = fieldNames(ipsecPolicyShowFields(&ipsecpolicies.Policy{}))
+
 func runIPsecPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
 	pages, err := ipsecpolicies.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -377,6 +387,9 @@ func runIPsecPolicyDelete(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func runIPsecPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *vpnPolicyFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(ipsecPolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := vpnPolicyAttrs(f)
 	if err != nil {
@@ -391,6 +404,9 @@ func runIPsecPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func runIPsecPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *vpnPolicyFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(ipsecPolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := vpnPolicyAttrs(f)
 	if err != nil {

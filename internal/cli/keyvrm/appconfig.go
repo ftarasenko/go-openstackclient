@@ -114,6 +114,9 @@ func newAppConfigSet(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAppConfigSet(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, body map[string]any, w io.Writer) error {
+	if err := o.CheckColumns(appConfigColumns...); err != nil {
+		return err
+	}
 	cfg, err := updateAppConfig(ctx, sc, body)
 	if err != nil {
 		return err

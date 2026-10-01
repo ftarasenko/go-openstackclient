@@ -268,6 +268,8 @@ func fwRuleShowFields(r *fwRule) ([]string, []any) {
 	}
 }
 
+var fwRuleColumns = fieldNames(fwRuleShowFields(&fwRule{}))
+
 // fwRuleResult is what the rules package's Create/Get/Update results share.
 type fwRuleResult interface {
 	ExtractIntoStructPtr(to any, label string) error
@@ -317,6 +319,9 @@ func newFirewallRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runFirewallRuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *fwRuleFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwRuleColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	attrs, err := buildFWRuleAttrs(ctx, client, f)
 	if err != nil {
@@ -454,6 +459,9 @@ func newFirewallRuleSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runFirewallRuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *fwRuleFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwRuleColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	attrs, err := buildFWRuleAttrs(ctx, client, f)
 	if err != nil {
@@ -560,6 +568,9 @@ func newFirewallRuleUnsetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runFirewallRuleUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *fwRuleUnsetFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwRuleColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	attrs := map[string]any{}
 	for _, c := range []struct {

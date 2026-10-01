@@ -218,6 +218,9 @@ func newBackupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runBackupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, volumeRef string, f *backupCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(backupColumns...); err != nil {
+		return err
+	}
 	volID, err := resolveVolumeID(ctx, client, volumeRef)
 	if err != nil {
 		return err
@@ -308,6 +311,9 @@ func newBackupRestoreCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runBackupRestore(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, backupRef string, f *backupRestoreFlags, w io.Writer) error {
+	if err := o.CheckColumns(backupRestoreColumns...); err != nil {
+		return err
+	}
 	backupID, err := resolveBackupID(ctx, client, backupRef)
 	if err != nil {
 		return err
@@ -324,7 +330,5 @@ func runBackupRestore(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return fmt.Errorf("restoring backup %q: %w", backupRef, err)
 	}
-	fields := []string{"backup_id", "volume_id", "volume_name"}
-	values := []any{r.BackupID, r.VolumeID, r.VolumeName}
-	return o.WriteSingle(w, fields, values)
+	return o.WriteSingle(w, backupRestoreColumns, []any{r.BackupID, r.VolumeID, r.VolumeName})
 }

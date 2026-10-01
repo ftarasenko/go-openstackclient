@@ -78,6 +78,9 @@ func newServerAddPortCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runServerAddPort(ctx context.Context, s *computeSession, o *output.Options,
 	serverRef, portRef, tag string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(interfaceColumns...); err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, s.client, serverRef)
 	if err != nil {
 		return err
@@ -163,6 +166,9 @@ type attachFlags struct {
 func runServerAddNetwork(ctx context.Context, s *computeSession, o *output.Options,
 	serverRef, networkRef string, f *attachFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(interfaceColumns...); err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, s.client, serverRef)
 	if err != nil {
 		return err
@@ -182,6 +188,9 @@ func runServerAddNetwork(ctx context.Context, s *computeSession, o *output.Optio
 func runServerAddNetworkForID(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	serverID, networkID string, f *attachFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(interfaceColumns...); err != nil {
+		return err
+	}
 	create := attachinterfaces.CreateOpts{NetworkID: networkID}
 	if f.address != "" {
 		// nova's schema caps fixed_ips at one item and requires ip_address.
@@ -386,12 +395,15 @@ func resolveNetworkResource(ctx context.Context, ac *auth.Client, ref string,
 	return fn(ctx, networkClient, ref)
 }
 
+// interfaceColumns are the fields of a single attached interface.
+var interfaceColumns = []string{"port_id", "net_id", "mac_addr", "port_state", "fixed_ips"}
+
 func writeInterface(o *output.Options, w io.Writer, iface *attachinterfaces.Interface) error {
 	addresses := make([]string, 0, len(iface.FixedIPs))
 	for _, fixed := range iface.FixedIPs {
 		addresses = append(addresses, fixed.IPAddress)
 	}
 	return o.WriteSingle(w,
-		[]string{"port_id", "net_id", "mac_addr", "port_state", "fixed_ips"},
+		interfaceColumns,
 		[]any{iface.PortID, iface.NetID, iface.MACAddr, iface.PortState, addresses})
 }
