@@ -1,10 +1,12 @@
 package server
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -14,6 +16,11 @@ import (
 type serverColumn struct {
 	Name  string
 	Value func(servers.Server) any
+	// Raw names a server attribute gophercloud's Server does not model; the
+	// column is read from the raw listing instead of Value.
+	Raw string
+	// Microversion is the least nova version that returns Raw.
+	Microversion string
 }
 
 // serverListOptional are the columns "server list" renders only when
@@ -28,23 +35,24 @@ type serverColumn struct {
 // no way to get a server's age from a listing at all, and the fallback is one
 // `server show` per server.
 //
-// Two of upstream's extras are absent: "Pinned Availability Zone" is nova 2.96
-// and "Scheduler Hints" is 2.100, both above the 2.93 cap of the oldest cloud
-// koc supports (AGENTS.md → "Minimum supported cloud"), so neither field is in
-// the response koc gets. Every column below is present in /servers/detail at
-// 2.1, which is what serverListMicroversion pins by default.
+// Host Status, Pinned Availability Zone and Scheduler Hints are fields nova
+// adds at 2.16, 2.96 and 2.100. Naming one raises the listing to that
+// microversion, which a cloud older than it refuses.
 var serverListOptional = []serverColumn{
-	{"Created At", func(s servers.Server) any { return s.Created }},
-	{"Image ID", func(s servers.Server) any { return imageID(s.Image) }},
-	{"Flavor ID", func(s servers.Server) any { return flavorID(s.Flavor) }},
-	{"Availability Zone", func(s servers.Server) any { return s.AvailabilityZone }},
-	{"Host", func(s servers.Server) any { return s.Host }},
-	{"Task State", func(s servers.Server) any { return s.TaskState }},
-	{"Power State", func(s servers.Server) any { return s.PowerState }},
-	{"Project ID", func(s servers.Server) any { return s.TenantID }},
-	{"User ID", func(s servers.Server) any { return s.UserID }},
-	{"Security Groups", func(s servers.Server) any { return securityGroupNames(s.SecurityGroups) }},
-	{"Properties", func(s servers.Server) any { return formatServerMetadata(s.Metadata) }},
+	{Name: "Created At", Value: func(s servers.Server) any { return s.Created }},
+	{Name: "Image ID", Value: func(s servers.Server) any { return listImageID(s) }},
+	{Name: "Flavor ID", Value: func(s servers.Server) any { return flavorID(s.Flavor) }},
+	{Name: "Availability Zone", Value: func(s servers.Server) any { return s.AvailabilityZone }},
+	{Name: "Host", Value: func(s servers.Server) any { return s.HypervisorHostname }},
+	{Name: "Task State", Value: func(s servers.Server) any { return s.TaskState }},
+	{Name: "Power State", Value: func(s servers.Server) any { return powerStateLabel(int(s.PowerState)) }},
+	{Name: "Project ID", Value: func(s servers.Server) any { return s.TenantID }},
+	{Name: "User ID", Value: func(s servers.Server) any { return s.UserID }},
+	{Name: "Security Groups", Value: func(s servers.Server) any { return securityGroupNames(s.SecurityGroups) }},
+	{Name: "Properties", Value: func(s servers.Server) any { return formatServerMetadata(s.Metadata) }},
+	{Name: "Host Status", Raw: "host_status", Microversion: "2.16"},
+	{Name: "Pinned Availability Zone", Raw: "pinned_availability_zone", Microversion: "2.96"},
+	{Name: "Scheduler Hints", Raw: "scheduler_hints", Microversion: "2.100"},
 }
 
 // serverListExtraColumns returns the optional columns the user asked for and
@@ -138,4 +146,142 @@ func formatServerMetadata(m map[string]string) string {
 		pairs = append(pairs, k+"='"+m[k]+"'")
 	}
 	return strings.Join(pairs, ", ")
+}
+
+// serverListColumnAliases are upstream's attribute spellings of the listing's
+// headers, which its ListServer accepts in -c as well.
+var serverListColumnAliases = map[string]string{
+	"id": "ID", "name": "Name", "status": "Status", "networks": "Networks", "addresses": "Networks",
+	"image_id": "Image ID", "flavor": "Flavor", "flavor_name": "Flavor", "flavor_id": "Flavor ID",
+	"created_at": "Created At", "availability_zone": "Availability Zone", "host": "Host",
+	"task_state": "Task State", "power_state": "Power State", "project_id": "Project ID",
+	"user_id": "User ID", "security_groups": "Security Groups", "properties": "Properties",
+	"metadata": "Properties", "host_status": "Host Status",
+	"pinned_availability_zone": "Pinned Availability Zone", "scheduler_hints": "Scheduler Hints",
+}
+
+// aliasServerListColumns rewrites -c and --sort-column names given in
+// upstream's attribute spelling to the header they select. The image name is
+// "Image" in the default listing and "Image Name" in --long; either spelling
+// selects whichever is shown.
+func aliasServerListColumns(o *output.Options, long bool) {
+	image := "Image"
+	if long {
+		image = "Image Name"
+	}
+	alias := func(names []string) {
+		for i, c := range names {
+			key := strings.ToLower(strings.TrimSpace(c))
+			switch {
+			case key == "image" || key == "image name" || key == "image_name":
+				names[i] = image
+			case serverListColumnAliases[key] != "":
+				names[i] = serverListColumnAliases[key]
+			}
+		}
+	}
+	alias(o.Columns)
+	alias(o.SortColumns)
+}
+
+// serverListRawColumnNames are the optional columns read from the raw listing.
+func serverListRawColumnNames() []string {
+	var names []string
+	for _, c := range serverListOptional {
+		if c.Raw != "" {
+			names = append(names, c.Name)
+		}
+	}
+	return names
+}
+
+// rawColumnsMicroversion is the least microversion that returns every raw
+// column named, or "" when none is.
+func rawColumnsMicroversion(names []string) string {
+	mv := ""
+	for _, c := range serverListOptional {
+		if c.Raw != "" && hasColumn(names, c.Name) && (mv == "" || microversionLess(mv, c.Microversion)) {
+			mv = c.Microversion
+		}
+	}
+	return mv
+}
+
+// microversionLess reports whether a is an older microversion than b.
+func microversionLess(a, b string) bool {
+	aMaj, aMin, _ := parseMicroversion(a)
+	bMaj, bMin, _ := parseMicroversion(b)
+	if aMaj != bMaj {
+		return aMaj < bMaj
+	}
+	return aMin < bMin
+}
+
+// extractServersWithRaw extracts a page as ExtractServers does and also keeps
+// each server's raw attributes, keyed by ID, for the raw columns.
+func extractServersWithRaw(raw map[string]map[string]any) func(pagination.Page) ([]servers.Server, error) {
+	return func(page pagination.Page) ([]servers.Server, error) {
+		list, err := servers.ExtractServers(page)
+		if err != nil {
+			return nil, err
+		}
+		var body struct {
+			Servers []map[string]any `json:"servers"`
+		}
+		sp, ok := page.(servers.ServerPage)
+		if !ok {
+			return nil, fmt.Errorf("unexpected page type %T", page)
+		}
+		if err := sp.ExtractInto(&body); err != nil {
+			return nil, err
+		}
+		for _, m := range body.Servers {
+			if id, ok := m["id"].(string); ok {
+				raw[id] = m
+			}
+		}
+		return list, nil
+	}
+}
+
+// listImageID is the listing's image ID, or upstream's marker for a server
+// booted from a volume.
+func listImageID(s servers.Server) string {
+	if id := imageID(s.Image); id != "" {
+		return id
+	}
+	return bootedFromVolume
+}
+
+// listImageName is the image's name from names, upstream's marker for a
+// volume-booted server, or "" when the name is unknown.
+func listImageName(s servers.Server, names map[string]string) string {
+	id := imageID(s.Image)
+	if id == "" {
+		return bootedFromVolume
+	}
+	return names[id]
+}
+
+// rawColumnValue renders a raw listing attribute; a map of lists (scheduler
+// hints) reads as upstream's DictListColumn, "key='v1, v2'".
+func rawColumnValue(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return flattenServerValue(v)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		val := m[k]
+		if list, ok := val.([]any); ok {
+			val = formatListFlat(list)
+		}
+		parts = append(parts, fmt.Sprintf("%s='%s'", k, scalarString(val)))
+	}
+	return strings.Join(parts, ", ")
 }

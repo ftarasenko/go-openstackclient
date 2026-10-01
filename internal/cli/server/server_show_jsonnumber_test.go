@@ -70,7 +70,7 @@ func TestRunServerShow_PowerStateFromDecodedBody(t *testing.T) {
 
 	var buf bytes.Buffer
 	o := &output.Options{Format: output.FormatTable}
-	if err := runServerShow(t.Context(), computeClient(fakeServer, "2.93"), o, serverUUID, false, &buf); err != nil {
+	if err := runServerShow(t.Context(), computeClient(fakeServer, "2.93"), o, serverUUID, false, nil, &buf); err != nil {
 		t.Fatalf("runServerShow: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Running") {

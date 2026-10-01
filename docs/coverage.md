@@ -218,7 +218,7 @@ What each service's Zed release caps at, read from the Zed sdists on PyPI:
 | Service | Zed version | Max microversion | Consequence |
 | --- | --- | --- | --- |
 | ironic | 21.4.0 | **1.82** | no `unhold` (1.85), `firmware` (1.86), `service` (1.87), child nodes (1.83), runbooks (1.92), inspection rules (1.96) |
-| nova | 26.x | **2.93** | no `server list -c "Pinned Availability Zone"` (2.96) or `-c "Scheduler Hints"` (2.100) |
+| nova | 26.x | **2.93** | `server list -c "Pinned Availability Zone"` (2.96) and `-c "Scheduler Hints"` (2.100) are refused |
 | cinder | 21.3.2 | **3.70** | |
 | placement | 9.0.0 | **1.39** | |
 | keystone, glance, neutron, designate, octavia | — | no microversions | capability is discovered per-extension (`network extension list`) |
@@ -369,30 +369,6 @@ One flag deviates in **spelling** rather than a command: `koc dns service list
 underscored flag in designate's CLI. Both work; the underscored form is
 registered hidden.
 
-One **default column set** deviates. Upstream's `server list` renders `ID, Name,
-Status, Networks, Image, Flavor` (python-openstackclient 10.2.1,
-`compute/v2/server.py`, the `column_headers` assembly in `ListServer`). `koc`
-renders all of those but **Image**: upstream's column is the image *name*, which
-it resolves with a glance lookup `koc` does not make, and what nova returns is
-the ID — so the honest `koc` column would be a 36-character UUID per row, which
-is most of what makes this table wrap. `-c "Image ID"` renders it on request.
-Flavor *is* in the default listing, and below nova 2.47 — which is where
-`serverListMicroversion` pins the listing by default — its name comes from one
-flavor listing for the whole page rather than from the 2.47 detail response,
-whose extra payload (`user_data` above all) costs roughly twenty times as much.
-
-One **default column set** deviates. Upstream's `server list` renders `ID, Name,
-Status, Networks, Image, Flavor` (python-openstackclient 10.2.1,
-`compute/v2/server.py`, the `column_headers` assembly in `ListServer`). `koc`
-renders all of those but **Image**: upstream's column is the image *name*, which
-it resolves with a glance lookup per listing, and what nova returns is the ID —
-so the honest `koc` column would be a 36-character UUID per row, which is most of
-what makes this table wrap. `-c "Image ID"` renders it on request. Flavor *is*
-in the default listing, and below nova 2.47 — which is where
-`serverListMicroversion` pins the listing by default — its name comes from one
-flavor listing for the whole page rather than from the 2.47 detail response,
-whose extra payload (`user_data` above all) costs roughly twenty times as much.
-
 One deviates in **semantics**: on `koc user create` and `koc user set`,
 `--project-domain` falls back to `--domain` — the user's own domain — when it is
 absent, where upstream resolves the default project unscoped across all domains
@@ -416,20 +392,21 @@ same trap exists on other nouns whose API cannot do substring matching — `volu
 list`, `network list`, `port list`, `subnet list` — and they have no equivalent
 flag yet; nova is the exception, as `server list --name` is a server-side regex.
 
-`koc server list` restores upstream's **opt-in columns** — the extras
-`ListServer` appends when `-c/--column` names one (`compute/v2/server.py`, the
-`if parsed_args.columns:` block) rather than carrying them in the default or
-`--long` table, which neither client does. Eleven of upstream's thirteen are
-implemented; `Pinned Availability Zone` (nova 2.96) and `Scheduler Hints`
-(2.100) are above the Zed cap, so the fields are not in the response koc gets
-(see "Minimum supported cloud"). `Created At` is the one that mattered: without
-it a server's age was unreachable from a listing in *any* format, and the
-fallback was one `server show` per server.
+`koc server list` matches upstream's columns: the default `ID, Name, Status,
+Networks, Image, Flavor`, the `--long` set in upstream's order with Host as the
+hypervisor hostname, and the opt-in extras `ListServer` appends when
+`-c/--column` names one (`compute/v2/server.py`, the `if parsed_args.columns:`
+block), under either the header or upstream's attribute spelling (`-c
+created_at`). Image is the name, from one glance `id=in:` query per page, as
+upstream does; `-n/--no-name-lookup` skips that and the flavor listing. `Host
+Status`, `Pinned Availability Zone` and `Scheduler Hints` raise the listing to
+nova 2.16, 2.96 and 2.100, so the last two fail on a cloud older than that (see
+"Minimum supported cloud").
 
-Two of these columns read better under `koc` than upstream. `Flavor ID` is
-populated, because `server list` pins the negotiated microversion to the lowest
-one that answers the request (2.1 for a plain listing) and nova stops returning
-the embedded flavor's ID at 2.47, where upstream — which negotiates `latest` —
+Two columns read better under `koc` than upstream. `Flavor ID` is populated,
+because `server list` pins the negotiated microversion to the lowest one that
+answers the request (2.1 for a plain listing) and nova stops returning the
+embedded flavor's ID at 2.47, where upstream — which negotiates `latest` —
 prints `None`. `Security Groups` is deduplicated, since nova repeats a group
 once per port it is applied to and the column answers "which groups", not "how
 many ports".
