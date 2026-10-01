@@ -315,6 +315,9 @@ func newLBQuotaSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runLBQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	project string, f *lbQuotaSetFlags, changed changedSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(lbQuotaColumns...); err != nil {
+		return err
+	}
 	var opts quotas.UpdateOpts
 	touched := false
 	// Applied in a fixed order so the request is deterministic.
@@ -396,6 +399,9 @@ func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runLBQuotaUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	project string, names []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(lbQuotaColumns...); err != nil {
+		return err
+	}
 	quota := make(map[string]any, len(names))
 	for _, n := range names {
 		quota[n] = nil
@@ -1000,9 +1006,8 @@ func runFlavorShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("showing load balancer flavor %q: %w", ref, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"id", "name", "description", "enabled", "flavor_profile_id"},
-		[]any{fl.ID, fl.Name, fl.Description, fl.Enabled, fl.FlavorProfileId})
+	fields, values := flavorFields(fl)
+	return o.WriteSingle(w, fields, values)
 }
 
 type octaviaFlavorCreateFlags struct {
@@ -1050,6 +1055,9 @@ func newFlavorCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *octaviaFlavorCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(flavorColumns...); err != nil {
+		return err
+	}
 	profileID, err := resolveFlavorProfileID(ctx, client, f.flavorProfile)
 	if err != nil {
 		return err
@@ -1063,9 +1071,8 @@ func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return fmt.Errorf("creating load balancer flavor %q: %w", name, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"id", "name", "description", "enabled", "flavor_profile_id"},
-		[]any{fl.ID, fl.Name, fl.Description, fl.Enabled, fl.FlavorProfileId})
+	fields, values := flavorFields(fl)
+	return o.WriteSingle(w, fields, values)
 }
 
 type octaviaFlavorSetFlags struct {
@@ -1115,6 +1122,9 @@ func newFlavorSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *octaviaFlavorSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(flavorColumns...); err != nil {
+		return err
+	}
 	changed := f.changed
 	if !changed["name"] && !changed["description"] && !changed["enable"] && !changed["disable"] {
 		return fmt.Errorf("nothing to set: pass at least one attribute flag")
@@ -1157,9 +1167,8 @@ func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 			return fmt.Errorf("getting load balancer flavor %q: %w", ref, err)
 		}
 	}
-	return o.WriteSingle(w,
-		[]string{"id", "name", "description", "enabled", "flavor_profile_id"},
-		[]any{fl.ID, fl.Name, fl.Description, fl.Enabled, fl.FlavorProfileId})
+	fields, values := flavorFields(fl)
+	return o.WriteSingle(w, fields, values)
 }
 
 // setFlavorEnabledRaw PUTs enabled explicitly. flavors.UpdateOpts tags Enabled
@@ -1317,9 +1326,8 @@ func runFlavorProfileShow(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return fmt.Errorf("showing flavor profile %q: %w", ref, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"id", "name", "provider_name", "flavor_data"},
-		[]any{p.ID, p.Name, p.ProviderName, p.FlavorData})
+	fields, values := flavorProfileFields(p)
+	return o.WriteSingle(w, fields, values)
 }
 
 func newFlavorProfileCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -1358,6 +1366,9 @@ func newFlavorProfileCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runFlavorProfileCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, providerName, flavorData string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(flavorProfileColumns...); err != nil {
+		return err
+	}
 	p, err := flavorprofiles.Create(ctx, client, flavorprofiles.CreateOpts{
 		Name:         name,
 		ProviderName: providerName,
@@ -1366,9 +1377,8 @@ func runFlavorProfileCreate(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return fmt.Errorf("creating flavor profile %q: %w", name, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"id", "name", "provider_name", "flavor_data"},
-		[]any{p.ID, p.Name, p.ProviderName, p.FlavorData})
+	fields, values := flavorProfileFields(p)
+	return o.WriteSingle(w, fields, values)
 }
 
 type flavorProfileSetFlags struct {
@@ -1409,6 +1419,9 @@ func newFlavorProfileSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runFlavorProfileSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *flavorProfileSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(flavorProfileColumns...); err != nil {
+		return err
+	}
 	id, err := resolveFlavorProfileID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -1422,9 +1435,8 @@ func runFlavorProfileSet(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return fmt.Errorf("updating flavor profile %q: %w", ref, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"id", "name", "provider_name", "flavor_data"},
-		[]any{p.ID, p.Name, p.ProviderName, p.FlavorData})
+	fields, values := flavorProfileFields(p)
+	return o.WriteSingle(w, fields, values)
 }
 
 func newFlavorProfileDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {

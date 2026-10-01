@@ -377,6 +377,8 @@ func vpnServiceShowFields(s *services.Service) ([]string, []any) {
 	}
 }
 
+var vpnServiceColumns = fieldNames(vpnServiceShowFields(&services.Service{}))
+
 func runVPNServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
 	pages, err := services.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -504,6 +506,9 @@ func newVPNServiceCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runVPNServiceCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *vpnServiceFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(vpnServiceColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := vpnServiceAttrs(ctx, client, f)
 	if err != nil {
@@ -549,6 +554,9 @@ func newVPNServiceSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runVPNServiceSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *vpnServiceFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(vpnServiceColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNaaS(ctx, client, err) }()
 	attrs, err := vpnServiceAttrs(ctx, client, f)
 	if err != nil {

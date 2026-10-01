@@ -327,6 +327,9 @@ func checkL7Action(f *l7PolicyWriteFlags) error {
 func runL7PolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *l7PolicyWriteFlags, projectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(l7PolicyColumns...); err != nil {
+		return err
+	}
 	listenerID, err := resolveListenerID(ctx, client, f.listener)
 	if err != nil {
 		return err
@@ -391,6 +394,9 @@ func newL7PolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runL7PolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *l7PolicyWriteFlags, changed changedSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(l7PolicyColumns...); err != nil {
+		return err
+	}
 	opts := l7policies.UpdateOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil
 
@@ -659,6 +665,9 @@ func newL7RuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runL7RuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	policyRef string, f *l7RuleWriteFlags, projectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(l7RuleColumns...); err != nil {
+		return err
+	}
 	policyID, err := resolveL7PolicyID(ctx, client, policyRef)
 	if err != nil {
 		return err
@@ -718,6 +727,9 @@ func newL7RuleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runL7RuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	policyRef, ruleID string, f *l7RuleWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(l7RuleColumns...); err != nil {
+		return err
+	}
 	changed := f.changed
 	opts := l7policies.UpdateRuleOpts{AdminStateUp: f.adminStateUp}
 	touched := f.adminStateUp != nil

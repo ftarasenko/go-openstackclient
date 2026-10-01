@@ -298,6 +298,9 @@ func validateZoneCreate(f *zoneCreateFlags) error {
 }
 
 func runZoneCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *zoneCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(zoneColumns...); err != nil {
+		return err
+	}
 	if err := validateZoneCreate(f); err != nil {
 		return err
 	}
@@ -412,6 +415,9 @@ func (b zoneUpdateBody) ToZoneUpdateMap() (map[string]any, error) { return b, ni
 func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *zoneSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(zoneColumns...); err != nil {
+		return err
+	}
 	if !f.emailSet && !f.ttlSet && !f.descSet {
 		return fmt.Errorf("zone set requires at least one of --email, --ttl or --description")
 	}

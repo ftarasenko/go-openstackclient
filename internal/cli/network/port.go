@@ -143,6 +143,8 @@ func portShowFields(p *portExt) ([]string, []any) {
 	return fields, values
 }
 
+var portColumns = fieldNames(portShowFields(&portExt{}))
+
 // optionalString renders an extension string that may be null: empty when
 // neutron sent null (or the extension is absent) rather than a quoted "".
 func optionalString(s *string) any {
@@ -1029,6 +1031,9 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *portCreateFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(portColumns...); err != nil {
+		return err
+	}
 	opts, err := portCreateOpts(ctx, client, name, f, flags)
 	if err != nil {
 		return err
@@ -1498,6 +1503,9 @@ func extendOrReplace[T any](reset bool, snap *portSnapshot, current func(*portEx
 }
 
 func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *portSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(portColumns...); err != nil {
+		return err
+	}
 	id, err := resolvePortID(ctx, client, nameOrID)
 	if err != nil {
 		return err

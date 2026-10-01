@@ -312,6 +312,9 @@ func (f *imageCreateFlags) createOpts(name string) (images.CreateOpts, error) {
 func runImageCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *imageCreateFlags, src *imageSource, w io.Writer,
 ) error {
+	if err := o.CheckColumns(imageColumns...); err != nil {
+		return err
+	}
 	opts, err := f.createOpts(name)
 	if err != nil {
 		return err
@@ -446,12 +449,21 @@ func createImageFromVolume(ctx context.Context, cmd *cobra.Command, session *aut
 	return runImageCreateFromVolume(ctx, client, o, name, volumeID, f, cmd.OutOrStdout())
 }
 
+// volumeImageColumns are the fields image create --volume renders: cinder's upload response.
+var volumeImageColumns = []string{
+	"container_format", "disk_format", "display_description", "id", "image_id", "image_name",
+	"protected", "size", "status", "updated_at", "visibility", "volume_type",
+}
+
 // runImageCreateFromVolume uploads a volume to glance via cinder's
 // os-volume_upload_image action. Visibility and protection need cinder 3.1;
 // there they default to private/unprotected, as upstream sends.
 func runImageCreateFromVolume(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, volumeID string, f *imageCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(volumeImageColumns...); err != nil {
+		return err
+	}
 	visibility, err := f.resolvedVisibility()
 	if err != nil {
 		return err
@@ -478,8 +490,7 @@ func runImageCreateFromVolume(ctx context.Context, client *gophercloud.ServiceCl
 		return fmt.Errorf("creating image %q from volume %s: %w", name, volumeID, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"container_format", "disk_format", "display_description", "id", "image_id", "image_name",
-			"protected", "size", "status", "updated_at", "visibility", "volume_type"},
+		volumeImageColumns,
 		[]any{vi.ContainerFormat, vi.DiskFormat, vi.Description, vi.VolumeID, vi.ImageID, vi.ImageName,
 			vi.Protected, vi.Size, vi.Status, vi.UpdatedAt, vi.Visibility, vi.VolumeType.Name})
 }

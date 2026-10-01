@@ -143,6 +143,8 @@ func bgpSpeakerShowFields(s *speakers.BGPSpeaker) ([]string, []any) {
 	return fields, values
 }
 
+var bgpSpeakerColumns = fieldNames(bgpSpeakerShowFields(&speakers.BGPSpeaker{}))
+
 // bgpSpeakerAdvertiseFlags carries the two advertise on/off pairs shared by
 // create and set (upstream add_common_arguments).
 type bgpSpeakerAdvertiseFlags struct {
@@ -221,6 +223,9 @@ func newBGPSpeakerCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runBGPSpeakerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *bgpSpeakerCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(bgpSpeakerColumns...); err != nil {
+		return err
+	}
 	localAS, err := parseASNumber(bgpFlagLocalAS, f.localAS)
 	if err != nil {
 		return err
@@ -357,6 +362,9 @@ func newBGPSpeakerSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runBGPSpeakerSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *bgpSpeakerSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(bgpSpeakerColumns...); err != nil {
+		return err
+	}
 	attrs := map[string]any{}
 	if flags.Changed(bgpFlagName) {
 		attrs["name"] = f.name

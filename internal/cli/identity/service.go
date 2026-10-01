@@ -162,9 +162,15 @@ func newServiceCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
+// serviceCreateColumns are the fields service create renders.
+var serviceCreateColumns = []string{"ID", "Name", "Type", "Enabled", "Description"}
+
 func runServiceCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	typ string, f *serviceWriteFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(serviceCreateColumns...); err != nil {
+		return err
+	}
 	s, err := services.Create(ctx, client, services.CreateOpts{
 		Type:        typ,
 		Name:        f.name,
@@ -175,7 +181,7 @@ func runServiceCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return fmt.Errorf("creating service of type %q: %w", typ, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Type", "Enabled", "Description"},
+		serviceCreateColumns,
 		[]any{s.ID, s.Name, s.Type, s.Enabled, s.Description})
 }
 

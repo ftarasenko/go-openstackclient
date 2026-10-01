@@ -60,6 +60,9 @@ func newRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runRoleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *roleCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(roleColumns...); err != nil {
+		return err
+	}
 	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
 		return err
@@ -78,9 +81,12 @@ func runRoleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	return writeRole(o, w, r)
 }
 
+// roleColumns are the fields of a single role.
+var roleColumns = []string{"ID", "Name", colDomainID, "Description"}
+
 func writeRole(o *output.Options, w io.Writer, r *roles.Role) error {
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", colDomainID, "Description"},
+		roleColumns,
 		[]any{r.ID, r.Name, r.DomainID, r.Description})
 }
 
@@ -214,9 +220,15 @@ func newImpliedRoleCreateCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	return cmd
 }
 
+// impliedRoleColumns are the fields implied role create renders.
+var impliedRoleColumns = []string{"Prior Role ID", "Prior Role Name", "Implied Role ID", "Implied Role Name"}
+
 func runImpliedRoleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	priorRef, impliedRef string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(impliedRoleColumns...); err != nil {
+		return err
+	}
 	priorID, impliedID, err := resolveInferencePair(ctx, client, priorRef, impliedRef)
 	if err != nil {
 		return err
@@ -227,7 +239,7 @@ func runImpliedRoleCreate(ctx context.Context, client *gophercloud.ServiceClient
 	}
 	inf := rule.RoleInference
 	return o.WriteSingle(w,
-		[]string{"Prior Role ID", "Prior Role Name", "Implied Role ID", "Implied Role Name"},
+		impliedRoleColumns,
 		[]any{inf.PriorRole.ID, inf.PriorRole.Name, inf.ImpliedRole.ID, inf.ImpliedRole.Name})
 }
 

@@ -188,7 +188,13 @@ func newAppCredCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
+// appCredCreateColumns are the fields application credential create renders.
+var appCredCreateColumns = []string{"ID", "Name", colProjectID, "Description", "Unrestricted", "Secret", colExpiresAt}
+
 func runAppCredCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, userID, name string, f *appCredCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(appCredCreateColumns...); err != nil {
+		return err
+	}
 	opts := applicationcredentials.CreateOpts{
 		Name:         name,
 		Secret:       f.secret,
@@ -214,7 +220,7 @@ func runAppCredCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return fmt.Errorf("creating application credential %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", colProjectID, "Description", "Unrestricted", "Secret", colExpiresAt},
+		appCredCreateColumns,
 		[]any{c.ID, c.Name, c.ProjectID, c.Description, c.Unrestricted, c.Secret, formatTime(c.ExpiresAt)})
 }
 

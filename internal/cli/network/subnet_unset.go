@@ -78,6 +78,9 @@ func newSubnetUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	nameOrID string, f *subnetUnsetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(subnetColumns...); err != nil {
+		return err
+	}
 	id, err := resolveSubnetID(ctx, client, nameOrID)
 	if err != nil {
 		return err

@@ -307,6 +307,9 @@ func newRecordSetCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runRecordSetCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, zoneRef, name string, f *recordSetCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(recordSetColumns...); err != nil {
+		return err
+	}
 	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
@@ -419,6 +422,9 @@ func newRecordSetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runRecordSetSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	zoneRef, rsRef string, f *recordSetSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(recordSetColumns...); err != nil {
+		return err
+	}
 	if !f.recordsSet && !f.ttlSet && !f.descSet {
 		return fmt.Errorf("recordset set requires at least one of --record, --ttl or --description")
 	}

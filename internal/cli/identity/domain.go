@@ -139,7 +139,13 @@ func newDomainCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// domainCreateColumns are the fields domain create renders.
+var domainCreateColumns = []string{"ID", "Name", "Enabled", "Description"}
+
 func runDomainCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *domainWriteFlags, w io.Writer) error {
+	if err := o.CheckColumns(domainCreateColumns...); err != nil {
+		return err
+	}
 	opts := domains.CreateOpts{
 		Name:        name,
 		Description: f.description,
@@ -150,7 +156,7 @@ func runDomainCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		return fmt.Errorf("creating domain %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", "Enabled", "Description"},
+		domainCreateColumns,
 		[]any{d.ID, d.Name, d.Enabled, d.Description})
 }
 

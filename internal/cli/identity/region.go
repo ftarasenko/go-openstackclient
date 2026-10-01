@@ -102,6 +102,9 @@ func newRegionCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runRegionCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, parent, description string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(regionColumns...); err != nil {
+		return err
+	}
 	r, err := regions.Create(ctx, client, regions.CreateOpts{
 		ID:             id,
 		ParentRegionID: parent,
@@ -113,9 +116,12 @@ func runRegionCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	return writeRegion(o, w, r)
 }
 
+// regionColumns are the fields of a single region.
+var regionColumns = []string{"ID", "Parent Region", "Description"}
+
 func writeRegion(o *output.Options, w io.Writer, r *regions.Region) error {
 	return o.WriteSingle(w,
-		[]string{"ID", "Parent Region", "Description"},
+		regionColumns,
 		[]any{r.ID, r.ParentRegionID, r.Description})
 }
 

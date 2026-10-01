@@ -67,6 +67,8 @@ func trunkFields(t *trunks.Trunk) ([]string, []any) {
 	return fields, values
 }
 
+var trunkColumns = fieldNames(trunkFields(&trunks.Trunk{}))
+
 // formatSubports renders the sub-port list compactly as
 // "<port-id>:<type>:<segmentation-id>" entries, so a trunk's VLAN mapping is
 // readable in a single table cell.
@@ -266,6 +268,9 @@ func newTrunkCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTrunkCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *trunkCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(trunkColumns...); err != nil {
+		return err
+	}
 	portID, err := resolvePortID(ctx, client, f.parentPort)
 	if err != nil {
 		return err
@@ -446,6 +451,9 @@ func (f *trunkSetFlags) attrsGiven() bool {
 func runTrunkSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *trunkSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(trunkColumns...); err != nil {
+		return err
+	}
 	id, err := resolveTrunkID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -701,6 +709,9 @@ func checkSubportAddShape(positional, specs, segGiven bool) error {
 func runTrunkSubportAddPort(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref, portRef string, sp trunkSubport, w io.Writer,
 ) error {
+	if err := o.CheckColumns(trunkColumns...); err != nil {
+		return err
+	}
 	id, err := resolveTrunkID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -725,6 +736,9 @@ func addTrunkSubports(ctx context.Context, client *gophercloud.ServiceClient, o 
 func runTrunkSubportAdd(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, specs []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(trunkColumns...); err != nil {
+		return err
+	}
 	id, err := resolveTrunkID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -774,6 +788,9 @@ func newTrunkSubportRemoveCommand(a *auth.Options, o *output.Options) *cobra.Com
 func runTrunkSubportRemove(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, portRefs []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(trunkColumns...); err != nil {
+		return err
+	}
 	id, err := resolveTrunkID(ctx, client, ref)
 	if err != nil {
 		return err

@@ -15,15 +15,18 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
+// imageColumns are the fields of a single image.
+var imageColumns = []string{
+	"id", "name", "status", "visibility", "protected", "hidden",
+	"size", "virtual_size", "disk_format", "container_format",
+	"min_disk", "min_ram", "owner", "checksum", "tags", "properties",
+	"file", "schema", "created_at", "updated_at",
+}
+
 // imageShowFields is the curated Field/Value view for a single image, matching
 // the most operationally useful attributes shown by `openstack image show`.
 func imageShowFields(img *images.Image) ([]string, []any) {
-	fields := []string{
-		"id", "name", "status", "visibility", "protected", "hidden",
-		"size", "virtual_size", "disk_format", "container_format",
-		"min_disk", "min_ram", "owner", "checksum", "tags", "properties",
-		"file", "schema", "created_at", "updated_at",
-	}
+	fields := imageColumns
 	values := []any{
 		img.ID, img.Name, string(img.Status), string(img.Visibility), img.Protected, img.Hidden,
 		img.SizeBytes, img.VirtualSize, img.DiskFormat, img.ContainerFormat,

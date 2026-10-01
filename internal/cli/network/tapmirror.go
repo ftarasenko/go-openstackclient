@@ -144,6 +144,8 @@ func tapMirrorShowFields(m *tapMirror) ([]string, []any) {
 	return fields, values
 }
 
+var tapMirrorColumns = fieldNames(tapMirrorShowFields(&tapMirror{}))
+
 func resolveTapMirrorID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
 	id, err := resolveByName(client, "tap mirror", nameOrID, func(c *gophercloud.ServiceClient) ([]tapMirror, error) {
 		pages, err := listTapMirrors(c, tapmirrors.ListOpts{Name: nameOrID}).AllPages(ctx)
@@ -228,6 +230,9 @@ func newTapMirrorCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runTapMirrorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *tapMirrorCreateFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(tapMirrorColumns...); err != nil {
+		return err
+	}
 	directions, err := parseTapMirrorDirections(f.directions)
 	if err != nil {
 		return err
@@ -410,6 +415,9 @@ func newTapMirrorUpdateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 // runTapMirrorUpdate PUTs name and description, the only attributes neutron
 // lets a mirror change.
 func runTapMirrorUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *tapMirrorUpdateFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(tapMirrorColumns...); err != nil {
+		return err
+	}
 	var opts tapmirrors.UpdateOpts
 	if flags.Changed("name") {
 		opts.Name = &f.name

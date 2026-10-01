@@ -143,16 +143,22 @@ func newResourceClassSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	}
 }
 
+// resourceClassColumns are the fields of a single resource class.
+var resourceClassColumns = []string{"name"}
+
 // runResourceClassSet mirrors osc-placement's `resource class set`, which is an
 // idempotent create rather than a rename: placement's PUT /resource_classes/
 // <name> creates the class when it is missing and is a no-op when it exists.
 func runResourceClassSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
+	if err := o.CheckColumns(resourceClassColumns...); err != nil {
+		return err
+	}
 	if err := resourceclasses.Update(ctx, client, name).ExtractErr(); err != nil {
 		return fmt.Errorf("setting resource class %s: %w", name, err)
 	}
 	// Placement answers the PUT with 200 and no useful body, so the name is
 	// echoed back rather than read from the response.
-	return o.WriteSingle(w, []string{"name"}, []any{name})
+	return o.WriteSingle(w, resourceClassColumns, []any{name})
 }
 
 func newResourceClassDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {

@@ -172,7 +172,13 @@ func newProjectCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
+// projectCreateColumns are the fields project create renders.
+var projectCreateColumns = []string{"ID", "Name", colDomainID, "Enabled", "Description"}
+
 func runProjectCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *projectWriteFlags, w io.Writer) error {
+	if err := o.CheckColumns(projectCreateColumns...); err != nil {
+		return err
+	}
 	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
 		return err
@@ -193,7 +199,7 @@ func runProjectCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return fmt.Errorf("creating project %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", colDomainID, "Enabled", "Description"},
+		projectCreateColumns,
 		[]any{p.ID, p.Name, p.DomainID, p.Enabled, p.Description})
 }
 

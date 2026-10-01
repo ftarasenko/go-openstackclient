@@ -67,6 +67,9 @@ func newImageAddProjectCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runImageAddProject(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, imageID, projectID string, w io.Writer) error {
+	if err := o.CheckColumns(memberColumns...); err != nil {
+		return err
+	}
 	m, err := members.Create(ctx, client, imageID, projectID).Extract()
 	if err != nil {
 		return fmt.Errorf("adding project %s to image %s: %w", projectID, imageID, err)
@@ -132,8 +135,11 @@ func resolveProjectRefInDomain(ctx context.Context, session *auth.Client, ref, d
 	return resolve.ProjectIDInDomain(ctx, identityClient, ref, domain)
 }
 
+// memberColumns are the fields of a single image member.
+var memberColumns = []string{"image_id", "member_id", "status", "schema", "created_at", "updated_at"}
+
 func memberFields(m *members.Member) ([]string, []any) {
-	fields := []string{"image_id", "member_id", "status", "schema", "created_at", "updated_at"}
+	fields := memberColumns
 	values := []any{m.ImageID, m.MemberID, m.Status, m.Schema, m.CreatedAt, m.UpdatedAt}
 	return fields, values
 }
@@ -259,6 +265,9 @@ func newImageMemberSetCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runImageMemberSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, imageID, memberID, status string, w io.Writer) error {
+	if err := o.CheckColumns(memberColumns...); err != nil {
+		return err
+	}
 	m, err := members.Update(ctx, client, imageID, memberID, members.UpdateOpts{Status: status}).Extract()
 	if err != nil {
 		return fmt.Errorf("setting member %s status on image %s: %w", memberID, imageID, err)

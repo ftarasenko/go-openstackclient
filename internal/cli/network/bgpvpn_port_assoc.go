@@ -257,7 +257,7 @@ func portAssocRouteColumns(routes []bgpvpns.PortRoutes) (prefixes, vpns []string
 func writeBGPVPNPortAssoc(o *output.Options, w io.Writer, p *bgpvpns.PortAssociation) error {
 	prefixes, vpns := portAssocRouteColumns(p.Routes)
 	return o.WriteSingle(w,
-		[]string{"advertise_fixed_ips", "bgpvpn_routes", "id", "port_id", "prefix_routes", "project_id"},
+		bgpvpnPortAssocColumns,
 		[]any{p.AdvertiseFixedIPs, vpns, p.ID, p.PortID, prefixes, p.ProjectID})
 }
 
@@ -285,6 +285,9 @@ func newBGPVPNPortAssocCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runBGPVPNPortAssocCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref bgpvpnAssocRef, projectID string, f *bgpvpnPortAssocFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnPortAssocColumns...); err != nil {
+		return err
+	}
 	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
 		return err
@@ -339,6 +342,9 @@ func newBGPVPNPortAssocSetCommand(a *auth.Options, o *output.Options, unset bool
 func runBGPVPNPortAssocUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref bgpvpnAssocRef, f *bgpvpnPortAssocFlags, unset bool, w io.Writer,
 ) error {
+	if err := o.CheckColumns(bgpvpnPortAssocColumns...); err != nil {
+		return err
+	}
 	id := ref.target
 	bgpvpnID, err := resolveBGPVPNID(ctx, client, ref.bgpvpn)
 	if err != nil {
@@ -410,3 +416,5 @@ func runBGPVPNPortAssocList(ctx context.Context, client *gophercloud.ServiceClie
 	}
 	return o.WriteList(w, t)
 }
+
+var bgpvpnPortAssocColumns = []string{"advertise_fixed_ips", "bgpvpn_routes", "id", "port_id", "prefix_routes", "project_id"}

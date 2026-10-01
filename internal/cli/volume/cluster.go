@@ -330,6 +330,9 @@ func newClusterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runClusterSet(ctx context.Context, client *gophercloud.ServiceClient,
 	o *output.Options, name string, f *clusterSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(clusterColumns...); err != nil {
+		return err
+	}
 	if err := requireVolumeMicroversion(client, clusterMicroversion, "block storage cluster set"); err != nil {
 		return err
 	}
@@ -360,20 +363,22 @@ func runClusterSet(ctx context.Context, client *gophercloud.ServiceClient,
 	return writeCluster(o, resp.Cluster, w)
 }
 
+// clusterColumns is upstream's detailed cluster format.
+var clusterColumns = []string{
+	"Name", "Binary", "State", "Status", "Disabled Reason",
+	"Hosts", "Down Hosts", "Last Heartbeat", "Created At", "Updated At",
+	"Replication Status", "Frozen", "Active Backend ID",
+}
+
 // writeCluster renders one cluster as a Field/Value view. The field set and its
 // order are upstream's detailed cluster format, including its own inconsistency:
 // the listing's --long calls these counts "Num Hosts"/"Num Down Hosts" while the
 // single-cluster view calls them "Hosts"/"Down Hosts".
 func writeCluster(o *output.Options, c cluster, w io.Writer) error {
-	fields := []string{
-		"Name", "Binary", "State", "Status", "Disabled Reason",
-		"Hosts", "Down Hosts", "Last Heartbeat", "Created At", "Updated At",
-		"Replication Status", "Frozen", "Active Backend ID",
-	}
 	values := []any{
 		c.Name, c.Binary, c.State, c.Status, c.DisabledReason,
 		c.NumHosts, c.NumDownHosts, c.LastHeartbeat, c.CreatedAt, c.UpdatedAt,
 		c.ReplicationStatus, c.Frozen, c.ActiveBackendID,
 	}
-	return o.WriteSingle(w, fields, values)
+	return o.WriteSingle(w, clusterColumns, values)
 }

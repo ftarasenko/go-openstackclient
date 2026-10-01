@@ -75,6 +75,9 @@ func newImageSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runImageSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *imageSetFlags, w io.Writer) error {
+	if err := o.CheckColumns(imageColumns...); err != nil {
+		return err
+	}
 	var ops images.UpdateOpts
 	if f.name != "" {
 		ops = append(ops, images.ReplaceImageName{NewName: f.name})
@@ -183,6 +186,9 @@ func newImageUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runImageUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *imageUnsetFlags, w io.Writer) error {
+	if err := o.CheckColumns(imageColumns...); err != nil {
+		return err
+	}
 	if len(f.property) == 0 {
 		return fmt.Errorf("image unset requires at least one --property")
 	}

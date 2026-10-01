@@ -58,6 +58,8 @@ func qosPolicyShowFields(p *policies.Policy) ([]string, []any) {
 	}
 }
 
+var qosPolicyColumns = fieldNames(qosPolicyShowFields(&policies.Policy{}))
+
 func newQoSPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var project, projectDomain string
 	var share, noShare bool
@@ -212,6 +214,9 @@ func newQoSPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runQoSPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *qosPolicyCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(qosPolicyColumns...); err != nil {
+		return err
+	}
 	opts := policies.CreateOpts{
 		Name:        name,
 		Description: f.description,
@@ -295,6 +300,9 @@ func newQoSPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runQoSPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *qosPolicySetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(qosPolicyColumns...); err != nil {
+		return err
+	}
 	id, err := resolveQoSPolicyID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -839,6 +847,9 @@ func newQoSRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runQoSRuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, k qosRuleKind, attrs map[string]any, w io.Writer,
 ) error {
+	if err := o.CheckColumns(qosRuleColumns...); err != nil {
+		return err
+	}
 	policyID, err := resolveQoSPolicyID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -875,6 +886,9 @@ func newQoSRuleSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runQoSRuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref, ruleID string, f *qosRuleFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(qosRuleColumns...); err != nil {
+		return err
+	}
 	policyID, k, err := resolveQoSRule(ctx, client, ref, ruleID)
 	if err != nil {
 		return err
@@ -1036,4 +1050,11 @@ func runQoSRuleTypeShow(ctx context.Context, client *gophercloud.ServiceClient, 
 		drivers = append(drivers, fmt.Sprintf("%s: %s", d.Name, strings.Join(params, "; ")))
 	}
 	return o.WriteSingle(w, []string{"type", "drivers"}, []any{rt.Type, strings.Join(drivers, "\n")})
+}
+
+// qosRuleColumns is every attribute a QoS rule of any type can carry; rules
+// render as neutron returns them, so the set is not known before the write.
+var qosRuleColumns = []string{
+	"direction", "dscp_mark", "id", "max_burst_kbps", "max_burst_kpps", "max_kbps",
+	"max_kpps", "min_kbps", "min_kpps", "project_id", "qos_policy_id", "tenant_id", "type",
 }

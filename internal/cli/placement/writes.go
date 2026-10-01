@@ -58,6 +58,9 @@ func newProviderCreateCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runProviderCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, uuid, parent string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(providerColumns...); err != nil {
+		return err
+	}
 	rp, err := resourceproviders.Create(ctx, client, resourceproviders.CreateOpts{
 		Name:               name,
 		UUID:               uuid,
@@ -112,6 +115,9 @@ func newProviderSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runProviderSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *providerSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(providerColumns...); err != nil {
+		return err
+	}
 	opts := resourceproviders.UpdateOpts{}
 	if f.nameSet {
 		opts.Name = &f.name
@@ -128,9 +134,12 @@ func runProviderSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	return writeProvider(o, w, rp)
 }
 
+// providerColumns are the fields of a single resource provider.
+var providerColumns = []string{"uuid", "name", "generation", "parent_provider_uuid", "root_provider_uuid"}
+
 func writeProvider(o *output.Options, w io.Writer, rp *resourceproviders.ResourceProvider) error {
 	return o.WriteSingle(w,
-		[]string{"uuid", "name", "generation", "parent_provider_uuid", "root_provider_uuid"},
+		providerColumns,
 		[]any{rp.UUID, rp.Name, rp.Generation, rp.ParentProviderUUID, rp.RootProviderUUID})
 }
 
@@ -267,9 +276,15 @@ func newProviderInventoryClassSetCommand(a *auth.Options, o *output.Options) *co
 	return cmd
 }
 
+// inventoryClassColumns are the fields of one resource class's inventory.
+var inventoryClassColumns = []string{"resource_class", "total", "reserved", "min_unit", "max_unit", "step_size", "allocation_ratio"}
+
 func runProviderInventoryClassSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, class string, fields []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(inventoryClassColumns...); err != nil {
+		return err
+	}
 	inv, err := parseInventory(fields)
 	if err != nil {
 		return fmt.Errorf("parsing --resource: %w", err)
@@ -290,7 +305,7 @@ func runProviderInventoryClassSet(ctx context.Context, client *gophercloud.Servi
 		return fmt.Errorf("setting %s inventory on resource provider %s: %w", class, id, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"resource_class", "total", "reserved", "min_unit", "max_unit", "step_size", "allocation_ratio"},
+		inventoryClassColumns,
 		[]any{class, got.Total, got.Reserved, got.MinUnit, got.MaxUnit, got.StepSize, got.AllocationRatio})
 }
 
@@ -324,6 +339,9 @@ func newProviderInventorySetCommand(a *auth.Options, o *output.Options) *cobra.C
 func runProviderInventorySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, resources []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(inventoryColumns...); err != nil {
+		return err
+	}
 	byClass := map[string][]string{}
 	for _, spec := range resources {
 		class, field, ok := strings.Cut(spec, ":")
@@ -399,9 +417,12 @@ func runProviderInventoryDelete(ctx context.Context, client *gophercloud.Service
 	return nil
 }
 
+// inventoryColumns are the columns of a provider's inventory listing.
+var inventoryColumns = []string{colResourceClass, "Total", "Reserved", "Min Unit", "Max Unit", "Step Size", "Allocation Ratio"}
+
 func writeInventories(o *output.Options, w io.Writer, inventories map[string]resourceproviders.Inventory) error {
 	t := output.Table{
-		Columns: []string{colResourceClass, "Total", "Reserved", "Min Unit", "Max Unit", "Step Size", "Allocation Ratio"},
+		Columns: inventoryColumns,
 	}
 	for class, inv := range inventories {
 		t.Rows = append(t.Rows, []any{class, inv.Total, inv.Reserved, inv.MinUnit, inv.MaxUnit, inv.StepSize, inv.AllocationRatio})
@@ -439,6 +460,9 @@ func newProviderTraitSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runProviderTraitSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, traitNames []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(traitColumns...); err != nil {
+		return err
+	}
 	current, err := resourceproviders.GetTraits(ctx, client, id).Extract()
 	if err != nil {
 		return fmt.Errorf("reading resource provider %s before writing its traits: %w", id, err)
@@ -450,7 +474,7 @@ func runProviderTraitSet(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return fmt.Errorf("setting the traits of resource provider %s: %w", id, err)
 	}
-	t := output.Table{Columns: []string{"Name"}, Rows: make([][]any, 0, len(got.Traits))}
+	t := output.Table{Columns: traitColumns, Rows: make([][]any, 0, len(got.Traits))}
 	for _, name := range got.Traits {
 		t.Rows = append(t.Rows, []any{name})
 	}
@@ -511,6 +535,9 @@ func newProviderAggregateSetCommand(a *auth.Options, o *output.Options) *cobra.C
 func runProviderAggregateSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, aggregates []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(aggregateColumns...); err != nil {
+		return err
+	}
 	current, err := resourceproviders.GetAggregates(ctx, client, id).Extract()
 	if err != nil {
 		return fmt.Errorf("reading resource provider %s before writing its aggregates: %w", id, err)
@@ -528,7 +555,7 @@ func runProviderAggregateSet(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return fmt.Errorf("setting the aggregates of resource provider %s: %w", id, err)
 	}
-	t := output.Table{Columns: []string{"Aggregate UUID"}, Rows: make([][]any, 0, len(got.Aggregates))}
+	t := output.Table{Columns: aggregateColumns, Rows: make([][]any, 0, len(got.Aggregates))}
 	for _, agg := range got.Aggregates {
 		t.Rows = append(t.Rows, []any{agg})
 	}
@@ -556,6 +583,9 @@ func newProviderAllocationShowCommand(a *auth.Options, o *output.Options) *cobra
 	}
 }
 
+// allocationColumns are the columns of a consumer's allocations.
+var allocationColumns = []string{"Resource Provider", colResourceClass, "Used"}
+
 func runProviderAllocationShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	consumer string, w io.Writer,
 ) error {
@@ -563,7 +593,7 @@ func runProviderAllocationShow(ctx context.Context, client *gophercloud.ServiceC
 	if err != nil {
 		return fmt.Errorf("showing the allocations of consumer %s: %w", consumer, err)
 	}
-	t := output.Table{Columns: []string{"Resource Provider", colResourceClass, "Used"}}
+	t := output.Table{Columns: allocationColumns}
 	for providerID, alloc := range got.Allocations {
 		for class, used := range alloc.Resources {
 			t.Rows = append(t.Rows, []any{providerID, class, used})
@@ -629,6 +659,9 @@ func requiresConsumerType(microversion string) bool {
 func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	consumer string, f *allocationSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(allocationColumns...); err != nil {
+		return err
+	}
 	// Placement 1.38 made consumer_type required, and it is not a value koc can
 	// invent on the operator's behalf — it describes what the consumer *is*. Say
 	// so here rather than letting placement answer with a schema dump.
@@ -727,6 +760,9 @@ func newProviderAllocationUnsetCommand(a *auth.Options, o *output.Options) *cobr
 func runProviderAllocationUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	consumer string, providers, classes []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(allocationColumns...); err != nil {
+		return err
+	}
 	if len(providers) == 0 && len(classes) == 0 {
 		if err := allocations.Delete(ctx, client, consumer).ExtractErr(); err != nil {
 			return fmt.Errorf("deleting the allocations of consumer %s: %w", consumer, err)
@@ -1068,3 +1104,10 @@ func rowKey(row []any) string {
 	}
 	return fmt.Sprintf("%v|%v", row[0], row[min(1, len(row)-1)])
 }
+
+// traitColumns and aggregateColumns are the columns trait set and aggregate set
+// render.
+var (
+	traitColumns     = []string{"Name"}
+	aggregateColumns = []string{"Aggregate UUID"}
+)

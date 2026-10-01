@@ -49,6 +49,10 @@ func parseKeyValMap(pairs []string) (map[string]any, error) {
 	return m, nil
 }
 
+// fieldNames returns the headers of a field builder's result. Applied to a zero
+// value it gives the columns a write verb checks -c against before it writes.
+func fieldNames(fields []string, _ []any) []string { return fields }
+
 // addFieldsAliases registers --fields and --field on cmd, python-ironicclient's
 // spelling of the global -c/--column selector. History shows operators reaching
 // for the ironic spelling on `baremetal node list`/`show`, where koc only

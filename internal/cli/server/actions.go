@@ -635,9 +635,15 @@ func newServerRebuildOpts(client *gophercloud.ServiceClient, f *serverRebuildFla
 	return serverRebuildOptsExt{RebuildOptsBuilder: base, UserData: &userData}, nil
 }
 
+// serverRebuildColumns are the fields server rebuild renders.
+var serverRebuildColumns = []string{"ID", "Name", "Status"}
+
 func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *serverRebuildFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(serverRebuildColumns...); err != nil {
+		return err
+	}
 	opts, err := newServerRebuildOpts(client, f)
 	if err != nil {
 		return err
@@ -650,7 +656,7 @@ func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return fmt.Errorf("rebuilding server %q: %w", ref, err)
 	}
-	return o.WriteSingle(w, []string{"ID", "Name", "Status"}, []any{s.ID, s.Name, s.Status})
+	return o.WriteSingle(w, serverRebuildColumns, []any{s.ID, s.Name, s.Status})
 }
 
 // volumes ----------------------------------------------------------------------
@@ -1072,7 +1078,13 @@ func consoleTypeFromFlags(novnc, xvpvnc, spice, serial, mks bool, consoleType st
 	}
 }
 
+// consoleURLColumns are the fields console url show renders; it mints a console, so -c is checked first.
+var consoleURLColumns = []string{"Type", "Protocol", "URL"}
+
 func runConsoleURLShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, consoleType string, w io.Writer) error {
+	if err := o.CheckColumns(consoleURLColumns...); err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -1093,7 +1105,7 @@ func runConsoleURLShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return fmt.Errorf("creating console for server %q: %w", ref, err)
 	}
-	return o.WriteSingle(w, []string{"Type", "Protocol", "URL"}, []any{rc.Type, rc.Protocol, rc.URL})
+	return o.WriteSingle(w, consoleURLColumns, []any{rc.Type, rc.Protocol, rc.URL})
 }
 
 // serverActionNegotiated posts a server action at the compute client's

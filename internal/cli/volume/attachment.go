@@ -292,6 +292,9 @@ func newAttachmentCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runAttachmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	volumeRef, serverID string, f *attachmentCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(attachmentColumns...); err != nil {
+		return err
+	}
 	if err := requireVolumeMicroversion(client, attachmentsMicroversion, "volume attachment create"); err != nil {
 		return err
 	}
@@ -395,6 +398,9 @@ func newAttachmentSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runAttachmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *attachmentConnectorFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(attachmentColumns...); err != nil {
+		return err
+	}
 	if err := requireVolumeMicroversion(client, attachmentsMicroversion, "volume attachment set"); err != nil {
 		return err
 	}

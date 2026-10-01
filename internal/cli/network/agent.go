@@ -45,6 +45,8 @@ func agentShowFields(ag *agents.Agent) ([]string, []any) {
 	return fields, values
 }
 
+var agentColumns = fieldNames(agentShowFields(&agents.Agent{}))
+
 type agentListFlags struct {
 	agentType string
 	host      string
@@ -309,6 +311,9 @@ func newAgentSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAgentSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *agentSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(agentColumns...); err != nil {
+		return err
+	}
 	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
 		return err
 	}

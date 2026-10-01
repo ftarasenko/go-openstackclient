@@ -157,10 +157,17 @@ func runUpload(ctx context.Context, client *s3.Client, o *output.Options,
 	}
 }
 
+// uploadColumns is what a single-object upload renders, checked against -c
+// before anything is sent.
+var uploadColumns = []string{"Bucket", "Key", "File", "Size", "ETag"}
+
 // runUploadStdin uploads standard input under the key given, which must be a
 // full key: a stream has no basename to fall back on.
 func runUploadStdin(ctx context.Context, client *s3.Client, o *output.Options,
 	r uploadRequest, w io.Writer) error {
+	if err := o.CheckColumns(uploadColumns...); err != nil {
+		return err
+	}
 	if r.key == "" || strings.HasSuffix(r.key, "/") {
 		return fmt.Errorf("uploading standard input needs a full key, got %q", r.bucket+"/"+r.key)
 	}
@@ -179,14 +186,15 @@ func runUploadStdin(ctx context.Context, client *s3.Client, o *output.Options,
 	if err != nil {
 		return fmt.Errorf("uploading standard input to %s/%s: %w", r.bucket, r.key, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"Bucket", "Key", "File", "Size", "ETag"},
-		[]any{r.bucket, r.key, "-", obj.Size, obj.ETag})
+	return o.WriteSingle(w, uploadColumns, []any{r.bucket, r.key, "-", obj.Size, obj.ETag})
 }
 
 // runUploadFile uploads one local file.
 func runUploadFile(ctx context.Context, client *s3.Client, o *output.Options,
 	r uploadRequest, w io.Writer) error {
+	if err := o.CheckColumns(uploadColumns...); err != nil {
+		return err
+	}
 	key := r.key
 	if key == "" || strings.HasSuffix(key, "/") {
 		key += filepath.Base(r.src)
@@ -218,9 +226,7 @@ func runUploadFile(ctx context.Context, client *s3.Client, o *output.Options,
 	if err != nil {
 		return fmt.Errorf("uploading %s to %s/%s: %w", r.src, r.bucket, key, err)
 	}
-	return o.WriteSingle(w,
-		[]string{"Bucket", "Key", "File", "Size", "ETag"},
-		[]any{r.bucket, key, r.src, obj.Size, obj.ETag})
+	return o.WriteSingle(w, uploadColumns, []any{r.bucket, key, r.src, obj.Size, obj.ETag})
 }
 
 // runUploadRecursive uploads every file under a directory.

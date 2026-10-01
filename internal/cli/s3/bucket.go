@@ -113,6 +113,9 @@ func newBucketCreateCommand(a *auth.Options, o *output.Options, f *connFlags) *c
 // runBucketCreate is the test seam for "bucket create".
 func runBucketCreate(ctx context.Context, client *s3.Client, o *output.Options,
 	bucket string, w io.Writer) error {
+	if err := o.CheckColumns(bucketCreateColumns...); err != nil {
+		return err
+	}
 	if err := client.CreateBucket(ctx, bucket); err != nil {
 		switch s3.ErrorCode(err) {
 		case "BucketAlreadyOwnedByYou":
@@ -122,7 +125,7 @@ func runBucketCreate(ctx context.Context, client *s3.Client, o *output.Options,
 		}
 		return fmt.Errorf("creating bucket %q on %s: %w", bucket, client.Endpoint(), err)
 	}
-	return o.WriteSingle(w, []string{"Bucket", "Region"}, []any{bucket, client.Region()})
+	return o.WriteSingle(w, bucketCreateColumns, []any{bucket, client.Region()})
 }
 
 const bucketDeleteLong = `Delete one or more empty buckets.
@@ -294,8 +297,18 @@ func versioningStatus(v string) (string, error) {
 // runBucketSet is the test seam for "bucket set".
 func runBucketSet(ctx context.Context, client *s3.Client, o *output.Options,
 	bucket, status string, w io.Writer) error {
+	if err := o.CheckColumns(bucketSetColumns...); err != nil {
+		return err
+	}
 	if err := client.SetBucketVersioning(ctx, bucket, status); err != nil {
 		return fmt.Errorf("setting versioning on %q: %w", bucket, err)
 	}
-	return o.WriteSingle(w, []string{"Bucket", "Versioning"}, []any{bucket, status})
+	return o.WriteSingle(w, bucketSetColumns, []any{bucket, status})
 }
+
+// The columns bucket create and set render, checked against -c before the
+// request: once the store has it, an error reads as a failed write.
+var (
+	bucketCreateColumns = []string{"Bucket", "Region"}
+	bucketSetColumns    = []string{"Bucket", "Versioning"}
+)

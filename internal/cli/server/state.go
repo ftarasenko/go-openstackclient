@@ -224,6 +224,9 @@ func newServerRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// serverRescueColumns are the fields server rescue renders.
+var serverRescueColumns = []string{"adminPass"}
+
 // runServerRescue rescues the server and prints the admin password nova
 // returns. When the password was generated rather than supplied, this response
 // is the only place it ever appears, so it goes to the output layer as a
@@ -231,6 +234,9 @@ func newServerRescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runServerRescue(ctx context.Context, client *gophercloud.ServiceClient, ac *auth.Client,
 	o *output.Options, ref string, f *rescueFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(serverRescueColumns...); err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -246,7 +252,7 @@ func runServerRescue(ctx context.Context, client *gophercloud.ServiceClient, ac 
 	if err != nil {
 		return fmt.Errorf("rescuing server %q: %w", ref, err)
 	}
-	return o.WriteSingle(w, []string{"adminPass"}, []any{adminPass})
+	return o.WriteSingle(w, serverRescueColumns, []any{adminPass})
 }
 
 // resolveImageRef turns an image name into an ID via glance, since nova takes
@@ -311,9 +317,15 @@ func newServerImageCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// serverImageCreateColumns are the fields server image create renders.
+var serverImageCreateColumns = []string{"id", "name"}
+
 func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient, ac *auth.Client,
 	o *output.Options, ref string, f *serverImageCreateFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(serverImageCreateColumns...); err != nil {
+		return err
+	}
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -344,7 +356,7 @@ func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient
 			return err
 		}
 	}
-	return o.WriteSingle(w, []string{"id", "name"}, []any{imageID, name})
+	return o.WriteSingle(w, serverImageCreateColumns, []any{imageID, name})
 }
 
 // parseStringMap turns repeated key=value flag values into a map. Nova's image

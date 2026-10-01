@@ -153,6 +153,8 @@ func secGroupShowFields(g *secGroupExt) ([]string, []any) {
 	return fields, values
 }
 
+var secGroupColumns = fieldNames(secGroupShowFields(&secGroupExt{}))
+
 func getSecGroup(ctx context.Context, client *gophercloud.ServiceClient, id string) (*secGroupExt, error) {
 	return extractSecGroup(groups.Get(ctx, client, id))
 }
@@ -352,6 +354,9 @@ func newSecurityGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runSecurityGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *secGroupCreateFlags, flags flagSet, w io.Writer,
 ) error {
+	if err := o.CheckColumns(secGroupColumns...); err != nil {
+		return err
+	}
 	opts := groups.CreateOpts{
 		Name:        name,
 		Description: name,
@@ -451,6 +456,9 @@ func newSecurityGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runSecurityGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *secGroupSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(secGroupColumns...); err != nil {
+		return err
+	}
 	opts := groups.UpdateOpts{
 		Name:     f.name,
 		Stateful: enableDisable(flags, f.stateful, f.stateless, flagSGStateful, flagSGStateless),
@@ -511,6 +519,9 @@ func newSecurityGroupUnsetCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runSecurityGroupUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *tagWriteFlags, w io.Writer) error {
+	if err := o.CheckColumns(secGroupColumns...); err != nil {
+		return err
+	}
 	if !f.given() {
 		return fmt.Errorf("security group unset requires --%s or --%s", flagTag, flagAllTag)
 	}

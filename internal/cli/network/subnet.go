@@ -151,6 +151,9 @@ func subnetShowFields(s *subnetExt) ([]string, []any) {
 	return fields, values
 }
 
+// subnetColumns adds router:external, rendered only when neutron sends it.
+var subnetColumns = append(fieldNames(subnetShowFields(&subnetExt{})), "router:external")
+
 // resolveSubnetSegmentID resolves a network segment name or ID for
 // --network-segment under the shared name-or-ID policy (helpers.go
 // resolveByName).
@@ -448,6 +451,9 @@ func newSubnetCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runSubnetCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *subnetCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(subnetColumns...); err != nil {
+		return err
+	}
 	opts, attrs, err := buildSubnetCreateOpts(ctx, client, name, f)
 	if err != nil {
 		return err
@@ -688,6 +694,9 @@ func newSubnetSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *subnetSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(subnetColumns...); err != nil {
+		return err
+	}
 	id, err := resolveSubnetID(ctx, client, nameOrID)
 	if err != nil {
 		return err

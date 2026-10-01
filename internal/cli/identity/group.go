@@ -34,9 +34,12 @@ func newGroupCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
+// groupColumns are the fields of a single group.
+var groupColumns = []string{"ID", "Name", colDomainID, "Description"}
+
 // groupFields is the Field/Value view of a single group.
 func groupFields(g *groups.Group) ([]string, []any) {
-	return []string{"ID", "Name", colDomainID, "Description"},
+	return groupColumns,
 		[]any{g.ID, g.Name, g.DomainID, g.Description}
 }
 
@@ -224,6 +227,9 @@ func newGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *groupWriteFlags, w io.Writer) error {
+	if err := o.CheckColumns(groupColumns...); err != nil {
+		return err
+	}
 	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
 		return err
@@ -321,6 +327,9 @@ func newGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	nameOrID string, f *groupWriteFlags, descriptionSet bool, w io.Writer,
 ) error {
+	if err := o.CheckColumns(groupColumns...); err != nil {
+		return err
+	}
 	domainID, err := resolveDomainID(ctx, client, f.domain)
 	if err != nil {
 		return err

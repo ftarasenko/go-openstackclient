@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	volumequotas "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/quotasets"
 	computequotas "github.com/gophercloud/gophercloud/v2/openstack/compute/v2/quotasets"
@@ -198,6 +199,9 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 	f *quotaSetFlags, w io.Writer,
 ) error {
 	fl, given := f.fl, f.given
+	if err := checkQuotaSetColumns(o, given); err != nil {
+		return err
+	}
 	// ptr yields a pointer to the flag's value only when it was actually given,
 	// which is how every quota UpdateOpts distinguishes "set to N" from
 	// "leave alone" (all fields are *int with omitempty).
@@ -286,6 +290,31 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 	}
 
 	return o.WriteSingle(w, fields, values)
+}
+
+// checkQuotaSetColumns checks -c against the columns quota set renders for the
+// services given. A per-volume-type quota is named after a type on the cloud,
+// so any name of that shape passes.
+func checkQuotaSetColumns(o *output.Options, given serviceSelection) error {
+	var cols []string
+	if given.compute {
+		cf, _ := computeQuotaFields(&computequotas.QuotaSet{})
+		cols = append(cols, cf...)
+	}
+	if given.volume {
+		vf, _ := volumeQuotaFields(&volumequotas.QuotaSet{}, nil)
+		cols = append(cols, vf...)
+		for _, c := range o.Columns {
+			if hasAnyPrefix(strings.ToLower(strings.TrimSpace(c)), perVolumeTypePrefixes) {
+				cols = append(cols, c)
+			}
+		}
+	}
+	if given.network {
+		nf, _ := networkQuotaFields(&networkquotas.Quota{})
+		cols = append(cols, nf...)
+	}
+	return o.CheckColumns(cols...)
 }
 
 // partialError names the services already updated when a later one fails, since

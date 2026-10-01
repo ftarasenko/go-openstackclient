@@ -117,6 +117,9 @@ func newZoneTransferRequestCreateCommand(a *auth.Options, o *output.Options) *co
 func runZoneTransferRequestCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	zoneRef, targetProjectID, description string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(transferRequestColumns...); err != nil {
+		return err
+	}
 	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
@@ -252,6 +255,9 @@ func newZoneTransferRequestSetCommand(a *auth.Options, o *output.Options) *cobra
 func runZoneTransferRequestSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, targetProjectID, description string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(transferRequestColumns...); err != nil {
+		return err
+	}
 	tr, err := request.Update(ctx, client, id, request.UpdateOpts{
 		TargetProjectID: targetProjectID,
 		Description:     description,
@@ -350,6 +356,9 @@ func newZoneTransferAcceptRequestCommand(a *auth.Options, o *output.Options) *co
 func runZoneTransferAcceptRequest(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	transferID, key string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(transferAcceptColumns...); err != nil {
+		return err
+	}
 	ac, err := accept.Create(ctx, client, accept.CreateOpts{
 		ZoneTransferRequestID: transferID,
 		Key:                   key,

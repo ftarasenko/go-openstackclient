@@ -93,6 +93,10 @@ func networkShowFields(n *networkExt) ([]string, []any) {
 	return fields, values
 }
 
+// networkColumns adds the attributes networkShowFields renders only when
+// neutron sends them.
+var networkColumns = append(fieldNames(networkShowFields(&networkExt{})), netAttrQinQ, "l2_adjacency")
+
 func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &networkListFlags{}
 	cmd := &cobra.Command{
@@ -503,6 +507,9 @@ func (opts providerCreateOpts) ToNetworkCreateMap() (map[string]any, error) {
 }
 
 func runNetworkCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *networkCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(networkColumns...); err != nil {
+		return err
+	}
 	if f.providerSegment != "" && f.providerType == "" {
 		return fmt.Errorf("--%s requires --%s", netFlagProviderSegment, netFlagProviderType)
 	}
@@ -671,6 +678,9 @@ func newNetworkSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNetworkSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *networkSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(networkColumns...); err != nil {
+		return err
+	}
 	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
 		return err
 	}
@@ -730,6 +740,9 @@ func newNetworkUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNetworkUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *networkUnsetFlags, w io.Writer) error {
+	if err := o.CheckColumns(networkColumns...); err != nil {
+		return err
+	}
 	id, err := resolveNetworkID(ctx, client, nameOrID)
 	if err != nil {
 		return err

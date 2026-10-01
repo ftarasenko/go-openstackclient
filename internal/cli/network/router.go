@@ -91,6 +91,11 @@ func routerDetailFields(r *routers.Router, ext routerExtAttrs) ([]string, []any)
 	return fields, values
 }
 
+// routerColumns adds the attributes routerDetailFields renders only when
+// neutron sends them.
+var routerColumns = append(fieldNames(routerDetailFields(&routers.Router{}, routerExtAttrs{})),
+	"ha", "enable_default_route_bfd", "enable_default_route_ecmp", "evpn_vni", "enable_snat")
+
 // extractRouterDetail decodes a single-router response (get, create or
 // update) into the typed Router and its routerExtAttrs. As with the list, the
 // body is decoded twice because Router's UnmarshalJSON would swallow the rest.
@@ -657,6 +662,9 @@ func newRouterCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRouterCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *routerCreateFlags, w io.Writer) error {
+	if err := o.CheckColumns(routerColumns...); err != nil {
+		return err
+	}
 	// Upstream checks this only after the router exists, leaving it behind;
 	// checking first creates nothing on a usage error.
 	if f.externalGateway == "" && (f.enableSNAT || f.disableSNAT || len(f.fixedIPs) > 0 || f.qosPolicy != "") {
@@ -895,6 +903,9 @@ func newRouterSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRouterSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *routerSetFlags, flags flagSet, w io.Writer) error {
+	if err := o.CheckColumns(routerColumns...); err != nil {
+		return err
+	}
 	if err := mutuallyExclusive(flags, "enable", "disable"); err != nil {
 		return err
 	}
@@ -1201,6 +1212,9 @@ func newRouterUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // named attributes. The router is read only when --route or --qos-policy
 // needs its current state.
 func runRouterUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, nameOrID string, f *routerUnsetFlags, w io.Writer) error {
+	if err := o.CheckColumns(routerColumns...); err != nil {
+		return err
+	}
 	if !f.externalGateway && len(f.route) == 0 && !f.qosPolicy && len(f.extraProperty) == 0 && !f.given() {
 		return fmt.Errorf("router unset requires at least one attribute flag")
 	}

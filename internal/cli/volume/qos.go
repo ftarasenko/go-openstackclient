@@ -199,6 +199,9 @@ func newQoSCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runQoSCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, consumer string, properties []string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(qosColumns...); err != nil {
+		return err
+	}
 	specs, err := parseProperties(properties)
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)

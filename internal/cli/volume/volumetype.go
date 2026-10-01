@@ -159,6 +159,9 @@ func newTypeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTypeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, f *typeCreateFlags, visibilitySet bool, w io.Writer) error {
+	if err := o.CheckColumns(volumeTypeColumns...); err != nil {
+		return err
+	}
 	specs, err := parseKeyValMap(f.property)
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)

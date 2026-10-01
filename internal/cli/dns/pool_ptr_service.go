@@ -409,6 +409,9 @@ func newPTRRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runPTRRecordSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, ptrdname string, f *ptrRecordSetFlags, w io.Writer,
 ) error {
+	if err := o.CheckColumns(ptrRecordColumns...); err != nil {
+		return err
+	}
 	body := map[string]any{"ptrdname": ptrdname}
 	switch {
 	case f.noDescription:

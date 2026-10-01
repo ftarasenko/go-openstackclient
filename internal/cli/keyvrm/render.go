@@ -124,3 +124,12 @@ var opColumns = []string{"ID", "Recommendation", "Status", "Nova Migration", "Fa
 func opRow(o Operation) []any {
 	return []any{o.ID, o.RecommendationID, o.Status, o.NovaMigrationID, o.FailureType, o.CreatedAt}
 }
+
+// Every column the set verbs can render, checked against -c before the PUT:
+// once KeyVRM has it, an error reads as a failed write and a retry repeats it.
+var (
+	appConfigColumns      = columnsOf(appConfigView(&AppConfig{}))
+	haConfigDetailColumns = columnsOf(haConfigView(&HostAggregateConfig{}))
+)
+
+func columnsOf(fields []string, _ []any) []string { return fields }

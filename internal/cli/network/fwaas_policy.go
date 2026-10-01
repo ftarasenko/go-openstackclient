@@ -116,6 +116,8 @@ func fwPolicyShowFields(p *policies.Policy) ([]string, []any) {
 		[]any{p.Audited, p.Description, p.Rules, p.ID, p.Name, p.ProjectID, p.Shared}
 }
 
+var fwPolicyColumns = fieldNames(fwPolicyShowFields(&policies.Policy{}))
+
 func writeFWPolicy(o *output.Options, w io.Writer, p *policies.Policy) error {
 	fields, values := fwPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -153,6 +155,9 @@ func newFirewallPolicyCreateCommand(a *auth.Options, o *output.Options) *cobra.C
 }
 
 func runFirewallPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *fwPolicyFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwPolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	attrs, err := buildFWPolicyAttrs(ctx, client, f, "")
 	if err != nil {
@@ -274,6 +279,9 @@ func newFirewallPolicySetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runFirewallPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *fwPolicyFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwPolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	id, err := resolveFirewallPolicyID(ctx, client, ref)
 	if err != nil {
@@ -369,6 +377,9 @@ func newFirewallPolicyUnsetCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runFirewallPolicyUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *fwPolicyUnsetFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwPolicyColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	id, err := resolveFirewallPolicyID(ctx, client, ref)
 	if err != nil {

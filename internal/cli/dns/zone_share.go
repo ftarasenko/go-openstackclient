@@ -90,6 +90,9 @@ func resolveTargetProjectID(ctx context.Context, session *auth.Client, ref, doma
 func runZoneShareCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	zoneRef, targetProjectID string, w io.Writer,
 ) error {
+	if err := o.CheckColumns(zoneShareColumns...); err != nil {
+		return err
+	}
 	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err

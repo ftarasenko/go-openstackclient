@@ -43,6 +43,8 @@ func vpnEndpointGroupShowFields(g *endpointgroups.EndpointGroup) ([]string, []an
 		[]any{g.Description, g.Endpoints, g.ID, g.Name, g.ProjectID, g.Type}
 }
 
+var vpnEndpointGroupColumns = fieldNames(vpnEndpointGroupShowFields(&endpointgroups.EndpointGroup{}))
+
 func runVPNEndpointGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
 	pages, err := endpointgroups.List(client, nil).AllPages(ctx)
 	if err != nil {
@@ -133,6 +135,9 @@ func newVPNEndpointGroupCreateCommand(a *auth.Options, o *output.Options) *cobra
 // runVPNEndpointGroupCreate mirrors upstream CreateEndpointGroup: subnet
 // endpoints are resolved to IDs, CIDRs are sent as given.
 func runVPNEndpointGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *vpnEndpointGroupFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(vpnEndpointGroupColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNEndpointGroups(ctx, client, err) }()
 	typeChoice := []*vpnChoice{{flag: "type", attr: "type", choices: vpnEndpointGroupTypes, value: f.typ}}
 	attrs := map[string]any{}
@@ -188,6 +193,9 @@ func newVPNEndpointGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runVPNEndpointGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *vpnEndpointGroupFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(vpnEndpointGroupColumns...); err != nil {
+		return err
+	}
 	defer func() { err = explainVPNEndpointGroups(ctx, client, err) }()
 	attrs := map[string]any{}
 	if f.description != "" {

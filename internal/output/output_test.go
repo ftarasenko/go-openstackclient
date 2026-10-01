@@ -831,3 +831,13 @@ func TestWriteSingle_ColumnErrorCarriesID(t *testing.T) {
 		t.Fatalf("err = %#v, want a rendering ColumnError with no ID", err)
 	}
 }
+
+// A bad --sort-column is only found while rendering, so it is marked as such.
+func TestWriteList_SortColumnErrorIsRendering(t *testing.T) {
+	o := &Options{Format: FormatValue, SortColumns: []string{"bogus"}}
+	err := o.WriteList(io.Discard, Table{Columns: []string{"ID"}, Rows: [][]any{{"a"}, {"b"}}})
+	var ce *ColumnError
+	if !errors.As(err, &ce) || !ce.Rendering || !strings.Contains(err.Error(), `unknown sort column "bogus"`) {
+		t.Fatalf("err = %v, want a rendering sort ColumnError", err)
+	}
+}

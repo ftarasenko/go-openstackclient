@@ -45,6 +45,9 @@ func newVolumeExtendCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runVolumeExtend(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, size int, w io.Writer,
 ) error {
+	if err := o.CheckColumns(volumeColumns...); err != nil {
+		return err
+	}
 	if size <= 0 {
 		return fmt.Errorf("new size must be a positive number of GiB, got %d", size)
 	}

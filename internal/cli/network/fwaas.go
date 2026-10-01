@@ -305,6 +305,8 @@ func fwGroupShowFields(g *groups.Group) ([]string, []any) {
 	}
 }
 
+var fwGroupColumns = fieldNames(fwGroupShowFields(&groups.Group{}))
+
 func writeFWGroup(o *output.Options, w io.Writer, g *groups.Group) error {
 	fields, values := fwGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)
@@ -346,6 +348,9 @@ func newFirewallGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runFirewallGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *fwGroupFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwGroupColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	attrs, err := buildFWGroupAttrs(ctx, client, f, "")
 	if err != nil {
@@ -464,6 +469,9 @@ func newFirewallGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runFirewallGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *fwGroupFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwGroupColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	id, err := resolveFirewallGroupID(ctx, client, ref)
 	if err != nil {
@@ -566,6 +574,9 @@ func newFirewallGroupUnsetCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runFirewallGroupUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *fwGroupUnsetFlags, w io.Writer) (err error) {
+	if err := o.CheckColumns(fwGroupColumns...); err != nil {
+		return err
+	}
 	defer func() { err = fwaasErr(ctx, client, err) }()
 	id, err := resolveFirewallGroupID(ctx, client, ref)
 	if err != nil {
