@@ -311,3 +311,35 @@ func TestRunServerImageCreate_ExplicitNameSkipsTheServerFetch(t *testing.T) {
 		t.Errorf("the pre-2.45 Location header was not read:\n%s", out.String())
 	}
 }
+
+// nova reports SHELVED while still offloading (task_state shelving_offloading);
+// --wait must not return until the task clears, or the unshelve a script sends
+// next is refused with a 409. Seen on an epoxy devstack.
+func TestRunServerShelve_WaitsForTaskStateToClear(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	captureServerAction(t, fakeServer, stateServerID)
+	var gets int
+	fakeServer.Mux.HandleFunc("/servers/"+stateServerID, func(w http.ResponseWriter, _ *http.Request) {
+		gets++
+		body := `{"server":{"id":"` + stateServerID + `","status":"SHELVED","OS-EXT-STS:task_state":"shelving_offloading"}}`
+		if gets > 2 {
+			body = `{"server":{"id":"` + stateServerID + `","status":"SHELVED_OFFLOADED","OS-EXT-STS:task_state":null}}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+
+	defer func(prev time.Duration) { statusPollInterval = prev }(statusPollInterval)
+	statusPollInterval = time.Millisecond
+
+	var out bytes.Buffer
+	if err := runServerShelve(context.Background(), computeClient(fakeServer, "latest"),
+		[]string{stateServerID}, false, true, time.Minute, &out); err != nil {
+		t.Fatalf("runServerShelve: %v", err)
+	}
+	if gets != 3 {
+		t.Errorf("polled %d times, want the wait to run until the offload finished", gets)
+	}
+}

@@ -420,8 +420,14 @@ func waitForServerStatuses(ctx context.Context, client *gophercloud.ServiceClien
 			return err
 		}
 		last = s.Status
+		if s.TaskState != "" {
+			last += " (task " + s.TaskState + ")"
+		}
 		switch {
-		case accept[s.Status]:
+		// A status is a resting one only once nova has no task running on the
+		// server: it reports SHELVED while still offloading, and ACTIVE through
+		// a live migration, and an action sent then is refused with a 409.
+		case accept[s.Status] && s.TaskState == "":
 			return nil
 		case s.Status == "ERROR":
 			return fmt.Errorf("server entered ERROR status while waiting for %q", wanted)
