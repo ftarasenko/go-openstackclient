@@ -19,7 +19,10 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then END="$TAG"; els
 # When TAG does not exist yet (first-time cut) it is absent from the list, so awk
 # prints every tag and tail picks the newest — the right predecessor.
 PREV="$(git tag --sort=v:refname | awk -v t="$TAG" '$0==t{exit} {print}' | tail -n1)"
-if [ -n "$PREV" ]; then REV="${PREV}..${END}"; else REV="$END"; fi
+# A symmetric range with --cherry-pick --right-only drops a commit whose patch
+# already shipped under the previous tag with another hash, as a rebase merge
+# re-creates every commit of a tagged branch on master.
+if [ -n "$PREV" ]; then REV="${PREV}...${END}"; else REV="$END"; fi
 
 # Collect one bullet per commit into its type's bucket.
 feat=(); fix=(); perf=(); refactor=(); docs=(); tests=(); tooling=(); other=(); breaking=()
@@ -59,7 +62,7 @@ while IFS= read -r sha; do
     build|ci|chore) tooling+=("$bullet") ;;
     *) other+=("$bullet") ;;
   esac
-done < <(git log --no-merges --format='%H' "$REV")
+done < <(git log --no-merges --cherry-pick --right-only --format='%H' "$REV")
 
 emit() { # heading, array-name
   local heading="$1"; shift
