@@ -124,7 +124,7 @@ func TestRunServerCreate_ColumnsMatchShow(t *testing.T) {
 		return keys
 	}
 	show := fieldsOf(func(o *output.Options, w io.Writer) error {
-		return runServerShow(context.Background(), client, o, "6f0c5a3e-0000-4000-8000-00000000002a", false, w)
+		return runServerShow(context.Background(), client, o, "6f0c5a3e-0000-4000-8000-00000000002a", false, nil, w)
 	})
 	create := fieldsOf(func(o *output.Options, w io.Writer) error {
 		return runServerCreate(context.Background(), client, o, "web-1",

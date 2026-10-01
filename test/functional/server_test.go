@@ -25,6 +25,10 @@ func boot(t *testing.T, r runner, c *cloud, name string, extra ...string) string
 	if id == "" {
 		t.Fatalf("server create returned %v", s)
 	}
+	// create renders show's columns, refreshed after --wait.
+	if field(s, "status") != "ACTIVE" || field(s, "flavor") == "" {
+		t.Errorf("server create --wait returned %v", s)
+	}
 	t.Cleanup(func() {
 		r.run(t, "server", "unlock", id)
 		r.run(t, "server", "delete", id, "--wait")
@@ -70,10 +74,25 @@ func TestServerLifecycle(t *testing.T) {
 	if field(s, "key_name") != key || !strings.Contains(field(s, "properties"), "ft") {
 		t.Errorf("server show = %v", s)
 	}
-	// server list --long carries the metadata as upstream's Properties.
+	// server list --long carries the metadata as upstream's Properties, and
+	// both listings name the image as upstream does.
+	image := field(r.show(t, "image", "show", c.Image), "name")
 	if rows := r.list(t, "server", "list", "--long", "--name", name); len(rows) != 1 ||
-		!strings.Contains(field(rows[0], "properties"), "ft='1'") {
+		!strings.Contains(field(rows[0], "properties"), "ft='1'") || field(rows[0], "Image Name") != image {
 		t.Errorf("server list --long --name %s = %v", name, rows)
+	}
+	if rows := r.list(t, "server", "list", "--name", name); len(rows) != 1 || field(rows[0], "Image") != image {
+		t.Errorf("server list --name %s = %v, want Image %q", name, rows, image)
+	}
+
+	// An unknown -c fails before nova is asked, so nothing is built.
+	bad := uniq("srv-badcol")
+	if msg := r.fails(t, "server", "create", bad, "--image", c.Image, "--flavor", "m1.tiny",
+		"--network", "private", "-c", "id", "-c", "bogus"); !strings.Contains(msg, "unknown column(s): bogus") {
+		t.Errorf("server create -c bogus: %s", msg)
+	}
+	if rows := r.list(t, "server", "list", "--name", bad); len(rows) != 0 {
+		t.Errorf("server create -c bogus built %v", rows)
 	}
 	// --user-data writes the decoded script raw, for a pipe, whatever -f says.
 	if ud := r.ok(t, "server", "show", id, "--user-data"); ud != "#cloud-config\nhostname: ft\n" {

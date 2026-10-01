@@ -350,31 +350,32 @@ API. Numeric columns compare numerically (`--sort-column Size` puts 9 before
 10, not before 100), the sort is stable so repeated `--sort-column` flags break
 ties, and column names are matched case-insensitively.
 
-`server list`'s default table is upstream's — `ID`, `Name`, `Status`,
-`Networks`, `Flavor` — with one deviation: upstream's sixth column is the image
-*name*, resolved with a glance lookup `koc` does not make, so rather than
-printing a 36-character image UUID in its place `koc` leaves it out and offers
-it as the opt-in `Image ID`. Below nova 2.47 the flavor's name comes from a
-single flavor listing per invocation, and only when the column is actually
-being rendered — so `-c Name -c Status` does not pay for it.
+`server list`'s columns are upstream's: `ID`, `Name`, `Status`, `Networks`,
+`Image`, `Flavor` by default, and with `--long` `ID`, `Name`, `Status`,
+`Task State`, `Power State`, `Networks`, `Image Name`, `Image ID`, `Flavor`,
+`Availability Zone`, `Host` (the hypervisor hostname), `Properties`. Image
+names come from one glance query per listing and flavor names, below nova
+2.47, from one flavor listing — each only when its column is rendered, so
+`-c Name -c Status` pays for neither. `-n/--no-name-lookup` shows IDs instead.
 
 A few columns are **opt-in**: they are not in the default table, and naming
 one in `-c/--column` (or `--sort-column`) materialises it.
-`server list` carries eleven — `Created At`, `Image ID`, `Flavor ID`,
+`server list` carries fourteen — `Created At`, `Image ID`, `Flavor ID`,
 `Availability Zone`, `Host`, `Task State`, `Power State`, `Project ID`,
-`User ID`, `Security Groups`, `Properties` — mirroring the extras upstream's
-`server list` appends the same way. So a server's age comes from the listing:
+`User ID`, `Security Groups`, `Properties`, `Host Status`, `Pinned
+Availability Zone`, `Scheduler Hints` — mirroring the extras upstream's
+`server list` appends the same way, and upstream's attribute spellings
+(`created_at`, `host`, `project_id`, …) select them too. The last three are
+fields nova adds at 2.16, 2.96 and 2.100, so naming one raises the listing to
+that microversion. So a server's age comes from the listing:
 
 ```sh
-koc server list --all-projects -c Name -c "Created At" --sort-column "Created At"
+koc server list --all-projects -c Name -c created_at --sort-column created_at
 ```
 
 without which reading creation time costs one `server show` per server. Naming
-one adds it for that invocation only — the default table is not otherwise
-widened, so nothing that reads it positionally is affected. `--long` already
-carries the ones upstream's `--long` does (`Availability Zone`, `Host`,
-`Task State`, `Power State`, `Properties`, plus koc's `Project ID` and
-`User ID`), so naming one of those alongside it adds nothing.
+one adds it for that invocation only. `--long` already carries the ones
+upstream's `--long` does, so naming one of those alongside it adds nothing.
 `server list --help` names the full set.
 
 ### Live refresh (`--watch`)

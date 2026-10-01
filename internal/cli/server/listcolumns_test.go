@@ -12,11 +12,9 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
-// TestServerList_LongCarriesOwner covers the Project ID / User ID columns.
-// Attributing a host's guests to their owners is the first step of a drain, and
-// nova returns both in /servers/detail at every microversion, so --long should
-// not make the operator run a query per project to get them.
-func TestServerList_LongCarriesOwner(t *testing.T) {
+// TestServerList_OwnerColumns covers Project ID / User ID: opt-in columns, as
+// upstream has them, rather than part of either listing.
+func TestServerList_OwnerColumns(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
 
@@ -35,27 +33,26 @@ func TestServerList_LongCarriesOwner(t *testing.T) {
 		}]}`))
 	})
 
-	o := &output.Options{Format: output.FormatCSV}
+	// Upstream's attribute spellings select them too.
+	o := &output.Options{Format: output.FormatCSV, Columns: []string{"Name", "project_id", "User ID"}}
 	var buf bytes.Buffer
 	if err := runServerList(context.Background(), computeClient(fakeServer, "latest"), o,
 		&serverListFlags{long: true}, "", "", &buf); err != nil {
 		t.Fatalf("runServerList: %v", err)
 	}
-	out := buf.String()
-	for _, want := range []string{"Project ID", "User ID", "proj-9", "user-4"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("server list --long output missing %q\n---\n%s", want, out)
-		}
+	if got, want := buf.String(), "Name,Project ID,User ID\nweb-1,proj-9,user-4\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 
-	// The default listing stays as it was: these are --long columns.
-	buf.Reset()
-	if err := runServerList(context.Background(), computeClient(fakeServer, "latest"), o,
-		&serverListFlags{}, "", "", &buf); err != nil {
-		t.Fatalf("runServerList: %v", err)
-	}
-	if strings.Contains(buf.String(), "Project ID") {
-		t.Errorf("default listing unexpectedly carries Project ID\n---\n%s", buf.String())
+	for _, long := range []bool{false, true} {
+		buf.Reset()
+		if err := runServerList(context.Background(), computeClient(fakeServer, "latest"),
+			&output.Options{Format: output.FormatCSV}, &serverListFlags{long: long}, "", "", &buf); err != nil {
+			t.Fatalf("runServerList: %v", err)
+		}
+		if strings.Contains(buf.String(), "Project ID") {
+			t.Errorf("listing (long=%v) unexpectedly carries Project ID\n---\n%s", long, buf.String())
+		}
 	}
 }
 
@@ -212,17 +209,17 @@ func TestServerList_OptInColumns(t *testing.T) {
 			// its last column below 2.96.
 			name:   "long carries properties",
 			long:   true,
-			want:   []string{",User ID,Properties\n", `,"env='prod', role='web'"`},
+			want:   []string{",Host,Properties\n", `,"env='prod', role='web'"`},
 			absent: []string{"Properties,Properties"},
 		},
 		{
-			// --long already renders Project ID; selecting it must not duplicate
+			// --long already renders Image ID; selecting it must not duplicate
 			// the header.
 			name:    "column --long already carries is not duplicated",
-			columns: []string{"Name", "Project ID"},
+			columns: []string{"Name", "Image ID"},
 			long:    true,
-			want:    []string{"Project ID"},
-			absent:  []string{"Project ID,Project ID"},
+			want:    []string{"Image ID"},
+			absent:  []string{"Image ID,Image ID"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -266,11 +263,11 @@ func TestServerList_OptInColumnsAreAbsentUnlessAsked(t *testing.T) {
 			&serverListFlags{long: long}, "", "", &buf); err != nil {
 			t.Fatalf("runServerList(long=%v): %v", long, err)
 		}
-		absents := []string{"Created At", "Security Groups", "Image ID"}
+		absents := []string{"Created At", "Security Groups", "Project ID", "User ID"}
 		if !long {
-			// Properties is upstream's last --long column, so only the
-			// default listing leaves it out.
-			absents = append(absents, "Properties")
+			// Image ID and Properties are upstream --long columns, so only the
+			// default listing leaves them out.
+			absents = append(absents, "Image ID", "Properties")
 		}
 		for _, absent := range absents {
 			if strings.Contains(buf.String(), absent) {

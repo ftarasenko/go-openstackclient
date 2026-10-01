@@ -155,6 +155,15 @@ type serverListFlags struct {
 	// koc's default, letting the list call negotiate the lowest version that
 	// still answers it — see serverListMicroversion.
 	pinMicroversion bool
+
+	// noNameLookup is upstream's --no-name-lookup: image and flavor columns
+	// show IDs, and neither glance nor the flavor listing is asked.
+	noNameLookup bool
+	// imageNames names the Image column; nil leaves it as IDs.
+	imageNames imageNamer
+	// rawColumns are the optional columns read from fields gophercloud's
+	// Server does not model; set by runServerList.
+	rawColumns []string
 }
 
 // serverListQuery augments gophercloud's servers.ListOpts with the KeyStack
@@ -237,6 +246,7 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			f.pinMicroversion = a.ComputeAPIVersionPinnable()
+			f.imageNames = glanceImageNamer(s.auth)
 			return runServerList(ctx, s.client, o, f, projectID, userID, cmd.OutOrStdout())
 		},
 	}
@@ -244,6 +254,7 @@ func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.all, "all", allprojects.Default(), "list servers across all projects (admin); alias of --all-projects")
 	allprojects.Bind(cmd, &f.allProjects, "list servers across all projects (admin)")
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
+	fl.BoolVarP(&f.noNameLookup, "no-name-lookup", "n", false, "skip flavor and image name lookup")
 	fl.StringVar(&f.name, "name", "", "filter by server name (regular expression)")
 	fl.StringVar(&f.status, "status", "", "filter by server status, e.g. ACTIVE")
 	fl.StringVar(&f.host, "host", "", "filter by hypervisor host name")
@@ -300,6 +311,8 @@ func resolveServerOwner(ctx context.Context, session *auth.Client, f *serverList
 func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *serverListFlags, projectID, userID string, w io.Writer,
 ) error {
+	aliasServerListColumns(o, f.long)
+	f.rawColumns = o.SelectedColumns(serverListRawColumnNames()...)
 	opts := serverListQuery{
 		ListOpts: servers.ListOpts{
 			Name:   f.name,
@@ -341,8 +354,17 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if basic {
 		pager = servers.ListSimple(listClient, opts)
 	}
-	all, err := paging.Collect(ctx, pager, f.limit, servers.ExtractServers)
+	raw := map[string]map[string]any{}
+	extract := servers.ExtractServers
+	if len(f.rawColumns) > 0 {
+		extract = extractServersWithRaw(raw)
+	}
+	all, err := paging.Collect(ctx, pager, f.limit, extract)
 	if err != nil {
+		if mv := rawColumnsMicroversion(f.rawColumns); mv != "" {
+			return fmt.Errorf("listing servers (-c %s needs nova %s): %w",
+				strings.Join(f.rawColumns, ", "), mv, err)
+		}
 		if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
 			return keystackExtErr(fmt.Errorf("listing servers: %w", err), "created/deleted server-list filters")
 		}
@@ -351,12 +373,15 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if basic {
 		return o.WriteList(w, serverBasicTable(all))
 	}
-	var flavorNames map[string]string
+	var flavorNames, imageNames map[string]string
 	if wantsFlavorNames(o, f) {
 		flavorNames = serverFlavorNames(ctx, client, all)
 	}
+	if wantsImageNames(o, f) {
+		imageNames = f.imageNames(ctx, serverImageIDs(all))
+	}
 	extra := serverListExtraColumns(o, serverListColumns(f.long))
-	return o.WriteList(w, serverListTable(all, f.long, flavorNames, extra))
+	return o.WriteList(w, serverListTable(all, f.long, listNames{flavor: flavorNames, image: imageNames}, extra, raw))
 }
 
 // serverListMicroversion is the lowest compute microversion that still answers
@@ -384,6 +409,9 @@ func serverListMicroversion(f *serverListFlags) string {
 		// user_id is rejected for a non-admin token below 2.83.
 		mv = "2.83"
 	}
+	if raw := rawColumnsMicroversion(f.rawColumns); raw != "" && microversionLess(mv, raw) {
+		mv = raw
+	}
 	return mv
 }
 
@@ -397,6 +425,9 @@ func serverListMicroversion(f *serverListFlags) string {
 // default listing: `server list -c Name -c Status --watch` must not buy a
 // flavor listing per refresh for a column it is not showing.
 func wantsFlavorNames(o *output.Options, f *serverListFlags) bool {
+	if f.noNameLookup {
+		return false
+	}
 	if f.long {
 		return true
 	}
@@ -420,14 +451,36 @@ func serverBasicTable(list []servers.Server) output.Table {
 	return t
 }
 
-// serverListTable renders the listing. --long adds nova's OS-EXT-* attributes
-// plus the owning project and user: attributing a host's guests to their owners
-// is the first step of any drain, and without these columns it costs one
-// `--project` query per project (or a guess from the server names). Nova
-// returns tenant_id/user_id in /servers/detail at every microversion, so they
-// are free here.
-func serverListTable(list []servers.Server, long bool, flavorNames map[string]string,
-	extra []serverColumn,
+// wantsImageNames reports whether a rendered column needs glance's image
+// names, the one reason to make that request.
+func wantsImageNames(o *output.Options, f *serverListFlags) bool {
+	if f.noNameLookup || f.imageNames == nil {
+		return false
+	}
+	return len(o.Columns) == 0 || len(o.SelectedColumns("Image", "Image Name")) > 0
+}
+
+// serverImageIDs lists the distinct images the servers booted from.
+func serverImageIDs(list []servers.Server) []string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, s := range list {
+		if id := imageID(s.Image); id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// listNames are the name lookups behind the listing's Image and Flavor columns.
+type listNames struct {
+	flavor, image map[string]string
+}
+
+// serverListTable renders the listing in upstream's column order.
+func serverListTable(list []servers.Server, long bool, names listNames,
+	extra []serverColumn, raw map[string]map[string]any,
 ) output.Table {
 	cols := serverListColumns(long)
 	for _, c := range extra {
@@ -435,14 +488,27 @@ func serverListTable(list []servers.Server, long bool, flavorNames map[string]st
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, s := range list {
-		row := []any{s.ID, s.Name, s.Status, formatNetworks(s.Addresses)}
+		row := []any{s.ID, s.Name, s.Status}
 		if long {
-			row = append(row, imageID(s.Image), flavorName(s.Flavor, flavorNames), s.AvailabilityZone,
-				s.Host, s.TaskState, s.PowerState, s.TenantID, s.UserID, formatServerMetadata(s.Metadata))
+			row = append(row, s.TaskState, powerStateLabel(int(s.PowerState)))
+		}
+		row = append(row, formatNetworks(s.Addresses))
+		if long {
+			row = append(row, listImageName(s, names.image), listImageID(s),
+				flavorName(s.Flavor, names.flavor), s.AvailabilityZone, s.HypervisorHostname,
+				formatServerMetadata(s.Metadata))
 		} else {
-			row = append(row, flavorName(s.Flavor, flavorNames))
+			image := listImageName(s, names.image)
+			if image == "" {
+				image = listImageID(s)
+			}
+			row = append(row, image, flavorName(s.Flavor, names.flavor))
 		}
 		for _, c := range extra {
+			if c.Raw != "" {
+				row = append(row, rawColumnValue(raw[s.ID][c.Raw]))
+				continue
+			}
 			row = append(row, c.Value(s))
 		}
 		t.Rows = append(t.Rows, row)
@@ -451,33 +517,15 @@ func serverListTable(list []servers.Server, long bool, flavorNames map[string]st
 }
 
 // serverListColumns is the listing's fixed column set, before the opt-in extras
-// in serverListOptional are appended.
-//
-// Flavor is in the default listing because upstream's is `ID, Name, Status,
-// Networks, Image, Flavor` (python-openstackclient 10.2.1,
-// compute/v2/server.py, the `column_headers` assembly at ListServer) and koc's
-// stopped at Networks — so `koc server list` and `openstack server list`
-// disagreed about the one attribute an operator reads a listing for after the
-// status.
-//
-// Image is deliberately still absent. Upstream's default column is the image
-// *name*, resolved with a glance lookup koc does not make; what koc has is the
-// ID, and a 36-character UUID per row is what makes this table wrap in the
-// first place. `-c "Image ID"` renders it for anyone who wants it, and the
-// deviation is recorded in docs/coverage.md under "Naming deviations from
-// upstream".
+// in serverListOptional are appended. Both match upstream's ListServer
+// (python-openstackclient, compute/v2/server.py) at a microversion of 2.47 or
+// later, where Flavor is the name; Host is the hypervisor hostname, as there.
 func serverListColumns(long bool) []string {
-	cols := []string{"ID", "Name", "Status", "Networks"}
 	if !long {
-		return append(cols, "Flavor")
+		return []string{"ID", "Name", "Status", "Networks", "Image", "Flavor"}
 	}
-	// --long keeps the column order it has always had: it is the listing
-	// scripts read positionally, and Flavor is already in it. Properties, the
-	// server's metadata, is upstream's last --long column below 2.96 (the
-	// pinned-AZ and scheduler-hint columns after it are above the Zed cap), so
-	// it is appended rather than slotted in.
-	return append(cols, "Image", "Flavor", "Availability Zone", "Host",
-		"Task State", "Power State", "Project ID", "User ID", "Properties")
+	return []string{"ID", "Name", "Status", "Task State", "Power State", "Networks",
+		"Image Name", "Image ID", "Flavor", "Availability Zone", "Host", "Properties"}
 }
 
 func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -491,11 +539,11 @@ func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			client, err := newComputeClient(ctx, a)
+			s, err := newComputeSession(ctx, a)
 			if err != nil {
 				return err
 			}
-			return runServerShow(ctx, client, o, args[0], userData, cmd.OutOrStdout())
+			return runServerShow(ctx, s.client, o, args[0], userData, glanceImageNamer(s.auth), cmd.OutOrStdout())
 		},
 	}
 	// user_data is a large base64 blob elided from the default table; --user-data
@@ -505,7 +553,9 @@ func newServerShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, userData bool, w io.Writer) error {
+func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string,
+	userData bool, images imageNamer, w io.Writer,
+) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
 		return err
@@ -517,6 +567,7 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if userData {
 		return writeServerUserData(server, w)
 	}
+	nameServerImage(ctx, server, images)
 	// json/yaml keep the raw structured values so they can be parsed; the
 	// text views (table/csv/value) flatten them OSC-style.
 	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
@@ -601,6 +652,9 @@ type serverCreateFlags struct {
 
 	wait        bool
 	waitTimeout time.Duration
+
+	// imageNames names the created server's image in the output.
+	imageNames imageNamer
 }
 
 func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -652,6 +706,7 @@ func newServerCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := resolveServerCreateRefs(ctx, s.auth, f); err != nil {
 				return err
 			}
+			f.imageNames = glanceImageNamer(s.auth)
 			return runServerCreate(ctx, s.client, o, args[0], f, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -910,7 +965,7 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 			return fmt.Errorf("server %q was created (id %s) but did not become ACTIVE: %w", name, s.ID, err)
 		}
 	}
-	return writeCreatedServer(ctx, client, o, s, name, w)
+	return writeCreatedServer(ctx, client, o, s, name, f.imageNames, w)
 }
 
 // writeCreatedServer renders the new server with `server show`'s columns plus
@@ -918,12 +973,13 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 // the generated password, so the server is re-fetched; a failed re-fetch is not
 // fatal, since the create already succeeded.
 func writeCreatedServer(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	s *servers.Server, name string, w io.Writer,
+	s *servers.Server, name string, images imageNamer, w io.Writer,
 ) error {
 	server, err := getServerRaw(ctx, client, s.ID)
 	if err != nil {
 		server = map[string]any{"id": s.ID, "name": name}
 	}
+	nameServerImage(ctx, server, images)
 	server["adminPass"] = s.AdminPass
 	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
 	fields, values := showServerFields(server, flatten)

@@ -81,7 +81,10 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runServerShow(context.Background(), client, o, serverUUID, false, &buf); err != nil {
+	names := func(_ context.Context, ids []string) map[string]string {
+		return map[string]string{ids[0]: "cirros"}
+	}
+	if err := runServerShow(context.Background(), client, o, serverUUID, false, names, &buf); err != nil {
 		t.Fatalf("runServerShow: %v", err)
 	}
 	if gotMethod != http.MethodGet {
@@ -90,12 +93,12 @@ func TestRunServerShow_RequestAndOutput(t *testing.T) {
 	out := buf.String()
 	// All attributes are shown (not a curated subset): the OS-EXT-* admin
 	// fields must appear, addresses/flavor/volumes are flattened OSC-style, and
-	// nested flavor extra_specs are dotted.
+	// nested flavor extra_specs are dotted; the image is "<name> (<id>)".
 	for _, want := range []string{
 		serverUUID, "web-1", "ACTIVE", "mykey",
 		"OS-EXT-SRV-ATTR:host", "cmp-1", "OS-EXT-STS:vm_state", "active",
 		"private=10.0.0.5", "original_name='m1.small'",
-		"extra_specs.hw:cpu_policy='dedicated'", "id='img-123'",
+		"extra_specs.hw:cpu_policy='dedicated'", "cirros (img-123)",
 		"id='vol-aaa'", "id='vol-bbb'",
 	} {
 		if !strings.Contains(out, want) {
@@ -127,7 +130,7 @@ func TestRunServerShow_JSONStructuredAndAliased(t *testing.T) {
 	client := computeClient(fakeServer, "2.79")
 	o := &output.Options{Format: output.FormatJSON}
 	var buf bytes.Buffer
-	if err := runServerShow(context.Background(), client, o, serverUUID, false, &buf); err != nil {
+	if err := runServerShow(context.Background(), client, o, serverUUID, false, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var got map[string]any
@@ -173,7 +176,7 @@ func TestRunServerShow_TableHumanized(t *testing.T) {
 	client := computeClient(fakeServer, "2.79")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerShow(context.Background(), client, o, serverUUID, false, &buf); err != nil {
+	if err := runServerShow(context.Background(), client, o, serverUUID, false, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -207,7 +210,7 @@ func TestRunServerShow_UserDataDecoded(t *testing.T) {
 	o := &output.Options{Format: output.FormatTable}
 
 	var buf bytes.Buffer
-	if err := runServerShow(context.Background(), client, o, serverUUID, true, &buf); err != nil {
+	if err := runServerShow(context.Background(), client, o, serverUUID, true, nil, &buf); err != nil {
 		t.Fatalf("runServerShow: %v", err)
 	}
 	if got := buf.String(); got != plain {
@@ -228,7 +231,7 @@ func TestRunServerShow_UserDataAbsentErrors(t *testing.T) {
 	client := computeClient(fakeServer, "2.79")
 	o := &output.Options{Format: output.FormatTable}
 	var buf bytes.Buffer
-	if err := runServerShow(context.Background(), client, o, serverUUID, true, &buf); err == nil {
+	if err := runServerShow(context.Background(), client, o, serverUUID, true, nil, &buf); err == nil {
 		t.Error("expected error when server has no user_data")
 	}
 }
