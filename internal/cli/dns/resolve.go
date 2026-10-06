@@ -26,21 +26,42 @@ func withTrailingDot(name string) string {
 // designate API, so a name is resolved by listing zones and matching on name
 // (tolerating a missing trailing dot) or on an exact ID.
 func resolveZoneID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
+	z, err := resolveZone(ctx, client, ref)
+	if err != nil {
+		return "", err
+	}
+	return z.ID, nil
+}
+
+// qualifyName makes a recordset name absolute within zoneName the way
+// python-designateclient's _canonicalize_record_name does: a name without a
+// trailing dot is relative to the zone ("www" in "example.com." is
+// "www.example.com."); one with a trailing dot is already fully qualified.
+func qualifyName(name, zoneName string) string {
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+	return name + "." + withTrailingDot(zoneName)
+}
+
+// resolveZone is resolveZoneID returning the whole zone, for callers that
+// also need its name.
+func resolveZone(ctx context.Context, client *gophercloud.ServiceClient, ref string) (zones.Zone, error) {
 	pages, err := zones.List(client, zones.ListOpts{}).AllPages(ctx)
 	if err != nil {
-		return "", fmt.Errorf("resolving zone %q: %w", ref, err)
+		return zones.Zone{}, fmt.Errorf("resolving zone %q: %w", ref, err)
 	}
 	all, err := zones.ExtractZones(pages)
 	if err != nil {
-		return "", fmt.Errorf("resolving zone %q: %w", ref, err)
+		return zones.Zone{}, fmt.Errorf("resolving zone %q: %w", ref, err)
 	}
 	want := withTrailingDot(ref)
 	for _, z := range all {
 		if z.ID == ref || z.Name == ref || z.Name == want {
-			return z.ID, nil
+			return z, nil
 		}
 	}
-	return "", fmt.Errorf("zone %q not found", ref)
+	return zones.Zone{}, fmt.Errorf("zone %q not found", ref)
 }
 
 // resolveRecordSetID turns a recordset reference (a name or an ID) into a

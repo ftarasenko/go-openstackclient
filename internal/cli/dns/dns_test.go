@@ -635,8 +635,8 @@ func TestRunRecordSetCreate_RequestBody(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Errorf("request method = %q, want POST", gotMethod)
 	}
-	if gotBody["name"] != "www." {
-		t.Errorf("body name = %v, want www. (trailing dot added)", gotBody["name"])
+	if gotBody["name"] != "www.example.com." {
+		t.Errorf("body name = %v, want www.example.com. (relative name qualified with the zone)", gotBody["name"])
 	}
 	if gotBody["type"] != "A" {
 		t.Errorf("body type = %v, want A", gotBody["type"])
@@ -981,5 +981,19 @@ func TestRunRecordSet_InheritedTTL(t *testing.T) {
 	}
 	if !strings.Contains(list.String(), `"TTL": null`) {
 		t.Errorf("recordset list TTL = %s, want null", list.String())
+	}
+}
+
+func TestQualifyName(t *testing.T) {
+	for _, c := range []struct{ name, zone, want string }{
+		{"auth", "e2e.example.com.", "auth.e2e.example.com."},
+		{"auth", "e2e.example.com", "auth.e2e.example.com."},
+		{"auth.e2e.example.com.", "e2e.example.com.", "auth.e2e.example.com."},
+		{"e2e.example.com.", "e2e.example.com.", "e2e.example.com."},
+		{"", "e2e.example.com.", ""},
+	} {
+		if got := qualifyName(c.name, c.zone); got != c.want {
+			t.Errorf("qualifyName(%q, %q) = %q, want %q", c.name, c.zone, got, c.want)
+		}
 	}
 }

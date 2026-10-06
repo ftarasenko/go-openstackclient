@@ -310,12 +310,14 @@ func runRecordSetCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err := o.CheckColumns(recordSetColumns...); err != nil {
 		return err
 	}
-	zoneID, err := resolveZoneID(ctx, client, zoneRef)
+	zone, err := resolveZone(ctx, client, zoneRef)
 	if err != nil {
 		return err
 	}
+	zoneID := zone.ID
 	opts := recordsets.CreateOpts{
-		Name:        withTrailingDot(name),
+		// A name without a trailing dot is relative to the zone, as upstream.
+		Name:        qualifyName(name, zone.Name),
 		Type:        f.typ,
 		Records:     f.records,
 		TTL:         f.ttl,

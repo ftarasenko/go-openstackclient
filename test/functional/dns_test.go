@@ -65,6 +65,10 @@ func TestDNSZonesAndRecordsets(t *testing.T) {
 	www := "www." + name
 	rs := r.show(t, "recordset", "create", id, www, "--type", "A", "--record", "192.0.2.10", "--ttl", "300")
 	rsID := field(rs, "id")
+	// A name without a trailing dot is relative to the zone, as upstream.
+	if rel := r.show(t, "recordset", "create", id, "rel", "--type", "A", "--record", "192.0.2.13"); field(rel, "name") != "rel."+name {
+		t.Errorf("relative recordset name = %v, want rel.%s", field(rel, "name"), name)
+	}
 	r.ok(t, "recordset", "set", id, rsID, "--record", "192.0.2.11", "--record", "192.0.2.12",
 		"--ttl", "600", "--description", "functional")
 	waitFor(t, "the recordset to go ACTIVE", dnsTimeout, func() bool {
