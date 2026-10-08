@@ -97,6 +97,7 @@ type volumeListFlags struct {
 	status      string
 	volumeType  string
 	host        string
+	properties  []string
 	limit       int
 	marker      string
 
@@ -162,6 +163,8 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.userDomain, "user-domain", "", "domain owning --user, to disambiguate the name (name or ID)")
 	fl.StringVar(&f.name, "name", "", "filter by volume name")
 	fl.StringVar(&f.status, "status", "", "filter by volume status")
+	fl.StringArrayVar(&f.properties, "property", nil,
+		"filter by a volume property key=value (repeatable; every pair must match)")
 	fl.StringVar(&f.volumeType, "type", "", "filter by volume type (client-side)")
 	// --host matches the backend attribution shown as os-vol-host-attr:host,
 	// i.e. "<host>@<backend>#<pool>". Any prefix at a component boundary matches,
@@ -177,6 +180,10 @@ func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *volumeListFlags, projectID, userID string, w io.Writer,
 ) error {
+	metadata, err := volumeListMetadata(f.properties)
+	if err != nil {
+		return err
+	}
 	base := volumes.ListOpts{
 		// Filtering by another project or user is inherently a cross-project read,
 		// which cinder only honors together with all_tenants — so either flag
@@ -185,6 +192,7 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		TenantID:   projectID,
 		Name:       f.name,
 		Status:     f.status,
+		Metadata:   metadata,
 		Limit:      f.limit,
 		Marker:     f.marker,
 	}
@@ -227,6 +235,25 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		}
 	}
 	return o.WriteList(w, volumeListTable(all, f.long))
+}
+
+// volumeListMetadata parses --property into the metadata filter. Cinder
+// filters server-side (metadata is in the default resource_filters.json, so it
+// applies to non-admins too) and wants a Python dict literal, which is what
+// upstream sends (str() of the dict) and what gophercloud's ListOpts encodes —
+// {'k':'v'} with no escaping, so a quote or backslash would reach cinder as a
+// malformed literal. Refuse those here rather than as cinder's opaque 400.
+func volumeListMetadata(pairs []string) (map[string]string, error) {
+	m, err := parseKeyValMap(pairs)
+	if err != nil {
+		return nil, fmt.Errorf("--property: %w", err)
+	}
+	for k, v := range m {
+		if strings.ContainsAny(k+v, `'\`) {
+			return nil, fmt.Errorf("--property %s=%s: quotes and backslashes cannot be filtered on", k, v)
+		}
+	}
+	return m, nil
 }
 
 // volumeListTable renders the listing. --long adds the backend Host column —

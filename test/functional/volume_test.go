@@ -89,6 +89,14 @@ func TestVolumeLifecycle(t *testing.T) {
 		!strings.Contains(field(rows[0], "properties"), "ft2") || strings.Contains(field(rows[0], "properties"), "ft:1") {
 		t.Errorf("volume list --long --name %s = %v", renamed, rows)
 	}
+	// --property filters server-side on the same metadata: a match keeps the
+	// volume, a mismatched value drops it.
+	if ids := column(r.list(t, "volume", "list", "--property", "ft2=2"), "id"); !slices.Contains(ids, id) {
+		t.Errorf("volume list --property ft2=2 = %v, want %s in it", ids, id)
+	}
+	if ids := column(r.list(t, "volume", "list", "--property", "ft2=nope"), "id"); slices.Contains(ids, id) {
+		t.Errorf("volume list --property ft2=nope = %v, want %s left out", ids, id)
+	}
 
 	r.ok(t, "volume", "extend", id, "2")
 	statusIs(t, r, "available", "volume", "show", id)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1149,5 +1150,47 @@ func TestRunVolumeMigrate_RequiresHost(t *testing.T) {
 	f := &volumeMigrateFlags{}
 	if err := runVolumeMigrate(context.Background(), nil, "x", f, io.Discard); err == nil {
 		t.Fatal("expected error when --host is empty, got nil")
+	}
+}
+
+// --property filters server-side as cinder's metadata query: a Python dict
+// literal, the form upstream sends. Map order is unspecified, so the pairs
+// are compared as a set.
+func TestRunVolumeList_PropertyFilter(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	calls := 0
+	fakeServer.Mux.HandleFunc("/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		got := r.URL.Query().Get("metadata")
+		inner := strings.TrimSuffix(strings.TrimPrefix(got, "{"), "}")
+		pairs := strings.Split(inner, ", ")
+		slices.Sort(pairs)
+		if want := []string{"'env':'prod'", "'tier':'a=b'"}; !slices.Equal(pairs, want) {
+			t.Errorf("metadata = %q, want the pairs %v", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(volumeListBody))
+	})
+
+	f := &volumeListFlags{properties: []string{"env=prod", "tier=a=b"}}
+	var buf bytes.Buffer
+	if err := runVolumeList(context.Background(), volumeClient(fakeServer, "latest"), &output.Options{},
+		f, "", "", &buf); err != nil {
+		t.Fatalf("runVolumeList: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("list calls = %d, want 1", calls)
+	}
+}
+
+func TestRunVolumeList_PropertyRefusals(t *testing.T) {
+	for _, p := range []string{"novalue", "=v", "k=it's", `k=a\b`} {
+		f := &volumeListFlags{properties: []string{p}}
+		err := runVolumeList(context.Background(), &gophercloud.ServiceClient{}, &output.Options{}, f, "", "", io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "--property") {
+			t.Errorf("--property %q: err = %v, want a --property error before any request", p, err)
+		}
 	}
 }
