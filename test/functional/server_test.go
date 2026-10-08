@@ -281,10 +281,36 @@ func TestServerNetworkingAndVolumes(t *testing.T) {
 	vol := uniq("vol")
 	r.ok(t, "volume", "create", vol, "--size", "1", "--wait")
 	t.Cleanup(func() { r.run(t, "volume", "delete", vol) })
-	r.ok(t, "server", "add", "volume", id, vol)
+	volID := field(r.show(t, "volume", "show", vol), "id")
+	r.ok(t, "server", "add", "volume", id, vol, "--enable-delete-on-termination")
 	waitFor(t, "the volume to attach", 2*time.Minute, func() bool {
 		return field(r.show(t, "volume", "show", vol), "status") == "in-use"
 	})
+	// delete_on_termination as nova records it: attached true, then flipped
+	// both ways by "server volume set" (nova 2.85, below Zed's 2.93 cap).
+	deleteOnTermination := func() string {
+		for _, row := range r.list(t, "server", "volume", "list", id) {
+			if field(row, "Volume ID") == volID {
+				return field(row, "Delete On Termination?")
+			}
+		}
+		t.Fatalf("volume %s missing from server volume list", volID)
+		return ""
+	}
+	if got := deleteOnTermination(); got != "true" {
+		t.Errorf("after --enable-delete-on-termination: Delete On Termination? = %q, want true", got)
+	}
+	r.ok(t, "server", "volume", "set", id, vol, "--preserve-on-termination")
+	if got := deleteOnTermination(); got != "false" {
+		t.Errorf("after --preserve-on-termination: Delete On Termination? = %q, want false", got)
+	}
+	r.ok(t, "server", "volume", "set", id, vol, "--delete-on-termination")
+	if got := deleteOnTermination(); got != "true" {
+		t.Errorf("after --delete-on-termination: Delete On Termination? = %q, want true", got)
+	}
+	// Preserve again before the detach, so a failure below cannot take the
+	// volume down with the server's cleanup.
+	r.ok(t, "server", "volume", "set", id, vol, "--preserve-on-termination")
 	r.ok(t, "server", "remove", "volume", id, vol)
 	waitFor(t, "the volume to detach", 2*time.Minute, func() bool {
 		return field(r.show(t, "volume", "show", vol), "status") == "available"

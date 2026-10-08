@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-09-25 · `koc` @ this commit (base `5cc80b1`) · 670 leaf
+**Snapshot:** 2026-10-08 · `koc` @ this commit (base `6d769d9`) · 672 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**620 of 947 in-scope upstream commands (65%).** Of `koc`'s 670 leaf commands,
-620 are upstream-equivalent and 50 are koc-native.
+**622 of 947 in-scope upstream commands (66%).** Of `koc`'s 672 leaf commands,
+622 are upstream-equivalent and 50 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -143,7 +143,7 @@ and Manila; 947 excluding them, since `koc` targets neither.
 
 | Namespace | Raw | Core (niche subsystems excluded) |
 | --- | --- | --- |
-| `openstack.compute.v2` | 73/100 (73%) | **71/88 (81%)** — `usage list/show` land outside the core denominator but are implemented |
+| `openstack.compute.v2` | 75/100 (75%) | **73/88 (83%)** — `usage list/show` land outside the core denominator but are implemented; `server volume update`, upstream's deprecated alias of `server volume set`, is deliberately not implemented |
 | `openstack.image.v2` | 16/42 (38%) | **14/15 (93%)** — only `image member get` remains |
 | `openstack.volume.v3` | 52/94 (55%) | **34/38 (89%)** — QoS, transfers, the backend pool/capability reads and `block storage cluster` are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
@@ -544,7 +544,7 @@ them in line with `network`.
 ## koc-native commands
 
 No upstream equivalent, by design — **50 leaves**, itemised so the total
-reconciles with the headline (670 = 620 + 50):
+reconciles with the headline (672 = 622 + 50):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -609,7 +609,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (670 leaf commands at the snapshot above)
+# 1. koc's own command tree (672 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -638,8 +638,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (620);
-2. leaf commands = headline numerator + koc-native (670 = 620 + 50);
+1. every raw row numerator summed = the headline numerator (622);
+2. leaf commands = headline numerator + koc-native (672 = 622 + 50);
 3. every raw row denominator summed = 1004, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (947).
 

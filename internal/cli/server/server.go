@@ -74,6 +74,7 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newServerImageCommand(a, o),
 		newServerGroupCommand(a, o),
 		newServerPasswordCommand(a, o),
+		newServerVolumeCommand(a, o),
 	)
 	return cmd
 }

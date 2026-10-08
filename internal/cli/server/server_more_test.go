@@ -927,7 +927,7 @@ func TestRunServerAddVolume_RequestAndOutput(t *testing.T) {
 
 	client := computeClient(fakeServer, "2.79")
 	var buf bytes.Buffer
-	if err := runServerAddVolume(context.Background(), client, volumeClient(fakeServer), serverUUID, "vol-9", "/dev/vdb", &buf); err != nil {
+	if err := runServerAddVolume(context.Background(), client, volumeClient(fakeServer), serverUUID, "vol-9", volumeAttachFlags{device: "/dev/vdb"}, &buf); err != nil {
 		t.Fatalf("runServerAddVolume: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -954,7 +954,7 @@ func TestRunServerAddVolume_Accepts202(t *testing.T) {
 	})
 	var buf bytes.Buffer
 	if err := runServerAddVolume(context.Background(), computeClient(fakeServer, "latest"), volumeClient(fakeServer),
-		serverUUID, vol9UUID, "", &buf); err != nil {
+		serverUUID, vol9UUID, volumeAttachFlags{}, &buf); err != nil {
 		t.Fatalf("runServerAddVolume with a 202: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Attached volume "+vol9UUID) {

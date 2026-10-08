@@ -662,7 +662,8 @@ func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o 
 // volumes ----------------------------------------------------------------------
 
 func newServerAddVolumeCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	var device string
+	var device, tag string
+	var enableDelete, disableDelete bool
 	cmd := &cobra.Command{
 		Use:   "volume <server> <volume>",
 		Short: "Attach a volume to a server",
@@ -680,17 +681,38 @@ func newServerAddVolumeCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return runServerAddVolume(ctx, s.client, volumeClient, args[0], args[1], device, cmd.OutOrStdout())
+			var del *bool
+			switch {
+			case enableDelete:
+				del = &enableDelete
+			case disableDelete:
+				f := false
+				del = &f
+			}
+			return runServerAddVolume(ctx, s.client, volumeClient, args[0], args[1],
+				volumeAttachFlags{device: device, tag: tag, deleteOnTermination: del}, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&device, "device", "", "device name to expose the volume as (default auto)")
+	cmd.Flags().StringVar(&tag, "tag", "", "tag for the attached volume (nova 2.49 or later)")
+	cmd.Flags().BoolVar(&enableDelete, flagEnableDeleteOnTerm, false,
+		"delete the volume when the server is destroyed (nova 2.79 or later)")
+	cmd.Flags().BoolVar(&disableDelete, flagDisableDeleteOnTerm, false,
+		"preserve the volume when the server is destroyed (nova 2.79 or later)")
+	cmd.MarkFlagsMutuallyExclusive(flagEnableDeleteOnTerm, flagDisableDeleteOnTerm)
 	return cmd
+}
+
+// volumeAttachFlags are "server add volume"'s optional attachment fields.
+type volumeAttachFlags struct {
+	device, tag         string
+	deleteOnTermination *bool // nil leaves nova's default (preserve)
 }
 
 // runServerAddVolume attaches a volume, named or by ID: nova takes only the ID,
 // so a name is resolved through cinder first.
 func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.ServiceClient,
-	ref, volumeRef, device string, w io.Writer,
+	ref, volumeRef string, f volumeAttachFlags, w io.Writer,
 ) error {
 	id, err := resolveServerID(ctx, client, ref)
 	if err != nil {
@@ -700,7 +722,11 @@ func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.S
 	if err != nil {
 		return err
 	}
-	if err := attachVolume(ctx, client, id, volumeattach.CreateOpts{VolumeID: volumeID, Device: device}); err != nil {
+	body, err := volumeAttachBody(client, volumeID, f.device, f.tag, f.deleteOnTermination)
+	if err != nil {
+		return err
+	}
+	if err := attachVolume(ctx, client, id, body); err != nil {
 		return fmt.Errorf("attaching volume %q to server %q: %w", volumeRef, ref, err)
 	}
 	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeRef, ref); err != nil {
@@ -714,11 +740,7 @@ func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.S
 // (seen on 2026.2) answers 202 with no body and finishes the attach
 // asynchronously, which gophercloud's Create (200 only) reports as a failure.
 // Callers that need the attachment read it back.
-func attachVolume(ctx context.Context, client *gophercloud.ServiceClient, serverID string, opts volumeattach.CreateOpts) error {
-	body, err := opts.ToVolumeAttachmentCreateMap()
-	if err != nil {
-		return err
-	}
+func attachVolume(ctx context.Context, client *gophercloud.ServiceClient, serverID string, body map[string]any) error {
 	resp, err := client.Post(ctx, client.ServiceURL("servers", serverID, "os-volume_attachments"), body, nil,
 		&gophercloud.RequestOpts{OkCodes: []int{http.StatusOK, http.StatusAccepted}})
 	if resp != nil {
