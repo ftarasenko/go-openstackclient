@@ -39,6 +39,9 @@ set +u
 # shellcheck disable=SC1091
 . "$DEVSTACK_DIR/openrc" admin admin >/dev/null
 set -u
+# Every OS_* the openrc exported, for the checks that must run from
+# clouds.yaml alone (env --unset each).
+mapfile -t OPENRC_VARS < <(compgen -e | grep '^OS_')
 has_feature() { [[ ",$KOC_FT_FEATURES," == *",$1,"* ]]; }
 
 OUT="$LOG_DIR/smoke.txt"
@@ -158,6 +161,29 @@ if has_feature dns; then
     openstack zone delete ft-smoke.example.org. >/dev/null 2>&1
 fi
 
+# --- ironic ----------------------------------------------------------------------
+
+# Ironic's secure-RBAC defaults keep drivers, shards and inspection rules to a
+# system-scoped token, so these checks run as devstack's system admin rather
+# than the openrc's project admin. A fake-hardware node walking enroll →
+# manageable → available proves the conductor works, not just the API; it is
+# deleted again so the tests start from an empty node list.
+sysadmin() { env "${OPENRC_VARS[@]/#/--unset=}" OS_CLOUD=devstack-system-admin "$@"; }
+# The first column is "Supported driver(s)" on older clients and "name" on newer.
+fake_driver() { sysadmin openstack baremetal driver list -f value | awk '$1 == "fake-hardware" {f=1} END {exit !f}'; }
+node_state() { [[ "$(sysadmin openstack baremetal node show ft-smoke -f value -c provision_state)" == "$1" ]]; }
+fake_node_available() {
+    sysadmin openstack baremetal node create --driver fake-hardware --name ft-smoke >/dev/null &&
+        sysadmin openstack baremetal node manage ft-smoke && wait_for 120 node_state manageable &&
+        sysadmin openstack baremetal node provide ft-smoke && wait_for 120 node_state available
+}
+if has_feature ironic; then
+    check "catalog: baremetal" catalog_has baremetal
+    check "ironic driver: fake-hardware" fake_driver
+    check "fake node reaches available" fake_node_available
+    sysadmin openstack baremetal node delete ft-smoke >/dev/null 2>&1
+fi
+
 # --- koc ---------------------------------------------------------------------------
 
 if [[ -n "$KOC" ]]; then
@@ -165,7 +191,6 @@ if [[ -n "$KOC" ]]; then
     # is the check that the clouds.yaml path works on its own. (It once also
     # hid two koc gaps devstack's openrc exposes — a bare OS_VOLUME_API_VERSION=3
     # and ID-only OS_*_DOMAIN_ID — both since fixed.)
-    mapfile -t OPENRC_VARS < <(compgen -e | grep '^OS_')
     koc() { env "${OPENRC_VARS[@]/#/--unset=}" OS_CLOUD=devstack-admin "$KOC" "$@" -f json; }
     check "koc catalog list" koc catalog list
     check "koc network list" koc network list
@@ -177,6 +202,10 @@ if [[ -n "$KOC" ]]; then
         check "koc s3 bucket list" koc s3 bucket list
     fi
     if has_feature dns; then check "koc zone list" koc zone list; fi
+    if has_feature ironic; then
+        kocsys() { sysadmin "$KOC" "$@" -f json; }
+        check "koc baremetal driver list" kocsys baremetal driver list
+    fi
 fi
 
 exit $FAILED

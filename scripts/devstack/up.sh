@@ -8,7 +8,7 @@
 # locally is byte-for-byte the config CI runs.
 #
 #   scripts/devstack/up.sh --series <zed|caracal|epoxy|latest|YYYY.N> \
-#       [--features core,net,dns] [--dest DIR] [--log-dir DIR] [--dry-run]
+#       [--features core,net,dns,ironic] [--dest DIR] [--log-dir DIR] [--dry-run]
 #
 # Features (keystone + neutron are always on):
 #   core  nova, glance, cinder (+ backup to swift), placement, swift + s3api
@@ -16,6 +16,9 @@
 #         ...) plus neutron-dynamic-routing, networking-bgpvpn, neutron-vpnaas,
 #         neutron-fwaas and tap-as-a-service
 #   dns   designate (bind9 backend); with "net" also neutron's dns integration
+#   ironic  ironic's API and conductor with the fake-hardware type only: no
+#         VMs, no deploy ramdisk, no inspector. koc's baremetal tests enroll
+#         their own fake nodes, so the API is all they need.
 #
 # Neutron backend by series: ML2/OVS through 2024.1, where fwaas, vpnaas and
 # bgp dynamic routing need the L3 agent; ML2/OVN, devstack's default, from
@@ -41,7 +44,7 @@ set -euo pipefail
 
 GIT_BASE=${GIT_BASE:-https://github.com}
 SERIES=""
-FEATURES="core,net,dns"
+FEATURES="core,net,dns,ironic"
 DEST=${DEST:-/opt/stack}
 LOG_DIR=${LOG_DIR:-$PWD/devstack-logs}
 DEVSTACK_DIR=${DEVSTACK_DIR:-$PWD/devstack}
@@ -150,6 +153,7 @@ if has_feature net; then
     NEEDED+=(neutron neutron-dynamic-routing networking-bgpvpn neutron-vpnaas neutron-fwaas tap-as-a-service)
 fi
 if has_feature dns; then NEEDED+=(designate); fi
+if has_feature ironic; then NEEDED+=(ironic); fi
 for p in "${NEEDED[@]}"; do ref_for "$p" >/dev/null; done
 DEVSTACK_REF=${REFS[devstack]}
 
@@ -239,6 +243,32 @@ EOF
         if has_feature net; then echo "enable_service neutron-dns"; fi
     fi
 
+    if has_feature ironic; then
+        # IRONIC_IS_HARDWARE with an empty hardware list enrolls nothing and
+        # skips virtualbmc and the VMs; BASIC_OPS off skips the deploy ramdisk
+        # download. nova keeps libvirt, so ironic is API-only. flat is enabled
+        # (noop stays the default) so a test node can hold a real neutron VIF.
+        cat <<EOF
+
+# ironic: API + conductor, fake-hardware only (see the header).
+$(plugin ironic)
+enable_service ir-api ir-cond
+IRONIC_IS_HARDWARE=True
+IRONIC_HWINFO_FILE=/dev/null
+IRONIC_BAREMETAL_BASIC_OPS=False
+IRONIC_BUILD_DEPLOY_RAMDISK=False
+IRONIC_ENABLED_HARDWARE_TYPES=fake-hardware
+IRONIC_DEPLOY_DRIVER=fake-hardware
+IRONIC_ENABLED_NETWORK_INTERFACES=noop,flat
+IRONIC_DEFAULT_NETWORK_INTERFACE=noop
+IRONIC_ENABLED_STORAGE_INTERFACES=noop,fake
+# The plugin queues cirros from download.cirros-cloud.net; devstack's own
+# default now comes from GitHub, so both would upload an image of the same
+# name and --image <name> becomes ambiguous. Keep the plugin's.
+DOWNLOAD_DEFAULT_IMAGES=False
+EOF
+    fi
+
     # Meta sections end localrc, so they go last.
     if has_feature core; then
         # swift's s3token now authenticates to keystone's /v3/s3tokens with a
@@ -302,26 +332,34 @@ printf '%s\n' "$LOCAL_CONF" >"$DEVSTACK_DIR/local.conf"
 # retry, and that host timing out has failed a whole cell. It skips the fetch
 # when the file is already in files/, so on a runner put it there first, from
 # cirros's GitHub release mirror (the host runners reach most reliably) with
-# the original as a fallback, retrying both.
+# the original as a fallback, retrying both. Ironic's plugin adds the uec
+# tarball from the same host.
 prefetch_cirros() {
-    local version file url
+    local version file url kind
     version=$(grep -m1 '^CIRROS_VERSION=' "$DEVSTACK_DIR/stackrc" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
     [[ -n $version ]] || { echo "up.sh: no CIRROS_VERSION in stackrc; leaving the fetch to stack.sh"; return 0; }
-    file=cirros-$version-$(uname -m)-disk.img
     mkdir -p "$DEVSTACK_DIR/files"
-    [[ -f $DEVSTACK_DIR/files/$file ]] && return 0
-    for url in "https://github.com/cirros-dev/cirros/releases/download/$version/$file" \
-        "https://download.cirros-cloud.net/$version/$file"; do
-        if curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$DEVSTACK_DIR/files/$file.part" "$url"; then
-            mv "$DEVSTACK_DIR/files/$file.part" "$DEVSTACK_DIR/files/$file"
-            echo "up.sh: prefetched $file from $url"
-            return 0
-        fi
+    for kind in "$@"; do
+        file=cirros-$version-$(uname -m)-$kind
+        [[ -f $DEVSTACK_DIR/files/$file ]] && continue
+        for url in "https://github.com/cirros-dev/cirros/releases/download/$version/$file" \
+            "https://download.cirros-cloud.net/$version/$file"; do
+            if curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$DEVSTACK_DIR/files/$file.part" "$url"; then
+                mv "$DEVSTACK_DIR/files/$file.part" "$DEVSTACK_DIR/files/$file"
+                echo "up.sh: prefetched $file from $url"
+                continue 2
+            fi
+        done
+        rm -f "$DEVSTACK_DIR/files/$file.part"
+        echo "up.sh: could not prefetch $file; leaving the fetch to stack.sh"
     done
-    rm -f "$DEVSTACK_DIR/files/$file.part"
-    echo "up.sh: could not prefetch $file; leaving the fetch to stack.sh"
 }
-if [[ "$GHA" == true && $FEATURES == *core* ]]; then prefetch_cirros; fi
+if [[ "$GHA" == true ]]; then
+    PREFETCH=()
+    if has_feature core || has_feature ironic; then PREFETCH+=(disk.img); fi
+    if has_feature ironic; then PREFETCH+=(uec.tar.gz); fi
+    if [[ ${#PREFETCH[@]} -gt 0 ]]; then prefetch_cirros "${PREFETCH[@]}"; fi
+fi
 
 disk_used_mb() { df -B1M --output=used / | tail -1 | tr -d ' '; }
 DISK_BEFORE=$(disk_used_mb)
@@ -354,7 +392,7 @@ if [[ $RC -eq 0 ]]; then
         echo "KOC_FT_FEATURES=$FEATURES"
         echo "KOC_FT_BACKEND=$BACKEND"
         if has_feature core; then
-            echo "KOC_FT_IMAGE=$(openstack image list -f value -c Name | grep -m1 -i cirros)"
+            echo "KOC_FT_IMAGE=$(openstack image list -f value -c Name | grep -m1 -i "cirros.*-disk")"
             # S3 goes to swift's proxy through the s3api middleware, with EC2
             # credentials keystone mints for the admin user.
             { read -r ACCESS; read -r SECRET; } < <(openstack ec2 credentials create -f value -c access -c secret)
