@@ -175,11 +175,11 @@ jobs:
       # Pin the exact golangci-lint version used in development and verify the
       # download against the release's published SHA-256 checksums before
       # extracting, so a corrupted or swapped asset fails the build.
-      - name: Install golangci-lint v2.13.2 (checksum-verified)
+      - name: Install golangci-lint v2.14.0 (checksum-verified)
         env:
           GOPROXY: "" # allow the tool download (build/test stay offline)
         run: |
-          VER=2.13.2
+          VER=2.14.0
           TARBALL="golangci-lint-${VER}-linux-amd64.tar.gz"
           BASE="https://github.com/golangci/golangci-lint/releases/download/v${VER}"
           curl -sSfL "${BASE}/${TARBALL}" -o "${TARBALL}"

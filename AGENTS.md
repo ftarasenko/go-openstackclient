@@ -94,13 +94,15 @@ tracking") and every new leaf has a functional test (`go test -tags functional
 **`gofmt` here means Go 1.27's.** 1.27 changed how a multi-value `return` whose
 operands are composite literals is indented, and the two versions disagree in
 both directions — 1.26's gofmt reformats what 1.27's wrote and vice versa. The
-pinned golangci-lint bundles 1.27's (the whole v2.13 line is built with
+pinned golangci-lint bundles 1.27's (v2.13 and v2.14 are built with
 go1.27.0) and enforces it as the `gofmt` formatter, so running `make fmt` under
 an older toolchain silently reverts the tree and the lint job then rejects the
 files it just touched. `go.mod`'s floor stays at 1.26.0 because nothing in the
 code needs 1.27 — building and testing on 1.26 is fine, formatting is not. If
 the golangci-lint pin ever moves to a build made with a newer Go, re-run
-`make fmt` with that Go in the same commit.
+`make fmt` with that Go in the same commit. The lint job's `check-latest` Go
+can also outrun the pin: v2.13.2 could not read go1.27.2's export data
+("export data version 5"), and v2.14.0 can — move the pin when that happens.
 
 ## SonarQube (out-of-band static analysis)
 
