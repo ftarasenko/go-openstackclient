@@ -6,13 +6,14 @@ package baremetal
 // name as "not set" rather than erroring — so a typo in a lookup copy silently
 // disables the check it guards instead of failing loudly.
 const (
-	flagResourceClass    = "resource-class"
-	flagConductorGroup   = "conductor-group"
-	flagDriverInfo       = "driver-info"
-	flagInstanceUUID     = "instance-uuid"
-	flagAutomatedClean   = "automated-clean"
-	flagPXEEnabled       = "pxe-enabled"
-	flagNoAutomatedClean = "no-automated-clean"
+	flagResourceClass       = "resource-class"
+	flagConductorGroup      = "conductor-group"
+	flagDriverInfo          = "driver-info"
+	flagInstanceUUID        = "instance-uuid"
+	flagAutomatedClean      = "automated-clean"
+	flagPXEEnabled          = "pxe-enabled"
+	flagNoAutomatedClean    = "no-automated-clean"
+	flagLocalLinkConnection = "local-link-connection"
 )
 
 // Repeated cobra Use lines.

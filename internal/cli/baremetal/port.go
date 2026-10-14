@@ -207,6 +207,7 @@ type portCreateFlags struct {
 	pxeEnabled      bool
 	pxeEnabledSet   bool
 	extra           []string
+	llc             []string
 }
 
 // portNameOpts adds ironic's port `name` to a create body. gophercloud's
@@ -256,6 +257,7 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "name of the physical network")
 	fl.BoolVar(&f.pxeEnabled, flagPXEEnabled, false, "whether PXE is enabled on the port")
 	fl.StringArrayVar(&f.extra, "extra", nil, "arbitrary metadata key=value (repeatable)")
+	fl.StringArrayVarP(&f.llc, flagLocalLinkConnection, "l", nil, "switch the port is cabled to, key=value: switch_id and port_id are required, switch_info and hostname optional (repeatable)")
 	_ = cmd.MarkFlagRequired("node")
 	return cmd
 }
@@ -271,13 +273,18 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("parsing --extra: %w", err)
 	}
+	llc, err := parseKeyValMap(f.llc)
+	if err != nil {
+		return fmt.Errorf("parsing --%s: %w", flagLocalLinkConnection, err)
+	}
 	opts := portNameOpts{
 		CreateOpts: ports.CreateOpts{
-			NodeUUID:        f.node,
-			Address:         f.address,
-			PortGroupUUID:   f.portGroup,
-			PhysicalNetwork: f.physicalNetwork,
-			Extra:           extra,
+			NodeUUID:            f.node,
+			Address:             f.address,
+			PortGroupUUID:       f.portGroup,
+			PhysicalNetwork:     f.physicalNetwork,
+			Extra:               extra,
+			LocalLinkConnection: llc,
 		},
 		Name: f.name,
 	}
@@ -341,6 +348,7 @@ type portSetFlags struct {
 	pxeEnabled      bool
 	pxeEnabledSet   bool
 	extra           []string
+	llc             []string
 }
 
 func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -369,6 +377,7 @@ func newPortSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.physicalNetwork, "physical-network", "", "set the physical network name")
 	fl.BoolVar(&f.pxeEnabled, flagPXEEnabled, false, "set whether PXE is enabled")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
+	fl.StringArrayVarP(&f.llc, flagLocalLinkConnection, "l", nil, "switch the port is cabled to, key=value: switch_id and port_id are required, switch_info and hostname optional (repeatable)")
 	return cmd
 }
 
@@ -398,6 +407,13 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 			return fmt.Errorf("parsing --extra: %w", err)
 		}
 		ops = append(ops, ports.UpdateOperation{Op: ports.AddOp, Path: "/extra/" + escapeJSONPointer(k), Value: v})
+	}
+	for _, p := range f.llc {
+		k, v, err := parseKeyVal(p)
+		if err != nil {
+			return fmt.Errorf("parsing --%s: %w", flagLocalLinkConnection, err)
+		}
+		ops = append(ops, ports.UpdateOperation{Op: ports.AddOp, Path: "/local_link_connection/" + escapeJSONPointer(k), Value: v})
 	}
 	if len(ops) == 0 {
 		return fmt.Errorf("port set requires at least one attribute flag")

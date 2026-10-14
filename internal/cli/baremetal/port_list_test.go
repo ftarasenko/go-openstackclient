@@ -114,3 +114,25 @@ func TestRunPortList_ShortStaysOnPlainList(t *testing.T) {
 		t.Errorf("output = %q", buf.String())
 	}
 }
+
+func TestRunPortCreateSet_LocalLinkConnection(t *testing.T) {
+	client, fake := newFakeIronic(t, map[string]fakeRoute{
+		"POST /ports":     {http.StatusCreated, boundPort("p1", "physnet1")},
+		"PATCH /ports/p1": {http.StatusOK, boundPort("p1", "physnet1")},
+	})
+	o := &output.Options{Format: output.FormatValue, Columns: []string{"uuid"}}
+	var buf bytes.Buffer
+	f := &portCreateFlags{node: testNodeUUID, address: "52:54:00:00:00:01",
+		llc: []string{"switch_id=00:00:5e:00:53:01", "port_id=Ethernet1/1", "switch_info=leaf1"}}
+	if err := runPortCreate(context.Background(), client, o, f, &buf); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := fake.call("POST /ports").Body.(map[string]any)
+	jsonEq(t, "local_link_connection", body["local_link_connection"],
+		`{"switch_id":"00:00:5e:00:53:01","port_id":"Ethernet1/1","switch_info":"leaf1"}`)
+
+	if err := runPortSet(context.Background(), client, o, "p1", &portSetFlags{llc: []string{"port_id=Ethernet1/2"}}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	jsonEq(t, "set patch", fake.call("PATCH /ports/p1").Body, `[{"op":"add","path":"/local_link_connection/port_id","value":"Ethernet1/2"}]`)
+}
