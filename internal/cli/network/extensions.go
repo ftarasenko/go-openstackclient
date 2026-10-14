@@ -617,7 +617,7 @@ func runSegmentList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	}
 	pages, err := segments.List(client, opts).AllPages(ctx)
 	if err != nil {
-		return fmt.Errorf("listing network segments: %w", err)
+		return explainMissingService(ctx, client, fmt.Errorf("listing network segments: %w", err), extSegment)
 	}
 	all, err := segments.ExtractSegments(pages)
 	if err != nil {
@@ -659,7 +659,7 @@ func newSegmentShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runSegmentShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
 	seg, err := segments.Get(ctx, client, id).Extract()
 	if err != nil {
-		return fmt.Errorf("showing network segment %s: %w", id, err)
+		return explainMissingService(ctx, client, fmt.Errorf("showing network segment %s: %w", id, err), extSegment)
 	}
 	return writeSegment(o, w, seg)
 }
@@ -731,7 +731,7 @@ func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		SegmentationID:  f.segmentationID,
 	}, extra)).Extract()
 	if err != nil {
-		return fmt.Errorf("creating network segment %q: %w", name, err)
+		return explainMissingService(ctx, client, fmt.Errorf("creating network segment %q: %w", name, err), extSegment)
 	}
 	return writeSegment(o, w, seg)
 }
@@ -798,7 +798,7 @@ func runSegmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 	seg, err := segments.Update(ctx, client, id, withSegmentUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
-		return fmt.Errorf("updating network segment %s: %w", id, err)
+		return explainMissingService(ctx, client, fmt.Errorf("updating network segment %s: %w", id, err), extSegment)
 	}
 	return writeSegment(o, w, seg)
 }
@@ -824,7 +824,7 @@ func newSegmentDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runSegmentDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
 	return batchdelete.Each(ids, func(id string) error {
 		if err := segments.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network segment %s: %w", id, err)
+			return explainMissingService(ctx, client, fmt.Errorf("deleting network segment %s: %w", id, err), extSegment)
 		}
 		return nil
 	})

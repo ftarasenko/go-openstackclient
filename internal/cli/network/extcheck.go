@@ -127,6 +127,7 @@ const (
 	extBGP                = "bgp"
 	extBGPDRAgentSchedule = "bgp_dragent_scheduler"
 	extTapMirror          = "tap-mirror"
+	extSegment            = "segment"
 )
 
 // explainMissingService annotates a 404 from a plugin service's endpoint: when
