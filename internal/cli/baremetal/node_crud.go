@@ -94,7 +94,7 @@ func newNodeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 // nodeColumns are the columns a node write verb renders.
-var nodeColumns = knownColumns(nodeDetailFields)
+var nodeColumns = knownColumns(nodeShowKnown)
 
 func runNodeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *nodeCreateFlags, w io.Writer) error {
 	if err := o.CheckColumns(nodeColumns...); err != nil {

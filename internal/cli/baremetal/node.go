@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -82,9 +83,14 @@ var nodeDetailFields = []string{
 // nodeFields are the columns of the short `node list`.
 var nodeFields = []string{"uuid", "name", "instance_uuid", "power_state", "provision_state", "maintenance"}
 
+// nodeShowKnown adds the node fields ironic returns that python-ironicclient's
+// detailed set lacks (service_step 1.87, shard 1.82) to what `node show`
+// always carries.
+var nodeShowKnown = append(slices.Clone(nodeDetailFields), "service_step", "shard")
+
 // nodeShowFields renders a node body as `node show` does upstream.
 func nodeShowFields(body map[string]any) ([]string, []any) {
-	return showFields(body, nodeDetailFields)
+	return showFields(body, nodeShowKnown)
 }
 
 // nodeListFlags holds the filters/pagination accepted by "node list".
