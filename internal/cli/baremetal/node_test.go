@@ -194,35 +194,40 @@ func TestRunNodeList_LimitCapsResults(t *testing.T) {
 }
 
 func TestNodeListFilters_MaintenanceAndAssociatedFalseAreSent(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
+	// --long lists /nodes/detail, whose query gophercloud builds separately.
+	for _, long := range []bool{false, true} {
+		fakeServer := th.SetupHTTP()
 
-	var gotRawQuery string
-	fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
-		gotRawQuery = r.URL.RawQuery
-		th.TestFormValues(t, r, map[string]string{
-			"maintenance": "false",
-			"associated":  "false",
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"nodes": []}`))
-	})
+		var gotRawQuery string
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			gotRawQuery = r.URL.RawQuery
+			th.TestFormValues(t, r, map[string]string{
+				"maintenance": "false",
+				"associated":  "false",
+			})
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"nodes": []}`))
+		}
+		fakeServer.Mux.HandleFunc("/nodes", handler)
+		fakeServer.Mux.HandleFunc("/nodes/detail", handler)
 
-	client := baremetalClient(fakeServer, "latest")
-	o := &output.Options{Format: output.FormatValue}
-	// Both flags explicitly set to their false (inverting) value.
-	f := &nodeListFlags{maintenanceSet: true, maintenance: false, associatedSet: true, associated: false}
+		client := baremetalClient(fakeServer, "latest")
+		o := &output.Options{Format: output.FormatValue}
+		// Both flags explicitly set to their false (inverting) value.
+		f := &nodeListFlags{long: long, maintenanceSet: true, maintenance: false, associatedSet: true, associated: false}
 
-	var buf bytes.Buffer
-	if err := runNodeList(context.Background(), client, o, f, &buf); err != nil {
-		t.Fatalf("runNodeList returned error: %v", err)
-	}
-	if !strings.Contains(gotRawQuery, "maintenance=false") {
-		t.Errorf("request query %q must contain maintenance=false", gotRawQuery)
-	}
-	if !strings.Contains(gotRawQuery, "associated=false") {
-		t.Errorf("request query %q must contain associated=false", gotRawQuery)
+		var buf bytes.Buffer
+		if err := runNodeList(context.Background(), client, o, f, &buf); err != nil {
+			t.Fatalf("runNodeList(long=%v) returned error: %v", long, err)
+		}
+		if !strings.Contains(gotRawQuery, "maintenance=false") {
+			t.Errorf("long=%v: request query %q must contain maintenance=false", long, gotRawQuery)
+		}
+		if !strings.Contains(gotRawQuery, "associated=false") {
+			t.Errorf("long=%v: request query %q must contain associated=false", long, gotRawQuery)
+		}
+		fakeServer.Teardown()
 	}
 }
 

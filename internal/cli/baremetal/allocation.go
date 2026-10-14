@@ -151,7 +151,7 @@ func newAllocationListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	fl.StringVar(&f.marker, "marker", "", "UUID of the last allocation from the previous page")
 	fl.StringVar(&f.sortKey, "sort-key", "", "sort output by this allocation attribute")
 	fl.StringVar(&f.sortDir, "sort-dir", "", "sort direction: asc or desc")
-	addFieldsAliases(cmd, o)
+	addListFieldsAliases(cmd, o)
 	return cmd
 }
 

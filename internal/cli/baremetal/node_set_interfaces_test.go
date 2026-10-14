@@ -122,17 +122,20 @@ func TestNodeSetUnset_DefineEveryInterfaceFlag(t *testing.T) {
 }
 
 // --fields/--field are the ironic CLI's spelling of -c/--column and must feed the
-// same output-layer selection rather than a parallel implementation.
+// same output-layer selection rather than a parallel implementation. On a list
+// they name ironic fields, which select the labelled columns.
 func TestAddFieldsAliases_FoldIntoColumns(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want []string
 	}{
-		{name: "comma separated", args: []string{"--fields=uuid,name"}, want: []string{"uuid", "name"}},
-		{name: "repeated", args: []string{"--fields=uuid", "--fields=name"}, want: []string{"uuid", "name"}},
-		{name: "singular alias", args: []string{"--field=uuid"}, want: []string{"uuid"}},
-		{name: "both spellings", args: []string{"--fields=uuid", "--field=name"}, want: []string{"uuid", "name"}},
+		{name: "comma separated", args: []string{"--fields=uuid,name"}, want: []string{"UUID", "Name"}},
+		{name: "repeated", args: []string{"--fields=uuid", "--fields=name"}, want: []string{"UUID", "Name"}},
+		{name: "singular alias", args: []string{"--field=uuid"}, want: []string{"UUID"}},
+		{name: "both spellings", args: []string{"--fields=uuid", "--field=name"}, want: []string{"UUID", "Name"}},
+		// A list's columns are labels; the ironic field name selects its column.
+		{name: "field name to label", args: []string{"--fields=resource_class,provision_state"}, want: []string{"Resource Class", "Provisioning State"}},
 		{name: "neither", args: nil, want: nil},
 	}
 	for _, tc := range tests {

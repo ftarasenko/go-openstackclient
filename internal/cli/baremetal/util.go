@@ -49,6 +49,19 @@ func parseKeyValMap(pairs []string) (map[string]any, error) {
 	return m, nil
 }
 
+// appendQuery appends already-encoded key=value pairs to a query string that
+// may be empty or start with "?".
+func appendQuery(s string, kv ...string) string {
+	if len(kv) == 0 {
+		return s
+	}
+	sep := "?"
+	if strings.Contains(s, "?") {
+		sep = "&"
+	}
+	return s + sep + strings.Join(kv, "&")
+}
+
 // fieldNames returns the headers of a field builder's result. Applied to a zero
 // value it gives the columns a write verb checks -c against before it writes.
 func fieldNames(fields []string, _ []any) []string { return fields }
@@ -63,14 +76,26 @@ func fieldNames(fields []string, _ []any) []string { return fields }
 // StringArrayVar) is used because the ironic CLI accepts both a comma-separated
 // list and repetition.
 func addFieldsAliases(cmd *cobra.Command, o *output.Options) {
+	registerFieldsAliases(cmd, o, func(f string) string { return f })
+}
+
+// addListFieldsAliases is addFieldsAliases for a list verb, whose columns are
+// labels: an ironic field name ("resource_class") selects its column
+// ("Resource Class"), as --fields does upstream.
+func addListFieldsAliases(cmd *cobra.Command, o *output.Options) {
+	registerFieldsAliases(cmd, o, label)
+}
+
+func registerFieldsAliases(cmd *cobra.Command, o *output.Options, column func(string) string) {
 	var fields, field []string
 	fl := cmd.Flags()
 	fl.StringSliceVar(&fields, "fields", nil,
 		"field(s) to include; comma-separated or repeated (ironic CLI spelling of -c/--column)")
 	fl.StringSliceVar(&field, "field", nil, "alias of --fields")
 	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
-		o.Columns = append(o.Columns, fields...)
-		o.Columns = append(o.Columns, field...)
+		for _, f := range append(fields, field...) {
+			o.Columns = append(o.Columns, column(f))
+		}
 		return nil
 	}
 }

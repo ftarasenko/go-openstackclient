@@ -37,7 +37,7 @@ func newNodeShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	n, err := nodes.Get(ctx, client, id).Extract()
+	n, err := resultMap(nodes.Get(ctx, client, id).Result)
 	if err != nil {
 		return fmt.Errorf("getting baremetal node %s: %w", id, err)
 	}
@@ -94,7 +94,7 @@ func newNodeCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 // nodeColumns are the columns a node write verb renders.
-var nodeColumns = fieldNames(nodeShowFields(&nodes.Node{}))
+var nodeColumns = knownColumns(nodeDetailFields)
 
 func runNodeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *nodeCreateFlags, w io.Writer) error {
 	if err := o.CheckColumns(nodeColumns...); err != nil {
@@ -122,7 +122,7 @@ func runNodeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		DriverInfo:     dinfo,
 		Extra:          extra,
 	}
-	n, err := nodes.Create(ctx, client, opts).Extract()
+	n, err := resultMap(nodes.Create(ctx, client, opts).Result)
 	if err != nil {
 		return fmt.Errorf("creating baremetal node: %w", err)
 	}
@@ -287,7 +287,7 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if len(ops) == 0 {
 		return fmt.Errorf("node set requires at least one attribute flag")
 	}
-	n, err := nodes.Update(ctx, client, id, ops).Extract()
+	n, err := resultMap(nodes.Update(ctx, client, id, ops).Result)
 	if err != nil {
 		return fmt.Errorf("updating baremetal node %s: %w", id, err)
 	}
@@ -394,7 +394,7 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if len(ops) == 0 {
 		return fmt.Errorf("node unset requires at least one attribute flag")
 	}
-	n, err := nodes.Update(ctx, client, id, ops).Extract()
+	n, err := resultMap(nodes.Update(ctx, client, id, ops).Result)
 	if err != nil {
 		return fmt.Errorf("updating baremetal node %s: %w", id, err)
 	}

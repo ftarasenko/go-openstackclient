@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
@@ -54,22 +53,30 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// nodeShowFields is the curated Field/Value view for a single node, matching the
-// most operationally useful attributes shown by `openstack baremetal node show`.
-func nodeShowFields(n *nodes.Node) ([]string, []any) {
-	fields := []string{
-		"uuid", "name", "power_state", "provision_state", "target_provision_state",
-		"maintenance", "maintenance_reason", "last_error", "driver", "resource_class",
-		"instance_uuid", "conductor_group", "conductor", "owner", "properties",
-		"driver_info", "extra", "created_at", "updated_at",
-	}
-	values := []any{
-		n.UUID, n.Name, n.PowerState, n.ProvisionState, n.TargetProvisionState,
-		n.Maintenance, n.MaintenanceReason, n.LastError, n.Driver, n.ResourceClass,
-		n.InstanceUUID, n.ConductorGroup, n.Conductor, n.Owner, n.Properties,
-		n.DriverInfo, n.Extra, n.CreatedAt, n.UpdatedAt,
-	}
-	return fields, values
+// nodeDetailFields are python-ironicclient's NODE_DETAILED_RESOURCE: the
+// columns of `node list --long`, and the fields `node show` always carries.
+var nodeDetailFields = []string{
+	"allocation_uuid", "automated_clean", "bios_interface", "boot_interface", "boot_mode",
+	"chassis_uuid", "clean_step", "conductor", "conductor_group", "console_enabled",
+	"console_interface", "created_at", "raid_config", "deploy_interface", "deploy_step",
+	"description", "disable_power_off", "driver", "driver_info", "driver_internal_info",
+	"extra", "fault", "firmware_interface", "health", "inspect_interface",
+	"inspection_finished_at", "inspection_started_at", "instance_info", "instance_name",
+	"instance_uuid", "last_error", "lessee", "maintenance", "maintenance_reason",
+	"management_interface", "name", "network_data", "network_interface", "owner",
+	"parent_node", "power_interface", "power_state", "properties", "protected",
+	"protected_reason", "provision_updated_at", "provision_state", "raid_interface",
+	"rescue_interface", "reservation", "resource_class", "retired", "retired_reason",
+	"secure_boot", "storage_interface", "target_power_state", "target_provision_state",
+	"target_raid_config", "traits", "uuid", "updated_at", "vendor_interface",
+}
+
+// nodeFields are the columns of the short `node list`.
+var nodeFields = []string{"uuid", "name", "instance_uuid", "power_state", "provision_state", "maintenance"}
+
+// nodeShowFields renders a node body as `node show` does upstream.
+func nodeShowFields(body map[string]any) ([]string, []any) {
+	return showFields(body, nodeDetailFields)
 }
 
 // nodeListFlags holds the filters/pagination accepted by "node list".
@@ -126,7 +133,7 @@ func newNodeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.resourceClass, flagResourceClass, "", "limit to nodes with this resource class")
 	fl.StringVar(&f.sortKey, "sort-key", "", "sort output by this node attribute")
 	fl.StringVar(&f.sortDir, "sort-dir", "", "sort direction: asc or desc")
-	addFieldsAliases(cmd, o)
+	addListFieldsAliases(cmd, o)
 	return cmd
 }
 
@@ -157,12 +164,17 @@ func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		opts.associated = &f.associated
 	}
 
-	all, err := paging.Collect(ctx, nodes.List(client, opts), f.limit, nodes.ExtractNodes)
+	// ironic's plain list carries only the six short columns; anything else —
+	// --long, or a -c naming a detail column — needs /nodes/detail.
+	fields, list := nodeFields, nodes.List
+	if f.long || len(o.SelectedColumns(labels(nodeDetailFields)...)) > len(o.SelectedColumns(labels(nodeFields)...)) {
+		fields, list = nodeDetailFields, nodes.ListDetail
+	}
+	all, err := paging.Collect(ctx, list(client, opts), f.limit, pageMaps("nodes"))
 	if err != nil {
 		return fmt.Errorf("listing baremetal nodes: %w", err)
 	}
-
-	return o.WriteList(w, nodeListTable(all, f.long))
+	return o.WriteList(w, listTable(all, fields))
 }
 
 // nodeListQuery wraps nodes.ListOpts to force the boolean filters that
@@ -178,6 +190,16 @@ type nodeListQuery struct {
 // ToNodeListQuery implements nodes.ListOptsBuilder.
 func (q nodeListQuery) ToNodeListQuery() (string, error) {
 	s, err := q.ListOpts.ToNodeListQuery()
+	return q.withBools(s, err)
+}
+
+// ToNodeListDetailQuery implements nodes.ListOptsBuilder for /nodes/detail.
+func (q nodeListQuery) ToNodeListDetailQuery() (string, error) {
+	s, err := q.ListOpts.ToNodeListDetailQuery()
+	return q.withBools(s, err)
+}
+
+func (q nodeListQuery) withBools(s string, err error) (string, error) {
 	if err != nil {
 		return "", err
 	}
@@ -188,30 +210,5 @@ func (q nodeListQuery) ToNodeListQuery() (string, error) {
 	if q.associated != nil {
 		extra = append(extra, "associated="+strconv.FormatBool(*q.associated))
 	}
-	if len(extra) == 0 {
-		return s, nil
-	}
-	sep := "?"
-	if strings.Contains(s, "?") {
-		sep = "&"
-	}
-	return s + sep + strings.Join(extra, "&"), nil
-}
-
-// nodeListTable builds the output table. The default column set matches
-// `openstack baremetal node list`; --long adds the operationally useful extras.
-func nodeListTable(list []nodes.Node, long bool) output.Table {
-	cols := []string{"UUID", "Name", "Instance UUID", "Power State", "Provisioning State", "Maintenance"}
-	if long {
-		cols = append(cols, "Driver", "Resource Class", "Target Provision State", "Last Error")
-	}
-	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
-	for _, n := range list {
-		row := []any{n.UUID, n.Name, n.InstanceUUID, n.PowerState, n.ProvisionState, n.Maintenance}
-		if long {
-			row = append(row, n.Driver, n.ResourceClass, n.TargetProvisionState, n.LastError)
-		}
-		t.Rows = append(t.Rows, row)
-	}
-	return t
+	return appendQuery(s, extra...), nil
 }
