@@ -30,5 +30,5 @@ func NewCommands(a *auth.Options, o *output.Options) []*cobra.Command {
 	usage := &cobra.Command{Use: "usage", Short: "Show compute resource usage"}
 	usage.AddCommand(newUsageListCommand(a, o), newUsageShowCommand(a, o))
 
-	return []*cobra.Command{availability, limits, usage}
+	return []*cobra.Command{availability, limits, usage, newExtensionCommand(a, o)}
 }
