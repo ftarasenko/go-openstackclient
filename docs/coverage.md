@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-10-14 · `koc` @ this commit (base `9dbcb7d`) · 691 leaf
+**Snapshot:** 2026-10-14 · `koc` @ this commit (base `60b685a`) · 693 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**641 of 947 in-scope upstream commands (68%).** Of `koc`'s 691 leaf commands,
-641 are upstream-equivalent and 50 are koc-native.
+**643 of 947 in-scope upstream commands (68%).** Of `koc`'s 693 leaf commands,
+643 are upstream-equivalent and 50 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -51,7 +51,7 @@ than an untracked extra. Its 13 `baremetal introspection` commands used to be
 scored against the `python-ironicclient` baseline, which never contained them —
 so at that snapshot the ironic row read an inflated 35/118 where the honest split
 was 29/118 for ironic and 6/13 for the inspector. Same six commands, two correct
-rows; the ironic figure has since grown to 71/118.
+rows; the ironic figure has since grown to 73/118.
 
 `python-octaviaclient` became a baseline during the history-parity pass, adding
 its 82 commands to the denominator; measured against the four baselines that
@@ -179,7 +179,7 @@ points, not common ones, and are counted in the compute row.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 71/118 (60%) | the full provision-state verb set, node lifecycle, power, ports, port groups, traits, console, secure boot, history, child nodes, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing chassis, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
+| ironic (`baremetal`) | 73/118 (62%) | the full provision-state verb set, node lifecycle, power, ports, port groups, traits, console, secure boot, history, child nodes, vendor passthru, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing chassis, deploy templates, runbooks, inspection rules, volume connectors/targets. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 62/82 (76%) | everything except availability zones and profiles (11 — `availabilityzone` ×6, `availabilityzoneprofile` ×5), eight of upstream's ten `unset` verbs (`loadbalancer`, `listener`, `pool`, `member`, `healthmonitor`, `l7policy`, `l7rule`, `flavor`; `quota unset` is implemented and `availability zone unset` is inside the 11) and `listener stats show` — 20 in all. Diffed name-for-name against `entry_points.txt`: all 62 `koc loadbalancer` leaves map to an upstream command, none is koc-invented |
 | osc-placement | **31/31 (100%)** | complete against `entry_points.txt`, diffed name-for-name — resource providers, classes, traits, inventories, aggregates, allocations, allocation candidates and usages, reads and writes alike |
@@ -291,8 +291,8 @@ fallback is written and its whole surface is covered; see below. Ironic VIFs and
 BIOS settings are no longer here either — `baremetal/v1/nodes` carries typed
 calls for both, so they are Tier 1.)
 
-Already using it: `baremetal port group`, `baremetal node trait|console|secure boot|history|children` (gophercloud has no
-`baremetal/v1/portgroups` package and no node traits, console, secure-boot, history or children calls; `internal/cli/baremetal/raw.go`), `network extension list/show`, `quota show --default`
+Already using it: `baremetal port group`, `baremetal node trait|console|secure boot|history|children|passthru` (gophercloud has no
+`baremetal/v1/portgroups` package and no node traits, console, secure-boot, history, children or passthru calls; `internal/cli/baremetal/raw.go`), `network extension list/show`, `quota show --default`
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
@@ -544,7 +544,7 @@ them in line with `network`.
 ## koc-native commands
 
 No upstream equivalent, by design — **50 leaves**, itemised so the total
-reconciles with the headline (691 = 641 + 50):
+reconciles with the headline (693 = 643 + 50):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -609,7 +609,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (691 leaf commands at the snapshot above)
+# 1. koc's own command tree (693 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -638,8 +638,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (641);
-2. leaf commands = headline numerator + koc-native (691 = 641 + 50);
+1. every raw row numerator summed = the headline numerator (643);
+2. leaf commands = headline numerator + koc-native (693 = 643 + 50);
 3. every raw row denominator summed = 1004, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (947).
 
