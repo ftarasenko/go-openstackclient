@@ -32,10 +32,7 @@ func testTemplate() map[string]any {
 
 func TestRunDeployTemplateList_ShortAndLong(t *testing.T) {
 	client, fake := newFakeIronic(t, map[string]fakeRoute{
-		"GET /deploy_templates": {http.StatusOK, map[string]any{"deploy_templates": []any{
-			map[string]any{"uuid": testTemplateUUID, "name": "CUSTOM_HYPERTHREADING_ON"},
-		}}},
-		"GET /deploy_templates/detail": {http.StatusOK, map[string]any{"deploy_templates": []any{testTemplate()}}},
+		"GET /deploy_templates": {http.StatusOK, map[string]any{"deploy_templates": []any{testTemplate()}}},
 	})
 	var buf bytes.Buffer
 	if err := runDeployTemplateList(context.Background(), client, &output.Options{Format: output.FormatValue},
@@ -53,6 +50,9 @@ func TestRunDeployTemplateList_ShortAndLong(t *testing.T) {
 	if err := runDeployTemplateList(context.Background(), client, &output.Options{Format: output.FormatJSON},
 		&resourceListFlags{long: true}, &buf); err != nil {
 		t.Fatal(err)
+	}
+	if q := fake.calls[len(fake.calls)-1].Query; q != "detail=True" {
+		t.Errorf("--long query = %q, want detail=True (ironic has no /deploy_templates/detail)", q)
 	}
 	rows := decodeJSON[[]map[string]any](t, buf.String())
 	jsonEq(t, "Steps", rows[0]["Steps"], testStepsJSON)

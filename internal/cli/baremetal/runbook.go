@@ -100,11 +100,14 @@ func newRunbookListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRunbookList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *resourceListFlags, w io.Writer) error {
-	fields, path := runbookFields, "runbooks"
+	// ironic lists these with ?detail=True; unlike nodes and ports there is
+	// no /detail route.
+	fields, q := runbookFields, f.query()
 	if f.detail(o, runbookFields, runbookDetailFields) {
-		fields, path = runbookDetailFields, "runbooks/detail"
+		fields = runbookDetailFields
+		q.Set("detail", "True")
 	}
-	all, err := ironicList(ctx, client, path, "runbooks", f.query(), f.limit)
+	all, err := ironicList(ctx, client, "runbooks", "runbooks", q, f.limit)
 	if err != nil {
 		return fmt.Errorf("listing baremetal runbooks: %w", explainMicroversion(ctx, client, featureRunbooks, err))
 	}

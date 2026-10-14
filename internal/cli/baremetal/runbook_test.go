@@ -25,10 +25,7 @@ func testRunbook() map[string]any {
 
 func TestRunRunbookList_ShortAndLong(t *testing.T) {
 	client, fake := newFakeIronic(t, map[string]fakeRoute{
-		"GET /runbooks": {http.StatusOK, map[string]any{"runbooks": []any{
-			map[string]any{"uuid": testRunbookUUID, "name": "CUSTOM_FIRMWARE_UPDATE"},
-		}}},
-		"GET /runbooks/detail": {http.StatusOK, map[string]any{"runbooks": []any{testRunbook()}}},
+		"GET /runbooks": {http.StatusOK, map[string]any{"runbooks": []any{testRunbook()}}},
 	})
 	var buf bytes.Buffer
 	if err := runRunbookList(context.Background(), client, &output.Options{Format: output.FormatValue},
@@ -43,13 +40,16 @@ func TestRunRunbookList_ShortAndLong(t *testing.T) {
 	}
 
 	buf.Reset()
-	// A -c naming a detail column reads /runbooks/detail without --long.
+	// A -c naming a detail column reads ?detail=True without --long.
 	o := &output.Options{Format: output.FormatValue, Columns: []string{"Name", "Traits", "Public"}}
 	if err := runRunbookList(context.Background(), client, o, &resourceListFlags{}, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != `CUSTOM_FIRMWARE_UPDATE ["CUSTOM_FIRMWARE_UPDATE"] true`+"\n" {
 		t.Errorf("detail output = %q", buf.String())
+	}
+	if q := fake.calls[len(fake.calls)-1].Query; q != "detail=True" {
+		t.Errorf("detail query = %q", q)
 	}
 }
 

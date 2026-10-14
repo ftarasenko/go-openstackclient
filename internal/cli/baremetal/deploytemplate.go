@@ -87,7 +87,7 @@ func (f *resourceListFlags) query() url.Values {
 	return url.Values{"marker": {f.marker}, "sort_key": {f.sortKey}, "sort_dir": {f.sortDir}}
 }
 
-// detail reports whether the listing needs the detail endpoint: --long, or a
+// detail reports whether the listing needs the detailed view: --long, or a
 // -c naming a column the short listing lacks.
 func (f *resourceListFlags) detail(o *output.Options, short, detailed []string) bool {
 	return f.long || len(o.SelectedColumns(labels(detailed)...)) > len(o.SelectedColumns(labels(short)...))
@@ -117,11 +117,14 @@ func newDeployTemplateListCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runDeployTemplateList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *resourceListFlags, w io.Writer) error {
-	fields, path := deployTemplateFields, "deploy_templates"
+	// ironic lists these with ?detail=True; unlike nodes and ports there is
+	// no /detail route.
+	fields, q := deployTemplateFields, f.query()
 	if f.detail(o, deployTemplateFields, deployTemplateDetailFields) {
-		fields, path = deployTemplateDetailFields, "deploy_templates/detail"
+		fields = deployTemplateDetailFields
+		q.Set("detail", "True")
 	}
-	all, err := ironicList(ctx, client, path, "deploy_templates", f.query(), f.limit)
+	all, err := ironicList(ctx, client, "deploy_templates", "deploy_templates", q, f.limit)
 	if err != nil {
 		return fmt.Errorf("listing baremetal deploy templates: %w", err)
 	}
