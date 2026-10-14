@@ -3,13 +3,103 @@
 package functional
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 )
 
 // ironic is stacked API-only (up.sh's "ironic" feature): fake-hardware nodes
 // with no VMs behind them, so every test here drives the API and its state
 // machine, never a real deploy.
+
+var (
+	ironicOnce sync.Once
+	ironicMax  string
+	errIronic  error
+)
+
+// ironicAPI is the cloud's maximum ironic microversion, read from the
+// endpoint's unauthenticated version document — the capability ironic
+// advertises, so a test gates on it rather than on the series.
+func ironicAPI(t *testing.T) string {
+	t.Helper()
+	ironicOnce.Do(func() {
+		var url string
+		for _, e := range defaultRunner(ft(t)).list(t, "endpoint", "list", "--interface", "public") {
+			if field(e, "Service Type") == "baremetal" {
+				url = field(e, "URL")
+			}
+		}
+		if url == "" {
+			errIronic = errNoIronic
+			return
+		}
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+		if err != nil {
+			errIronic = err
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			errIronic = err
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var doc struct {
+			Default struct {
+				Version string `json:"version"`
+			} `json:"default_version"`
+		}
+		errIronic = json.NewDecoder(resp.Body).Decode(&doc)
+		ironicMax = doc.Default.Version
+	})
+	if errIronic != nil {
+		t.Fatalf("reading the ironic version document: %v", errIronic)
+	}
+	return ironicMax
+}
+
+var errNoIronic = errors.New("no public baremetal endpoint in the catalog")
+
+// requireIronicAPI skips unless the cloud's ironic speaks at least minimum.
+func requireIronicAPI(t *testing.T, minimum string) {
+	t.Helper()
+	requireFeature(t, "ironic")
+	if have := ironicAPI(t); !microversionAtLeast(have, minimum) {
+		t.Skipf("needs ironic API %s; this cloud's ironic speaks up to %s", minimum, have)
+	}
+}
+
+// microversionAtLeast compares two "major.minor" versions.
+func microversionAtLeast(have, want string) bool {
+	parse := func(v string) (int, int) {
+		maj, mnr, _ := strings.Cut(v, ".")
+		a, _ := strconv.Atoi(maj)
+		b, _ := strconv.Atoi(mnr)
+		return a, b
+	}
+	ha, hb := parse(have)
+	wa, wb := parse(want)
+	return ha > wa || ha == wa && hb >= wb
+}
+
+// TestIronicCapability pins the ironic API each cell stacks, as
+// TestCapabilityMatrix does for neutron: a version-gated test turning into a
+// skip must be a deliberate change, not a silent one. The floors are ironic's
+// release mapping (ironic/common/release_mappings.py).
+func TestIronicCapability(t *testing.T) {
+	c := ft(t)
+	requireIronicAPI(t, "1.1")
+	floor := map[bool]string{false: "1.80", true: "1.96"}[c.Series.atLeast("2025.1")]
+	if have := ironicAPI(t); !microversionAtLeast(have, floor) {
+		t.Errorf("ironic on %s speaks up to %s, want at least %s", c.Series, have, floor)
+	}
+}
 
 // newBareNode enrolls a fake-hardware node and deletes it when the test ends.
 // It returns the node's name and UUID.
