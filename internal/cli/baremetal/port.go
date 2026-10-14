@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
+	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/ports"
@@ -38,13 +40,15 @@ func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // implementation time (HTTP 403), so these are UNVERIFIED against KeyStack and
 // fall back to upstream OSC semantics.
 type portListFlags struct {
-	long    bool
-	node    string
-	address string
-	limit   int
-	marker  string
-	sortKey string
-	sortDir string
+	long            bool
+	node            string
+	address         string
+	portGroup       string
+	physicalNetwork string
+	limit           int
+	marker          string
+	sortKey         string
+	sortDir         string
 }
 
 func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -69,57 +73,98 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
 	fl.StringVar(&f.node, "node", "", "limit to ports of this node (name or UUID)")
 	fl.StringVar(&f.address, "address", "", "limit to the port with this MAC address")
+	fl.StringVar(&f.portGroup, "port-group", "", "limit to ports of this port group (name or UUID)")
+	fl.StringVar(&f.physicalNetwork, "physical-network", "", "limit to ports on this physical network (filtered client-side)")
 	fl.IntVar(&f.limit, "limit", 0, "maximum number of ports to return")
 	fl.StringVar(&f.marker, "marker", "", "UUID of the last port from the previous page")
 	fl.StringVar(&f.sortKey, "sort-key", "", "sort output by this port attribute")
 	fl.StringVar(&f.sortDir, "sort-dir", "", "sort direction: asc or desc")
+	addListFieldsAliases(cmd, o)
 	return cmd
 }
 
 func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portListFlags, w io.Writer) error {
-	opts := ports.ListOpts{
-		Node:    f.node,
-		Address: f.address,
-		Limit:   f.limit,
-		Marker:  f.marker,
-		SortKey: f.sortKey,
-		SortDir: f.sortDir,
+	opts := portListQuery{
+		ListOpts: ports.ListOpts{
+			Node:    f.node,
+			Address: f.address,
+			Marker:  f.marker,
+			SortKey: f.sortKey,
+			SortDir: f.sortDir,
+		},
+		portGroup: f.portGroup,
 	}
-	all, err := paging.Collect(ctx, ports.List(client, opts), f.limit, ports.ExtractPorts)
+	// The plain list carries only uuid and address; --long, a -c naming
+	// another column, or the physical-network filter need /ports/detail.
+	fields, list := portFields, ports.List
+	if f.long || f.physicalNetwork != "" ||
+		len(o.SelectedColumns(labels(portDetailFields)...)) > len(o.SelectedColumns(labels(portFields)...)) {
+		fields, list = portDetailFields, ports.ListDetail
+	}
+	// ironic has no physical_network query parameter, so --limit cannot be
+	// handed to the API when filtering on it.
+	limit := f.limit
+	if f.physicalNetwork != "" {
+		limit = 0
+	}
+	opts.Limit = limit
+	all, err := paging.Collect(ctx, list(client, opts), limit, pageMaps("ports"))
 	if err != nil {
 		return fmt.Errorf("listing baremetal ports: %w", err)
 	}
-	return o.WriteList(w, portListTable(all, f.long))
-}
-
-func portListTable(list []ports.Port, long bool) output.Table {
-	cols := []string{"UUID", "Address"}
-	if long {
-		cols = append(cols, "Node UUID", "PXE Enabled", "Physical Network", "Portgroup UUID")
-	}
-	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
-	for _, p := range list {
-		row := []any{p.UUID, p.Address}
-		if long {
-			row = append(row, p.NodeUUID, p.PXEEnabled, p.PhysicalNetwork, p.PortGroupUUID)
+	if f.physicalNetwork != "" {
+		all = slices.DeleteFunc(all, func(p map[string]any) bool { return p["physical_network"] != f.physicalNetwork })
+		if f.limit > 0 && len(all) > f.limit {
+			all = all[:f.limit]
 		}
-		t.Rows = append(t.Rows, row)
 	}
-	return t
+	return o.WriteList(w, listTable(all, fields))
 }
 
-func portShowFields(p *ports.Port) ([]string, []any) {
-	fields := []string{
-		"uuid", "address", "node_uuid", "portgroup_uuid", "pxe_enabled",
-		"physical_network", "local_link_connection", "is_smartnic", "extra",
-		"created_at", "updated_at",
+// portListQuery adds ironic's portgroup filter, which gophercloud's
+// ports.ListOpts does not model.
+type portListQuery struct {
+	ports.ListOpts
+	portGroup string
+}
+
+// ToPortListQuery implements ports.ListOptsBuilder.
+func (q portListQuery) ToPortListQuery() (string, error) {
+	s, err := q.ListOpts.ToPortListQuery()
+	return q.withPortGroup(s, err)
+}
+
+// ToPortListDetailQuery implements ports.ListOptsBuilder for /ports/detail.
+func (q portListQuery) ToPortListDetailQuery() (string, error) {
+	s, err := q.ListOpts.ToPortListDetailQuery()
+	return q.withPortGroup(s, err)
+}
+
+func (q portListQuery) withPortGroup(s string, err error) (string, error) {
+	if err != nil || q.portGroup == "" {
+		return s, err
 	}
-	values := []any{
-		p.UUID, p.Address, p.NodeUUID, p.PortGroupUUID, p.PXEEnabled,
-		p.PhysicalNetwork, p.LocalLinkConnection, p.IsSmartNIC, p.Extra,
-		p.CreatedAt, p.UpdatedAt,
+	return appendQuery(s, "portgroup="+url.QueryEscape(q.portGroup)), nil
+}
+
+// portDetailFields are python-ironicclient's PORT_DETAILED_RESOURCE, the
+// columns of `port list --long`; portFields are the short list's.
+var (
+	portDetailFields = []string{
+		"uuid", "address", "created_at", "extra", "node_uuid", "category", "vendor",
+		"local_link_connection", "portgroup_uuid", "pxe_enabled", "physical_network",
+		"updated_at", "internal_info", "is_smartnic", "name",
 	}
-	return fields, values
+	portFields = []string{"uuid", "address"}
+)
+
+// portShowKnown adds description (API 1.97), which python-ironicclient's
+// detailed set lacks, to the fields `port show` always carries.
+var portShowKnown = append(slices.Clone(portDetailFields), "description")
+
+// portShowFields renders a port body as `port show` does upstream.
+func portShowFields(body map[string]any) ([]string, []any) {
+	return showFields(body, portShowKnown)
 }
 
 func newPortShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -143,7 +188,7 @@ func newPortShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	p, err := ports.Get(ctx, client, id).Extract()
+	p, err := resultMap(ports.Get(ctx, client, id).Result)
 	if err != nil {
 		return fmt.Errorf("getting baremetal port %s: %w", id, err)
 	}
@@ -167,10 +212,6 @@ type portCreateFlags struct {
 // ports.CreateOpts has no such field — the attribute arrived in API 1.88, after
 // the package was written — so the builder interface is implemented here rather
 // than hand-rolling the whole request.
-//
-// gophercloud's ports.Port has no Name field either, and no catch-all, so
-// `port show` cannot render the name back yet: doing that needs a koc-owned DTO
-// for the port reads, which is a larger change than accepting the flag.
 type portNameOpts struct {
 	ports.CreateOpts
 	Name string
@@ -219,7 +260,7 @@ func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 // portColumns are the columns a port write verb renders.
-var portColumns = fieldNames(portShowFields(&ports.Port{}))
+var portColumns = knownColumns(portShowKnown)
 
 func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portCreateFlags, w io.Writer) error {
 	if err := o.CheckColumns(portColumns...); err != nil {
@@ -242,7 +283,7 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.pxeEnabledSet {
 		opts.PXEEnabled = &f.pxeEnabled
 	}
-	p, err := ports.Create(ctx, client, opts).Extract()
+	p, err := resultMap(ports.Create(ctx, client, opts).Result)
 	if err != nil {
 		if f.name != "" {
 			// A port name is rejected as an unknown attribute below ironic 1.88,
@@ -360,7 +401,7 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if len(ops) == 0 {
 		return fmt.Errorf("port set requires at least one attribute flag")
 	}
-	p, err := ports.Update(ctx, client, id, ops).Extract()
+	p, err := resultMap(ports.Update(ctx, client, id, ops).Result)
 	if err != nil {
 		if f.name != "" {
 			return fmt.Errorf("updating baremetal port %s: %w", id,

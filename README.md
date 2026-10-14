@@ -986,11 +986,6 @@ items are deferred and worth noting:
   tokens and credential fields; it does not pretty-print JSON.
 - **`-f json` mirrors the rendered table**, not the API object — see "Output
   formats" above before consuming it from a script.
-- **`baremetal port --name` can be set but not shown.** `port create`/`port set`
-  send ironic's `name` attribute (API 1.88, OpenStack 2024.1), but gophercloud's
-  port result type has no field for it and no catch-all, so `port show`/`port
-  list` cannot render it back. Reading it needs a koc-owned DTO for the port
-  reads.
 - **Cinder's pool capacity can mix raw and replicated figures.** `koc volume
   backend pool list` reports what cinder's scheduler was handed: one
   `total_capacity_gb` and one `free_capacity_gb` per pool. A driver that
