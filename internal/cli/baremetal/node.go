@@ -57,6 +57,7 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newNodeHistoryCommand(a, o))
 	cmd.AddCommand(newNodeChildrenCommand(a, o))
 	cmd.AddCommand(newNodePassthruCommand(a, o))
+	cmd.AddCommand(newNodeVmediaCommand(a))
 	return cmd
 }
 
