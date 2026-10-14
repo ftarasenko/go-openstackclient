@@ -201,6 +201,24 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 	o.applyProjectScope(ao)
 	o.applyDomainScope(ao)
 	o.applySystemScope(ao)
+	o.applyDefaultDomain(ao)
+}
+
+// applyDefaultDomain qualifies, with --os-default-domain, a username and a
+// project-by-name scope that nothing else qualified, as osc-lib does
+// (osc_lib/cli/client_config.py _auth_default_domain). Keystone otherwise
+// rejects the password grant; devstack's zed clouds.yaml names its system
+// admin with no user domain at all.
+func (o *Options) applyDefaultDomain(ao *gophercloud.AuthOptions) {
+	if o.DefaultDomain == "" || ao.ApplicationCredentialID != "" || ao.ApplicationCredentialName != "" {
+		return
+	}
+	if ao.Username != "" && ao.UserID == "" && ao.DomainID == "" && ao.DomainName == "" {
+		ao.DomainID = o.DefaultDomain
+	}
+	if s := ao.Scope; s != nil && s.ProjectName != "" && s.ProjectID == "" && s.DomainID == "" && s.DomainName == "" {
+		s.DomainID = o.DefaultDomain
+	}
 }
 
 // applyProjectScope moves an explicit project scope to the project the operator

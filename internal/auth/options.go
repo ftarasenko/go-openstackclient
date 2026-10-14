@@ -83,6 +83,9 @@ type Options struct {
 	ProjectDomainID string
 	UserDomainID    string
 	DomainID        string
+	// DefaultDomain qualifies a username or project name no domain flag,
+	// variable or clouds.yaml key qualifies: osc-lib's --os-default-domain.
+	DefaultDomain string
 
 	RegionName string
 	Interface  string
@@ -301,6 +304,8 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"user domain ID (env OS_USER_DOMAIN_ID)")
 	fs.StringVar(&o.DomainID, "os-domain-id", os.Getenv("OS_DOMAIN_ID"),
 		"domain ID for domain-scoped tokens (env OS_DOMAIN_ID)")
+	fs.StringVar(&o.DefaultDomain, "os-default-domain", envOr("OS_DEFAULT_DOMAIN", "default"),
+		"domain ID for a username or project name given without one (env OS_DEFAULT_DOMAIN)")
 	fs.StringVar(&o.RegionName, "os-region-name", os.Getenv("OS_REGION_NAME"),
 		"region name (env OS_REGION_NAME)")
 	fs.StringVar(&o.Interface, "os-interface", os.Getenv("OS_INTERFACE"),

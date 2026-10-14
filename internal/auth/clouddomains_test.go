@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -126,5 +128,62 @@ func TestReconcileCloudDomains_FlagsStillWin(t *testing.T) {
 	}
 	if ao.Scope == nil || ao.Scope.DomainName != "FlagDom" {
 		t.Errorf("scope = %#v, want the flag's domain", ao.Scope)
+	}
+}
+
+// A username or project name nothing qualified falls back to
+// --os-default-domain, as osc-lib's does; devstack's zed clouds.yaml names its
+// system admin with no user domain at all.
+func TestApplyDefaultDomain(t *testing.T) {
+	cloudsPath := filepath.Join(t.TempDir(), "clouds.yaml")
+	if err := os.WriteFile(cloudsPath, []byte(`clouds:
+  sysadmin:
+    auth:
+      auth_url: http://192.0.2.1/identity
+      username: admin
+      password: secret
+      system_scope: all
+  proj:
+    auth:
+      auth_url: http://192.0.2.1/identity
+      username: demo
+      password: secret
+      project_name: demo
+  qualified:
+    auth:
+      auth_url: http://192.0.2.1/identity
+      username: demo
+      password: secret
+      project_name: demo
+      user_domain_name: Users
+      project_domain_name: Projects
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OS_CLIENT_CONFIG_FILE", cloudsPath)
+
+	for _, tc := range []struct {
+		cloud, userDomainID, userDomainName, scopeDomainID string
+	}{
+		{"sysadmin", "default", "", ""},
+		{"proj", "default", "", "default"},
+		{"qualified", "", "Users", ""},
+	} {
+		t.Run(tc.cloud, func(t *testing.T) {
+			o := &Options{Cloud: tc.cloud, DefaultDomain: "default"}
+			ao, _, _, err := o.resolveAuth()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ao.DomainID != tc.userDomainID || ao.DomainName != tc.userDomainName {
+				t.Errorf("user domain = %q/%q, want %q/%q", ao.DomainID, ao.DomainName, tc.userDomainID, tc.userDomainName)
+			}
+			if ao.Scope != nil && !ao.Scope.System && ao.Scope.DomainID != tc.scopeDomainID {
+				t.Errorf("scope = %#v, want domain ID %q", ao.Scope, tc.scopeDomainID)
+			}
+			if tc.cloud == "sysadmin" && (ao.Scope == nil || !ao.Scope.System) {
+				t.Errorf("scope = %#v, want system", ao.Scope)
+			}
+		})
 	}
 }
