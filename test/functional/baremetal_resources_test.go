@@ -3,6 +3,7 @@
 package functional
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -116,4 +117,27 @@ func TestBaremetalVolumeConnectorsAndTargets(t *testing.T) {
 	r.fails(t, "baremetal", "volume", "target", "show", tgtID)
 	r.ok(t, "baremetal", "volume", "connector", "delete", connID)
 	r.fails(t, "baremetal", "volume", "connector", "show", connID)
+}
+
+func TestBaremetalShards(t *testing.T) {
+	c := ft(t)
+	requireIronicAPI(t, "1.82")
+	r := defaultRunner(c)
+	_, nodeUUID := newBareNode(t, r)
+
+	shard := uniq("shard")
+	r.ok(t, "baremetal", "node", "set", nodeUUID, "--shard", shard)
+	if got := r.show(t, "baremetal", "node", "show", nodeUUID); field(got, "shard") != shard {
+		t.Errorf("node set --shard: shard = %q", field(got, "shard"))
+	}
+	rows := r.list(t, "baremetal", "shard", "list")
+	i := slices.IndexFunc(rows, func(m map[string]any) bool { return field(m, "Name") == shard })
+	if i < 0 || field(rows[i], "Count") != "1" {
+		t.Errorf("shard list = %v, want %s with one node", rows, shard)
+	}
+
+	r.ok(t, "baremetal", "node", "unset", nodeUUID, "--shard")
+	if rows := r.list(t, "baremetal", "shard", "list"); in(rows, shard) {
+		t.Errorf("shard list still has %s after node unset --shard: %v", shard, rows)
+	}
 }

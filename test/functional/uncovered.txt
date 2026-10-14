@@ -43,7 +43,6 @@ koc baremetal node service
 koc baremetal node undeploy
 koc baremetal node unhold
 koc baremetal node unrescue
-koc baremetal node unset
 koc baremetal node validate
 koc baremetal node vif attach
 koc baremetal node vif detach

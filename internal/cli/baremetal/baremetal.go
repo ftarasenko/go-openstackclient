@@ -26,5 +26,6 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newDeployCommand(a, o))
 	cmd.AddCommand(newRunbookCommand(a, o))
 	cmd.AddCommand(newVolumeCommand(a, o))
+	cmd.AddCommand(newShardCommand(a, o))
 	return cmd
 }

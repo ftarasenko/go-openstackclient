@@ -48,6 +48,7 @@ var fieldLabels = map[string]string{
 	"connector_id":                    "Connector ID",
 	"console_enabled":                 "Console Enabled",
 	"console_interface":               "Console Interface",
+	"count":                           "Count",
 	"created_at":                      "Created At",
 	"deploy_interface":                "Deploy Interface",
 	"deploy_step":                     "Deploy Step",

@@ -177,6 +177,7 @@ type nodeSetFlags struct {
 	resourceClass  string
 	conductorGroup string
 	instanceUUID   string
+	shard          string
 	property       []string
 	driverInfo     []string
 	extra          []string
@@ -221,6 +222,7 @@ func newNodeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.resourceClass, flagResourceClass, "", "set the resource class")
 	fl.StringVar(&f.conductorGroup, flagConductorGroup, "", "set the conductor group")
 	fl.StringVar(&f.instanceUUID, flagInstanceUUID, "", "associate the node with this instance UUID")
+	fl.StringVar(&f.shard, "shard", "", "set the node's shard (requires ironic API 1.82)")
 	fl.StringArrayVar(&f.property, "property", nil, "set a physical property key=value (repeatable)")
 	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "set a driver_info key=value (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
@@ -259,6 +261,9 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if f.instanceUUID != "" {
 		scalar(flagInstanceUUID, "/instance_uuid", f.instanceUUID)
 	}
+	if f.shard != "" {
+		scalar("shard", "/shard", f.shard)
+	}
 	if err := appendKVOps(&ops, "/properties/", f.property, "--property"); err != nil {
 		return err
 	}
@@ -289,6 +294,9 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	}
 	n, err := resultMap(nodes.Update(ctx, client, id, ops).Result)
 	if err != nil {
+		if f.shard != "" {
+			err = explainMicroversion(ctx, client, featureShards, err)
+		}
 		return fmt.Errorf("updating baremetal node %s: %w", id, err)
 	}
 	fields, values := nodeShowFields(n)
@@ -313,6 +321,7 @@ type nodeUnsetFlags struct {
 	name           bool
 	resourceClass  bool
 	instanceUUID   bool
+	shard          bool
 	property       []string
 	driverInfo     []string
 	extra          []string
@@ -342,6 +351,7 @@ func newNodeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.name, "name", false, "clear the node name")
 	fl.BoolVar(&f.resourceClass, flagResourceClass, false, "clear the resource class")
 	fl.BoolVar(&f.instanceUUID, flagInstanceUUID, false, "disassociate the node from its instance")
+	fl.BoolVar(&f.shard, "shard", false, "clear the node's shard")
 	fl.StringArrayVar(&f.property, "property", nil, "remove a physical property by key (repeatable)")
 	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "remove a driver_info key (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "remove an extra metadata key (repeatable)")
@@ -372,6 +382,9 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	if f.instanceUUID {
 		remove("/instance_uuid")
+	}
+	if f.shard {
+		remove("/shard")
 	}
 	for _, k := range f.property {
 		remove("/properties/" + escapeJSONPointer(k))
