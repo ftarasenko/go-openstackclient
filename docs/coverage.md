@@ -181,7 +181,7 @@ counted in the compute row.
 
 | Plugin | Coverage | Shape of the gap |
 | --- | --- | --- |
-| ironic (`baremetal`) | 107/118 (91%) | the full provision-state verb set, node lifecycle, power, ports, port groups, deploy templates, runbooks, inspection rules, volume connectors/targets, shards, traits, console, secure boot, history, child nodes, vendor passthru, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing chassis. Sequenced in `docs/proposals/coverage-tiers.md` |
+| ironic (`baremetal`) | 107/118 (91%) | the full provision-state verb set, node lifecycle, power, ports, port groups, deploy templates, runbooks, inspection rules, volume connectors/targets, shards, traits, console, secure boot, history, child nodes, vendor passthru, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing `chassis` (6), `baremetal create`, `driver passthru list/call`, `node boot mode set` and `port unset`. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
 | python-octaviaclient (`load balancer`) | 62/82 (76%) | everything except availability zones and profiles (11 — `availabilityzone` ×6, `availabilityzoneprofile` ×5), eight of upstream's ten `unset` verbs (`loadbalancer`, `listener`, `pool`, `member`, `healthmonitor`, `l7policy`, `l7rule`, `flavor`; `quota unset` is implemented and `availability zone unset` is inside the 11) and `listener stats show` — 20 in all. Diffed name-for-name against `entry_points.txt`: all 62 `koc loadbalancer` leaves map to an upstream command, none is koc-invented |
 | osc-placement | **31/31 (100%)** | complete against `entry_points.txt`, diffed name-for-name — resource providers, classes, traits, inventories, aggregates, allocations, allocation candidates and usages, reads and writes alike |
@@ -283,7 +283,7 @@ covers strictly more clouds than a four-way typed switch would.
 ### Tier 3 — no gophercloud package; needs a raw `ServiceClient` fallback
 
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
-`block storage log level/manageable`; ironic chassis; Neutron metering, flavors, L3 conntrack helpers, local IPs,
+`block storage log level/manageable`; ironic chassis, driver passthru and node boot mode; Neutron metering, flavors, L3 conntrack helpers, local IPs,
 NDP proxies, segment ranges, default SG rules; octavia availability zones and
 profiles; TaaS tap services and flows (only tap mirrors have a gophercloud
 package); all of Swift and Manila. (Designate is no longer on this list — the raw
