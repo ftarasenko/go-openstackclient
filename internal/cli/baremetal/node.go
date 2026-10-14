@@ -50,6 +50,8 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newNodeBIOSCommand(a, o))
 	cmd.AddCommand(newNodeFirmwareCommand(a, o))
 	cmd.AddCommand(newNodeInjectNMICommand(a, o))
+	cmd.AddCommand(newNodeTraitCommand(a, o))
+	cmd.AddCommand(newNodeAddRemoveTraitCommands(a)...)
 	return cmd
 }
 

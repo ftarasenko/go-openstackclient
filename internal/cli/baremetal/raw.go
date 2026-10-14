@@ -48,6 +48,22 @@ func ironicPost(ctx context.Context, client *gophercloud.ServiceClient, path str
 	return err
 }
 
+// ironicPut PUTs body to path; body may be nil.
+func ironicPut(ctx context.Context, client *gophercloud.ServiceClient, path string, body any) error {
+	opts := &gophercloud.RequestOpts{
+		OkCodes: []int{http.StatusOK, http.StatusAccepted, http.StatusNoContent},
+	}
+	if body != nil {
+		opts.JSONBody = body
+	}
+	resp, err := client.Request(ctx, http.MethodPut, client.ServiceURL(path), opts)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
+}
+
 // ironicPatch applies a JSON patch to the resource at path and decodes the
 // updated resource into out.
 func ironicPatch(ctx context.Context, client *gophercloud.ServiceClient, path string, ops []patchOp, out any) error {
