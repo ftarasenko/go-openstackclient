@@ -34,7 +34,6 @@ koc baremetal node inventory save
 koc baremetal node inventory show
 koc baremetal node maintenance unset
 koc baremetal node manage
-koc baremetal node power off
 koc baremetal node power on
 koc baremetal node power reboot
 koc baremetal node provide

@@ -13,7 +13,8 @@ deployment. No Python at runtime.
 > - **baremetal** (ironic) — node lifecycle (create/delete/show/set/unset),
 >   provision transitions (manage/provide/deploy/undeploy/rebuild/inspect, with
 >   `--wait`), maintenance, power, boot device, traits, ports, port groups,
->   deploy templates, runbooks, inspection rules, drivers, conductors
+>   deploy templates, runbooks, inspection rules, volume connectors and targets, drivers,
+>   conductors
 > - **server** (nova) — full lifecycle, add/remove volume·floating-ip·security-group,
 >   console log/url, plus `compute service`, `hypervisor list` (with color
 >   allocation **gauges**), `quota show`
