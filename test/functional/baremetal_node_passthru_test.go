@@ -13,7 +13,7 @@ import (
 func TestBaremetalNodePassthru(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, _ := newBareNode(t, r)
 	r.ok(t, "baremetal", "node", "set", node, "--vendor-interface", "fake")
 

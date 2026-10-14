@@ -133,7 +133,7 @@ func object(m map[string]any, key string) map[string]any {
 func TestBaremetalNodeReads(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	name, uuid := newBareNode(t, r)
 
 	n := r.show(t, "baremetal", "node", "show", name)
@@ -161,7 +161,7 @@ func TestBaremetalNodeReads(t *testing.T) {
 func TestBaremetalPortGroups(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, nodeUUID := newBareNode(t, r)
 
 	pgName := uniq("bond")
@@ -226,7 +226,7 @@ func TestBaremetalNodeNetworkShow(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
 	requireExtension(t, "trunk")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, nodeUUID := newBareNode(t, r)
 	r.ok(t, "baremetal", "node", "set", node, "--network-interface", "flat")
 
@@ -245,19 +245,30 @@ func TestBaremetalNodeNetworkShow(t *testing.T) {
 		t.Errorf("port set --local-link-connection = %v", p)
 	}
 
-	native, vlan := newNetwork(t, r, "198.51.100.0/24"), newNetwork(t, r, "198.51.100.128/25")
-	parent := field(r.show(t, "port", "create", uniq("bmparent"), "--network", native.net), "id")
-	t.Cleanup(func() { r.run(t, "port", "delete", parent) })
-	sub := field(r.show(t, "port", "create", uniq("bmsub"), "--network", vlan.net), "id")
-	t.Cleanup(func() { r.run(t, "port", "delete", sub) })
-	trunk := field(r.show(t, "network", "trunk", "create", uniq("bmtrunk"), "--parent-port", parent,
+	// neutron resources belong to the project; ironic is driven system-scoped.
+	n := defaultRunner(c)
+	native, vlan := newNetwork(t, n, "198.51.100.0/24"), newNetwork(t, n, "198.51.100.128/25")
+	parent := field(n.show(t, "port", "create", uniq("bmparent"), "--network", native.net), "id")
+	t.Cleanup(func() { n.run(t, "port", "delete", parent) })
+	sub := field(n.show(t, "port", "create", uniq("bmsub"), "--network", vlan.net), "id")
+	t.Cleanup(func() { n.run(t, "port", "delete", sub) })
+	trunk := field(n.show(t, "network", "trunk", "create", uniq("bmtrunk"), "--parent-port", parent,
 		"--subport", "port="+sub+",segmentation-type=vlan,segmentation-id=101"), "id")
-	t.Cleanup(func() { r.run(t, "network", "trunk", "delete", trunk) })
+	t.Cleanup(func() { n.run(t, "network", "trunk", "delete", trunk) })
 
 	r.ok(t, "baremetal", "node", "vif", "attach", node, parent)
 	t.Cleanup(func() { r.run(t, "baremetal", "node", "vif", "detach", node, parent) })
 
-	res := r.run(t, "baremetal", "node", "network", "show", node, "-f", "json")
+	// One token has to read both halves. neutron shows a system-scoped token
+	// no project's ports, so read as the project, which ironic lets see the
+	// node — and its ports and port groups — once the project owns it.
+	project := field(n.show(t, "token", "issue"), "project_id")
+	r.ok(t, "baremetal", "node", "set", node, "--owner", project, "--lessee", project)
+	if got := r.show(t, "baremetal", "node", "show", node); field(got, "owner") != project || field(got, "lessee") != project {
+		t.Errorf("node set --owner/--lessee: %v", got)
+	}
+	t.Cleanup(func() { r.run(t, "baremetal", "node", "unset", node, "--owner", "--lessee") })
+	res := n.run(t, "baremetal", "node", "network", "show", node, "-f", "json")
 	if res.code != 0 {
 		t.Fatalf("node network show: exit %d: %s", res.code, res.stderr)
 	}

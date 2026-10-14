@@ -14,7 +14,7 @@ import (
 func TestBaremetalNodeVmedia(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, _ := newBareNode(t, r)
 
 	attach := r.run(t, "baremetal", "node", "vmedia", "attach", node, "http://192.0.2.1/boot.iso")

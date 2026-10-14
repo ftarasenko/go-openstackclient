@@ -24,7 +24,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 func TestBaremetalNodeConsole(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, _ := newBareNode(t, r)
 	r.ok(t, "baremetal", "node", "set", node, "--console-interface", "fake")
 
@@ -45,7 +45,7 @@ func TestBaremetalNodeConsole(t *testing.T) {
 func TestBaremetalNodeSecureBoot(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, _ := newBareNode(t, r)
 
 	on := r.run(t, "baremetal", "node", "secure", "boot", "on", node)

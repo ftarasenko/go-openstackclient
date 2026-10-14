@@ -15,7 +15,7 @@ import (
 func TestBaremetalInspectionRules(t *testing.T) {
 	c := ft(t)
 	requireIronicAPI(t, "1.96")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 
 	rule := r.show(t, "baremetal", "inspection", "rule", "create",
 		"--description", "koc functional", "--priority", "10",
@@ -65,7 +65,7 @@ func powerOff(t *testing.T, r runner, node string) {
 func TestBaremetalVolumeConnectorsAndTargets(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, nodeUUID := newBareNode(t, r)
 	powerOff(t, r, nodeUUID)
 
@@ -122,7 +122,7 @@ func TestBaremetalVolumeConnectorsAndTargets(t *testing.T) {
 func TestBaremetalShards(t *testing.T) {
 	c := ft(t)
 	requireIronicAPI(t, "1.82")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	_, nodeUUID := newBareNode(t, r)
 
 	shard := uniq("shard")

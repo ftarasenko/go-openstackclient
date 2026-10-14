@@ -34,7 +34,7 @@ func itemObject(m map[string]any, key string, i int) map[string]any {
 func TestBaremetalDeployTemplates(t *testing.T) {
 	c := ft(t)
 	requireIronicAPI(t, "1.55")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 
 	name := customTrait("dt")
 	tmpl := r.show(t, "baremetal", "deploy", "template", "create", name, "--steps", ftSteps, "--extra", "team=ops")
@@ -77,7 +77,7 @@ const ftRunbookSteps = `[{"interface":"bios","step":"apply_configuration","order
 func TestBaremetalRunbooks(t *testing.T) {
 	c := ft(t)
 	requireIronicAPI(t, "1.92")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 
 	// Below 1.112 a runbook's name must be a trait; a CUSTOM_ name is valid
 	// on every version.
@@ -97,16 +97,24 @@ func TestBaremetalRunbooks(t *testing.T) {
 		t.Errorf("runbook list --long has no %s: %v", id, rows)
 	}
 
-	r.ok(t, "baremetal", "runbook", "set", id, "--owner", "ft-owner", "--public", "--disable-ramdisk", "--extra", "rack=r1")
+	// ironic refuses an owner on a public runbook, so the two are set apart.
+	r.ok(t, "baremetal", "runbook", "set", id, "--owner", "ft-owner", "--disable-ramdisk", "--extra", "rack=r1")
 	got := r.show(t, "baremetal", "runbook", "show", id)
-	if field(got, "owner") != "ft-owner" || field(got, "public") != "true" || field(got, "disable_ramdisk") != "true" ||
-		field(object(got, "extra"), "rack") != "r1" {
+	if field(got, "owner") != "ft-owner" || field(got, "disable_ramdisk") != "true" || field(object(got, "extra"), "rack") != "r1" {
 		t.Errorf("after runbook set: %v", got)
 	}
-	r.ok(t, "baremetal", "runbook", "unset", id, "--owner", "--public", "--disable-ramdisk", "--extra", "rack")
+	r.ok(t, "baremetal", "runbook", "unset", id, "--owner", "--disable-ramdisk", "--extra", "rack")
 	got = r.show(t, "baremetal", "runbook", "show", id)
-	if field(got, "owner") != "" || field(got, "public") == "true" || field(object(got, "extra"), "rack") != "" {
+	if field(got, "owner") != "" || field(got, "disable_ramdisk") == "true" || field(object(got, "extra"), "rack") != "" {
 		t.Errorf("after runbook unset: %v", got)
+	}
+	r.ok(t, "baremetal", "runbook", "set", id, "--public")
+	if got := r.show(t, "baremetal", "runbook", "show", id); field(got, "public") != "true" {
+		t.Errorf("after runbook set --public: %v", got)
+	}
+	r.ok(t, "baremetal", "runbook", "unset", id, "--public")
+	if got := r.show(t, "baremetal", "runbook", "show", id); field(got, "public") == "true" {
+		t.Errorf("after runbook unset --public: %v", got)
 	}
 
 	t.Run("traits", func(t *testing.T) {

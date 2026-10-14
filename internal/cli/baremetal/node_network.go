@@ -350,7 +350,11 @@ func (nw *nodeWiring) check() []string {
 		}
 		port := nw.vifs[vif]
 		if port == nil {
-			warns = append(warns, fmt.Sprintf("VIF %s on %s does not exist in neutron", vif, what))
+			// neutron answers 404 for a port this token cannot see too: a
+			// system-scoped token, which ironic's defaults want, sees no
+			// project's ports.
+			warns = append(warns, fmt.Sprintf("VIF %s on %s was not found in neutron: deleted, "+
+				"or not visible to this token (neutron shows a system-scoped token no project's ports)", vif, what))
 			continue
 		}
 		switch vt := str(port, "binding:vif_type"); vt {

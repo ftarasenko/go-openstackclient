@@ -12,7 +12,7 @@ import (
 func TestBaremetalNodeHistoryAndChildren(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, _ := newBareNode(t, r)
 
 	// A failed transition is what ironic records: manage needs a power

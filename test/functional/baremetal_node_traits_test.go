@@ -12,7 +12,7 @@ import (
 func TestBaremetalNodeTraits(t *testing.T) {
 	c := ft(t)
 	requireFeature(t, "ironic")
-	r := defaultRunner(c)
+	r := systemRunner(c)
 	node, _ := newBareNode(t, r)
 
 	traits := func() []string {

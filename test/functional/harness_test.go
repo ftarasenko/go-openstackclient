@@ -370,6 +370,24 @@ func defaultRunner(c *cloud) runner {
 	return cloudsRunner(c)
 }
 
+// systemRunner is the default credential path with a system-scoped token:
+// ironic's secure-RBAC defaults keep drivers, shards, deploy templates,
+// inspection rules and vendor passthru to the system scope, which is how an
+// operator runs ironic. devstack's clouds.yaml carries the system admin, and
+// its openrc becomes one by trading the project for --os-system-scope all.
+func systemRunner(c *cloud) runner {
+	if c.Auth == "env" {
+		var env []string
+		for _, kv := range c.Openrc {
+			if !strings.HasPrefix(kv, "OS_PROJECT_") {
+				env = append(env, kv)
+			}
+		}
+		return runner{env: append(append(baseEnv(), env...), "OS_SYSTEM_SCOPE=all")}
+	}
+	return runner{env: append(baseEnv(), "OS_CLOUD=devstack-system-admin")}
+}
+
 func (r runner) with(kv ...string) runner {
 	r.env = append(append([]string(nil), r.env...), kv...)
 	return r
