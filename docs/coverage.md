@@ -604,6 +604,14 @@ a caller that falls back on failure then silently acts on nothing. Same
 filters but no name filter — and is neutron's exact-match `name` query, so it
 filters server-side instead of leaving every caller to do it client-side.
 
+`network list --provider` is koc-native and uncounted. It adds `Network Type`,
+`Provider Physical Network` and `Provider Segment` (neutron's `provider:*`,
+from the listing itself), each also selectable by name with `-c`. Upstream's
+listing has only `Network Type`, under `--long`, so "every VLAN network on
+physnet1 and its VLAN ID" took a `network show` per network. A multi-segment
+network carries no `provider:*` of its own; its cells join the per-segment
+values.
+
 ## Updating this document
 
 The tables are derived, not hand-maintained. To re-derive after a version bump

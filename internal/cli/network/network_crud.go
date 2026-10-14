@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
@@ -128,6 +130,8 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.long, "long", false, "list additional fields in output")
+	fl.BoolVar(&f.provider, "provider", false,
+		"add the provider network type, physical network and segment columns (koc-only; also selectable with -c)")
 	fl.BoolVar(&f.external, netFlagExternal, false, "list only external networks (use --external=false for internal)")
 	fl.BoolVar(&f.internal, netFlagInternal, false, "list only internal networks")
 	fl.StringVar(&f.name, "name", "", "list networks matching this name")
@@ -153,6 +157,7 @@ func newNetworkListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 type networkListFlags struct {
 	long        bool
+	provider    bool
 	external    bool
 	externalSet bool
 	internal    bool
@@ -287,7 +292,75 @@ func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err := networks.ExtractNetworksInto(pages, &all); err != nil {
 		return fmt.Errorf("parsing network list: %w", err)
 	}
-	return o.WriteList(w, networkListTable(all, f.long))
+	t := networkListTable(all, f.long)
+	addProviderColumns(&t, all, networkProviderColumns(o, f.provider, t.Columns))
+	return o.WriteList(w, t)
+}
+
+// The provider columns are opt-in (--provider or -c): upstream's listing has
+// only "Network Type" (--long), so finding every VLAN network on a physnet and
+// its VLAN ID took a show per network. All three come from the list response.
+const (
+	colNetworkType     = "Network Type"
+	colProviderPhysNet = "Provider Physical Network"
+	colProviderSegment = "Provider Segment"
+)
+
+// networkProviderColumns returns the provider columns to add to a listing that
+// already has present: all of them for --provider, else those named with
+// -c/--sort-column.
+func networkProviderColumns(o *output.Options, all bool, present []string) []string {
+	want := []string{colNetworkType, colProviderPhysNet, colProviderSegment}
+	if !all {
+		want = o.SelectedColumns(want...)
+	}
+	return slices.DeleteFunc(want, func(c string) bool { return slices.Contains(present, c) })
+}
+
+// addProviderColumns appends cols to t, one value per network. A network with
+// several segments carries no provider:* attributes of its own, only a
+// "segments" list, so its values are the per-segment ones joined by commas.
+func addProviderColumns(t *output.Table, list []networkExt, cols []string) {
+	if len(cols) == 0 {
+		return
+	}
+	t.Columns = append(t.Columns, cols...)
+	for i := range list {
+		p := &list[i].NetworkProviderExt
+		for _, c := range cols {
+			t.Rows[i] = append(t.Rows[i], providerValue(p, c))
+		}
+	}
+}
+
+func providerValue(p *provider.NetworkProviderExt, col string) any {
+	var single string
+	switch col {
+	case colNetworkType:
+		single = p.NetworkType
+	case colProviderPhysNet:
+		single = p.PhysicalNetwork
+	case colProviderSegment:
+		single = p.SegmentationID
+	}
+	if single != "" {
+		return single
+	}
+	if len(p.Segments) == 0 {
+		return nil
+	}
+	vals := make([]string, 0, len(p.Segments))
+	for _, seg := range p.Segments {
+		switch col {
+		case colNetworkType:
+			vals = append(vals, seg.NetworkType)
+		case colProviderPhysNet:
+			vals = append(vals, seg.PhysicalNetwork)
+		case colProviderSegment:
+			vals = append(vals, strconv.Itoa(seg.SegmentationID))
+		}
+	}
+	return strings.Join(vals, ",")
 }
 
 // runNetworkListByAgent is "network list --agent": the networks a DHCP agent
@@ -308,14 +381,14 @@ func networkListTable(list []networkExt, long bool) output.Table {
 	cols := []string{"ID", "Name", "Subnets"}
 	if long {
 		cols = []string{"ID", "Name", "Status", "Project", "State", "Shared", "Subnets",
-			"Network Type", "Router Type", "Availability Zones", "Tags"}
+			colNetworkType, "Router Type", "Availability Zones", "Tags"}
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for i := range list {
 		n := &list[i]
 		if long {
 			t.Rows = append(t.Rows, []any{n.ID, n.Name, n.Status, n.ProjectID, adminState(n.AdminStateUp), n.Shared,
-				n.Subnets, n.NetworkType, routerType(n.External), n.AvailabilityZones, n.Tags})
+				n.Subnets, providerValue(&n.NetworkProviderExt, colNetworkType), routerType(n.External), n.AvailabilityZones, n.Tags})
 		} else {
 			t.Rows = append(t.Rows, []any{n.ID, n.Name, n.Subnets})
 		}
