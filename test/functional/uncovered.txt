@@ -42,7 +42,6 @@ koc baremetal node provide
 koc baremetal node rebuild
 koc baremetal node rescue
 koc baremetal node service
-koc baremetal node set
 koc baremetal node undeploy
 koc baremetal node unhold
 koc baremetal node unrescue
