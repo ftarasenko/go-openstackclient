@@ -217,3 +217,69 @@ func TestBaremetalPortGroups(t *testing.T) {
 	r.ok(t, "baremetal", "port", "group", "delete", pgUUID)
 	r.fails(t, "baremetal", "port", "group", "show", pgUUID)
 }
+
+// TestBaremetalNodeNetworkShow wires a bonded node the way a tenant does: a
+// port group of two cabled ports, a trunk parent VIF attached through ironic's
+// flat network interface, and a VLAN subport with its own MAC. node network
+// show must join both halves and flag the subport's MAC.
+func TestBaremetalNodeNetworkShow(t *testing.T) {
+	c := ft(t)
+	requireFeature(t, "ironic")
+	requireExtension(t, "trunk")
+	r := defaultRunner(c)
+	node, nodeUUID := newBareNode(t, r)
+	r.ok(t, "baremetal", "node", "set", node, "--network-interface", "flat")
+
+	pg := field(r.show(t, "baremetal", "port", "group", "create", "--node", node, "--name", uniq("bond"),
+		"--address", "52:54:00:56:78:00", "--mode", "802.3ad"), "uuid")
+	t.Cleanup(func() { r.run(t, "baremetal", "port", "group", "delete", pg) })
+	for i, mac := range []string{"52:54:00:56:78:01", "52:54:00:56:78:02"} {
+		p := field(r.show(t, "baremetal", "port", "create", mac, "--node", nodeUUID, "--port-group", pg,
+			"--local-link-connection", "switch_id=00:00:5e:00:53:01",
+			"--local-link-connection", "port_id=Ethernet1/"+strconv.Itoa(i+1),
+			"--local-link-connection", "switch_info=leaf1"), "uuid")
+		t.Cleanup(func() { r.run(t, "baremetal", "port", "delete", p) })
+	}
+	if p := r.show(t, "baremetal", "port", "set", field(r.list(t, "baremetal", "port", "list", "--port-group", pg)[0], "UUID"),
+		"--local-link-connection", "switch_info=leaf2"); field(object(p, "local_link_connection"), "switch_info") != "leaf2" {
+		t.Errorf("port set --local-link-connection = %v", p)
+	}
+
+	native, vlan := newNetwork(t, r, "198.51.100.0/24"), newNetwork(t, r, "198.51.100.128/25")
+	parent := field(r.show(t, "port", "create", uniq("bmparent"), "--network", native.net), "id")
+	t.Cleanup(func() { r.run(t, "port", "delete", parent) })
+	sub := field(r.show(t, "port", "create", uniq("bmsub"), "--network", vlan.net), "id")
+	t.Cleanup(func() { r.run(t, "port", "delete", sub) })
+	trunk := field(r.show(t, "network", "trunk", "create", uniq("bmtrunk"), "--parent-port", parent,
+		"--subport", "port="+sub+",segmentation-type=vlan,segmentation-id=101"), "id")
+	t.Cleanup(func() { r.run(t, "network", "trunk", "delete", trunk) })
+
+	r.ok(t, "baremetal", "node", "vif", "attach", node, parent)
+	t.Cleanup(func() { r.run(t, "baremetal", "node", "vif", "detach", node, parent) })
+
+	res := r.run(t, "baremetal", "node", "network", "show", node, "-f", "json")
+	if res.code != 0 {
+		t.Fatalf("node network show: exit %d: %s", res.code, res.stderr)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(res.stdout), &rows); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]map[string]any{}
+	for _, row := range rows {
+		kinds[field(row, "Kind")+"/"+field(row, "VIF")+field(row, "Ironic")] = row
+	}
+	if g := kinds["portgroup/"+parent+pg]; g == nil || field(g, "Trunk") != trunk || field(g, "Network") != native.net {
+		t.Errorf("no port group row carrying VIF %s on trunk %s: %v", parent, trunk, rows)
+	}
+	if s := kinds["subport/"+sub]; s == nil || field(s, "VLAN") != "101" || field(s, "Network") != vlan.net {
+		t.Errorf("no subport row for %s on VLAN 101: %v", sub, rows)
+	}
+	if n := len(rows); n != 4 {
+		t.Errorf("%d rows, want port group + 2 ports + subport: %v", n, rows)
+	}
+	// ironic gave the parent the port group's MAC; the subport kept neutron's.
+	if !strings.Contains(res.stderr, "subport "+sub+" (VLAN 101) has MAC") {
+		t.Errorf("no subport MAC warning:\n%s", res.stderr)
+	}
+}

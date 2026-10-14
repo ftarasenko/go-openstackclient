@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-10-14 · `koc` @ this commit (base `567ac0e`) · 731 leaf
+**Snapshot:** 2026-10-14 · `koc` @ this commit (base `6cf4895`) · 732 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**677 of 947 in-scope upstream commands (71%).** Of `koc`'s 731 leaf commands,
-677 are upstream-equivalent and 54 are koc-native.
+**677 of 947 in-scope upstream commands (71%).** Of `koc`'s 732 leaf commands,
+677 are upstream-equivalent and 55 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -543,8 +543,8 @@ them in line with `network`.
 
 ## koc-native commands
 
-No upstream equivalent, by design — **54 leaves**, itemised so the total
-reconciles with the headline (731 = 677 + 54):
+No upstream equivalent, by design — **55 leaves**, itemised so the total
+reconciles with the headline (732 = 677 + 55):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -557,6 +557,7 @@ reconciles with the headline (731 = 677 + 54):
 | 2 | `koc network extension list`, `koc network extension show` | the neutron-only `koc` spelling of upstream `extension list --network` / `extension show`; `koc extension list/show` carries the count, so these two are extras |
 | 1 | `koc image member set` | accept/reject/pending on an image membership. Upstream registers `image member get`/`list` only — the status write has no entry point |
 | 1 | `koc baremetal node inventory show` | a table summary of the inventory upstream only offers as a raw `save` |
+| 1 | `koc baremetal node network show` | one view of a node's wiring across ironic and neutron — ports, port groups, switch ports, VIFs, networks, VLANs, trunk subports — with the binding faults that break bare-metal networking silently flagged; upstream has no cross-service command |
 | 2 | `koc baremetal node vmedia attach/detach` | ironic's virtual-media API (1.89, OpenStack 2024.1) has no `python-ironicclient` command; openstacksdk has `attach_vmedia_to_node`/`detach_vmedia_from_node` |
 | 1 | `koc server password show` | see below |
 | 2 | `koc compute host drain`, `koc compute host evacuate` | draining a compute host has no OSC entry point at all. `nova host-evacuate-live`, `host-servers-migrate` and `host-evacuate` exist only in `python-novaclient`'s own shell (`novaclient/v2/shell.py`), which OSC never absorbed, and all three are client-side loops rather than APIs — nova has no host-level endpoint to wrap. The first two are one `koc` verb: see "Naming deviations" |
@@ -619,7 +620,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (731 leaf commands at the snapshot above)
+# 1. koc's own command tree (732 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -649,7 +650,7 @@ Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
 1. every raw row numerator summed = the headline numerator (677);
-2. leaf commands = headline numerator + koc-native (731 = 677 + 54);
+2. leaf commands = headline numerator + koc-native (732 = 677 + 55);
 3. every raw row denominator summed = 1004, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (947).
 

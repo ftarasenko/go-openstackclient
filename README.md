@@ -12,9 +12,11 @@ deployment. No Python at runtime.
 >
 > - **baremetal** (ironic) — node lifecycle (create/delete/show/set/unset),
 >   provision transitions (manage/provide/deploy/undeploy/rebuild/inspect, with
->   `--wait`), maintenance, power, boot device, traits, ports, port groups,
->   deploy templates, runbooks, inspection rules, volume connectors and targets, shards,
->   drivers, conductors
+>   `--wait`), maintenance, power, boot device, traits, console, history,
+>   vendor passthru, virtual media, ports, port groups, deploy templates,
+>   runbooks, inspection rules, volume connectors and targets, shards, drivers,
+>   conductors, and `node network show` (a node's wiring across ironic and
+>   neutron)
 > - **server** (nova) — full lifecycle, add/remove volume·floating-ip·security-group,
 >   console log/url, plus `compute service`, `hypervisor list` (with color
 >   allocation **gauges**), `quota show`
@@ -677,6 +679,23 @@ treated as an error.
 These cover `nova host-evacuate-live`, `host-servers-migrate` and
 `host-evacuate`; `openstack` has no equivalent for any of them. See
 `docs/coverage.md` → "Naming deviations" for why the first two are one verb.
+
+### Bare-metal network wiring (`koc baremetal node network show`)
+
+One table of how a node is cabled and bound, read from ironic and neutron:
+each port group, its member ports and standalone ports (MAC, PXE, physical
+network, the switch and switch port from `local_link_connection`), the VIF
+bound to each, that VIF's network, VLAN, status, `binding:vif_type` and bound
+mechanism drivers, and — for a trunk parent — every subport with its network,
+VLAN, MAC and status. After the table it warns, on stderr so `-f json` stays
+parseable, about the faults that break bare-metal networking without an error:
+
+- a VIF on a port (or port group member) with no `local_link_connection`;
+- a VIF whose `binding:vif_type` is `binding_failed` or `unbound`;
+- a subport whose MAC differs from its parent's (a bond drops its frames);
+- a trunk that is `ACTIVE` while one of its subports is `DOWN`.
+
+With `--creds-from-ns` (ironic only) it shows the ironic half.
 
 ### Vault KV (`koc vault kv`)
 

@@ -44,10 +44,7 @@ koc baremetal node undeploy
 koc baremetal node unhold
 koc baremetal node unrescue
 koc baremetal node validate
-koc baremetal node vif attach
-koc baremetal node vif detach
 koc baremetal node vif list
-koc baremetal port set
 koc baremetal port show
 koc keyvrm app-config set
 koc keyvrm app-config show
