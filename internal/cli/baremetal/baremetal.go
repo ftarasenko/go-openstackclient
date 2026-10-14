@@ -23,5 +23,6 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newIntrospectionCommand(a, o))
 	cmd.AddCommand(newAllocationCommand(a, o))
 	cmd.AddCommand(newDeployCommand(a, o))
+	cmd.AddCommand(newRunbookCommand(a, o))
 	return cmd
 }

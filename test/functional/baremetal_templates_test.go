@@ -3,6 +3,7 @@
 package functional
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -68,4 +69,68 @@ func TestBaremetalDeployTemplates(t *testing.T) {
 
 	r.ok(t, "baremetal", "deploy", "template", "delete", id)
 	r.fails(t, "baremetal", "deploy", "template", "show", id)
+}
+
+const ftRunbookSteps = `[{"interface":"bios","step":"apply_configuration","order":1,` +
+	`"args":{"settings":[{"name":"LogicalProc","value":"Enabled"}]}}]`
+
+func TestBaremetalRunbooks(t *testing.T) {
+	c := ft(t)
+	requireIronicAPI(t, "1.92")
+	r := defaultRunner(c)
+
+	// Below 1.112 a runbook's name must be a trait; a CUSTOM_ name is valid
+	// on every version.
+	name := customTrait("rb")
+	rb := r.show(t, "baremetal", "runbook", "create", "--name", name, "--steps", ftRunbookSteps,
+		"--extra", "team=ops", "--public=false")
+	id := field(rb, "uuid")
+	t.Cleanup(func() { r.run(t, "baremetal", "runbook", "delete", id) })
+	if len(items(rb, "steps")) != 1 || field(rb, "public") != "false" || field(object(rb, "extra"), "team") != "ops" {
+		t.Errorf("runbook create = %v", rb)
+	}
+
+	if got := r.show(t, "baremetal", "runbook", "show", name); field(got, "uuid") != id {
+		t.Errorf("runbook show = %v", got)
+	}
+	if rows := r.list(t, "baremetal", "runbook", "list", "--long"); !in(rows, id) {
+		t.Errorf("runbook list --long has no %s: %v", id, rows)
+	}
+
+	r.ok(t, "baremetal", "runbook", "set", id, "--owner", "ft-owner", "--public", "--disable-ramdisk", "--extra", "rack=r1")
+	got := r.show(t, "baremetal", "runbook", "show", id)
+	if field(got, "owner") != "ft-owner" || field(got, "public") != "true" || field(got, "disable_ramdisk") != "true" ||
+		field(object(got, "extra"), "rack") != "r1" {
+		t.Errorf("after runbook set: %v", got)
+	}
+	r.ok(t, "baremetal", "runbook", "unset", id, "--owner", "--public", "--disable-ramdisk", "--extra", "rack")
+	got = r.show(t, "baremetal", "runbook", "show", id)
+	if field(got, "owner") != "" || field(got, "public") == "true" || field(object(got, "extra"), "rack") != "" {
+		t.Errorf("after runbook unset: %v", got)
+	}
+
+	t.Run("traits", func(t *testing.T) {
+		requireIronicAPI(t, "1.112")
+		r.ok(t, "baremetal", "runbook", "set", id, "--description", "koc functional")
+		if got := r.show(t, "baremetal", "runbook", "show", id); field(got, "description") != "koc functional" {
+			t.Errorf("runbook set --description: %v", got)
+		}
+		r.ok(t, "baremetal", "runbook", "trait", "add", id, "CUSTOM_FT_A", "CUSTOM_FT_B")
+		traits := column(r.list(t, "baremetal", "runbook", "trait", "list", id), "Traits")
+		if !slices.Contains(traits, "CUSTOM_FT_A") || !slices.Contains(traits, "CUSTOM_FT_B") {
+			t.Errorf("runbook trait list = %v", traits)
+		}
+		r.ok(t, "baremetal", "runbook", "trait", "remove", id, "CUSTOM_FT_A")
+		if traits := column(r.list(t, "baremetal", "runbook", "trait", "list", id), "Traits"); slices.Contains(traits, "CUSTOM_FT_A") {
+			t.Errorf("after runbook trait remove: %v", traits)
+		}
+		r.ok(t, "baremetal", "runbook", "trait", "remove", id, "--all")
+		if traits := r.list(t, "baremetal", "runbook", "trait", "list", id); len(traits) != 0 {
+			t.Errorf("after runbook trait remove --all: %v", traits)
+		}
+		r.ok(t, "baremetal", "runbook", "unset", id, "--description")
+	})
+
+	r.ok(t, "baremetal", "runbook", "delete", id)
+	r.fails(t, "baremetal", "runbook", "show", id)
 }
