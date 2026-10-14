@@ -296,3 +296,12 @@ func TestServerList_UnknownColumnStillErrors(t *testing.T) {
 		t.Errorf("expected an unknown-column error, got %v", err)
 	}
 }
+
+// A quote or backslash inside a hint value is escaped, so the rendered
+// key='value' still ends where the value does (CodeQL go/unsafe-quoting).
+func TestRawColumnValueEscapesQuotes(t *testing.T) {
+	got := rawColumnValue(map[string]any{"group": []any{"it's"}, "path": `C:\x`, "plain": "g1"})
+	if want := `group='it\'s', path='C:\\x', plain='g1'`; got != want {
+		t.Errorf("rawColumnValue = %q, want %q", got, want)
+	}
+}

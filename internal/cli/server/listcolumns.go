@@ -263,6 +263,11 @@ func listImageName(s servers.Server, names map[string]string) string {
 	return names[id]
 }
 
+// quoteEscaper backslash-escapes a value placed between single quotes, so a
+// hint containing ' cannot read as the end of its value. Upstream does not
+// escape; this differs only for such a value.
+var quoteEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+
 // rawColumnValue renders a raw listing attribute; a map of lists (scheduler
 // hints) reads as upstream's DictListColumn, "key='v1, v2'".
 func rawColumnValue(v any) any {
@@ -281,7 +286,7 @@ func rawColumnValue(v any) any {
 		if list, ok := val.([]any); ok {
 			val = formatListFlat(list)
 		}
-		parts = append(parts, fmt.Sprintf("%s='%s'", k, scalarString(val)))
+		parts = append(parts, fmt.Sprintf("%s='%s'", k, quoteEscaper.Replace(scalarString(val))))
 	}
 	return strings.Join(parts, ", ")
 }
