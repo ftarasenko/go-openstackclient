@@ -98,15 +98,30 @@ func TestBaremetalRunbooks(t *testing.T) {
 	}
 
 	// ironic refuses an owner on a public runbook, so the two are set apart.
-	r.ok(t, "baremetal", "runbook", "set", id, "--owner", "ft-owner", "--disable-ramdisk", "--extra", "rack=r1")
+	r.ok(t, "baremetal", "runbook", "set", id, "--owner", "ft-owner", "--extra", "rack=r1")
 	got := r.show(t, "baremetal", "runbook", "show", id)
-	if field(got, "owner") != "ft-owner" || field(got, "disable_ramdisk") != "true" || field(object(got, "extra"), "rack") != "r1" {
+	if field(got, "owner") != "ft-owner" || field(object(got, "extra"), "rack") != "r1" {
 		t.Errorf("after runbook set: %v", got)
 	}
-	r.ok(t, "baremetal", "runbook", "unset", id, "--owner", "--disable-ramdisk", "--extra", "rack")
+	r.ok(t, "baremetal", "runbook", "unset", id, "--owner", "--extra", "rack")
 	got = r.show(t, "baremetal", "runbook", "show", id)
-	if field(got, "owner") != "" || field(got, "disable_ramdisk") == "true" || field(object(got, "extra"), "rack") != "" {
+	if field(got, "owner") != "" || field(object(got, "extra"), "rack") != "" {
 		t.Errorf("after runbook unset: %v", got)
+	}
+	// ironic 29 (2025.1) leaves disable_ramdisk out of a runbook's patchable
+	// fields — no microversion marks it — and says so; later releases accept it.
+	if res := r.run(t, "baremetal", "runbook", "set", id, "--disable-ramdisk"); res.code != 0 {
+		if !strings.Contains(res.stderr, "Cannot patch /disable_ramdisk") {
+			t.Errorf("runbook set --disable-ramdisk: exit %d: %s", res.code, res.stderr)
+		}
+	} else {
+		if got := r.show(t, "baremetal", "runbook", "show", id); field(got, "disable_ramdisk") != "true" {
+			t.Errorf("after runbook set --disable-ramdisk: %v", got)
+		}
+		r.ok(t, "baremetal", "runbook", "unset", id, "--disable-ramdisk")
+		if got := r.show(t, "baremetal", "runbook", "show", id); field(got, "disable_ramdisk") == "true" {
+			t.Errorf("after runbook unset --disable-ramdisk: %v", got)
+		}
 	}
 	r.ok(t, "baremetal", "runbook", "set", id, "--public")
 	if got := r.show(t, "baremetal", "runbook", "show", id); field(got, "public") != "true" {
