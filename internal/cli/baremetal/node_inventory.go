@@ -67,7 +67,7 @@ func newNodeInventorySaveCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runNodeInventorySave(ctx context.Context, client *gophercloud.ServiceClient, id string, f *nodeInventorySaveFlags, w io.Writer) (err error) {
 	res := nodes.GetInventory(ctx, client, id)
 	if res.Err != nil {
-		return fmt.Errorf("getting inventory for node %s: %w", id, res.Err)
+		return fmt.Errorf("getting inventory for node %s: %w", id, explainMicroversion(ctx, client, featureNodeInventory, res.Err))
 	}
 
 	dst := w
@@ -115,7 +115,7 @@ func newNodeInventoryShowCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runNodeInventoryShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
 	data, err := nodes.GetInventory(ctx, client, id).Extract()
 	if err != nil {
-		return fmt.Errorf("getting inventory for node %s: %w", id, err)
+		return fmt.Errorf("getting inventory for node %s: %w", id, explainMicroversion(ctx, client, featureNodeInventory, err))
 	}
 	inv := data.Inventory
 	fields := []string{

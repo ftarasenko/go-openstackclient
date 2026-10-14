@@ -28,6 +28,7 @@ const (
 	flagInterfaceSuffix = "-interface"
 
 	pathAutomatedClean = "/automated_clean"
+	releaseAntelope    = "OpenStack 2023.1"
 	releaseBobcat      = "OpenStack 2023.2"
 	releaseCaracal     = "OpenStack 2024.1"
 	releaseDalmatian   = "OpenStack 2024.2"

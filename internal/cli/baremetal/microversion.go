@@ -12,7 +12,7 @@ import (
 )
 
 // koc supports OpenStack Zed (2022.2) and newer — see AGENTS.md, "Minimum
-// supported cloud". Zed ships ironic 21.4.0, whose API tops out at 1.82, so
+// supported cloud". Zed ships ironic 21.1, whose API tops out at 1.80, so
 // every feature ironic gated behind a later microversion is missing on the
 // oldest clouds in the fleet.
 //
@@ -43,15 +43,16 @@ type ironicFeature struct {
 	release string
 }
 
-// Features gated above the Zed cap of 1.82. Microversions are from
-// ironic/api/controllers/v1/versions.py; the release mapping is that file's
-// MINOR_MAX_VERSION read across the stable series (21.4 → 1.82, 22.0 → 1.83,
-// 23.0 → 1.87, 24.1 → 1.90, 26.1 → 1.93, 29.0 → 1.96).
+// Features gated above the Zed cap of 1.80. Microversions are from
+// ironic/api/controllers/v1/versions.py; the release mapping is
+// ironic/common/release_mappings.py (zed 21.1 → 1.80, 2023.1 21.4 → 1.82,
+// 2023.2 23.0 → 1.87, 2024.1 24.1 → 1.90, 2024.2 26.1 → 1.93, 2025.1 29.0 → 1.96).
 var (
-	featureNodeUnhold   = ironicFeature{"baremetal node unhold", "1.85", releaseBobcat}
-	featureNodeFirmware = ironicFeature{"baremetal node firmware list", "1.86", releaseBobcat}
-	featureNodeService  = ironicFeature{"baremetal node service", "1.87", releaseBobcat}
-	featurePortName     = ironicFeature{"baremetal port --name", "1.88", releaseCaracal}
+	featureNodeInventory = ironicFeature{"baremetal node inventory", "1.81", releaseAntelope}
+	featureNodeUnhold    = ironicFeature{"baremetal node unhold", "1.85", releaseBobcat}
+	featureNodeFirmware  = ironicFeature{"baremetal node firmware list", "1.86", releaseBobcat}
+	featureNodeService   = ironicFeature{"baremetal node service", "1.87", releaseBobcat}
+	featurePortName      = ironicFeature{"baremetal port --name", "1.88", releaseCaracal}
 )
 
 // ironicMaxVersionHeader is set by ironic on every response, including errors.

@@ -18,7 +18,7 @@ import (
 
 // featureShards dates from ironic 21.4, Zed's last point release and the
 // 2023.1 release; earlier Zed point releases stop at 1.80.
-var featureShards = ironicFeature{"baremetal shard list / node --shard", "1.82", "ironic 21.4, OpenStack 2023.1"}
+var featureShards = ironicFeature{"baremetal shard list / node --shard", "1.82", releaseAntelope}
 
 // shardFields are python-ironicclient's SHARD_RESOURCE.
 var shardFields = []string{"name", "count"}

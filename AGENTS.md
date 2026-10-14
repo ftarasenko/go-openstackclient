@@ -288,7 +288,7 @@ release caps its microversion at:
 
 | Service | Zed version | Max microversion |
 | --- | --- | --- |
-| ironic | 21.4.0 | **1.82** |
+| ironic | 21.1 | **1.80** |
 | nova | 26.x | **2.93** |
 | cinder | 21.3.2 | **3.70** |
 | placement | 9.0.0 | **1.39** |
@@ -304,9 +304,9 @@ behind** (`ironic/api/controllers/v1/versions.py` in the sdist is the canonical
 list; PyPI is reachable where opendev.org is not). If it is above the cap in the
 table, route the error through `internal/cli/baremetal.explainMicroversion` (or
 the equivalent for that service) and state the requirement in the command's
-`Short`. Known post-Zed ironic features: `node children list` (1.83), `node
-unhold` (1.85), `node firmware list` (1.86), `node service` (1.87), runbooks
-(1.92), inspection rules (1.96).
+`Short`. Known post-Zed ironic features: `node inventory` (1.81), shards
+(1.82), `node children list` (1.83), `node unhold` (1.85), `node firmware list`
+(1.86), `node service` (1.87), runbooks (1.92), inspection rules (1.96).
 
 The same rule keeps `koc baremetal introspection …` alive: ironic dropped the
 `inspector` inspect interface in 33.0.0 (2026.1) and moved inspection rules into

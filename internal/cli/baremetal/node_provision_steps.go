@@ -256,7 +256,7 @@ func runNodeService(ctx context.Context, client *gophercloud.ServiceClient, id s
 			return err
 		}
 	}
-	// The `service` target arrived at 1.87, above the Zed cap of 1.82, so an old
+	// The `service` target arrived at 1.87, above the Zed cap of 1.80, so an old
 	// cloud rejects the value rather than the version — see microversion.go.
 	err = applyProvisionState(ctx, client, id,
 		provisionRequest{verb: "service", opts: opts, want: nodes.Active, wait: wf}, w)

@@ -126,3 +126,16 @@ func TestRunNodeInventorySave_StdoutAndFile(t *testing.T) {
 		t.Errorf("--file output missing inventory data:\n%s", data)
 	}
 }
+
+// Stored inventory arrived at 1.81, after Zed's 1.80: the 404 a Zed cloud
+// answers names the version rather than reading as "no such node".
+func TestNodeInventory_ZedNamesVersion(t *testing.T) {
+	client, fake := newFakeIronic(t, map[string]fakeRoute{
+		"GET /nodes/bm-1/inventory": {http.StatusNotFound, map[string]any{"error_message": ""}},
+	})
+	fake.max = "1.80"
+	err := runNodeInventoryShow(context.Background(), client, &output.Options{Format: output.FormatTable}, "bm-1", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "requires ironic API 1.81 (OpenStack 2023.1); this cloud supports up to 1.80") {
+		t.Errorf("err = %v", err)
+	}
+}

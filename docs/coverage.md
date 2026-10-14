@@ -219,7 +219,7 @@ What each service's Zed release caps at, read from the Zed sdists on PyPI:
 
 | Service | Zed version | Max microversion | Consequence |
 | --- | --- | --- | --- |
-| ironic | 21.4.0 | **1.82** | no `unhold` (1.85), `firmware` (1.86), `service` (1.87), child nodes (1.83), runbooks (1.92), inspection rules (1.96) |
+| ironic | 21.1 | **1.80** | no stored `inventory` (1.81), `shard` (1.82), `unhold` (1.85), `firmware` (1.86), `service` (1.87), child nodes (1.83), runbooks (1.92), inspection rules (1.96) |
 | nova | 26.x | **2.93** | `server list -c "Pinned Availability Zone"` (2.96) and `-c "Scheduler Hints"` (2.100) are refused |
 | cinder | 21.3.2 | **3.70** | |
 | placement | 9.0.0 | **1.39** | |
@@ -231,7 +231,7 @@ answers `/v1/nodes/<n>/firmware` with a 404 because the endpoint does not exist
 below 1.86, and a bare 404 reads like "no such node". Those commands route their
 error through `internal/cli/baremetal.explainMicroversion`, which re-reads the
 endpoint's version document and turns the 404/406 into "requires ironic API 1.86
-(OpenStack 2023.2); this cloud supports up to 1.82".
+(OpenStack 2023.2); this cloud supports up to 1.80".
 
 The rule for new commands: **look up the microversion the API gated the feature
 behind** (`ironic/api/controllers/v1/versions.py` in the sdist is the list) and,

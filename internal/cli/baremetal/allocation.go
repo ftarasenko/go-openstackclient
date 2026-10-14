@@ -51,7 +51,7 @@ func newAllocationCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 // allocation is ironic's allocation plus `owner`, which the API has carried
-// since microversion 1.60 — below the 1.82 Zed cap, so it exists on every cloud
+// since microversion 1.60 — below the 1.80 Zed cap, so it exists on every cloud
 // koc supports — but which gophercloud v2 models nowhere: not on Allocation, not
 // on CreateOpts, not on ListOpts. Upstream `openstack baremetal allocation show`
 // prints it, so leaving it out was a visible gap against OSC.
