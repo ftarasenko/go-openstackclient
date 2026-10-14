@@ -27,7 +27,6 @@ koc baremetal node bios setting show
 koc baremetal node boot device set
 koc baremetal node boot device show
 koc baremetal node clean
-koc baremetal node deploy
 koc baremetal node firmware list
 koc baremetal node inject nmi
 koc baremetal node inspect

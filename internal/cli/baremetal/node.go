@@ -54,6 +54,8 @@ func newNodeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newNodeAddRemoveTraitCommands(a)...)
 	cmd.AddCommand(newNodeConsoleCommand(a, o))
 	cmd.AddCommand(newNodeSecureBootCommand(a))
+	cmd.AddCommand(newNodeHistoryCommand(a, o))
+	cmd.AddCommand(newNodeChildrenCommand(a, o))
 	return cmd
 }
 

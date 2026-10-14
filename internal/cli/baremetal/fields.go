@@ -20,6 +20,17 @@ import (
 
 // fieldLabels maps an ironic field to python-ironicclient's column label.
 var fieldLabels = map[string]string{
+	"async":                           "Async",
+	"attach":                          "Response is attachment",
+	"children":                        "Child Nodes",
+	"duration_seconds":                "Duration (seconds)",
+	"event":                           "Description of the event",
+	"event_type":                      "Event Origin Type",
+	"http_methods":                    "Supported HTTP methods",
+	"project":                         "Project",
+	"severity":                        "Severity",
+	"state":                           "State",
+	"user":                            "User",
 	"actions":                         "Actions",
 	"address":                         "Address",
 	"allocation_uuid":                 "Allocation UUID",
