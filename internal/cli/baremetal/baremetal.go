@@ -21,6 +21,7 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newDriverCommand(a, o))
 	cmd.AddCommand(newConductorCommand(a, o))
 	cmd.AddCommand(newIntrospectionCommand(a, o))
+	cmd.AddCommand(newInspectionCommand(a, o))
 	cmd.AddCommand(newAllocationCommand(a, o))
 	cmd.AddCommand(newDeployCommand(a, o))
 	cmd.AddCommand(newRunbookCommand(a, o))

@@ -18,6 +18,8 @@ type fakeIronic struct {
 	t      *testing.T
 	routes map[string]fakeRoute
 	calls  []fakeCall
+	// max is the X-OpenStack-Ironic-API-Maximum-Version every answer carries.
+	max string
 }
 
 type fakeRoute struct {
@@ -36,7 +38,7 @@ func newFakeIronic(t *testing.T, routes map[string]fakeRoute) (*gophercloud.Serv
 	t.Helper()
 	fakeServer := th.SetupHTTP()
 	t.Cleanup(fakeServer.Teardown)
-	f := &fakeIronic{t: t, routes: routes}
+	f := &fakeIronic{t: t, routes: routes, max: "1.96"}
 	fakeServer.Mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		call := fakeCall{
 			Method: r.Method, Path: r.URL.EscapedPath(), Query: r.URL.RawQuery,
@@ -54,7 +56,7 @@ func newFakeIronic(t *testing.T, routes map[string]fakeRoute) (*gophercloud.Serv
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.Header().Set(ironicMaxVersionHeader, "1.96")
+		w.Header().Set(ironicMaxVersionHeader, f.max)
 		if route.body == nil {
 			w.WriteHeader(route.status)
 			return

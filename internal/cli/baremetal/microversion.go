@@ -24,11 +24,13 @@ import (
 //     node";
 //   - a new value for an existing field (`target: service`) fails validation, so
 //     Zed answers **400**, complaining about the value rather than the version;
+//   - a write to a route that is versioned as a whole (`POST
+//     /v1/inspection_rules`) is refused with **405**;
 //   - only an explicitly pinned request above the endpoint's maximum yields the
 //     **406** that actually names the problem, and koc's defaults negotiate
 //     "latest" precisely so that never happens.
 //
-// All three arrive through gophercloud as an opaque status code.
+// All of them arrive through gophercloud as an opaque status code.
 // explainMicroversion turns them into the real answer. Callers wrap the API
 // error of a gated command and nothing else.
 
@@ -55,7 +57,7 @@ var (
 // ironicMaxVersionHeader is set by ironic on every response, including errors.
 const ironicMaxVersionHeader = "X-OpenStack-Ironic-API-Maximum-Version"
 
-// explainMicroversion rewrites the 400/404/406 a version-gated feature returns
+// explainMicroversion rewrites the 400/404/405/406 a version-gated feature returns
 // on an older cloud into a message naming the requirement, and leaves every
 // other error untouched.
 //
@@ -73,7 +75,7 @@ func explainMicroversion(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	switch unexpected.Actual {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusNotAcceptable:
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotAcceptable:
 	default:
 		return err
 	}
