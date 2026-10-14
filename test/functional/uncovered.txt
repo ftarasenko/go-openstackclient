@@ -27,16 +27,12 @@ koc baremetal node bios setting show
 koc baremetal node boot device set
 koc baremetal node boot device show
 koc baremetal node clean
-koc baremetal node create
-koc baremetal node delete
 koc baremetal node deploy
 koc baremetal node firmware list
 koc baremetal node inject nmi
 koc baremetal node inspect
 koc baremetal node inventory save
 koc baremetal node inventory show
-koc baremetal node list
-koc baremetal node maintenance set
 koc baremetal node maintenance unset
 koc baremetal node manage
 koc baremetal node power off
@@ -47,7 +43,6 @@ koc baremetal node rebuild
 koc baremetal node rescue
 koc baremetal node service
 koc baremetal node set
-koc baremetal node show
 koc baremetal node undeploy
 koc baremetal node unhold
 koc baremetal node unrescue
@@ -56,9 +51,6 @@ koc baremetal node validate
 koc baremetal node vif attach
 koc baremetal node vif detach
 koc baremetal node vif list
-koc baremetal port create
-koc baremetal port delete
-koc baremetal port list
 koc baremetal port set
 koc baremetal port show
 koc keyvrm app-config set

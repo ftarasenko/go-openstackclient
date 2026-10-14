@@ -74,6 +74,7 @@ var fieldLabels = map[string]string{
 	"phase":                           "Phase",
 	"physical_network":                "Physical Network",
 	"portgroup_uuid":                  "Portgroup UUID",
+	"ports":                           "Ports",
 	"power_interface":                 "Power Interface",
 	"power_state":                     "Power State",
 	"priority":                        "Priority",

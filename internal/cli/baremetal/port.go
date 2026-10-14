@@ -29,6 +29,7 @@ func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newPortCreateCommand(a, o),
 		newPortDeleteCommand(a, o),
 		newPortSetCommand(a, o),
+		newPortGroupCommand(a, o),
 	)
 	return cmd
 }

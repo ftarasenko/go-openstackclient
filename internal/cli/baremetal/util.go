@@ -49,6 +49,13 @@ func parseKeyValMap(pairs []string) (map[string]any, error) {
 	return m, nil
 }
 
+// setIf sets body[key] to v unless v is empty.
+func setIf(body map[string]any, key, v string) {
+	if v != "" {
+		body[key] = v
+	}
+}
+
 // appendQuery appends already-encoded key=value pairs to a query string that
 // may be empty or start with "?".
 func appendQuery(s string, kv ...string) string {
