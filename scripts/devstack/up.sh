@@ -318,6 +318,12 @@ gha_workarounds() {
     sudo apt-get install -y erlang rabbitmq-server
     sudo apt-get install -y runc || true
     sudo apt-get purge -y python3-simplejson python3-pyasn1-modules 'postgresql*' || true
+    # ironic's zed and 2024.1 plugins `dpkg -r dnsmasq-base` on jammy to build
+    # an older dnsmasq; the runner image's podman CNI dnsname plugin depends
+    # on it, so the removal fails and stack.sh with it.
+    if has_feature ironic; then
+        sudo apt-get purge -y golang-github-containernetworking-plugin-dnsname || true
+    fi
 }
 if [[ "$GHA" == true ]]; then gha_workarounds; fi
 

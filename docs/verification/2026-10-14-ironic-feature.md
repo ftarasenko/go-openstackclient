@@ -18,7 +18,11 @@ plugin at the series' ref, with the **fake-hardware** type only:
 | `IRONIC_ENABLED_STORAGE_INTERFACES=noop,fake` | volume connectors/targets |
 | `DOWNLOAD_DEFAULT_IMAGES=False` | the plugin queues its own cirros; devstack's default now comes from another host, and two images of one name make `--image <name>` ambiguous |
 
-nova keeps libvirt; ironic is API-only. Under `--gha` the cirros disk and uec
+nova keeps libvirt; ironic is API-only. Under `--gha`, `up.sh` also purges
+the runner image's `golang-github-containernetworking-plugin-dnsname`: ironic's
+zed and 2024.1 plugins remove `dnsmasq-base` on jammy to build an older
+dnsmasq, and that package (podman's) depends on it — the first nightly run
+failed zed and caracal at "Stack devstack" on exactly that. Under `--gha` the cirros disk and uec
 images are prefetched like the core image. `smoke.sh` checks the catalog entry,
 the `fake-hardware` driver, a fake node walking enroll → manageable →
 available, and `koc baremetal driver list`.
