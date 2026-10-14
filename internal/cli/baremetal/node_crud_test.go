@@ -225,3 +225,20 @@ func assertPatchRemove(t *testing.T, ops []map[string]any, path string) {
 	}
 	t.Errorf("missing remove op for path %q in %#v", path, ops)
 }
+
+func TestRunNodeSetUnset_OwnerAndLessee(t *testing.T) {
+	client, fake := newFakeIronic(t, map[string]fakeRoute{
+		"PATCH /nodes/bm-1": {http.StatusOK, map[string]any{"uuid": testNodeUUID, "owner": "p1", "lessee": "p2"}},
+	})
+	o := &output.Options{Format: output.FormatJSON}
+	if err := runNodeSet(context.Background(), client, o, "bm-1", &nodeSetFlags{owner: "p1", lessee: "p2"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	jsonEq(t, "set patch", fake.call("PATCH /nodes/bm-1").Body,
+		`[{"op":"replace","path":"/owner","value":"p1"},{"op":"replace","path":"/lessee","value":"p2"}]`)
+	fake.calls = nil
+	if err := runNodeUnset(context.Background(), client, o, "bm-1", &nodeUnsetFlags{owner: true, lessee: true}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	jsonEq(t, "unset patch", fake.call("PATCH /nodes/bm-1").Body, `[{"op":"remove","path":"/owner"},{"op":"remove","path":"/lessee"}]`)
+}

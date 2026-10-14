@@ -178,6 +178,8 @@ type nodeSetFlags struct {
 	conductorGroup string
 	instanceUUID   string
 	shard          string
+	owner          string
+	lessee         string
 	property       []string
 	driverInfo     []string
 	extra          []string
@@ -223,6 +225,8 @@ func newNodeSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.conductorGroup, flagConductorGroup, "", "set the conductor group")
 	fl.StringVar(&f.instanceUUID, flagInstanceUUID, "", "associate the node with this instance UUID")
 	fl.StringVar(&f.shard, "shard", "", "set the node's shard (requires ironic API 1.82)")
+	fl.StringVar(&f.owner, "owner", "", "set the project that owns the node")
+	fl.StringVar(&f.lessee, "lessee", "", "set the project the node is leased to")
 	fl.StringArrayVar(&f.property, "property", nil, "set a physical property key=value (repeatable)")
 	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "set a driver_info key=value (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "set an extra metadata key=value (repeatable)")
@@ -263,6 +267,12 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	}
 	if f.shard != "" {
 		scalar("shard", "/shard", f.shard)
+	}
+	if f.owner != "" {
+		scalar("owner", "/owner", f.owner)
+	}
+	if f.lessee != "" {
+		scalar("lessee", "/lessee", f.lessee)
 	}
 	if err := appendKVOps(&ops, "/properties/", f.property, "--property"); err != nil {
 		return err
@@ -322,6 +332,8 @@ type nodeUnsetFlags struct {
 	resourceClass  bool
 	instanceUUID   bool
 	shard          bool
+	owner          bool
+	lessee         bool
 	property       []string
 	driverInfo     []string
 	extra          []string
@@ -352,6 +364,8 @@ func newNodeUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.resourceClass, flagResourceClass, false, "clear the resource class")
 	fl.BoolVar(&f.instanceUUID, flagInstanceUUID, false, "disassociate the node from its instance")
 	fl.BoolVar(&f.shard, "shard", false, "clear the node's shard")
+	fl.BoolVar(&f.owner, "owner", false, "clear the node's owner")
+	fl.BoolVar(&f.lessee, "lessee", false, "clear the node's lessee")
 	fl.StringArrayVar(&f.property, "property", nil, "remove a physical property by key (repeatable)")
 	fl.StringArrayVar(&f.driverInfo, flagDriverInfo, nil, "remove a driver_info key (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, "remove an extra metadata key (repeatable)")
@@ -385,6 +399,12 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	if f.shard {
 		remove("/shard")
+	}
+	if f.owner {
+		remove("/owner")
+	}
+	if f.lessee {
+		remove("/lessee")
 	}
 	for _, k := range f.property {
 		remove("/properties/" + escapeJSONPointer(k))
