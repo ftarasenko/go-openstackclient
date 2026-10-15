@@ -178,3 +178,60 @@ func TestAuthSystemScope(t *testing.T) {
 	}
 	defaultRunner(c).ok(t, "--os-system-scope", "all", "endpoint", "list")
 }
+
+// python-openstackclient's handling of the OS_* environment around clouds.yaml:
+// a cloud entry that stores no password takes OS_PASSWORD (the bug this test
+// was written for), a file with one cloud needs no OS_CLOUD, a secure file can
+// live anywhere, the v2-era OS_TENANT_NAME still scopes, and OS_TOKEN
+// authenticates on its own.
+func TestAuthEnvParity(t *testing.T) {
+	c := ft(t)
+	admin := issue(t, cloudsRunner(c))
+	authURL, region := openrcValue(c, "OS_AUTH_URL"), openrcValue(c, "OS_REGION_NAME")
+	password := openrcValue(c, "OS_PASSWORD")
+
+	dir := t.TempDir()
+	cfg := writeFile(t, dir, "clouds.yaml", fmt.Sprintf(`clouds:
+  ft-nopass:
+    region_name: %s
+    auth:
+      auth_url: %s
+      username: %s
+      project_name: %s
+      user_domain_id: %s
+      project_domain_id: %s
+`, region, authURL, openrcValue(c, "OS_USERNAME"), openrcValue(c, "OS_PROJECT_NAME"),
+		openrcValue(c, "OS_USER_DOMAIN_ID"), openrcValue(c, "OS_PROJECT_DOMAIN_ID")))
+	file := "OS_CLIENT_CONFIG_FILE=" + filepath.Clean(cfg)
+
+	paths := []struct {
+		name string
+		r    runner
+	}{
+		{"OS_CLOUD + OS_PASSWORD", runner{env: append(baseEnv(), file, "OS_CLOUD=ft-nopass", "OS_PASSWORD="+password)}},
+		{"single cloud, no OS_CLOUD", runner{env: append(baseEnv(), file, "OS_PASSWORD="+password)}},
+		{"OS_CLIENT_SECURE_FILE", runner{env: append(baseEnv(), file, "OS_CLOUD=ft-nopass",
+			"OS_CLIENT_SECURE_FILE="+writeFile(t, t.TempDir(), "secrets.yaml",
+				fmt.Sprintf("clouds:\n  ft-nopass:\n    auth:\n      password: %q\n", password)))}},
+		{"OS_TENANT_NAME", runner{env: append(baseEnv(), without(c.Openrc, "OS_PROJECT_NAME", "OS_PROJECT_ID")...)}.
+			with("OS_TENANT_NAME=" + openrcValue(c, "OS_PROJECT_NAME"))},
+	}
+	for _, p := range paths {
+		t.Run(p.name, func(t *testing.T) {
+			if got := issue(t, p.r); got != admin {
+				t.Errorf("token = %+v, want %+v", got, admin)
+			}
+		})
+	}
+
+	t.Run("OS_TOKEN", func(t *testing.T) {
+		var tok map[string]any
+		cloudsRunner(c).json(t, &tok, "token", "issue")
+		r := runner{env: append(baseEnv(), "OS_AUTH_URL="+authURL, "OS_REGION_NAME="+region,
+			"OS_TOKEN="+str(tok["id"]), "OS_PROJECT_ID="+admin.project)}
+		if got := issue(t, r); got != admin {
+			t.Errorf("token = %+v, want %+v", got, admin)
+		}
+		r.ok(t, "network", "list")
+	})
+}

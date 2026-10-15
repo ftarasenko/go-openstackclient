@@ -113,7 +113,7 @@ func TestResolveAuth_EnvMissingCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when neither a password nor application credentials are set")
 	}
-	if !strings.Contains(err.Error(), "OS_PASSWORD or application credentials") {
+	if !strings.Contains(err.Error(), "set OS_PASSWORD, application credentials") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -126,10 +126,11 @@ func TestResolveAuth_CloudsFileNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when clouds.yaml cannot be found")
 	}
-	if !strings.Contains(err.Error(), `loading cloud "example" from clouds.yaml`) {
+	if !strings.Contains(err.Error(), `loading cloud "example"`) {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "clouds file not found") {
+	// The search list starts with the OS_CLIENT_CONFIG_FILE that was missing.
+	if !strings.Contains(err.Error(), "no clouds.yaml found; searched "+os.Getenv("OS_CLIENT_CONFIG_FILE")+", ") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

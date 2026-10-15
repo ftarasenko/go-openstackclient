@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/config"
@@ -77,7 +79,9 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 	if err := o.promptMissingPassword(&ao, os.Stderr); err != nil {
 		return nil, err
 	}
-	ao.AllowReauth = true
+	// gophercloud refuses to re-authenticate from a pre-issued token without a
+	// new scope, and an expired token cannot mint a fresh one anyway.
+	ao.AllowReauth = ao.TokenID == ""
 
 	tlsCfg, insecure, err := o.resolveTLSConfig(baseTLS)
 	if err != nil {
@@ -112,11 +116,19 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 	var eo gophercloud.EndpointOpts
 	var baseTLS *tls.Config
 
+	iface, err := normalizeInterface(o.Interface)
+	if err != nil {
+		return ao, eo, nil, err
+	}
+	if err := o.selectDefaultCloud(); err != nil {
+		return ao, eo, nil, err
+	}
+
+	var cloudAuthType string
 	if o.Cloud != "" {
-		var err error
-		ao, eo, baseTLS, err = clouds.Parse(clouds.WithCloudName(o.Cloud))
+		ao, eo, baseTLS, cloudAuthType, err = o.parseCloud(iface)
 		if err != nil {
-			return ao, eo, nil, fmt.Errorf("loading cloud %q from clouds.yaml: %w", o.Cloud, err)
+			return ao, eo, nil, err
 		}
 		reconcileCloudDomains(&ao)
 	} else {
@@ -127,17 +139,96 @@ func (o *Options) resolveAuth() (gophercloud.AuthOptions, gophercloud.EndpointOp
 		// project domain are given). applyAuthOverrides and applyDomainScope below
 		// populate ao from o's fields.
 		if o.AuthURL == "" {
-			return ao, eo, nil, fmt.Errorf("no credentials found: set --os-cloud, or OS_AUTH_URL and the related OS_* variables")
+			return ao, eo, nil, fmt.Errorf("no credentials found: set --os-cloud / OS_CLOUD (a clouds.yaml entry), or OS_AUTH_URL and the related OS_* variables")
 		}
-		if o.Password == "" && o.AppCredID == "" && o.AppCredName == "" && !o.willPromptForPassword() {
-			return ao, eo, nil, fmt.Errorf("no credentials found: set OS_PASSWORD or application credentials (OS_APPLICATION_CREDENTIAL_ID/_SECRET), pass --os-password-stdin, or run interactively to be prompted")
+		if o.Password == "" && o.AppCredID == "" && o.AppCredName == "" && o.Token == "" && !o.willPromptForPassword() {
+			return ao, eo, nil, fmt.Errorf("no credentials found: set OS_PASSWORD, application credentials (OS_APPLICATION_CREDENTIAL_ID/_SECRET) or OS_TOKEN, pass --os-password-stdin, or run interactively to be prompted")
 		}
 		eo = gophercloud.EndpointOpts{Region: o.RegionName}
 	}
 
 	o.applyAuthOverrides(&ao)
+	if err := o.applyAuthType(&ao, cloudAuthType); err != nil {
+		return ao, eo, nil, err
+	}
 	o.applyEndpointOverrides(&eo)
 	return ao, eo, baseTLS, nil
+}
+
+// selectDefaultCloud picks the lone cloud of a clouds.yaml when nothing named
+// one and nothing else says where Keystone is, as openstacksdk does: with
+// OS_CLIENT_CONFIG_FILE pointing at a one-cloud file, OS_CLOUD is optional.
+// OS_AUTH_URL (or --os-auth-url) keeps the environment path, the way upstream's
+// environment "envvars" cloud does.
+func (o *Options) selectDefaultCloud() error {
+	if o.Cloud != "" || o.AuthURL != "" {
+		return nil
+	}
+	cf, err := findCloudsFile()
+	if err != nil || cf == nil {
+		return err
+	}
+	switch len(cf.names) {
+	case 0:
+		return nil
+	case 1:
+		o.Cloud = cf.names[0]
+		return nil
+	}
+	sort.Strings(cf.names)
+	return fmt.Errorf("no credentials found: %s defines several clouds (%s); choose one with --os-cloud or OS_CLOUD",
+		cf.path, strings.Join(cf.names, ", "))
+}
+
+// parseCloud loads the named cloud from the clouds.yaml / secure.yaml koc's
+// search found (see cloudsfile.go), returning its auth_type alongside.
+//
+// Region and interface are handed to clouds.Parse explicitly because it
+// otherwise reads OS_REGION_NAME and OS_INTERFACE itself and lets them beat the
+// cloud's own region_name / interface — the very redirect Options.override
+// exists to stop. Only a value that may override reaches it here; one the cloud
+// leaves unset is filled in afterwards by applyEndpointOverrides.
+func (o *Options) parseCloud(iface string) (gophercloud.AuthOptions, gophercloud.EndpointOpts, *tls.Config, string, error) {
+	cf, err := findCloudsFile()
+	if err != nil {
+		return gophercloud.AuthOptions{}, gophercloud.EndpointOpts{}, nil, "", err
+	}
+	if cf == nil {
+		return gophercloud.AuthOptions{}, gophercloud.EndpointOpts{}, nil, "", fmt.Errorf("loading cloud %q: %w", o.Cloud, errNoCloudsFile())
+	}
+	opts, done, err := cf.parseOptions()
+	if err != nil {
+		return gophercloud.AuthOptions{}, gophercloud.EndpointOpts{}, nil, "", err
+	}
+	defer done()
+	opts = append(opts,
+		clouds.WithCloudName(o.Cloud),
+		clouds.WithRegion(o.override("os-region-name", o.RegionName)),
+		clouds.WithEndpointType(o.override("os-interface", iface)),
+	)
+	ao, eo, tlsCfg, err := clouds.Parse(opts...)
+	if err != nil {
+		return ao, eo, nil, "", fmt.Errorf("loading cloud %q from %s: %w", o.Cloud, cf.path, err)
+	}
+	return ao, eo, tlsCfg, cf.authTypes[o.Cloud], nil
+}
+
+// layered is override plus gap-filling: a value that may override (see
+// override) wins, and otherwise an environment-derived value still fills a
+// field the named cloud left empty, which gap reports.
+//
+// osc-lib layers every OS_* variable over a named cloud. koc does not, so a
+// sourced openrc cannot redirect a cloud that states its own value, but a
+// clouds.yaml that deliberately leaves the password out (the pattern the
+// upstream docs recommend, with OS_PASSWORD exported) must still authenticate.
+func (o *Options) layered(flag, v string, gap bool) string {
+	if w := o.override(flag, v); w != "" {
+		return w
+	}
+	if gap {
+		return v
+	}
+	return ""
 }
 
 // reconcileCloudDomains restores the domain coalescing clouds.Parse used to do
@@ -188,15 +279,26 @@ func (o *Options) applyAuthOverrides(ao *gophercloud.AuthOptions) {
 			*dst = v
 		}
 	}
-	setIf(&ao.IdentityEndpoint, o.override("os-auth-url", o.AuthURL))
-	setIf(&ao.Username, o.override("os-username", o.Username))
-	setIf(&ao.UserID, o.override("os-user-id", o.UserID))
-	setIf(&ao.Password, o.override(flagOSPassword, o.Password))
+	// The gaps are judged on what the cloud itself supplied, before anything
+	// is layered: an env password belongs only to a cloud that names no other
+	// way to authenticate, and an env application credential secret only to a
+	// cloud that names the credential but not its secret.
+	appCred := ao.ApplicationCredentialID != "" || ao.ApplicationCredentialName != ""
+	noUser := ao.Username == "" && ao.UserID == ""
+	noSecret := ao.Password == "" && ao.TokenID == "" && !appCred
+	appCredSecretGap := appCred && ao.ApplicationCredentialSecret == ""
+	tokenGap := noSecret && noUser
+
+	setIf(&ao.IdentityEndpoint, o.layered("os-auth-url", o.AuthURL, ao.IdentityEndpoint == ""))
+	setIf(&ao.Username, o.layered("os-username", o.Username, noUser && !appCred && ao.TokenID == ""))
+	setIf(&ao.UserID, o.layered("os-user-id", o.UserID, noUser && !appCred && ao.TokenID == ""))
+	setIf(&ao.Password, o.layered(flagOSPassword, o.Password, noSecret))
+	setIf(&ao.TokenID, o.layered(flagOSToken, o.Token, tokenGap))
 	setIf(&ao.TenantName, o.override(flagOSProjectName, o.ProjectName))
 	setIf(&ao.TenantID, o.override(flagOSProjectID, o.ProjectID))
 	setIf(&ao.ApplicationCredentialID, o.override("os-application-credential-id", o.AppCredID))
 	setIf(&ao.ApplicationCredentialName, o.override("os-application-credential-name", o.AppCredName))
-	setIf(&ao.ApplicationCredentialSecret, o.override("os-application-credential-secret", o.AppCredSecret))
+	setIf(&ao.ApplicationCredentialSecret, o.layered("os-application-credential-secret", o.AppCredSecret, appCredSecretGap))
 
 	o.applyProjectScope(ao)
 	o.applyDomainScope(ao)
@@ -379,10 +481,12 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func (o *Options) applyEndpointOverrides(eo *gophercloud.EndpointOpts) {
-	if region := o.override("os-region-name", o.RegionName); region != "" {
+	if region := o.layered("os-region-name", o.RegionName, eo.Region == ""); region != "" {
 		eo.Region = region
 	}
-	switch o.override("os-interface", o.Interface) {
+	// resolveAuth has already rejected a value normalizeInterface refuses.
+	iface, _ := normalizeInterface(o.override("os-interface", o.Interface))
+	switch iface {
 	case "public":
 		eo.Availability = gophercloud.AvailabilityPublic
 	case "internal":
@@ -390,4 +494,111 @@ func (o *Options) applyEndpointOverrides(eo *gophercloud.EndpointOpts) {
 	case "admin":
 		eo.Availability = gophercloud.AvailabilityAdmin
 	}
+}
+
+// normalizeInterface accepts the endpoint interface spellings the Python
+// clients do: public / internal / admin in any case, and the identity-v2
+// publicURL / internalURL / adminURL that OS_ENDPOINT_TYPE usually carries.
+// Anything else is an error rather than a silent fall back to public.
+func normalizeInterface(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	n := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(v, "URL"), "url"))
+	switch n {
+	case "public", "internal", "admin":
+		return n, nil
+	}
+	return "", fmt.Errorf("--os-interface / OS_INTERFACE: unsupported value %q, want public, internal or admin", v)
+}
+
+// Auth types koc implements, by osc-lib / keystoneauth plugin name.
+const (
+	authTypePassword = "password"
+	authTypeToken    = "token"
+	authTypeAppCred  = "v3applicationcredential"
+)
+
+// canonicalAuthType maps a keystoneauth plugin name onto the three koc
+// implements. koc speaks identity v3 only, so the v3-prefixed names and the
+// version-discovering generic ones mean the same thing here.
+func canonicalAuthType(v string) (string, error) {
+	switch strings.ToLower(strings.ReplaceAll(v, "-", "_")) {
+	case "":
+		return "", nil
+	case "password", "v3password":
+		return authTypePassword, nil
+	case "token", "v3token":
+		return authTypeToken, nil
+	case "v3applicationcredential", "applicationcredential", "v3_application_credential", "application_credential":
+		return authTypeAppCred, nil
+	}
+	return "", fmt.Errorf("--os-auth-type / OS_AUTH_TYPE: unsupported auth type %q; koc supports password, token and v3applicationcredential (and v3password, v3token)", v)
+}
+
+// applyAuthType settles which one Keystone auth method the request carries.
+// gophercloud picks by field precedence (password, then token, then
+// application credential) and rejects a token alongside any user field, so
+// leftovers of the other methods are cleared here.
+//
+// With no auth type given — by flag, OS_AUTH_TYPE or the cloud's auth_type —
+// it is chosen the way osc-lib does (_auth_select_default_plugin): a user means
+// password (or an application credential, which gophercloud tells apart), and
+// a token only when nothing else was supplied.
+func (o *Options) applyAuthType(ao *gophercloud.AuthOptions, cloudAuthType string) error {
+	t, err := canonicalAuthType(firstNonEmpty(o.layered(flagOSAuthType, o.AuthType, cloudAuthType == ""), cloudAuthType))
+	if err != nil {
+		return err
+	}
+	appCred := ao.ApplicationCredentialID != "" || ao.ApplicationCredentialName != ""
+	clearToken := func() { ao.TokenID = "" }
+	clearAppCred := func() {
+		ao.ApplicationCredentialID, ao.ApplicationCredentialName, ao.ApplicationCredentialSecret = "", "", ""
+	}
+
+	switch t {
+	case "":
+		if ao.TokenID == "" {
+			return nil
+		}
+		if ao.Username != "" || ao.UserID != "" || ao.Password != "" || appCred {
+			clearToken()
+			return nil
+		}
+		// A token and nothing else: token auth.
+		tokenAuth(ao)
+	case authTypePassword:
+		clearToken()
+		clearAppCred()
+	case authTypeAppCred:
+		if !appCred {
+			return fmt.Errorf("auth type %s needs --os-application-credential-id or --os-application-credential-name (env OS_APPLICATION_CREDENTIAL_ID / _NAME)", authTypeAppCred)
+		}
+		clearToken()
+		ao.Password = ""
+	case authTypeToken:
+		if ao.TokenID == "" {
+			return fmt.Errorf("auth type token needs a token: set --%s or OS_TOKEN", flagOSToken)
+		}
+		clearAppCred()
+		tokenAuth(ao)
+	}
+	return nil
+}
+
+// tokenAuth turns ao into a token request. A token already names its user, and
+// gophercloud rejects any user field sent with one — including the user domain,
+// which is also what qualifies a project named without a scope. So the scope is
+// pinned first: with none, gophercloud would pass the token through unscoped
+// and ignore the project, where keystoneauth's token plugin rescopes to it.
+func tokenAuth(ao *gophercloud.AuthOptions) {
+	if ao.Scope == nil {
+		switch {
+		case ao.TenantID != "":
+			ao.Scope = &gophercloud.AuthScope{ProjectID: ao.TenantID}
+		case ao.TenantName != "":
+			ao.Scope = &gophercloud.AuthScope{ProjectName: ao.TenantName, DomainID: ao.DomainID, DomainName: ao.DomainName}
+		}
+	}
+	ao.Username, ao.UserID, ao.Password, ao.DomainID, ao.DomainName = "", "", "", "", ""
 }

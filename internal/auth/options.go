@@ -67,11 +67,18 @@ type Options struct {
 
 	// OS_* auth overrides. When a flag is left at its (env-derived) default we
 	// defer to clouds.yaml / AuthOptionsFromEnv; explicit flags win.
-	AuthURL           string
-	Username          string
-	UserID            string
-	Password          string
-	PasswordStdin     bool
+	AuthURL       string
+	Username      string
+	UserID        string
+	Password      string
+	PasswordStdin bool
+	// Token is a pre-issued Keystone token (--os-token / OS_TOKEN), used by the
+	// token auth type instead of a password.
+	Token string
+	// AuthType is osc-lib's --os-auth-type / OS_AUTH_TYPE. Empty selects one
+	// from what was supplied, as osc-lib does: a username means password, a
+	// token alone means token. See authTypeFor.
+	AuthType          string
 	ProjectName       string
 	ProjectID         string
 	ProjectDomainName string
@@ -286,10 +293,17 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	// something else.
 	fs.BoolVar(&o.PasswordStdin, flagOSPasswordStdin, false,
 		"read the password from standard input instead of --os-password, which is visible in ps and the shell history")
-	fs.StringVar(&o.ProjectName, flagOSProjectName, os.Getenv("OS_PROJECT_NAME"),
-		"project name (env OS_PROJECT_NAME)")
-	fs.StringVar(&o.ProjectID, flagOSProjectID, os.Getenv("OS_PROJECT_ID"),
-		"project ID (env OS_PROJECT_ID)")
+	fs.StringVar(&o.Token, flagOSToken, os.Getenv("OS_TOKEN"),
+		"pre-issued Keystone token, for the token auth type (env OS_TOKEN)")
+	fs.StringVar(&o.AuthType, flagOSAuthType, os.Getenv("OS_AUTH_TYPE"),
+		"authentication type: password, token or v3applicationcredential (and their v3 spellings); default: chosen from --os-username / --os-token (env OS_AUTH_TYPE)")
+	// OS_TENANT_NAME / OS_TENANT_ID are the identity-v2 spellings osc-lib still
+	// reads as fallbacks (osc_lib/api/auth.py build_auth_plugins_option_parser);
+	// old openrc files export only those.
+	fs.StringVar(&o.ProjectName, flagOSProjectName, envOr("OS_PROJECT_NAME", os.Getenv("OS_TENANT_NAME")),
+		"project name (env OS_PROJECT_NAME, or OS_TENANT_NAME)")
+	fs.StringVar(&o.ProjectID, flagOSProjectID, envOr("OS_PROJECT_ID", os.Getenv("OS_TENANT_ID")),
+		"project ID (env OS_PROJECT_ID, or OS_TENANT_ID)")
 	fs.StringVar(&o.ProjectDomainName, "os-project-domain-name", os.Getenv("OS_PROJECT_DOMAIN_NAME"),
 		"project domain name (env OS_PROJECT_DOMAIN_NAME)")
 	fs.StringVar(&o.UserDomainName, "os-user-domain-name", os.Getenv("OS_USER_DOMAIN_NAME"),
@@ -308,8 +322,11 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"domain ID for a username or project name given without one (env OS_DEFAULT_DOMAIN)")
 	fs.StringVar(&o.RegionName, "os-region-name", os.Getenv("OS_REGION_NAME"),
 		"region name (env OS_REGION_NAME)")
-	fs.StringVar(&o.Interface, "os-interface", os.Getenv("OS_INTERFACE"),
-		"endpoint interface: public, internal or admin (env OS_INTERFACE)")
+	// OS_ENDPOINT_TYPE is the pre-interface spelling, which openstacksdk still
+	// maps onto interface (loader.py _fix_backwards_interface); its values are
+	// often publicURL / internalURL, which normalizeInterface accepts.
+	fs.StringVar(&o.Interface, "os-interface", envOr("OS_INTERFACE", os.Getenv("OS_ENDPOINT_TYPE")),
+		"endpoint interface: public, internal or admin (env OS_INTERFACE, or OS_ENDPOINT_TYPE)")
 	fs.StringVar(&o.SystemScope, "os-system-scope", os.Getenv("OS_SYSTEM_SCOPE"),
 		`request a system-scoped token; the only value Keystone defines is "all" (env OS_SYSTEM_SCOPE)`)
 

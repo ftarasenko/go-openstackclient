@@ -9,4 +9,6 @@ const (
 	flagOSProjectName = "os-project-name"
 	flagOSProjectID   = "os-project-id"
 	flagOSPassword    = "os-password"
+	flagOSToken       = "os-token"
+	flagOSAuthType    = "os-auth-type"
 )

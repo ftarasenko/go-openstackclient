@@ -198,6 +198,12 @@ func redactJSON(v any) any {
 				t[k] = redactedValue
 				continue
 			}
+			// Token authentication (--os-token) sends the token as
+			// identity.token.id. A v3 token *response* object carries no "id",
+			// so redacting it here never hides the catalog.
+			if tok, ok := val.(map[string]any); ok && strings.EqualFold(k, "token") && isScalar(tok["id"]) && tok["id"] != nil {
+				tok["id"] = redactedValue
+			}
 			t[k] = redactJSON(val)
 		}
 		return t
