@@ -196,11 +196,10 @@ falls back to that list. `secure.yaml` is searched the same way, headed by
 `OS_CLIENT_SECURE_FILE`. When the file defines exactly one cloud and neither
 `OS_CLOUD` nor `OS_AUTH_URL` is set, that cloud is used.
 
-A named cloud is used as written: a sourced openrc's `OS_*` cannot redirect a
-field the cloud sets (type the flag to override it). The environment does fill
-what the cloud leaves out — `OS_PASSWORD` for an entry that stores no
-password, the application-credential secret, `OS_TOKEN`, the auth URL, the user
-and `OS_REGION_NAME`:
+As in `python-openstackclient`, every `OS_*` variable is layered over the named
+cloud field by field, and a typed flag beats both: a clouds.yaml entry that
+stores no password takes `OS_PASSWORD`, and an exported `OS_PROJECT_NAME` or
+`OS_REGION_NAME` re-scopes it.
 
 ```sh
 export OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml OS_CLOUD=mycloud
@@ -209,12 +208,29 @@ koc server list
 ```
 
 Also honoured, as in `python-openstackclient`: `OS_TENANT_NAME` / `OS_TENANT_ID`
-(fallbacks for `OS_PROJECT_NAME` / `OS_PROJECT_ID`), `OS_ENDPOINT_TYPE`
-(fallback for `OS_INTERFACE`; `publicURL`-style values are accepted, and an
-unknown interface is an error), and token authentication with `--os-token` /
-`OS_TOKEN`, chosen automatically when no user is given or explicitly with
-`--os-auth-type` / `OS_AUTH_TYPE` (`password`, `token`,
-`v3applicationcredential`, or a clouds.yaml `auth_type`).
+and the hidden `--os-tenant-name` / `--os-tenant-id` (spellings of the project
+options), `OS_ENDPOINT_TYPE` (fallback for `OS_INTERFACE`; `publicURL`-style
+values are accepted, and an unknown interface is an error), and
+`--os-trust-id` / `OS_TRUST_ID` for a trust-scoped token.
+
+| Auth type (`--os-auth-type` / `OS_AUTH_TYPE` / clouds.yaml `auth_type`) | Needs |
+| --- | --- |
+| `password` / `v3password` (default when a user is given) | user, password |
+| `token` / `v3token` (default when only a token is given) | `--os-token` / `OS_TOKEN` |
+| `v3applicationcredential` | application credential ID or name, and secret |
+| `v3totp` | user, `--os-passcode` / `OS_PASSCODE` |
+| `v3multifactor` | user, password and passcode |
+| `none` / `noauth` | a service URL (below); no Keystone |
+| `admin_token` / `token_endpoint` | token and a service URL; no Keystone |
+| `http_basic` | user, password and a service URL; no Keystone |
+
+A service's catalog entry is replaced by `OS_<SERVICE>_ENDPOINT_OVERRIDE` (or
+clouds.yaml `<service>_endpoint_override`), keyed by service type or alias:
+`OS_COMPUTE_ENDPOINT_OVERRIDE`, `OS_BAREMETAL_ENDPOINT_OVERRIDE`,
+`OS_VOLUMEV3_ENDPOINT_OVERRIDE`, … The Keystone-less auth types have no catalog,
+so each service takes its override or else `--os-endpoint` / `OS_ENDPOINT`
+(clouds.yaml `auth.endpoint`) — a standalone Ironic is
+`OS_AUTH_TYPE=none OS_ENDPOINT=http://ironic:6385 koc baremetal node list`.
 
 Project-, domain- and system-scoped tokens are all supported:
 

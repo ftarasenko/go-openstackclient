@@ -11,4 +11,6 @@ const (
 	flagOSPassword    = "os-password"
 	flagOSToken       = "os-token"
 	flagOSAuthType    = "os-auth-type"
+	flagOSTenantName  = "os-tenant-name"
+	flagOSTenantID    = "os-tenant-id"
 )

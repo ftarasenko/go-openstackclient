@@ -16,11 +16,11 @@
 // standard input instead of a flag or the environment, and a run that reaches
 // authentication without one is prompted on the terminal, as osc-lib does.
 //
-// Naming a cloud selects it wholesale: because every auth flag defaults to its
-// OS_* variable, a sourced openrc would otherwise override the named cloud
-// field by field and silently send the command — credentials included — to the
-// environment's cloud instead. Only flags the operator actually typed (and
-// values from a --creds-from-vault openrc) outrank clouds.yaml.
+// As in python-openstackclient, the OS_* variables outrank a named cloud field
+// by field: every auth flag defaults to its variable, and the flags are layered
+// over the clouds.yaml entry (openstacksdk's get_one does the same with
+// osc-lib's argparse values). So a cloud that stores no password takes
+// OS_PASSWORD, and an exported OS_REGION_NAME picks the region.
 //
 // TLS is always wired explicitly into the provider so behavior matches OSC:
 // custom CA bundle (OS_CACERT / --os-cacert), mutual TLS client cert+key
@@ -77,8 +77,31 @@ type Options struct {
 	Token string
 	// AuthType is osc-lib's --os-auth-type / OS_AUTH_TYPE. Empty selects one
 	// from what was supplied, as osc-lib does: a username means password, a
-	// token alone means token. See authTypeFor.
-	AuthType          string
+	// token alone means token. See applyAuthType.
+	AuthType string
+	// Passcode is a TOTP passcode, for the v3totp and v3multifactor auth types
+	// (--os-passcode / OS_PASSCODE).
+	Passcode string
+	// TrustID requests a trust-scoped token (--os-trust-id / OS_TRUST_ID).
+	TrustID string
+	// Endpoint is the service URL of the Keystone-less auth types — none /
+	// noauth, admin_token / token_endpoint and http_basic — which have no
+	// catalog to look one up in (--os-endpoint / OS_ENDPOINT).
+	Endpoint string
+
+	// tenantName / tenantID back the hidden v2-era --os-tenant-name /
+	// --os-tenant-id spellings osc-lib still accepts; applyTenantAliases folds
+	// them into ProjectName / ProjectID.
+	tenantName, tenantID string
+
+	// authKind is the auth type resolveAuth settled on (canonicalAuthType's
+	// value; empty when nothing chose one).
+	authKind string
+	// endpointOverrides maps a service type to the URL that replaces its
+	// catalog entry: OS_<TYPE>_ENDPOINT_OVERRIDE and clouds.yaml
+	// <type>_endpoint_override. See endpoints.go.
+	endpointOverrides map[string]string
+
 	ProjectName       string
 	ProjectID         string
 	ProjectDomainName string
@@ -171,13 +194,13 @@ type Options struct {
 	Timing bool
 
 	// fs is retained so factory methods can distinguish an explicitly-set flag
-	// from an env-derived default (notably for --insecure, and for keeping a
-	// stray OS_* out of an explicitly named cloud — see Options.override).
+	// from an env-derived default (notably for --insecure, and for a typed
+	// domain name beating an exported domain ID — see domainOption).
 	fs *pflag.FlagSet
 
-	// forced names flags whose value came from a source that outranks
-	// clouds.yaml even though pflag never saw them on the command line —
-	// currently only the --creds-from-vault openrc.
+	// forced names flags whose value came from a source as deliberate as the
+	// command line even though pflag never saw it — the --creds-from-vault
+	// openrc, and a password read from stdin or the prompt.
 	forced map[string]bool
 
 	// authenticate overrides Authenticate in tests so a command's RunE can be
@@ -209,7 +232,7 @@ type Options struct {
 }
 
 // markForced records that flag's value was supplied by a source pflag cannot
-// see but which still outranks clouds.yaml.
+// see but which counts as explicitly given.
 func (o *Options) markForced(flag string) {
 	if o.forced == nil {
 		o.forced = make(map[string]bool)
@@ -252,23 +275,6 @@ func (o *Options) explicitlySet(flag string) bool {
 	return o.fs.Changed(flag)
 }
 
-// override returns v only when it may legitimately be layered over the auth
-// options the base path produced.
-//
-// On the env path o's fields *are* the configuration, so everything applies. On
-// the clouds.yaml path they are not: AddFlags defaults every auth flag to its
-// OS_* variable, so a sourced openrc leaves them all populated even when the
-// operator typed nothing but --os-cloud. Layering those over the named cloud
-// silently redirects the command — credentials included — at whatever the
-// environment happened to hold, so there only a value the operator actually
-// supplied wins.
-func (o *Options) override(flag, v string) string {
-	if v == "" || o.Cloud == "" || o.explicitlySet(flag) {
-		return v
-	}
-	return ""
-}
-
 // AddFlags registers the global auth/TLS/microversion flags. Defaults are drawn
 // from the corresponding OS_* environment variables so that flag-or-env
 // precedence matches python-openstackclient.
@@ -296,7 +302,13 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.Token, flagOSToken, os.Getenv("OS_TOKEN"),
 		"pre-issued Keystone token, for the token auth type (env OS_TOKEN)")
 	fs.StringVar(&o.AuthType, flagOSAuthType, os.Getenv("OS_AUTH_TYPE"),
-		"authentication type: password, token or v3applicationcredential (and their v3 spellings); default: chosen from --os-username / --os-token (env OS_AUTH_TYPE)")
+		"authentication type: password, token, v3applicationcredential, v3totp, v3multifactor, none, admin_token or http_basic (and their v3 spellings); default: chosen from --os-username / --os-token (env OS_AUTH_TYPE)")
+	fs.StringVar(&o.Passcode, "os-passcode", os.Getenv("OS_PASSCODE"),
+		"TOTP passcode, for the v3totp and v3multifactor auth types (env OS_PASSCODE)")
+	fs.StringVar(&o.TrustID, "os-trust-id", os.Getenv("OS_TRUST_ID"),
+		"request a trust-scoped token for this trust (env OS_TRUST_ID)")
+	fs.StringVar(&o.Endpoint, "os-endpoint", os.Getenv("OS_ENDPOINT"),
+		"service URL for the auth types that use no Keystone: none, admin_token, http_basic (env OS_ENDPOINT)")
 	// OS_TENANT_NAME / OS_TENANT_ID are the identity-v2 spellings osc-lib still
 	// reads as fallbacks (osc_lib/api/auth.py build_auth_plugins_option_parser);
 	// old openrc files export only those.
@@ -304,6 +316,10 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 		"project name (env OS_PROJECT_NAME, or OS_TENANT_NAME)")
 	fs.StringVar(&o.ProjectID, flagOSProjectID, envOr("OS_PROJECT_ID", os.Getenv("OS_TENANT_ID")),
 		"project ID (env OS_PROJECT_ID, or OS_TENANT_ID)")
+	fs.StringVar(&o.tenantName, flagOSTenantName, "", "deprecated spelling of --os-project-name")
+	fs.StringVar(&o.tenantID, flagOSTenantID, "", "deprecated spelling of --os-project-id")
+	_ = fs.MarkHidden(flagOSTenantName)
+	_ = fs.MarkHidden(flagOSTenantID)
 	fs.StringVar(&o.ProjectDomainName, "os-project-domain-name", os.Getenv("OS_PROJECT_DOMAIN_NAME"),
 		"project domain name (env OS_PROJECT_DOMAIN_NAME)")
 	fs.StringVar(&o.UserDomainName, "os-user-domain-name", os.Getenv("OS_USER_DOMAIN_NAME"),

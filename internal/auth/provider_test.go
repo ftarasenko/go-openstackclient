@@ -313,10 +313,10 @@ func cloudsYAMLResult() (gophercloud.AuthOptions, gophercloud.EndpointOpts) {
 	}
 }
 
-// A named cloud must be used wholesale. Every auth flag defaults to its OS_*
-// variable, so before the fix a sourced openrc silently redirected
-// "--os-cloud other" at the environment's cloud, credentials included.
-func TestOverride_NamedCloudIsNotClobberedByEnvDefaults(t *testing.T) {
+// As in python-openstackclient, the OS_* variables outrank a named cloud field
+// by field: openstacksdk merges osc-lib's argparse values, whose defaults are
+// the variables, over the clouds.yaml entry.
+func TestOverride_EnvOutranksNamedCloud(t *testing.T) {
 	envOpenrc(t)
 	o := &Options{}
 	fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
@@ -330,28 +330,27 @@ func TestOverride_NamedCloudIsNotClobberedByEnvDefaults(t *testing.T) {
 	o.applyEndpointOverrides(&eo)
 
 	for _, tc := range []struct{ field, got, want string }{
-		{"auth URL", ao.IdentityEndpoint, "https://named-cloud.example:5000"},
-		{"username", ao.Username, "cloudsuser"},
-		{"password", ao.Password, "cloudssecret"},
-		{"project", ao.TenantName, "cloudsproject"},
-		{"user domain", ao.DomainName, "CloudsDom"},
-		{"region", eo.Region, "cloudsregion"},
+		{"auth URL", ao.IdentityEndpoint, "https://env-cloud.example:5000"},
+		{"username", ao.Username, "envuser"},
+		{"password", ao.Password, "envsecret"},
+		{"project", ao.TenantName, "envproject"},
+		{"user domain", ao.DomainName, "EnvDom"},
+		{"region", eo.Region, "envregion"},
 	} {
 		if tc.got != tc.want {
-			t.Errorf("%s = %q, want %q (the named cloud's value)", tc.field, tc.got, tc.want)
+			t.Errorf("%s = %q, want %q (the environment's value)", tc.field, tc.got, tc.want)
 		}
 	}
-	if eo.Availability != gophercloud.AvailabilityPublic {
-		t.Errorf("interface = %q, want public (OS_INTERFACE must not win)", eo.Availability)
+	if eo.Availability != gophercloud.AvailabilityAdmin {
+		t.Errorf("interface = %q, want admin from OS_INTERFACE", eo.Availability)
 	}
-	// The env's project domain must not have rewritten the scope either.
-	if ao.Scope != nil {
-		t.Errorf("scope = %#v, want nil (no domain flag was given)", ao.Scope)
+	if ao.Scope == nil || ao.Scope.ProjectName != "envproject" || ao.Scope.DomainName != "EnvDom" {
+		t.Errorf("scope = %#v, want project envproject in EnvDom", ao.Scope)
 	}
 }
 
-// The flags the operator actually types still outrank the named cloud.
-func TestOverride_ExplicitFlagsStillBeatNamedCloud(t *testing.T) {
+// Typed flags outrank both the environment and the named cloud.
+func TestOverride_ExplicitFlagsBeatEnvAndNamedCloud(t *testing.T) {
 	envOpenrc(t)
 	o := &Options{}
 	fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
@@ -379,9 +378,9 @@ func TestOverride_ExplicitFlagsStillBeatNamedCloud(t *testing.T) {
 	if eo.Region != "flagregion" {
 		t.Errorf("region = %q, want flagregion", eo.Region)
 	}
-	// Untouched flags keep the cloud's values.
-	if ao.IdentityEndpoint != "https://named-cloud.example:5000" {
-		t.Errorf("auth URL = %q, want the named cloud's", ao.IdentityEndpoint)
+	// Untouched flags carry the environment's values.
+	if ao.IdentityEndpoint != "https://env-cloud.example:5000" {
+		t.Errorf("auth URL = %q, want OS_AUTH_URL's", ao.IdentityEndpoint)
 	}
 }
 
@@ -437,9 +436,9 @@ func TestOverride_VaultOpenrcOutranksNamedCloud(t *testing.T) {
 	if ao.Username != "vaultuser" {
 		t.Errorf("username = %q, want vaultuser", ao.Username)
 	}
-	// A field the openrc did not carry still comes from the named cloud.
-	if ao.Password != "cloudssecret" {
-		t.Errorf("password = %q, want the named cloud's", ao.Password)
+	// A field the openrc did not carry falls back to the environment.
+	if ao.Password != "envsecret" {
+		t.Errorf("password = %q, want OS_PASSWORD's", ao.Password)
 	}
 }
 
@@ -514,9 +513,8 @@ func TestOverride_ProjectFlagRescopesNamedCloud(t *testing.T) {
 	}
 }
 
-// Leftover OS_PROJECT_* in the environment must not re-scope a named cloud:
-// only an explicit flag does.
-func TestOverride_EnvProjectDoesNotRescopeNamedCloud(t *testing.T) {
+// OS_PROJECT_NAME re-scopes a named cloud just as --os-project-name does.
+func TestOverride_EnvProjectRescopesNamedCloud(t *testing.T) {
 	t.Setenv("OS_PROJECT_NAME", "leftover")
 	o := &Options{}
 	fs := pflag.NewFlagSet("koc", pflag.ContinueOnError)
@@ -527,7 +525,7 @@ func TestOverride_EnvProjectDoesNotRescopeNamedCloud(t *testing.T) {
 	ao, _ := cloudsYAMLResult()
 	ao.Scope = &gophercloud.AuthScope{ProjectName: "cloudsproject", DomainName: "CloudsDom"}
 	o.applyAuthOverrides(&ao)
-	if ao.Scope.ProjectName != "cloudsproject" {
-		t.Errorf("scope project = %q, want the named cloud's", ao.Scope.ProjectName)
+	if ao.Scope.ProjectName != "leftover" || ao.Scope.DomainName != "CloudsDom" {
+		t.Errorf("scope = %+v, want project leftover in the cloud's domain", ao.Scope)
 	}
 }

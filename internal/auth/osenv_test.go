@@ -16,8 +16,8 @@ import (
 )
 
 // python-openstackclient parity for the OS_* environment: clouds.yaml
-// discovery, the variables that fill a named cloud's gaps, the deprecated
-// aliases, and token authentication.
+// discovery, the variables layered over a named cloud, the deprecated
+// aliases, and the auth types.
 
 // isolateConfig points every clouds.yaml search location koc consults at empty
 // temporary directories, so a developer's own ~/.config/openstack cannot leak
@@ -122,10 +122,10 @@ func TestOSPassword_FillsNamedCloudWithoutPassword(t *testing.T) {
 	}
 }
 
-// A cloud that authenticates by application credential must not be switched to
-// password auth by a leftover OS_PASSWORD (gophercloud prefers a password when
-// both are present).
-func TestOSPassword_DoesNotFillApplicationCredentialCloud(t *testing.T) {
+// A cloud whose auth_type names application credentials keeps them even with a
+// leftover OS_PASSWORD exported: gophercloud would otherwise prefer the
+// password, where keystoneauth's v3applicationcredential plugin ignores it.
+func TestOSPassword_DoesNotSwitchApplicationCredentialCloud(t *testing.T) {
 	envOpenrc(t)
 	o := envOptions(t, "--os-cloud", "named")
 	ao := gophercloud.AuthOptions{
@@ -134,8 +134,11 @@ func TestOSPassword_DoesNotFillApplicationCredentialCloud(t *testing.T) {
 		ApplicationCredentialSecret: "acsecret",
 	}
 	o.applyAuthOverrides(&ao)
-	if ao.Password != "" || ao.Username != "" {
-		t.Errorf("password/username = %q/%q, want both empty on an application credential cloud", ao.Password, ao.Username)
+	if err := o.applyAuthType(&ao, "v3applicationcredential"); err != nil {
+		t.Fatal(err)
+	}
+	if ao.Password != "" || ao.ApplicationCredentialID != "ac1" {
+		t.Errorf("got %+v, want application credential auth with no password", ao)
 	}
 }
 
@@ -149,36 +152,29 @@ func TestOSApplicationCredentialSecret_FillsNamedCloud(t *testing.T) {
 	}
 }
 
-// OS_REGION_NAME fills a cloud with no region_name, and does not beat one the
-// cloud states — clouds.Parse used to read it itself and let it win.
+// OS_REGION_NAME and OS_INTERFACE beat the cloud's region_name / interface.
 func TestOSRegionName_UnderNamedCloud(t *testing.T) {
 	isolateConfig(t)
 	t.Setenv("OS_REGION_NAME", "envregion")
 	t.Setenv("OS_INTERFACE", "admin")
 	t.Setenv("OS_PASSWORD", "pw")
-	dir := t.TempDir()
+	t.Setenv("OS_CLIENT_CONFIG_FILE", writeConfig(t, filepath.Join(t.TempDir(), "clouds.yaml"),
+		"clouds:\n  c:\n    region_name: cloudregion\n    interface: internal\n    auth:\n      auth_url: https://k.example/v3\n      username: u\n"))
+	_, eo, _, err := envOptions(t, "--os-cloud", "c").resolveAuth()
+	if err != nil {
+		t.Fatalf("resolveAuth: %v", err)
+	}
+	if eo.Region != "envregion" || eo.Availability != gophercloud.AvailabilityAdmin {
+		t.Errorf("region/interface = %q/%q, want envregion/admin", eo.Region, eo.Availability)
+	}
 
-	for _, tc := range []struct {
-		name, region, want string
-	}{
-		{"cloud states its region", "    region_name: cloudregion\n", "cloudregion"},
-		{"cloud has none", "", "envregion"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("OS_CLIENT_CONFIG_FILE", writeConfig(t, filepath.Join(dir, tc.want+".yaml"),
-				"clouds:\n  c:\n"+tc.region+"    auth:\n      auth_url: https://k.example/v3\n      username: u\n"))
-			o := envOptions(t, "--os-cloud", "c")
-			_, eo, _, err := o.resolveAuth()
-			if err != nil {
-				t.Fatalf("resolveAuth: %v", err)
-			}
-			if eo.Region != tc.want {
-				t.Errorf("region = %q, want %q", eo.Region, tc.want)
-			}
-			if eo.Availability != gophercloud.AvailabilityPublic {
-				t.Errorf("interface = %q, want public (OS_INTERFACE must not win)", eo.Availability)
-			}
-		})
+	t.Setenv("OS_REGION_NAME", "")
+	t.Setenv("OS_INTERFACE", "")
+	if _, eo, _, err = envOptions(t, "--os-cloud", "c").resolveAuth(); err != nil {
+		t.Fatalf("resolveAuth: %v", err)
+	}
+	if eo.Region != "cloudregion" || eo.Availability != gophercloud.AvailabilityInternal {
+		t.Errorf("region/interface = %q/%q, want the cloud's cloudregion/internal", eo.Region, eo.Availability)
 	}
 }
 
@@ -385,5 +381,206 @@ func TestRedact_TokenAuthRequest(t *testing.T) {
 		`{"auth":{"identity":{"methods":["token"],"token":{"id":"tok123"}}}}`
 	if out := redact(in); strings.Contains(out, "tok123") {
 		t.Errorf("token leaked: %s", out)
+	}
+}
+
+// --- endpoint overrides and the Keystone-less auth types ---
+
+func TestCollectEndpointOverrides(t *testing.T) {
+	t.Setenv("OS_COMPUTE_ENDPOINT_OVERRIDE", "https://env-nova.example/v2.1")
+	t.Setenv("OS_IMAGE_ENDPOINT", "https://plain-glance.example")
+	t.Setenv("OS_IMAGE_ENDPOINT_OVERRIDE", "https://glance.example")
+	got := collectEndpointOverrides(map[string]string{
+		"compute":  "https://cloud-nova.example/v2.1",
+		"volumev3": "https://cinder.example/v3",
+	})
+	for k, want := range map[string]string{
+		"compute":  "https://env-nova.example/v2.1", // the environment beats clouds.yaml
+		"image":    "https://glance.example",        // _ENDPOINT_OVERRIDE beats _ENDPOINT
+		"volumev3": "https://cinder.example/v3",
+	} {
+		if got[k] != want {
+			t.Errorf("override[%s] = %q, want %q", k, got[k], want)
+		}
+	}
+	// OS_ENDPOINT and OS_ENDPOINT_TYPE are not per-service overrides.
+	t.Setenv("OS_ENDPOINT", "https://x.example")
+	t.Setenv("OS_ENDPOINT_TYPE", "internal")
+	if _, ok := collectEndpointOverrides(nil)[""]; ok {
+		t.Error("OS_ENDPOINT was read as an override for the empty service type")
+	}
+}
+
+func TestEndpointLocator_AliasesAndFallthrough(t *testing.T) {
+	o := &Options{endpointOverrides: map[string]string{"volumev3": "https://cinder.example/v3"}}
+	loc := o.endpointLocator(func(gophercloud.EndpointOpts) (string, error) { return "https://catalog.example/", nil })
+
+	eo := gophercloud.EndpointOpts{}
+	eo.ApplyDefaults("block-storage")
+	if u, _ := loc(eo); u != "https://cinder.example/v3/" {
+		t.Errorf("block-storage = %q, want the volumev3 override", u)
+	}
+	eo = gophercloud.EndpointOpts{}
+	eo.ApplyDefaults("compute")
+	if u, _ := loc(eo); u != "https://catalog.example/" {
+		t.Errorf("compute = %q, want the catalog's", u)
+	}
+}
+
+// serviceCapture answers any request and records its auth headers.
+func serviceCapture(t *testing.T) (*httptest.Server, *http.Header) {
+	t.Helper()
+	got := http.Header{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		got.Set("X-Path", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"nodes":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &got
+}
+
+func getNodes(t *testing.T, sc *gophercloud.ServiceClient) {
+	t.Helper()
+	resp, err := sc.Get(context.Background(), sc.ServiceURL("nodes"), nil, nil)
+	if err != nil {
+		t.Fatalf("GET nodes: %v", err)
+	}
+	_ = resp.Body.Close()
+}
+
+func TestKeystoneless(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		o                  Options
+		wantToken, wantBas string
+	}{
+		{name: "none", o: Options{AuthType: "noauth"}},
+		{name: "admin_token", o: Options{AuthType: "token_endpoint", Token: "static"}, wantToken: "static"},
+		{name: "http_basic", o: Options{AuthType: "http_basic", Username: "bm", Password: "pw"}, wantBas: "Basic Ym06cHc="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateConfig(t)
+			srv, got := serviceCapture(t)
+			o := tc.o
+			o.Endpoint = srv.URL
+			c, err := o.Authenticate(context.Background())
+			if err != nil {
+				t.Fatalf("Authenticate: %v", err)
+			}
+			sc, err := c.Baremetal()
+			if err != nil {
+				t.Fatalf("Baremetal: %v", err)
+			}
+			getNodes(t, sc)
+			if p := got.Get("X-Path"); p != "/v1/nodes" {
+				t.Errorf("path = %q, want /v1/nodes under OS_ENDPOINT", p)
+			}
+			if v := got.Get("X-Auth-Token"); v != tc.wantToken {
+				t.Errorf("X-Auth-Token = %q, want %q", v, tc.wantToken)
+			}
+			if v := got.Get("Authorization"); v != tc.wantBas {
+				t.Errorf("Authorization = %q, want %q", v, tc.wantBas)
+			}
+		})
+	}
+}
+
+func TestKeystoneless_NeedsAnEndpoint(t *testing.T) {
+	isolateConfig(t)
+	_, err := (&Options{AuthType: "none"}).Authenticate(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "needs the service URL") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// clouds.Parse panics on an entry with no auth section, the usual shape for
+// auth_type none.
+func TestKeystoneless_CloudWithoutAuthSection(t *testing.T) {
+	isolateConfig(t)
+	srv, got := serviceCapture(t)
+	t.Setenv("OS_CLIENT_CONFIG_FILE", writeConfig(t, filepath.Join(t.TempDir(), "clouds.yaml"),
+		"clouds:\n  bm:\n    auth_type: none\n    baremetal_endpoint_override: "+srv.URL+"\n"))
+	c, err := envOptions(t).Authenticate(context.Background())
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	sc, err := c.Baremetal()
+	if err != nil {
+		t.Fatalf("Baremetal: %v", err)
+	}
+	getNodes(t, sc)
+	if p := got.Get("X-Path"); p != "/v1/nodes" {
+		t.Errorf("path = %q", p)
+	}
+}
+
+// With Keystone, an override replaces just that service's catalog entry.
+func TestEndpointOverride_KeystonePath(t *testing.T) {
+	isolateConfig(t)
+	srv, _ := passwordCapture(t)
+	t.Setenv("OS_COMPUTE_ENDPOINT_OVERRIDE", "https://nova.example/v2.1")
+	o := mockOptions(srv.URL + "/v3")
+	c, err := o.Authenticate(context.Background())
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	sc, err := c.Compute()
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if sc.Endpoint != "https://nova.example/v2.1/" {
+		t.Errorf("compute endpoint = %q, want the override", sc.Endpoint)
+	}
+	if _, err := c.Image(); err == nil {
+		t.Error("image resolved although the catalog is empty and it has no override")
+	}
+}
+
+// --- TOTP, trusts and the tenant flags ---
+
+func TestTOTPAuthTypes(t *testing.T) {
+	user := func() gophercloud.AuthOptions {
+		return gophercloud.AuthOptions{Username: "u", Password: "p", Passcode: "123456", DomainName: "D"}
+	}
+	ao := user()
+	if err := (&Options{AuthType: "v3totp"}).applyAuthType(&ao, ""); err != nil || ao.Password != "" || ao.Passcode != "123456" {
+		t.Errorf("v3totp: %v, %+v; want passcode only", err, ao)
+	}
+	ao = user()
+	if err := (&Options{AuthType: "v3multifactor"}).applyAuthType(&ao, ""); err != nil || ao.Password != "p" || ao.Passcode != "123456" {
+		t.Errorf("v3multifactor: %v, %+v; want password and passcode", err, ao)
+	}
+	// Inferred password auth ignores a passcode, as osc-lib's does.
+	ao = user()
+	if err := (&Options{}).applyAuthType(&ao, ""); err != nil || ao.Passcode != "" {
+		t.Errorf("inferred: %v, %+v; want the passcode dropped", err, ao)
+	}
+	ao = gophercloud.AuthOptions{Username: "u"}
+	if err := (&Options{AuthType: "v3totp"}).applyAuthType(&ao, ""); err == nil {
+		t.Error("v3totp without a passcode must be an error")
+	}
+}
+
+func TestTrustScope(t *testing.T) {
+	ao := gophercloud.AuthOptions{Username: "u", TenantName: "p", Scope: &gophercloud.AuthScope{ProjectName: "p", DomainName: "D"}}
+	(&Options{TrustID: "tr1"}).applyAuthOverrides(&ao)
+	if ao.Scope == nil || ao.Scope.TrustID != "tr1" || ao.Scope.ProjectName != "" || ao.TenantName != "" {
+		t.Errorf("scope = %+v, tenant %q; want trust tr1 only", ao.Scope, ao.TenantName)
+	}
+}
+
+func TestTenantFlags(t *testing.T) {
+	t.Setenv("OS_PROJECT_NAME", "")
+	o := envOptions(t, "--os-tenant-name", "tname", "--os-tenant-id", "tid")
+	o.applyTenantAliases()
+	if o.ProjectName != "tname" || o.ProjectID != "tid" {
+		t.Errorf("project = %q/%q, want the --os-tenant-* values", o.ProjectName, o.ProjectID)
+	}
+	o = envOptions(t, "--os-tenant-name", "tname", "--os-project-name", "pname")
+	o.applyTenantAliases()
+	if o.ProjectName != "pname" {
+		t.Errorf("project = %q, want --os-project-name to win", o.ProjectName)
 	}
 }

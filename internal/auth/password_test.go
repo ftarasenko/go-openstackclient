@@ -75,11 +75,13 @@ func TestApplyPasswordStdin_PopulatesPasswordAndOutranksACloud(t *testing.T) {
 	if o.Password != "piped" {
 		t.Errorf("password = %q, want piped", o.Password)
 	}
-	// A piped password is as deliberate as a typed one, so it must survive the
-	// clouds.yaml guard in Options.override.
+	// A piped password is as deliberate as a typed one, so it outranks a named
+	// cloud's stored password.
 	o.Cloud = "named"
-	if got := o.override("os-password", o.Password); got != "piped" {
-		t.Errorf("override dropped the piped password: %q", got)
+	ao := gophercloud.AuthOptions{Username: "u", Password: "stored"}
+	o.applyAuthOverrides(&ao)
+	if ao.Password != "piped" {
+		t.Errorf("password = %q, want the piped one over the cloud's", ao.Password)
 	}
 }
 

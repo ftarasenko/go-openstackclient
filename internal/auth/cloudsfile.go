@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -160,18 +161,33 @@ type cloudsFile struct {
 	securePath string
 	// names lists the clouds the file (and secure file) define.
 	names []string
-	// authTypes maps a cloud name to its auth_type, if it sets one.
-	authTypes map[string]string
+	// extras holds, per cloud, the settings clouds.Parse does not model.
+	extras map[string]cloudExtra
 }
 
-// cloudsDoc is the slice of a clouds.yaml koc decodes itself.
+// cloudExtra is what koc reads from a cloud entry itself, because
+// gophercloud's clouds.Cloud has no field for it.
+type cloudExtra struct {
+	authType string
+	// endpoint is auth.endpoint: the service URL of the Keystone-less auth
+	// types (none, admin_token, http_basic).
+	endpoint string
+	// passcode is auth.passcode, for v3totp / v3multifactor.
+	passcode string
+	// hasAuth reports whether the entry has an auth section at all.
+	hasAuth bool
+	// overrides maps a service-type key as written (compute, block_storage,
+	// volumev3, …) to its <key>_endpoint_override (or <key>_endpoint) URL.
+	overrides map[string]string
+}
+
+// cloudsDoc is a clouds.yaml decoded loosely: koc picks out of each entry
+// only what cloudExtra needs.
 type cloudsDoc struct {
-	Clouds map[string]struct {
-		AuthType string `yaml:"auth_type"`
-	} `yaml:"clouds"`
+	Clouds map[string]map[string]any `yaml:"clouds"`
 }
 
-// findCloudsFile locates and minimally decodes clouds.yaml and secure.yaml. A
+// findCloudsFile locates and loosely decodes clouds.yaml and secure.yaml. A
 // missing clouds.yaml is not an error: it returns nil, and the caller reports
 // the search path if it needed one.
 func findCloudsFile() (*cloudsFile, error) {
@@ -179,9 +195,11 @@ func findCloudsFile() (*cloudsFile, error) {
 	if path == "" {
 		return nil, nil
 	}
-	cf := &cloudsFile{path: path, securePath: firstReadable(configCandidates("secure", envClientSecureFile)), authTypes: map[string]string{}}
+	cf := &cloudsFile{path: path, securePath: firstReadable(configCandidates("secure", envClientSecureFile)), extras: map[string]cloudExtra{}}
 
 	seen := map[string]bool{}
+	// secure.yaml is read second so that, as in openstacksdk's merge, its
+	// values win.
 	for _, p := range []string{cf.path, cf.securePath} {
 		if p == "" {
 			continue
@@ -195,12 +213,74 @@ func findCloudsFile() (*cloudsFile, error) {
 				seen[name] = true
 				cf.names = append(cf.names, name)
 			}
-			if c.AuthType != "" && cf.authTypes[name] == "" {
-				cf.authTypes[name] = c.AuthType
-			}
+			cf.extras[name] = mergeExtra(cf.extras[name], c)
 		}
 	}
 	return cf, nil
+}
+
+// mergeExtra layers one file's entry for a cloud over what earlier files gave.
+func mergeExtra(e cloudExtra, c map[string]any) cloudExtra {
+	str := func(v any) string {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return ""
+	}
+	if v := str(c["auth_type"]); v != "" {
+		e.authType = v
+	}
+	if a, ok := c["auth"].(map[string]any); ok {
+		e.hasAuth = true
+		if v := str(a["endpoint"]); v != "" {
+			e.endpoint = v
+		}
+		if v := str(a["passcode"]); v != "" {
+			e.passcode = v
+		}
+	}
+	for k, v := range c {
+		u := str(v)
+		if u == "" {
+			continue
+		}
+		var key string
+		switch {
+		case strings.HasSuffix(k, "_endpoint_override"):
+			key = strings.TrimSuffix(k, "_endpoint_override")
+		case strings.HasSuffix(k, "_endpoint"):
+			key = strings.TrimSuffix(k, "_endpoint")
+		default:
+			continue
+		}
+		if e.overrides == nil {
+			e.overrides = map[string]string{}
+		}
+		// <key>_endpoint_override beats <key>_endpoint, as in openstacksdk's
+		// CloudRegion.get_endpoint.
+		if _, have := e.overrides[key]; !have || strings.HasSuffix(k, "_endpoint_override") {
+			e.overrides[key] = u
+		}
+	}
+	return e
+}
+
+// withEmptyAuth returns the clouds.yaml at path with an empty auth section
+// added to cloud name. gophercloud resolves no path relative to the file's
+// location, so reading the copy from memory changes nothing else.
+func withEmptyAuth(path, name string) ([]byte, error) {
+	doc, err := readCloudsDoc(path)
+	if err != nil {
+		return nil, err
+	}
+	if c, ok := doc.Clouds[name]; ok {
+		c["auth"] = map[string]any{}
+	}
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("re-encoding %s: %w", path, err)
+	}
+	return out, nil
 }
 
 func readCloudsDoc(path string) (cloudsDoc, error) {
@@ -217,10 +297,22 @@ func readCloudsDoc(path string) (cloudsDoc, error) {
 
 // parseOptions are the clouds.Parse options that point gophercloud at the
 // files findCloudsFile chose, plus the public-clouds search list.
-func (cf *cloudsFile) parseOptions() ([]clouds.ParseOption, func(), error) {
+//
+// clouds.Parse dereferences the entry's auth section unconditionally, so an
+// entry with none — the usual shape for auth_type none — would panic it.
+// Such an entry is handed over as a copy of the file with an empty auth added.
+func (cf *cloudsFile) parseOptions(name string) ([]clouds.ParseOption, func(), error) {
 	opts := []clouds.ParseOption{
-		clouds.WithLocations(cf.path),
 		clouds.WithPublicLocations(configCandidates("clouds-public", "")...),
+	}
+	if cf.extras[name].hasAuth {
+		opts = append(opts, clouds.WithLocations(cf.path))
+	} else {
+		patched, err := withEmptyAuth(cf.path, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		opts = append(opts, clouds.WithCloudsYAML(bytes.NewReader(patched)))
 	}
 	if cf.securePath == "" {
 		// gophercloud would otherwise look for a secure.yaml next to the

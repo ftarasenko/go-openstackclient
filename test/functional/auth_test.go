@@ -94,8 +94,8 @@ func TestAuthPaths(t *testing.T) {
 	}
 }
 
-// A named cloud outranks leftover OS_* in the environment, and an explicit flag
-// outranks both — the rule auth.Options.override implements.
+// As in python-openstackclient, OS_* in the environment outranks the named
+// cloud, and a typed flag outranks both.
 func TestAuthPrecedence(t *testing.T) {
 	c := ft(t)
 	admin := issue(t, cloudsRunner(c))
@@ -112,13 +112,20 @@ func TestAuthPrecedence(t *testing.T) {
 		t.Fatal("devstack's demo project is missing")
 	}
 
-	leftover := cloudsRunner(c).with("OS_PROJECT_NAME=demo", "OS_USERNAME=demo")
-	if got := issue(t, leftover); got != admin {
-		t.Errorf("OS_CLOUD with leftover OS_PROJECT_NAME=demo scoped to %+v, want the named cloud's %+v", got, admin)
+	// devstack gives admin a role on demo, so both can move the scope there.
+	if got := issue(t, cloudsRunner(c).with("OS_PROJECT_NAME=demo")); got.project != demo {
+		t.Errorf("OS_PROJECT_NAME=demo over OS_CLOUD scoped to %s, want demo (%s)", got.project, demo)
 	}
-	// devstack gives admin a role on demo, so the flag can move the scope there.
 	if got := issue(t, cloudsRunner(c), "--os-project-name", "demo"); got.project != demo {
 		t.Errorf("--os-project-name demo over OS_CLOUD scoped to %s, want demo (%s)", got.project, demo)
+	}
+	// The typed flag beats the variable.
+	adminProject := openrcValue(c, "OS_PROJECT_NAME")
+	if adminProject == "" {
+		adminProject = "admin"
+	}
+	if got := issue(t, cloudsRunner(c).with("OS_PROJECT_NAME=demo"), "--os-project-name", adminProject); got != admin {
+		t.Errorf("--os-project-name %s over OS_PROJECT_NAME=demo scoped to %+v, want %+v", adminProject, got, admin)
 	}
 }
 
@@ -234,4 +241,26 @@ func TestAuthEnvParity(t *testing.T) {
 		}
 		r.ok(t, "network", "list")
 	})
+}
+
+// Per-service endpoint overrides: the catalog's compute endpoint, handed back
+// through OS_COMPUTE_ENDPOINT_OVERRIDE, still serves the command.
+func TestAuthEndpointOverride(t *testing.T) {
+	c := ft(t)
+	var eps []map[string]any
+	cloudsRunner(c).json(t, &eps, "endpoint", "list", "--interface", "public")
+	url := ""
+	for _, e := range eps {
+		if str(e["Service Type"]) == "compute" {
+			url = str(e["URL"])
+		}
+	}
+	if url == "" {
+		t.Fatalf("no public compute endpoint in %v", eps)
+	}
+	cloudsRunner(c).with("OS_COMPUTE_ENDPOINT_OVERRIDE="+url).ok(t, "flavor", "list")
+	out := cloudsRunner(c).with("OS_COMPUTE_ENDPOINT_OVERRIDE=http://127.0.0.1:1/").fails(t, "flavor", "list")
+	if !strings.Contains(out, "127.0.0.1:1") {
+		t.Errorf("an override pointing nowhere failed without naming it: %s", out)
+	}
 }

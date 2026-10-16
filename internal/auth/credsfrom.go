@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -158,7 +159,7 @@ func (ic *ironicCreds) baremetalClient(microversion string) (*gophercloud.Servic
 	// (redact() covers Authorization as well now, so this is belt and braces.)
 	var rt http.RoundTripper = &basicAuthTransport{
 		base:     newHTTPTransport(tlsCfg),
-		host:     endpointURL.Host,
+		hosts:    []string{endpointURL.Host},
 		username: ic.username,
 		password: ic.password,
 	}
@@ -187,7 +188,8 @@ func (ic *ironicCreds) baremetalClient(microversion string) (*gophercloud.Servic
 }
 
 // basicAuthTransport injects HTTP Basic credentials onto every request bound for
-// the configured host.
+// one of the configured hosts (the standalone ironic of --creds-from-ns, or the
+// service endpoints of --os-auth-type http_basic).
 //
 // The host check is the security-relevant part: injecting at the RoundTripper
 // runs on every request the client makes *including each redirected one*, which
@@ -196,13 +198,13 @@ func (ic *ironicCreds) baremetalClient(microversion string) (*gophercloud.Servic
 // cannot collect the standalone ironic password.
 type basicAuthTransport struct {
 	base     http.RoundTripper
-	host     string // host:port of the ironic endpoint; other hosts get no credentials
+	hosts    []string // host:port of each endpoint; other hosts get no credentials
 	username string
 	password string
 }
 
 func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.host != "" && req.URL.Host != t.host {
+	if len(t.hosts) > 0 && !slices.Contains(t.hosts, req.URL.Host) {
 		return t.base.RoundTrip(req)
 	}
 	r := req.Clone(req.Context())
@@ -612,8 +614,8 @@ func (o *Options) applyOpenrcVars(kv map[string]string) {
 		for _, k := range keys {
 			if v := kv[k]; v != "" {
 				*dst = v
-				// pflag never saw this value, but it still outranks
-				// clouds.yaml — mark it so Options.override keeps it.
+				// pflag never saw this value, but it counts as explicitly
+				// given (see Options.explicitlySet).
 				o.markForced(flag)
 				return
 			}
@@ -639,6 +641,11 @@ func (o *Options) applyOpenrcVars(kv map[string]string) {
 	set("os-application-credential-id", &o.AppCredID, "OS_APPLICATION_CREDENTIAL_ID")
 	set("os-application-credential-name", &o.AppCredName, "OS_APPLICATION_CREDENTIAL_NAME")
 	set("os-application-credential-secret", &o.AppCredSecret, "OS_APPLICATION_CREDENTIAL_SECRET")
+	set(flagOSAuthType, &o.AuthType, "OS_AUTH_TYPE")
+	set(flagOSToken, &o.Token, "OS_TOKEN")
+	set("os-trust-id", &o.TrustID, "OS_TRUST_ID")
+	set("os-endpoint", &o.Endpoint, "OS_ENDPOINT")
+	set("os-system-scope", &o.SystemScope, "OS_SYSTEM_SCOPE")
 
 	// OS_ENDPOINT_TYPE is sometimes "publicURL"; normalize to the interface name.
 	if o.fs == nil || !o.fs.Changed("os-interface") {
