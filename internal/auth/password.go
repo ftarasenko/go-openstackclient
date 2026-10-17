@@ -9,6 +9,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"golang.org/x/term"
+
+	"github.com/ftarasenko/go-openstackclient/internal/kochome"
 )
 
 // Two ways to supply the Keystone password other than --os-password /
@@ -152,12 +154,13 @@ func (o *Options) willPromptForPassword() bool {
 }
 
 // terminalPassword returns the function that asks for a password, or nil when
-// there is no terminal to ask on.
+// there is no terminal to ask on. The embedded profile never asks: in a
+// console terminal the user acts with the token the host handed over.
 func (o *Options) terminalPassword() func(io.Writer) (string, error) {
 	if o.promptPassword != nil {
 		return o.promptPassword
 	}
-	if o.PasswordStdin || !term.IsTerminal(int(os.Stdin.Fd())) {
+	if kochome.Embedded() || o.PasswordStdin || !term.IsTerminal(int(os.Stdin.Fd())) {
 		return nil
 	}
 	return readTerminalPassword

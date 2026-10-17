@@ -48,7 +48,8 @@ func NewRootCommand(version string) *cobra.Command {
 		// block, while a runtime RunE failure (auth/API error) does not.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
-			return nil
+			// The embedded profile's refusals (embedded.go); a no-op otherwise.
+			return checkEmbedded(cmd)
 		},
 	}
 
@@ -107,6 +108,7 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(newShellCommand(version))
 
 	// Must run last, once the whole tree is assembled.
+	addEmbeddedFlags(root)
 	requireSubcommands(root)
 	enableWatch(root, authOpts, outOpts)
 	guardRenderErrors(root)
