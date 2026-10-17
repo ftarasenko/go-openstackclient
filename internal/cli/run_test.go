@@ -17,7 +17,7 @@ import (
 func runCaptured(t *testing.T, args ...string) (stdout string, code int) {
 	t.Helper()
 	var out bytes.Buffer
-	cmd, err := Run(context.Background(), "test", args, func(root *cobra.Command) {
+	cmd, err := Run(context.Background(), "test", args, func(root *cobra.Command, _ []string) {
 		root.SetOut(&out)
 		root.SetErr(&out)
 	})
