@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"gopkg.in/yaml.v3"
+
+	"github.com/ftarasenko/go-openstackclient/internal/kochome"
 )
 
 // clouds.yaml discovery, following openstacksdk's loader
@@ -28,7 +31,9 @@ import (
 //     instead of only next to the clouds.yaml that was found.
 //
 // The files are still parsed by gophercloud's clouds.Parse; koc only decides
-// which ones it reads.
+// which ones it reads. With KOC_HOME set, that directory replaces the whole
+// search path, and the embedded profile reads no clouds.yaml at all (see
+// internal/kochome).
 
 const (
 	envClientConfigFile = "OS_CLIENT_CONFIG_FILE"
@@ -44,6 +49,9 @@ var configSuffixes = []string{".yaml", ".yml", ".json"}
 // config directory, and /etc/openstack. Duplicates (on Linux the first two
 // user directories usually coincide) are dropped.
 func configSearchDirs() []string {
+	if d := kochome.Dir(); d != "" {
+		return []string{d}
+	}
 	var dirs []string
 	if cwd, err := os.Getwd(); err == nil {
 		dirs = append(dirs, cwd)
@@ -123,9 +131,12 @@ func siteConfigDirs() []string {
 // base (clouds, secure, clouds-public) may live at, headed by the value of
 // override when that environment variable is set.
 func configCandidates(base, override string) []string {
+	if kochome.Embedded() {
+		return nil
+	}
 	var out []string
 	if override != "" {
-		if p := os.Getenv(override); p != "" {
+		if p := kochome.ExplicitPath(override); p != "" {
 			out = append(out, p)
 		}
 	}
@@ -141,7 +152,7 @@ func configCandidates(base, override string) []string {
 // openstacksdk likewise skips a file it is denied access to.
 func firstReadable(candidates []string) string {
 	for _, p := range candidates {
-		f, err := os.Open(p) //nolint:gosec // G304: the clouds.yaml search path, which OS_CLIENT_*_FILE exists to point anywhere
+		f, err := kochome.Open(p)
 		if err != nil {
 			continue
 		}
@@ -285,7 +296,7 @@ func withEmptyAuth(path, name string) ([]byte, error) {
 
 func readCloudsDoc(path string) (cloudsDoc, error) {
 	var doc cloudsDoc
-	raw, err := os.ReadFile(path) //nolint:gosec // G304: a clouds.yaml / secure.yaml firstReadable chose from the search path
+	raw, err := kochome.ReadFile(path)
 	if err != nil {
 		return doc, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -321,7 +332,7 @@ func (cf *cloudsFile) parseOptions(name string) ([]clouds.ParseOption, func(), e
 		opts = append(opts, clouds.WithSecureYAML(strings.NewReader("{}")))
 		return opts, func() {}, nil
 	}
-	f, err := os.Open(cf.securePath)
+	f, err := kochome.Open(cf.securePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening %s: %w", cf.securePath, err)
 	}
@@ -331,5 +342,8 @@ func (cf *cloudsFile) parseOptions(name string) ([]clouds.ParseOption, func(), e
 // errNoCloudsFile is returned for a named cloud when no clouds.yaml exists on
 // the search path.
 func errNoCloudsFile() error {
+	if kochome.Embedded() {
+		return errors.New("clouds.yaml is not read in the console terminal; the console sets the scope")
+	}
 	return fmt.Errorf("no clouds.yaml found; searched %s", strings.Join(configCandidates("clouds", envClientConfigFile), ", "))
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"gopkg.in/yaml.v3"
 
+	"github.com/ftarasenko/go-openstackclient/internal/kochome"
 	"github.com/ftarasenko/go-openstackclient/internal/kube"
 	"github.com/ftarasenko/go-openstackclient/internal/vault"
 )
@@ -448,17 +449,21 @@ func fileExists(path string) bool {
 }
 
 // readVaultTokenFile returns the token cached by `vault login` in ~/.vault-token,
-// honoring the VAULT_TOKEN_FILE override, or "" if none is present.
+// honoring the VAULT_TOKEN_FILE override, or "" if none is present. Under
+// KOC_HOME, "~" is that directory; the embedded profile reads neither.
 func readVaultTokenFile() string {
-	path := os.Getenv("VAULT_TOKEN_FILE")
+	if kochome.Embedded() {
+		return ""
+	}
+	path := kochome.ExplicitPath("VAULT_TOKEN_FILE")
 	if path == "" {
-		home, err := os.UserHomeDir()
+		home, err := kochome.UserHomeDir()
 		if err != nil {
 			return ""
 		}
 		path = filepath.Join(home, ".vault-token")
 	}
-	b, err := os.ReadFile(path) //nolint:gosec // G304: operator-controlled Vault token path (flag/env/~/.vault-token)
+	b, err := kochome.ReadFile(path)
 	if err != nil {
 		return ""
 	}

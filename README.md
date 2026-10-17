@@ -553,6 +553,30 @@ excluded: `console url show` *creates* a console session on every call, and
 `--timing` are refused alongside a repainting `--watch` (their per-request output
 would overwrite the frame) and allowed with `--watch-plain`.
 
+### Interactive shell (`koc shell`)
+
+`koc shell` is a REPL that runs koc commands and nothing else: type
+`server list` instead of `koc server list`, with Tab completion (commands, flags
+and values, from cobra's own completion engine) and Up/Down history. Every line
+runs on a fresh command tree, so no flag carries over to the next one; a failing
+line shows its exit status in the prompt instead of ending the shell; Ctrl-C
+cancels the running command and returns to the prompt.
+
+```text
+$ koc shell
+koc [RegionOne · demo] $ server list --long
+koc [RegionOne · demo] $ scope
+```
+
+Arguments are quoted as in a POSIX shell, but there are no pipes, redirects,
+globbing or variables — such a line is refused with the feature named. The
+shell is also the terminal a web console embeds: `KOC_SCOPE_FILE` hands it the
+user's token and scope and rotates them without a restart, `KOC_PROFILE=embedded`
+refuses credentials, scope switches,
+local files and prompts, `KOC_HOME` confines every config read to one directory,
+and `KOC_AUDIT_FD`/`KOC_AUDIT_FILE` record each line as a JSON event. See
+[`docs/shell.md`](docs/shell.md).
+
 ### Flag abbreviation
 
 `openstack` is built on argparse, which accepts any **unambiguous prefix** of a
@@ -1060,7 +1084,9 @@ internal/s3/               minimal S3 REST client (SigV4, no aws-sdk/minio-go)
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt, no Keystone auth
 internal/cli/s3/           "koc s3" bucket/object/du/transfer/copy/presign, no Keystone auth
 internal/output/           -f/-c formatter (table/json/yaml/value/csv)
-internal/cli/              root command wiring
+internal/kochome/          KOC_HOME resolver and the embedded profile switch
+internal/cli/              root command wiring; embedded.go is the embedded profile's table
+internal/cli/shell/        "koc shell": the REPL, scope file reload, audit events
 internal/cli/resolve/      cross-service name→ID resolution
 internal/cli/baremetal/    baremetal (ironic) command group
 internal/cli/keyvrm/       KeyVRM in-house catalog service (CLI over pkg/keyvrm)

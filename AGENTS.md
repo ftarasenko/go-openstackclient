@@ -46,6 +46,13 @@ to surface first at release time, and a size regression used to surface never.
 `PLATFORMS` in the Makefile must stay in sync with `.goreleaser.yaml`'s
 `goos`/`goarch` and the CI cross-compile matrix.
 
+**The embedded profile** (`KOC_PROFILE=embedded`, docs/shell.md). Its refusals live
+in one table, `internal/cli/embedded.go`, enforced from the root's
+`PersistentPreRunE` — never inside a service package. A new flag or argument
+that reads or writes a local file must be added there (or to the test's
+`notFileFlags` with the reason it is not one): `TestEmbeddedFileFlags` walks the
+tree and fails otherwise.
+
 The air-gap invariant — every build/test must pass with **no module proxy**:
 
 ```sh
@@ -193,6 +200,7 @@ and honours `sonar.coverage.exclusions` (which drops `cmd/koc/main.go`), while
 
 ```
 cmd/koc/main.go            cobra root entrypoint; version var; signal-cancelled context
+internal/kochome/          KOC_HOME: the one resolver for config/state paths; KOC_PROFILE
 internal/auth/             one authenticated ProviderClient per invocation + per-service clients
   options.go               global flags (auth/TLS/microversion/output/debug/timing/timeout + creds-from-*), env-defaulted
   transport.go             http.Client construction: --timeout whole-exchange cap (0 = off) + fixed 60s response-header timeout
@@ -200,6 +208,7 @@ internal/auth/             one authenticated ProviderClient per invocation + per
   tls.go                   explicit *tls.Config (CA bundle, mTLS, --insecure, TLS 1.2 min)
   services.go              auth.Client factory methods: Compute()/Identity()/Volume()/...
   credsfrom.go             --creds-from-ns/-vault: standalone basic-auth ironic + Vault openrc → OS_*
+  scopefile.go             KOC_SCOPE_FILE: a host-written token + scope, mapped onto the OS_* options
   debug.go                 --debug transport: redacts tokens+secrets, elides large bodies
 internal/kube/             minimal read-only k8s REST client (kubeconfig + secret/Ironic reads); no client-go
 internal/vault/            minimal Vault REST client (AppRole login / token + KV v2 read + X-Vault-Namespace)
@@ -216,7 +225,10 @@ internal/cli/s3/           "koc s3" bucket/object lifecycle, du, download/upload
                            recursive), server-side copy/move, presign, sync (package s3cli); S3 creds only
 internal/cli/quota/        "koc quota show|set" — the one cross-service noun (nova+cinder+neutron)
 internal/cli/              root.go wires every service's command group onto the root;
-                           watch.go gives every read verb --watch in the same final pass
+                           watch.go gives every read verb --watch in the same final pass;
+                           run.go is one invocation on a fresh tree (main and every shell line);
+                           embedded.go is the embedded profile's one refusal table
+internal/cli/shell/        "koc shell": x/term REPL, cobra completion, scope-file reload, audit events
 internal/cli/resolve/      the CLI's name→ID policy (zero-match fallback, --watch memo) over pkg/openstack/resolve
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
 pkg/                       the PUBLIC Go API (see "Public Go API"); the CLI is its first consumer

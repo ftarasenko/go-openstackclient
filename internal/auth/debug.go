@@ -64,6 +64,23 @@ var secretKeys = map[string]bool{
 	"blob":                          true,
 }
 
+// IsSecretName reports whether a flag or key name carries a credential, by the
+// same list --debug redacts JSON keys with: the name is lower-cased, dashes
+// become underscores, and it matches when any underscore-separated tail of it
+// (os_password → password, vault_secret_id → secret_id) or any one segment of
+// it (secret_key → secret) is on the list. `koc shell` uses it for its audit
+// events and history file, so a value that never reaches a --debug dump never
+// reaches those either.
+func IsSecretName(name string) bool {
+	segs := strings.Split(strings.ToLower(strings.ReplaceAll(strings.TrimLeft(name, "-"), "-", "_")), "_")
+	for i := range segs {
+		if secretKeys[strings.Join(segs[i:], "_")] || secretKeys[segs[i]] {
+			return true
+		}
+	}
+	return false
+}
+
 // secretJSONRe is the fallback for a body that is not valid JSON (a truncated
 // dump, a form-encoded payload). The value pattern tolerates escaped quotes:
 // `"[^"]*"` stopped at the backslash-quote inside a password, leaking its tail
@@ -267,9 +284,11 @@ type timingTransport struct {
 }
 
 // activeTiming is the transport --timing installed for this invocation, so main
-// can print the summary once the command has finished. koc authenticates at most
-// once per process, so a single handle is enough; it stays nil when --timing was
-// not given, which is what makes ReportTiming a no-op then.
+// can print the summary once the command has finished. An invocation
+// authenticates at most once, so a single handle is enough; it stays nil when
+// --timing was not given, which is what makes ReportTiming a no-op then.
+// ReportTiming takes it back, so a `koc shell` line without --timing does not
+// repeat the previous line's summary.
 var activeTiming atomic.Pointer[timingTransport]
 
 func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
@@ -288,7 +307,7 @@ func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
 // nothing when --timing was not given. Call it once the command has run,
 // including when it failed: a slow call is often exactly why it failed.
 func ReportTiming() {
-	if t := activeTiming.Load(); t != nil {
+	if t := activeTiming.Swap(nil); t != nil {
 		t.report()
 	}
 }

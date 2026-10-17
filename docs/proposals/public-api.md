@@ -155,13 +155,13 @@ seams, 2k lines) took about a third of one.
 
 Total: about 20 sessions, network and servers being half of it.
 
-## Designed in, not built
+## Constraints from neighbouring work
 
-- The embedded terminal mode (`koc shell`, token auth, one configurable home
-  for every file koc writes, no prompts without a terminal) needs nothing from
-  `pkg/` but what the rules already require: no file paths, prompts or
-  environment reads in `pkg/`, and feature groups (Vault, S3, kube, consoles)
-  separable — they are all CLI-side.
+- The embedded terminal mode (`koc shell`, the embedded profile, `KOC_HOME`)
+  landed on `master` alongside this work and needs nothing from `pkg/` but what
+  the rules already require: no file paths, prompts or environment reads in
+  `pkg/`, and the feature groups it turns off (Vault, S3, kube, consoles) all
+  CLI-side.
 
 ## Decisions (owner, 2026-10-17)
 
