@@ -81,6 +81,22 @@ jobs:
           echo "koc size: ${SIZE} bytes ($((SIZE / 1024 / 1024)) MiB)"
           echo "\`koc\` binary size: **${SIZE}** bytes ($((SIZE / 1024 / 1024)) MiB)" >> "$GITHUB_STEP_SUMMARY"
 
+      # koc-embedded is the web-console sandbox build (docs/shell.md): the
+      # koc_embedded tag leaves Vault, S3 and Kubernetes out. Built, sized and
+      # checked here so a change that drags that code back in, or breaks the
+      # tagged build, fails the commit that makes it.
+      - name: Build koc-embedded (offline, from vendor/)
+        run: |
+          go build -tags koc_embedded -trimpath \
+            -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty)" \
+            -o koc-embedded ./cmd/koc
+          SIZE=$(stat -c%s koc-embedded)
+          echo "koc-embedded size: ${SIZE} bytes ($((SIZE / 1024 / 1024)) MiB)"
+          echo "\`koc-embedded\` binary size: **${SIZE}** bytes ($((SIZE / 1024 / 1024)) MiB)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check koc-embedded (vet, package graph, tests)
+        run: make embedded-check
+
       - name: Test
         run: go test ./...
 
@@ -105,7 +121,8 @@ jobs:
       fail-fast: false
       matrix:
         # Must stay in sync with .goreleaser.yaml `goos`/`goarch` and the
-        # Makefile PLATFORMS list.
+        # Makefile PLATFORMS list; the two koc_embedded rows with the
+        # koc-embedded build there and EMBEDDED_PLATFORMS.
         include:
           - goos: linux
             goarch: amd64
@@ -119,6 +136,12 @@ jobs:
             goarch: amd64
           - goos: windows
             goarch: arm64
+          - goos: linux
+            goarch: amd64
+            tags: koc_embedded
+          - goos: linux
+            goarch: arm64
+            tags: koc_embedded
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -129,11 +152,19 @@ jobs:
           check-latest: true
           cache: false
 
-      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }} (offline)
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }} ${{ matrix.tags }} (offline)
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build ./...
+          TAGS: ${{ matrix.tags }}
+        # The tagged build is the koc-embedded binary only: under koc_embedded,
+        # internal/cli/vault and internal/cli/s3 are unregistered, not built.
+        run: |
+          if [ -n "$TAGS" ]; then
+            go build -tags "$TAGS" -o /dev/null ./cmd/koc
+          else
+            go build ./...
+          fi
 
   # Race detector on the primary target. Separate job because -race requires
   # cgo (CGO_ENABLED=1), which the shipped static binaries must never use — so
@@ -193,3 +224,11 @@ jobs:
 
       - name: golangci-lint
         run: golangci-lint run ./...
+
+      # The files behind the koc_embedded tag, over the packages koc-embedded
+      # is built from (see EMBEDDED_VET in the Makefile).
+      - name: golangci-lint (koc_embedded)
+        run: >-
+          golangci-lint run --build-tags koc_embedded
+          ./cmd/... ./internal/auth/ ./internal/cli/ ./internal/cli/shell/
+          ./internal/kochome/ ./internal/watch/
