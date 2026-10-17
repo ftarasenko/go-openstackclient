@@ -1,5 +1,3 @@
-//go:build !koc_embedded
-
 package auth
 
 import (

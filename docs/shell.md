@@ -69,7 +69,7 @@ exits 0; check each line's output or the audit log.
 | Variable | Meaning |
 | --- | --- |
 | `KOC_HOME` | the only directory koc reads configuration from or writes state to (below) |
-| `KOC_PROFILE` | `embedded` selects the embedded profile; a `koc-embedded` binary is always in it |
+| `KOC_PROFILE` | `embedded` selects the embedded profile |
 | `KOC_SCOPE_FILE` | the scope file (below); relative paths resolve inside `KOC_HOME` |
 | `KOC_HISTORY_FILE` | persist history here; without it history is in memory only |
 | `KOC_AUDIT_FD` | write audit events to this inherited file descriptor (3 or above) |
@@ -153,7 +153,7 @@ Unknown fields are rejected, so a typo cannot silently drop a setting.
 
 ## The embedded profile
 
-`KOC_PROFILE=embedded` — and every `koc-embedded` binary — is koc for a
+`KOC_PROFILE=embedded` is koc for a
 console terminal: the user acts only as themselves, in the scope the host set,
 in a throwaway sandbox whose disk they cannot reach from the browser. One
 table in `internal/cli/embedded.go`, keyed by command path and flag name,
@@ -200,8 +200,7 @@ cannot slip into the console unnoticed.
 refused (use `--password`); the key passphrase prompt is unreachable because
 `--private-key` is refused. koc has no other confirmation prompt.
 
-**Whole commands**: `koc vault` and `koc s3` (absent from a `koc-embedded`
-binary altogether).
+**Whole commands**: `koc vault` and `koc s3`.
 
 **Generated private keys**: `keypair create` without `--public-key` makes nova
 generate the pair and return the private key exactly once. In the embedded
@@ -214,17 +213,6 @@ nowhere.
 
 A refused line exits 1 with the message on stderr; in the shell, it sets the
 prompt's status and is an audit event with a `refused` reason.
-
-### The `koc-embedded` binary
-
-A build with `-tags koc_embedded` (`make embedded`) is always in the embedded
-profile and leaves out the Vault and S3 command groups and the Kubernetes
-integration entirely — no code, no flags, no help lines; `make embedded-check`
-fails if its package graph reaches `internal/kube`, `internal/vault` or
-`internal/s3`. Releases ship it as
-`koc-embedded_<version>_linux_{amd64,arm64}.tar.gz`, listed in `checksums.txt`
-like every other archive; it is not in the `.rpm`/`.deb` or the Homebrew cask.
-The sandbox image is built elsewhere from that archive.
 
 ## Audit events
 
@@ -261,11 +249,12 @@ watch your end of the pipe and stop the sandbox when it closes.
 
 A sketch of what a host does per browser session:
 
-1. Start a sandbox from an image holding `koc-embedded`, with a read-only root,
-   a tmpfs `KOC_HOME`, and egress only to that region's OpenStack APIs.
+1. Start a sandbox from an image holding `koc`, with a read-only root, a tmpfs
+   `KOC_HOME`, `KOC_PROFILE=embedded`, and egress only to that region's
+   OpenStack APIs.
 2. Write the scope file into the sandbox (atomically), set `KOC_SCOPE_FILE`,
    and open a pipe for audit events as fd 3 with `KOC_AUDIT_FD=3`.
-3. Run `koc-embedded shell` on a PTY and bridge it to the browser's WebSocket.
+3. Run `koc shell` on a PTY and bridge it to the browser's WebSocket.
    Pass terminal resizes through to the PTY; koc reads the size before every
    line.
 4. Rewrite the scope file to rotate the token before `expires_at`, or to

@@ -48,28 +48,6 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64] # -> 6 combos, matches the previous hand-rolled matrix
 
-  # koc-embedded: the web-console sandbox build (docs/shell.md). The
-  # koc_embedded tag leaves the Vault, S3 and Kubernetes code out and makes the
-  # embedded profile permanent. It is for containers only — the host's sandbox
-  # image is built elsewhere from this artefact — so Linux only, and it rides in
-  # neither the .rpm/.deb nor the Homebrew cask (both are `ids: [koc]`). Keep
-  # goos/goarch in sync with the Makefile's EMBEDDED_PLATFORMS and the
-  # koc_embedded rows of the CI cross-compile matrix.
-  - id: koc-embedded
-    main: ./cmd/koc
-    binary: koc-embedded
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
-      - -mod=vendor
-      - -tags=koc_embedded
-    ldflags:
-      - -s -w -X main.version={{ .Version }}
-    mod_timestamp: "{{ .CommitTimestamp }}"
-    goos: [linux]
-    goarch: [amd64, arm64]
-
 archives:
   - id: koc
     ids: [koc]
@@ -97,21 +75,6 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
-
-  # Its own archive, so a container build pulls exactly one binary. Listed in
-  # checksums.txt (and so covered by the cosign signature) and in the SBOM
-  # bundle like every other archive. No completions: there is no shell to
-  # complete in, `koc shell` completes itself.
-  - id: koc-embedded
-    ids: [koc-embedded]
-    formats: [tar.gz]
-    name_template: "koc-embedded_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    builds_info:
-      mtime: "{{ .CommitDate }}"
-    files:
-      - src: LICENSE
-        info:
-          mtime: "{{ .CommitDate }}"
 
 # Linux system packages for the stated target: an air-gapped RHEL-derivative
 # node, where Homebrew is useless. These drop into a local yum/apt mirror.

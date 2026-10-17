@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/ftarasenko/go-openstackclient/internal/cli/shell"
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
 )
 
 // regionCloud is a mock Keystone whose catalog has one nova per region
@@ -148,9 +147,6 @@ func (s *steppedInput) Read(p []byte) (int, error) {
 }
 
 func TestShell_ScopeFile(t *testing.T) {
-	if kochome.BuiltEmbedded() {
-		t.Skip("types --os-region-name, which the embedded profile refuses; see TestShell_EmbeddedScopeFlags")
-	}
 	rc := newRegionCloud(t, "tokA", "tokB")
 	clearOSEnv(t)
 	// A full password openrc in the environment, pointing elsewhere: the scope

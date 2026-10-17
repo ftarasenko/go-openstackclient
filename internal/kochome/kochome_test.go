@@ -9,13 +9,11 @@ import (
 func TestDir(t *testing.T) {
 	t.Setenv(EnvProfile, "")
 	t.Setenv(EnvHome, "")
-	if !builtEmbedded {
-		if d := Dir(); d != "" {
-			t.Errorf("no KOC_HOME, default profile: Dir() = %q, want unconfined", d)
-		}
-		if Confined() {
-			t.Error("Confined() without KOC_HOME")
-		}
+	if d := Dir(); d != "" {
+		t.Errorf("no KOC_HOME, default profile: Dir() = %q, want unconfined", d)
+	}
+	if Confined() {
+		t.Error("Confined() without KOC_HOME")
 	}
 
 	tmp := t.TempDir()

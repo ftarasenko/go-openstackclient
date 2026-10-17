@@ -57,9 +57,6 @@ func assertInside(t *testing.T, home string, paths []string) {
 // TestKOCHome_ConfinesConfigReads: with KOC_HOME set, clouds.yaml, secure.yaml
 // and ~/.vault-token are looked up only there.
 func TestKOCHome_ConfinesConfigReads(t *testing.T) {
-	if kochome.BuiltEmbedded() {
-		t.Skip("a koc_embedded build is always the embedded profile")
-	}
 	home, opened := strayDirs(t)
 	t.Setenv(kochome.EnvProfile, "")
 	writeConfig(t, filepath.Join(home, "clouds.yaml"),
