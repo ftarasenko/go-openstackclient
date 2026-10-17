@@ -14,10 +14,12 @@ linters:
     - bodyclose
     - contextcheck
     - copyloopvar
+    - depguard
     - durationcheck
     - errcheck
     - errname
     - errorlint
+    - forbidigo
     - forcetypeassert
     - gocognit
     - gosec
@@ -45,6 +47,41 @@ linters:
     - usestdlibvars
     - wastedassign
   settings:
+    # pkg/ is the public Go API (see pkg/openstack/doc.go). It must build into
+    # a downstream importer's program with none of the CLI behind it, so it
+    # may not import the CLI's frameworks or anything under internal/: a
+    # helper both need moves into pkg/ instead. Scoped to pkg/ — the CLI is
+    # where cobra, pflag and the terminal belong.
+    depguard:
+      rules:
+        public-api:
+          files:
+            - "**/pkg/**/*.go"
+          deny:
+            - pkg: github.com/spf13/cobra
+              desc: pkg/ is the public API; command-line wiring belongs in internal/cli
+            - pkg: github.com/spf13/pflag
+              desc: pkg/ is the public API; flags belong in internal/cli and internal/auth
+            - pkg: golang.org/x/term
+              desc: pkg/ is the public API; terminals belong in the CLI
+            - pkg: github.com/ftarasenko/go-openstackclient/internal
+              desc: pkg/ may not depend on internal/ — move the helper into pkg/
+    # The other half of the pkg/ contract: a library takes its inputs as
+    # arguments, so it reads no environment variable, touches no standard
+    # stream, prints nothing and never exits. Only pkg/ is checked (see the
+    # path-except exclusion below); the "no mutable package state" rule is
+    # pkg/openstack's TestNoPackageState, since no linter expresses it.
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^os\.(Getenv|LookupEnv|Environ|ExpandEnv|Setenv|Unsetenv|Exit)$
+          msg: pkg/ is the public API; take the value as an argument instead
+        - pattern: ^os\.(Stdin|Stdout|Stderr)$
+          msg: pkg/ is the public API; take an io.Reader/io.Writer instead
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: pkg/ is the public API; return the value or take an io.Writer
+        - pattern: ^log\.
+          msg: pkg/ is the public API; return errors rather than logging them
     # gocognit at 25 — not its own default of 30, nor sonar's 15. The command
     # layer is long chains of `if flags.Changed("x") { opts.X = &x }`: one
     # branch per CLI flag, linear and a single level deep, where the metric
@@ -98,6 +135,12 @@ linters:
       - path: _test\.go
         linters:
           - gocognit
+      # forbidigo carries only the pkg/ rules above, so it runs on pkg/ alone.
+      # This is the rule's scope, not an exemption: nothing under pkg/ is
+      # excluded.
+      - path-except: ^pkg/
+        linters:
+          - forbidigo
       # False positive in output.go selectColumns: `idx` is a NAMED RETURN that
       # is `make([]int, len(all))` only on the early-return branch, so on the
       # branch that appends it is still nil. makezero cannot see the branches are
