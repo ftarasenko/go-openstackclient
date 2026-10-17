@@ -2,20 +2,17 @@ package image
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/tasks"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // glance tasks (the async import/export jobs), the staging upload, and the
@@ -74,7 +71,9 @@ func newImageTaskListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runImageTaskList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *imageTaskListFlags, w io.Writer,
 ) error {
-	opts := taskListQuery{
+	// Type is the filter gophercloud's own ListOpts silently drops (see
+	// imageapi.TaskListOpts); --limit caps the result as well as the page.
+	all, err := imageapi.ListTasks(ctx, client, imageapi.TaskListOpts{
 		ListOpts: tasks.ListOpts{
 			Status:  tasks.TaskStatus(f.status),
 			Limit:   f.limit,
@@ -82,11 +81,10 @@ func runImageTaskList(ctx context.Context, client *gophercloud.ServiceClient, o 
 			SortKey: f.sortKey,
 			SortDir: f.sortDir,
 		},
-		typ: f.typ,
-	}
-	all, err := paging.Collect(ctx, tasks.List(client, opts), f.limit, tasks.ExtractTasks)
+		Type: f.typ,
+	})
 	if err != nil {
-		return fmt.Errorf("listing glance tasks: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Type", "Status", "Owner", "Expires At"},
@@ -96,29 +94,6 @@ func runImageTaskList(ctx context.Context, client *gophercloud.ServiceClient, o 
 		t.Rows = append(t.Rows, []any{task.ID, task.Type, task.Status, task.Owner, task.ExpiresAt})
 	}
 	return o.WriteList(w, t)
-}
-
-// taskListQuery adds the `type` filter that gophercloud's ListOpts declares
-// with a `json:` tag instead of a `q:` one — so BuildQueryString ignores it and
-// --type would be silently dropped.
-type taskListQuery struct {
-	tasks.ListOpts
-	typ string
-}
-
-func (q taskListQuery) ToTaskListQuery() (string, error) {
-	s, err := q.ListOpts.ToTaskListQuery()
-	if err != nil {
-		return "", err
-	}
-	if q.typ == "" {
-		return s, nil
-	}
-	sep := "?"
-	if len(s) > 0 && s[0] == '?' {
-		sep = "&"
-	}
-	return s + sep + "type=" + q.typ, nil
 }
 
 func newImageTaskShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -141,9 +116,9 @@ func newImageTaskShowCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runImageTaskShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	task, err := tasks.Get(ctx, client, id).Extract()
+	task, err := imageapi.GetTask(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing glance task %s: %w", id, err)
+		return err
 	}
 	return o.WriteSingle(w,
 		[]string{"id", "type", "status", "owner", "message", "input", "result", "expires_at", "created_at", "updated_at"},
@@ -194,8 +169,8 @@ func runImageStage(ctx context.Context, client *gophercloud.ServiceClient, ref, 
 		defer func() { _ = f.Close() }()
 		data = f
 	}
-	if err := imagedata.Stage(ctx, client, id, data).ExtractErr(); err != nil {
-		return fmt.Errorf("staging data for image %q: %w", ref, err)
+	if err := imageapi.StageImageData(ctx, client, id, imageapi.Data{Body: data}); err != nil {
+		return relabel(err, "staging data for image %q", ref)
 	}
 	_, err = fmt.Fprintf(w, "Staged data for image %s\n", ref)
 	return err
@@ -228,79 +203,24 @@ func newImageStoresCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// jsonBool decodes a flag that glance spells as a JSON *string* rather than a
-// JSON boolean: /v2/info/stores answers
-//
-//	{"stores": [{"id": "file", "default": "true"}, {"id": "http", "read-only": "true"}]}
-//
-// Decoding those into a plain bool fails the whole document with
-// `cannot unmarshal string into Go struct field .stores.default of type bool`,
-// which took "image stores list" out entirely. Both spellings are accepted
-// because the quoting is glance's own inconsistency, not a documented contract.
-type jsonBool bool
-
-func (b *jsonBool) UnmarshalJSON(data []byte) error {
-	var asBool bool
-	if err := json.Unmarshal(data, &asBool); err == nil {
-		*b = jsonBool(asBool)
-		return nil
-	}
-	var asString string
-	if err := json.Unmarshal(data, &asString); err != nil {
-		return fmt.Errorf("expected a boolean or a quoted boolean, got %s", data)
-	}
-	if asString == "" {
-		*b = false
-		return nil
-	}
-	parsed, err := strconv.ParseBool(asString)
-	if err != nil {
-		return fmt.Errorf("expected a quoted boolean, got %q", asString)
-	}
-	*b = jsonBool(parsed)
-	return nil
-}
-
-// runImageStoresList reads /v2/info/stores. gophercloud has no package for it,
-// so this is a raw GET — a flat list with no pagination.
-//
-// The endpoint exists only when the operator enabled multi-store, and glance
-// answers 404 otherwise; that is a configuration answer rather than a failure,
-// so it is reported as one.
+// runImageStoresList reads /v2/info/stores (see imageapi.ListStores) — a flat
+// list with no pagination. Without multi-store, glance answers 404; that is a
+// configuration answer rather than a failure, and the error says so.
 func runImageStoresList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	detail bool, w io.Writer,
 ) error {
-	var doc struct {
-		Stores []struct {
-			ID          string         `json:"id"`
-			Description string         `json:"description"`
-			Default     jsonBool       `json:"default"`
-			ReadOnly    jsonBool       `json:"read-only"`
-			Properties  map[string]any `json:"properties"`
-		} `json:"stores"`
-	}
-	url := client.ServiceURL("info", "stores")
-	if detail {
-		url += "/detail"
-	}
-	resp, err := client.Get(ctx, url, &doc, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
+	stores, err := imageapi.ListStores(ctx, client, detail)
 	if err != nil {
-		if gophercloud.ResponseCodeIs(err, 404) {
-			return fmt.Errorf("this glance has no multi-store support enabled: %w", err)
-		}
-		return fmt.Errorf("listing glance stores: %w", err)
+		return err
 	}
 
 	cols := []string{"ID", "Description", "Default", "Read Only"}
 	if detail {
 		cols = append(cols, "Properties")
 	}
-	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(doc.Stores))}
-	for _, store := range doc.Stores {
-		row := []any{store.ID, store.Description, bool(store.Default), bool(store.ReadOnly)}
+	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(stores))}
+	for _, store := range stores {
+		row := []any{store.ID, store.Description, store.Default, store.ReadOnly}
 		if detail {
 			row = append(row, store.Properties)
 		}

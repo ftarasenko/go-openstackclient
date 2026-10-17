@@ -1020,6 +1020,58 @@ never overwrite an existing file without `--force`, and a transfer that fails
 partway removes the partial file rather than leaving a truncated dump that looks
 complete.
 
+## Using koc as a library
+
+The OpenStack layer under the CLI is a public Go API in
+`github.com/ftarasenko/go-openstackclient/pkg/...`: an authenticated session
+with per-region service clients, paging, cross-service name resolution, and
+per-service calls that return gophercloud v2 types. The CLI is built on it, so
+an importer sends the same requests `koc` does.
+
+```go
+import (
+	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+)
+
+s, err := openstack.New(ctx, openstack.Config{
+	AuthOptions: &gophercloud.AuthOptions{
+		IdentityEndpoint:            "https://keystone.example.com:5000/v3/",
+		ApplicationCredentialID:     appCredID,
+		ApplicationCredentialSecret: appCredSecret,
+	},
+	Region: "RegionOne",
+})
+client, err := s.ForRegion("RegionTwo").Image() // same token, another region
+all, err := image.ListImages(ctx, client, images.ListOpts{Visibility: image.VisibilityAll})
+```
+
+`openstack.FromProvider` wraps a `*gophercloud.ProviderClient` you
+authenticated yourself. Nothing under `pkg/` reads the environment, a file or
+a terminal: credentials, clouds.yaml content and HTTP transports are passed in.
+
+| Package | What it holds |
+| --- | --- |
+| `pkg/openstack` | `Session`, `New`, `FromProvider`, `ForRegion`, the service-client constructors, `ServiceError`, `ErrNotFound` |
+| `pkg/openstack/paging` | `Collect`: page until a result cap is met |
+| `pkg/openstack/resolve` | name→ID across services, strict on no match; `Resolver` + an endpoint-keyed `Cache` |
+| `pkg/openstack/image` | glance: images, data, import, members, tasks, stores, `WaitForStatus` |
+| `pkg/keyvrm` | KeyVRM's typed requests and DTOs |
+
+The other services move behind `pkg/` one at a time
+([docs/proposals/public-api.md](docs/proposals/public-api.md) has the plan).
+
+**Stability.** The API is the exported identifiers under `pkg/` and the
+gophercloud types they use; it versions with the repository's tags. Before
+`v1.0.0` a breaking change bumps the minor version, and an identifier is
+removed only after carrying `// Deprecated:` for at least two minor releases
+and 90 days. A gophercloud major-version bump is a breaking change. The CLI's
+flags and output are a separate contract. Details, examples and the full
+policy: [pkg.go.dev](https://pkg.go.dev/github.com/ftarasenko/go-openstackclient/pkg/openstack).
+
 ## Layout
 
 ```
@@ -1037,7 +1089,11 @@ internal/cli/              root command wiring; embedded.go is the embedded prof
 internal/cli/shell/        "koc shell": the REPL, scope file reload, audit events
 internal/cli/resolve/      cross-service name→ID resolution
 internal/cli/baremetal/    baremetal (ironic) command group
-internal/cli/keyvrm/       KeyVRM in-house catalog service (raw request layer)
+internal/cli/keyvrm/       KeyVRM in-house catalog service (CLI over pkg/keyvrm)
+pkg/openstack/             public Go API: Session and per-service clients
+pkg/openstack/<service>/   public per-service calls (paging, resolve, image, …)
+pkg/keyvrm/                public KeyVRM request layer
+test/importer/             nested module: pkg/ as a downstream importer uses it
 ```
 
 ## Development

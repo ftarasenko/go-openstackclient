@@ -10,6 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
 )
 
 func newHostAggregateConfigCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -66,7 +67,7 @@ func newHAList(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runHAList(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, opts listOpts, w io.Writer) error {
-	p, err := listHostAggregates(ctx, sc, opts)
+	p, err := keyvrmapi.ListHostAggregates(ctx, sc, opts.api())
 	if err != nil {
 		return err
 	}
@@ -97,7 +98,7 @@ func newHAShow(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runHAShow(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	h, err := getHostAggregate(ctx, sc, id)
+	h, err := keyvrmapi.GetHostAggregate(ctx, sc, id)
 	if err != nil {
 		return err
 	}
@@ -160,7 +161,7 @@ func runHASet(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Opti
 	if err := o.CheckColumns(haConfigDetailColumns...); err != nil {
 		return err
 	}
-	h, err := updateHostAggregate(ctx, sc, id, body)
+	h, err := keyvrmapi.UpdateHostAggregate(ctx, sc, id, body)
 	if err != nil {
 		return err
 	}
@@ -181,7 +182,7 @@ func newHAMarkers(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			markers, err := getMarkers(cmd.Context(), sc)
+			markers, err := keyvrmapi.GetMarkers(cmd.Context(), sc)
 			if err != nil {
 				return err
 			}
@@ -211,7 +212,7 @@ func newHAEventCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			opts := listOpts{Limit: f.limit, Offset: f.offset, filters: map[string]string{"status": f.status}}
-			p, err := listHostAggregateEvents(cmd.Context(), sc, args[0], opts)
+			p, err := keyvrmapi.ListHostAggregateEvents(cmd.Context(), sc, args[0], opts.api())
 			if err != nil {
 				return err
 			}

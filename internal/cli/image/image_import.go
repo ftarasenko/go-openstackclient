@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // newImageImportCommand builds "image import ...".
@@ -118,49 +119,21 @@ func (f *imageImportFlags) resolveMethod(cmd *cobra.Command) error {
 	return nil
 }
 
-// importStoreOpts adds glance's multi-store keys to an import request.
-// gophercloud's imageimport.CreateOpts only carries the `method` object, but
-// `stores` / `all_stores` sit next to it at the *top* level of the body (see
-// openstacksdk `image/v2/image.py import_image`), so the builder interface is
-// implemented here rather than reaching for a raw Post: everything else about
-// the call — URL, 202 OkCodes, error wrapping — stays gophercloud's.
-//
-// Both keys are omitted unless asked for, keeping the default request
-// byte-identical to one built from CreateOpts alone. Upstream OSC always sends
-// `all_stores: false`, which is the same request with an extra key.
-type importStoreOpts struct {
-	imageimport.CreateOpts
-	Stores    []string
-	AllStores bool
-}
-
-func (o importStoreOpts) ToImportCreateMap() (map[string]any, error) {
-	b, err := o.CreateOpts.ToImportCreateMap()
-	if err != nil {
-		return nil, err
-	}
-	if o.AllStores {
-		b["all_stores"] = true
-	}
-	if len(o.Stores) > 0 {
-		b["stores"] = o.Stores
-	}
-	return b, nil
-}
-
 // runImageImport kicks off the import. Glance returns 202 with no body: the
 // import runs asynchronously, so progress is observed with `image show`
 // (status goes importing → active) rather than reported here.
 func runImageImport(ctx context.Context, client *gophercloud.ServiceClient, ref, id string,
 	f *imageImportFlags, w io.Writer,
 ) error {
-	opts := importStoreOpts{
+	// Upstream OSC always sends `all_stores: false`; koc omits both multi-store
+	// keys unless asked, which is the same request with one key fewer.
+	opts := imageapi.ImportOpts{
 		CreateOpts: imageimport.CreateOpts{Name: f.resolved, URI: f.uri},
 		Stores:     f.stores,
 		AllStores:  f.allStores,
 	}
-	if err := imageimport.Create(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("importing image %q: %w", ref, err)
+	if err := imageapi.ImportImage(ctx, client, id, opts); err != nil {
+		return relabel(err, "importing image %q", ref)
 	}
 	if _, err := fmt.Fprintf(w,
 		"Started %s import of image %s; poll \"koc image show %s\" until status is active\n",
@@ -190,9 +163,9 @@ func newImageImportInfoCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runImageImportInfo(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	info, err := imageimport.Get(ctx, client).Extract()
+	info, err := imageapi.GetImportInfo(ctx, client)
 	if err != nil {
-		return fmt.Errorf("getting image import info: %w", err)
+		return err
 	}
 	return o.WriteSingle(w,
 		[]string{"import-methods", "description", "type"},

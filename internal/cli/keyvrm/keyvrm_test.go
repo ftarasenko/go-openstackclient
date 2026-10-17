@@ -24,19 +24,6 @@ func keyvrmTestClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
 	return sc
 }
 
-func TestQuery(t *testing.T) {
-	got := query("/v1/host_aggregates", listOpts{Limit: 50, Offset: 10, filters: map[string]string{"marker": "HA", "empty": ""}})
-	if !strings.Contains(got, "limit=50") || !strings.Contains(got, "offset=10") || !strings.Contains(got, "marker=HA") {
-		t.Errorf("query = %q", got)
-	}
-	if strings.Contains(got, "empty=") {
-		t.Errorf("empty filter should be omitted: %q", got)
-	}
-	if base := query("/v1/x", listOpts{}); base != "/v1/x" {
-		t.Errorf("no-params query = %q", base)
-	}
-}
-
 func TestBuildBody_ExcludeNone(t *testing.T) {
 	cmd := &cobra.Command{Use: "t", RunE: func(*cobra.Command, []string) error { return nil }}
 	cmd.Flags().Bool("enabled", false, "")
@@ -253,25 +240,5 @@ func TestRunEventRecList_RequestAndOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output %q missing %q", out, want)
 		}
-	}
-}
-
-func TestRunRecommendationTrigger(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
-
-	hit := false
-	fakeServer.Mux.HandleFunc("/v1/recommendations/rec-1/run", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, "POST")
-		hit = true
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	sc := keyvrmTestClient(fakeServer)
-	if err := runRecommendation(context.Background(), sc, "rec-1"); err != nil {
-		t.Fatalf("runRecommendation: %v", err)
-	}
-	if !hit {
-		t.Error("expected POST to /v1/recommendations/rec-1/run")
 	}
 }

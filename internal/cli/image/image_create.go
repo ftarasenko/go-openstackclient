@@ -10,17 +10,16 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
-	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imageimport"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // Upstream OSC's defaults and choices (openstackclient/image/v2/image.py).
@@ -308,7 +307,7 @@ func (f *imageCreateFlags) createOpts(name string) (images.CreateOpts, error) {
 
 // runImageCreate creates the record, uploads src (if any) and shows the result.
 // A failed upload deletes the record, as openstacksdk does, instead of leaving
-// it queued.
+// it queued (see imageapi.CreateImageWithData).
 func runImageCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, f *imageCreateFlags, src *imageSource, w io.Writer,
 ) error {
@@ -319,75 +318,28 @@ func runImageCreate(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	res := images.Create(ctx, client, opts)
-	img, err := res.Extract()
-	if err != nil {
-		return fmt.Errorf("creating image %q: %w", name, err)
+	img, err := imageapi.CreateImageWithData(ctx, client, opts, src.data(f.useImport))
+	if errors.Is(err, imageapi.ErrGlanceDirectUnavailable) {
+		return fmt.Errorf("--import: %w", err)
 	}
-	if src != nil {
-		if err := uploadImageData(ctx, client, img.ID, src, f.useImport, res.Header.Get("OpenStack-image-import-methods")); err != nil {
-			return discardImage(ctx, client, img.ID, err)
-		}
-		// Re-fetch so the shown record reflects the resulting status/size/checksum.
-		if img, err = images.Get(ctx, client, img.ID).Extract(); err != nil {
-			return fmt.Errorf("getting image after upload: %w", err)
-		}
+	if err != nil {
+		return err
 	}
 	fields, values := imageShowFields(img)
 	return o.WriteSingle(w, fields, values)
 }
 
-func uploadImageData(ctx context.Context, client *gophercloud.ServiceClient, id string,
-	src *imageSource, useImport bool, importMethods string,
-) error {
-	if !useImport {
-		if err := putImageData(ctx, client, id, "file", src); err != nil {
-			return fmt.Errorf("uploading image data for %s: %w", id, err)
-		}
+// data is src as the public API uploads it: nil for no data, and with the
+// progress bar drawn as the body is read.
+func (src *imageSource) data(glanceDirect bool) *imageapi.Data {
+	if src == nil {
 		return nil
-	}
-	if !slices.Contains(strings.Split(importMethods, ","), string(imageimport.GlanceDirectMethod)) {
-		return errors.New("--import: the cloud does not offer the glance-direct import method")
-	}
-	if err := putImageData(ctx, client, id, "stage", src); err != nil {
-		return fmt.Errorf("staging image data for %s: %w", id, err)
-	}
-	opts := imageimport.CreateOpts{Name: imageimport.GlanceDirectMethod}
-	if err := imageimport.Create(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("importing image %s: %w", id, err)
-	}
-	return nil
-}
-
-// putImageData is imagedata.Upload/Stage plus the X-OpenStack-Image-Size header
-// openstacksdk sends, which glance (2025.2+) uses to size the store up front.
-func putImageData(ctx context.Context, client *gophercloud.ServiceClient, id, part string, src *imageSource) error {
-	headers := map[string]string{"Content-Type": "application/octet-stream"}
-	if src.size > 0 {
-		headers["X-OpenStack-Image-Size"] = strconv.FormatInt(src.size, 10)
 	}
 	body := src.r
 	if src.progress != nil && src.size > 0 {
 		body = &progressReader{r: src.r, total: src.size, w: src.progress, last: -1}
 	}
-	resp, err := client.Put(ctx, client.ServiceURL("images", id, part), body, nil, &gophercloud.RequestOpts{
-		MoreHeaders: headers,
-		OkCodes:     []int{204},
-	})
-	if resp != nil {
-		_ = resp.Body.Close()
-	}
-	return err
-}
-
-// discardImage deletes an image whose upload failed, even if ctx was cancelled.
-func discardImage(ctx context.Context, client *gophercloud.ServiceClient, id string, cause error) error {
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	if err := images.Delete(cctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("%w (deleting the partial image also failed: %w)", cause, err)
-	}
-	return fmt.Errorf("%w (the partial image was deleted)", cause)
+	return &imageapi.Data{Body: body, Size: src.size, GlanceDirect: glanceDirect}
 }
 
 // progressReader draws a percentage bar as the body is read. Seek passes
@@ -485,9 +437,9 @@ func runImageCreateFromVolume(ctx context.Context, client *gophercloud.ServiceCl
 		return errors.New("--os-volume-api-version 3.1 or later is required for the --public, --private, " +
 			"--community, --shared, --visibility, --protected or --unprotected option")
 	}
-	vi, err := volumes.UploadImage(ctx, client, volumeID, opts).Extract()
+	vi, err := imageapi.CreateImageFromVolume(ctx, client, volumeID, opts)
 	if err != nil {
-		return fmt.Errorf("creating image %q from volume %s: %w", name, volumeID, err)
+		return err
 	}
 	return o.WriteSingle(w,
 		volumeImageColumns,

@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack"
-	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
 )
 
 // authenticated is Authenticate, or the test hook when one is installed, and
@@ -150,6 +149,26 @@ func bareMajor(v string) (int, bool) {
 // endpoint supports. Placement accepts the literal "latest".
 const defaultPlacementMicroversion = "latest"
 
+// Session is the public API's view of this Client: the same ProviderClient
+// and endpoint options, carrying the KeyVRM endpoint override. The per-service
+// factories below are thin wrappers over its constructors, so the CLI and an
+// importer of pkg/openstack derive service clients from one place. It is nil
+// in --creds-from-ns mode, which has no Keystone provider.
+//
+// The microversions are not passed through: the factories set them from the
+// --os-*-api-version flags themselves, because a bad flag value is an error
+// naming the flag, and only for the service a command actually uses.
+func (c *Client) Session() *openstack.Session {
+	if c == nil || c.Provider == nil {
+		return nil
+	}
+	var opts openstack.Options
+	if c.opts != nil {
+		opts.KeyVRMEndpoint = c.opts.KeyVRMEndpoint
+	}
+	return openstack.FromProvider(c.Provider, c.Endpoint, opts)
+}
+
 // Baremetal returns an ironic (baremetal v1) service client. In --creds-from-ns
 // mode this is the standalone, basic-auth client built from the Kubernetes
 // secret rather than a Keystone-catalog endpoint.
@@ -165,9 +184,9 @@ func (c *Client) Baremetal() (*gophercloud.ServiceClient, error) {
 		}
 		return sc, nil
 	}
-	sc, err := openstack.NewBareMetalV1(c.Provider, c.Endpoint)
+	sc, err := c.Session().Baremetal()
 	if err != nil {
-		return nil, wrapService("baremetal", err)
+		return nil, err
 	}
 	if sc.Microversion, err = apiMicroversion("os-baremetal-api-version", baremetalAPIMajor, c.opts.BaremetalAPIVersion); err != nil {
 		return nil, err
@@ -184,11 +203,7 @@ func (c *Client) Introspection() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("baremetal-introspection"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewBareMetalIntrospectionV1(c.Provider, c.Endpoint)
-	if err != nil {
-		return nil, wrapService("baremetal-introspection", err)
-	}
-	return sc, nil
+	return c.Session().Introspection()
 }
 
 // requireKeystone rejects a non-baremetal service in --creds-from-ns mode, where
@@ -205,9 +220,9 @@ func (c *Client) Compute() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("compute"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewComputeV2(c.Provider, c.Endpoint)
+	sc, err := c.Session().Compute()
 	if err != nil {
-		return nil, wrapService("compute", err)
+		return nil, err
 	}
 	if sc.Microversion, err = apiMicroversion("os-compute-api-version", computeAPIMajor, c.opts.ComputeAPIVersion); err != nil {
 		return nil, err
@@ -220,11 +235,7 @@ func (c *Client) Identity() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("identity"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewIdentityV3(c.Provider, c.Endpoint)
-	if err != nil {
-		return nil, wrapService("identity", err)
-	}
-	return sc, nil
+	return c.Session().Identity()
 }
 
 // Volume returns a cinder (block-storage v3) service client.
@@ -232,9 +243,9 @@ func (c *Client) Volume() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("volume"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewBlockStorageV3(c.Provider, c.Endpoint)
+	sc, err := c.Session().Volume()
 	if err != nil {
-		return nil, wrapService("volume", err)
+		return nil, err
 	}
 	if sc.Microversion, err = apiMicroversion("os-volume-api-version", volumeAPIMajor, c.opts.VolumeAPIVersion); err != nil {
 		return nil, err
@@ -247,11 +258,7 @@ func (c *Client) DNS() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("dns"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewDNSV2(c.Provider, c.Endpoint)
-	if err != nil {
-		return nil, wrapService("dns", err)
-	}
-	return sc, nil
+	return c.Session().DNS()
 }
 
 // Image returns a glance (image v2) service client.
@@ -259,11 +266,7 @@ func (c *Client) Image() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("image"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewImageV2(c.Provider, c.Endpoint)
-	if err != nil {
-		return nil, wrapService("image", err)
-	}
-	return sc, nil
+	return c.Session().Image()
 }
 
 // Network returns a neutron (network v2) service client.
@@ -271,11 +274,7 @@ func (c *Client) Network() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("network"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewNetworkV2(c.Provider, c.Endpoint)
-	if err != nil {
-		return nil, wrapService("network", err)
-	}
-	return sc, nil
+	return c.Session().Network()
 }
 
 // Placement returns a placement (v1) service client. Placement uses the generic
@@ -284,9 +283,9 @@ func (c *Client) Placement() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("placement"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewPlacementV1(c.Provider, c.Endpoint)
+	sc, err := c.Session().Placement()
 	if err != nil {
-		return nil, wrapService("placement", err)
+		return nil, err
 	}
 	if sc.Microversion, err = apiMicroversion("os-placement-api-version", placementAPIMajor, c.opts.PlacementAPIVersion); err != nil {
 		return nil, err
@@ -302,49 +301,18 @@ func (c *Client) LoadBalancer() (*gophercloud.ServiceClient, error) {
 	if err := c.requireKeystone("load-balancer"); err != nil {
 		return nil, err
 	}
-	sc, err := openstack.NewLoadBalancerV2(c.Provider, c.Endpoint)
-	if err != nil {
-		return nil, wrapService("load-balancer", err)
-	}
-	return sc, nil
+	return c.Session().LoadBalancer()
 }
-
-// keyvrmServiceType is the Keystone catalog service type for KeyVRM.
-const keyvrmServiceType = "keyvrm"
 
 // KeyVRM returns a client for the in-house KeyVRM service. Its endpoint is
 // resolved from the Keystone catalog (type "keyvrm"), unless an override is set.
 // KeyVRM authenticates with the standard Keystone token, so no microversion or
 // custom auth is involved.
 func (c *Client) KeyVRM() (*gophercloud.ServiceClient, error) {
-	if err := c.requireKeystone(keyvrmServiceType); err != nil {
+	if err := c.requireKeystone(openstack.KeyVRMServiceType); err != nil {
 		return nil, err
 	}
-	if c.opts.KeyVRMEndpoint != "" {
-		return c.keyvrmClientAt(c.opts.KeyVRMEndpoint), nil
-	}
-	eo := c.Endpoint
-	eo.Type = keyvrmServiceType
-	eo.ApplyDefaults(keyvrmServiceType)
-	url, err := c.Provider.EndpointLocator(eo)
-	if err != nil {
-		return nil, wrapService(keyvrmServiceType, err)
-	}
-	return c.keyvrmClientAt(url), nil
-}
-
-// keyvrmClientAt builds a KeyVRM service client rooted at url, exposing the v1
-// API under ResourceBase.
-func (c *Client) keyvrmClientAt(url string) *gophercloud.ServiceClient {
-	if !strings.HasSuffix(url, "/") {
-		url += "/"
-	}
-	return &gophercloud.ServiceClient{
-		ProviderClient: c.Provider,
-		Endpoint:       url,
-		ResourceBase:   url + "v1/",
-		Type:           keyvrmServiceType,
-	}
+	return c.Session().KeyVRM()
 }
 
 func wrapService(name string, err error) error {
@@ -352,17 +320,9 @@ func wrapService(name string, err error) error {
 }
 
 // ServiceError wraps a failure while constructing a service client, keeping the
-// service name for a clear, consistent error message.
-type ServiceError struct {
-	Service string
-	Err     error
-}
-
-func (e *ServiceError) Error() string {
-	return "creating " + e.Service + " client: " + e.Err.Error()
-}
-
-func (e *ServiceError) Unwrap() error { return e.Err }
+// service name for a clear, consistent error message. It is the public API's
+// type, so errors.As works the same for the CLI and for importers.
+type ServiceError = openstack.ServiceError
 
 // ScopedProjectID is the project the invocation's token is scoped to, read from
 // the authentication result keystone already returned: "" for a domain- or
@@ -371,18 +331,5 @@ func (e *ServiceError) Unwrap() error { return e.Err }
 // OS_PROJECT_NAME, which are empty when the project comes from clouds.yaml or
 // an application credential.
 func (c *Client) ScopedProjectID() string {
-	if c == nil || c.Provider == nil {
-		return ""
-	}
-	r, ok := c.Provider.GetAuthResult().(interface {
-		ExtractProject() (*tokens.Project, error)
-	})
-	if !ok {
-		return ""
-	}
-	p, err := r.ExtractProject()
-	if err != nil || p == nil {
-		return ""
-	}
-	return p.ID
+	return c.Session().ScopedProjectID()
 }

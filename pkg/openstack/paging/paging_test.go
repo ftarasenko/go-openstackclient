@@ -1,4 +1,4 @@
-package paging
+package paging_test
 
 import (
 	"context"
@@ -14,6 +14,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/pagination"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 )
 
 // item is a minimal paginated resource; only its name matters to these tests.
@@ -213,7 +215,7 @@ func TestCollect(t *testing.T) {
 			c := &fakeCollection{total: tc.total, pageSize: tc.pageSize, alwaysNext: tc.alwaysNext}
 			client, url := c.install(t)
 
-			got, err := Collect(context.Background(), c.pager(client, url), tc.limit, extractItems)
+			got, err := paging.Collect(context.Background(), c.pager(client, url), tc.limit, extractItems)
 			th.AssertNoErr(t, err)
 
 			if len(got) != tc.wantCount {
@@ -237,7 +239,7 @@ func TestCollect_EmptyPageYieldsNilSlice(t *testing.T) {
 	c := &fakeCollection{total: 0, pageSize: 10}
 	client, url := c.install(t)
 
-	got, err := Collect(context.Background(), c.pager(client, url), 0, extractItems)
+	got, err := paging.Collect(context.Background(), c.pager(client, url), 0, extractItems)
 	th.AssertNoErr(t, err)
 	if got != nil {
 		t.Fatalf("want nil slice for an empty collection, got %#v", got)
@@ -273,7 +275,7 @@ func TestCollect_ClientSideFilterKeepsPaging(t *testing.T) {
 		c := &fakeCollection{total: 25, pageSize: 10, alwaysNext: true}
 		client, url := c.install(t)
 
-		all, err := Collect(context.Background(), c.pager(client, url), userLimit, extractItems)
+		all, err := paging.Collect(context.Background(), c.pager(client, url), userLimit, extractItems)
 		th.AssertNoErr(t, err)
 		filtered := keep(all)
 		if len(filtered) >= userLimit {
@@ -290,7 +292,7 @@ func TestCollect_ClientSideFilterKeepsPaging(t *testing.T) {
 		c := &fakeCollection{total: 25, pageSize: 10, alwaysNext: true}
 		client, url := c.install(t)
 
-		all, err := Collect(context.Background(), c.pager(client, url), 0, extractItems)
+		all, err := paging.Collect(context.Background(), c.pager(client, url), 0, extractItems)
 		th.AssertNoErr(t, err)
 		filtered := keep(all)
 		if len(filtered) > userLimit {
@@ -310,7 +312,7 @@ func TestCollect_ExtractError(t *testing.T) {
 	client, url := c.install(t)
 
 	sentinel := errors.New("boom")
-	got, err := Collect(context.Background(), c.pager(client, url), 0,
+	got, err := paging.Collect(context.Background(), c.pager(client, url), 0,
 		func(pagination.Page) ([]item, error) { return nil, sentinel })
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want %v", err, sentinel)
@@ -331,7 +333,7 @@ func TestCollect_ExtractErrorOnSecondPage(t *testing.T) {
 
 	sentinel := errors.New("boom")
 	var calls int
-	got, err := Collect(context.Background(), c.pager(client, url), 0,
+	got, err := paging.Collect(context.Background(), c.pager(client, url), 0,
 		func(p pagination.Page) ([]item, error) {
 			calls++
 			if calls > 1 {
@@ -354,7 +356,7 @@ func TestCollect_MalformedPage(t *testing.T) {
 	c := &fakeCollection{total: 25, pageSize: 10, badJSON: true}
 	client, url := c.install(t)
 
-	got, err := Collect(context.Background(), c.pager(client, url), 0, extractItems)
+	got, err := paging.Collect(context.Background(), c.pager(client, url), 0, extractItems)
 	if err == nil {
 		t.Fatalf("want an error for a malformed page, got %v", names(got))
 	}
@@ -368,7 +370,7 @@ func TestCollect_RequestErrorOnSecondPage(t *testing.T) {
 	c := &fakeCollection{total: 25, pageSize: 10, failFrom: 2}
 	client, url := c.install(t)
 
-	got, err := Collect(context.Background(), c.pager(client, url), 0, extractItems)
+	got, err := paging.Collect(context.Background(), c.pager(client, url), 0, extractItems)
 	if err == nil {
 		t.Fatalf("want an error from the failing page, got %v", names(got))
 	}
@@ -385,7 +387,7 @@ func TestCollect_CapPreventsTheFailingPage(t *testing.T) {
 	c := &fakeCollection{total: 25, pageSize: 10, alwaysNext: true, failFrom: 2}
 	client, url := c.install(t)
 
-	got, err := Collect(context.Background(), c.pager(client, url), 10, extractItems)
+	got, err := paging.Collect(context.Background(), c.pager(client, url), 10, extractItems)
 	th.AssertNoErr(t, err)
 	th.AssertEquals(t, 10, len(got))
 	th.AssertEquals(t, int64(1), c.requests.Load())
@@ -398,7 +400,7 @@ func TestCollect_CancelledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	got, err := Collect(ctx, c.pager(client, url), 0, extractItems)
+	got, err := paging.Collect(ctx, c.pager(client, url), 0, extractItems)
 	if err == nil {
 		t.Fatalf("want an error for a cancelled context, got %v", names(got))
 	}
