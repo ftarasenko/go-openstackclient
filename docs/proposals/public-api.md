@@ -157,29 +157,24 @@ Total: about 20 sessions, network and servers being half of it.
 
 ## Designed in, not built
 
-- `pkg/kolladefaults` and `pkg/deployment` (from the parked
-  `feat/deployment-validation` branch) would slot in as two more packages under
-  `pkg/` with nothing else changing; nothing from that branch lands until the
-  owner decides (open question 1).
 - The embedded terminal mode (`koc shell`, token auth, one configurable home
   for every file koc writes, no prompts without a terminal) needs nothing from
   `pkg/` but what the rules already require: no file paths, prompts or
   environment reads in `pkg/`, and feature groups (Vault, S3, kube, consoles)
   separable — they are all CLI-side.
 
-## Open questions for the owner
+## Decisions (owner, 2026-10-17)
 
-1. `kolladefaults` and `deployment` from `feat/deployment-validation`: public
-   packages later, or out of koc altogether? Nothing from that branch lands
-   until this is answered.
-2. Should `internal/vault`, `internal/s3` or `internal/kube` become public? The
-   default is no: importers are expected to use the official Vault and
-   Kubernetes clients.
-3. The module path: is `github.com/ftarasenko/go-openstackclient` permanent,
-   or does it move to an organisation or vanity path before `v1.0.0`? Moving
-   it after v1 breaks every importer.
-4. When to declare `v1.0.0` — after the first downstream release that depends
-   on `pkg/`?
-5. Return gophercloud types (as built) or koc-owned DTOs? DTOs would decouple
-   importers from gophercloud majors at the cost of a large mapping layer; the
-   recommendation stays gophercloud types.
+1. **`kolladefaults` and `deployment` stay out of koc altogether** — not public
+   packages later. Validating kolla defaults is LCM logic and moves to the LCM
+   tooling, outside this repository; `feat/deployment-validation` stays parked
+   and nothing from it lands here.
+2. **`internal/vault`, `internal/s3` and `internal/kube` stay internal.**
+   Importers use each system's official client.
+3. **The module path stays** `github.com/ftarasenko/go-openstackclient`.
+4. **Versioning:** the version keeps bumping by the existing rules; `v1.0.0`
+   is not tied to a downstream release.
+5. **Return gophercloud types**, as built. koc-owned types exist only for koc's
+   own extensions (raw-request fallbacks, request-body splices, documents
+   gophercloud does not model — `image.ImportOpts`, `image.Store`, the KeyVRM
+   DTOs).

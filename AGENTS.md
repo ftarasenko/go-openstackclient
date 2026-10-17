@@ -300,7 +300,7 @@ secondary client lazily (see `server/client.go` `newComputeSession`).
 built on, for downstream importers (multi-region resource views, services that
 need koc's resolve-by-name and paging). The CLI is its first consumer, so the
 same requests leave either way. The plan, the per-service checklist for the
-services not yet moved, and the open questions are in
+services not yet moved, and the owner's decisions on its scope are in
 `docs/proposals/public-api.md`.
 
 Rules, enforced where a tool can:
