@@ -10,6 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
 )
 
 func newEventCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -49,7 +50,7 @@ func newEventShow(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			e, err := getEvent(cmd.Context(), sc, args[0])
+			e, err := keyvrmapi.GetEvent(cmd.Context(), sc, args[0])
 			if err != nil {
 				return err
 			}
@@ -93,7 +94,7 @@ func newEventRecommendationCommand(a *auth.Options, o *output.Options) *cobra.Co
 			if err != nil {
 				return err
 			}
-			if err := runEventRecommendations(cmd.Context(), sc, args[0]); err != nil {
+			if err := keyvrmapi.RunEventRecommendations(cmd.Context(), sc, args[0]); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "All recommendations for event %s triggered.\n", args[0])
@@ -108,7 +109,7 @@ func newEventRecommendationCommand(a *auth.Options, o *output.Options) *cobra.Co
 // runEventRecList is the test seam for "event recommendation list <event-id>":
 // it lists an event's recommendations and renders them through the output layer.
 func runEventRecList(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, eventID string, opts listOpts, w io.Writer) error {
-	p, err := listEventRecommendations(ctx, sc, eventID, opts)
+	p, err := keyvrmapi.ListEventRecommendations(ctx, sc, eventID, opts.api())
 	if err != nil {
 		return err
 	}

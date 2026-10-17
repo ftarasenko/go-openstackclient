@@ -9,6 +9,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
 )
 
 func newRecommendationCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -17,8 +18,8 @@ func newRecommendationCommand(a *auth.Options, o *output.Options) *cobra.Command
 		newRecList(a, o),
 		newRecShow(a, o),
 		newRecOperationCommand(a, o),
-		newRecAction(a, o, "run", "Run a recommendation", runRecommendation, "started"),
-		newRecAction(a, o, "stop", "Stop a recommendation", stopRecommendation, "stopped"),
+		newRecAction(a, o, "run", "Run a recommendation", keyvrmapi.RunRecommendation, "started"),
+		newRecAction(a, o, "stop", "Stop a recommendation", keyvrmapi.StopRecommendation, "stopped"),
 	)
 	return cmd
 }
@@ -42,7 +43,7 @@ func newRecList(a *auth.Options, o *output.Options) *cobra.Command {
 				"host_aggregate_event_id": eventID,
 				"status":                  status,
 			}}
-			p, err := listRecommendations(cmd.Context(), sc, opts)
+			p, err := keyvrmapi.ListRecommendations(cmd.Context(), sc, opts.api())
 			if err != nil {
 				return err
 			}
@@ -74,7 +75,7 @@ func newRecShow(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			r, err := getRecommendation(cmd.Context(), sc, args[0])
+			r, err := keyvrmapi.GetRecommendation(cmd.Context(), sc, args[0])
 			if err != nil {
 				return err
 			}
@@ -102,7 +103,7 @@ func newRecOperationCommand(a *auth.Options, o *output.Options) *cobra.Command {
 				return err
 			}
 			opts := listOpts{Limit: limit, Offset: offset, filters: map[string]string{"status": status}}
-			p, err := listRecommendationOperations(cmd.Context(), sc, args[0], opts)
+			p, err := keyvrmapi.ListRecommendationOperations(cmd.Context(), sc, args[0], opts.api())
 			if err != nil {
 				return err
 			}

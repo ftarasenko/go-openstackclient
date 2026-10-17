@@ -9,6 +9,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
 )
 
 func newAppConfigCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -36,7 +37,7 @@ func newAppConfigShow(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAppConfigShow(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	cfg, err := getAppConfig(ctx, sc)
+	cfg, err := keyvrmapi.GetAppConfig(ctx, sc)
 	if err != nil {
 		return err
 	}
@@ -117,7 +118,7 @@ func runAppConfigSet(ctx context.Context, sc *gophercloud.ServiceClient, o *outp
 	if err := o.CheckColumns(appConfigColumns...); err != nil {
 		return err
 	}
-	cfg, err := updateAppConfig(ctx, sc, body)
+	cfg, err := keyvrmapi.UpdateAppConfig(ctx, sc, body)
 	if err != nil {
 		return err
 	}

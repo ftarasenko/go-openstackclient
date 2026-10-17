@@ -210,7 +210,7 @@ internal/s3/               minimal S3 REST client, no aws-sdk-go-v2 / minio-go: 
 internal/output/           -f/--format {table,json,yaml,value,csv} and -c/--column layer
 internal/watch/            --watch: the in-process refresh loop (ticker, alternate-screen
                            painter, status line, identity-based diff, raw-mode keys)
-internal/cli/keyvrm/       KeyVRM (in-house catalog service); typed request layer (types.go/requests.go) + cobra verbs
+internal/cli/keyvrm/       KeyVRM (in-house catalog service): cobra verbs over the typed layer in pkg/keyvrm
 internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt (package vaultcli); Vault creds only
 internal/cli/s3/           "koc s3" bucket/object lifecycle, du, download/upload (multipart, stdin,
                            recursive), server-side copy/move, presign, sync (package s3cli); S3 creds only
@@ -237,9 +237,10 @@ pattern decoding into koc-owned DTO structs.
 > **Feature parity:** `koc keyvrm …` mirrors the Python `kvrm` CLI
 > (`~/code/project_k/keyvrm-cli`) over the `keyvrm-sdk` API
 > (`~/code/project_k/keyvrm/package/keyvrm_sdk`). When either changes (new
-> endpoints, DTO fields, or verbs), re-check and update `internal/cli/keyvrm/`
-> (`requests.go`/`types.go` for the API, the verb files for the CLI) to keep them
-> in sync. See `docs/proposals/keyvrm.md` for the command mapping.
+> endpoints, DTO fields, or verbs), re-check and update `pkg/keyvrm/`
+> (`requests.go`/`types.go`, the public API) and `internal/cli/keyvrm/` (the verb
+> files, the CLI) to keep them in sync. See `docs/proposals/keyvrm.md` for the
+> command mapping.
 
 ## Command pattern (follow it exactly for new commands)
 

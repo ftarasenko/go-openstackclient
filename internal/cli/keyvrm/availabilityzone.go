@@ -10,6 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
 )
 
 func newAvailabilityZoneCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -41,7 +42,7 @@ func newAZList(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAZList(ctx context.Context, sc *gophercloud.ServiceClient, o *output.Options, opts listOpts, w io.Writer) error {
-	p, err := listAvailabilityZones(ctx, sc, opts)
+	p, err := keyvrmapi.ListAvailabilityZones(ctx, sc, opts.api())
 	if err != nil {
 		return err
 	}
@@ -75,7 +76,7 @@ func newAZHostAggregateCommand(a *auth.Options, o *output.Options) *cobra.Comman
 			if cmd.Flags().Changed("no-op") {
 				opts.filters["no_op_mode"] = strconv.FormatBool(noOp)
 			}
-			p, err := listZoneHostAggregates(cmd.Context(), sc, args[0], opts)
+			p, err := keyvrmapi.ListZoneHostAggregates(cmd.Context(), sc, args[0], opts.api())
 			if err != nil {
 				return err
 			}

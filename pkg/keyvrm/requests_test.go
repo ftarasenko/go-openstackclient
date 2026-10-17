@@ -1,4 +1,4 @@
-package keyvrm
+package keyvrm_test
 
 import (
 	"context"
@@ -7,24 +7,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
 )
 
-// --- query() page-parameter builder ---
+func keyvrmTestClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {
+	sc := fakeclient.ServiceClient(fakeServer)
+	sc.Type = "keyvrm"
+	sc.ResourceBase = sc.Endpoint + "v1/"
+	return sc
+}
+
+// --- ListOpts.ToQuery page-parameter builder ---
 
 func TestQuery_LimitOffsetOnly(t *testing.T) {
-	got := query("/v1/x", listOpts{Limit: 25})
+	got := "/v1/x" + keyvrm.ListOpts{Limit: 25}.ToQuery()
 	if got != "/v1/x?limit=25" {
 		t.Errorf("query = %q, want limit-only", got)
 	}
-	got = query("/v1/x", listOpts{Offset: 5})
+	got = "/v1/x" + keyvrm.ListOpts{Offset: 5}.ToQuery()
 	if got != "/v1/x?offset=5" {
 		t.Errorf("query = %q, want offset-only", got)
 	}
 }
 
 func TestQuery_ZeroLimitOffsetOmitted(t *testing.T) {
-	got := query("/v1/x", listOpts{Limit: 0, Offset: 0, filters: map[string]string{"marker": "HA"}})
+	got := "/v1/x" + keyvrm.ListOpts{Limit: 0, Offset: 0, Filters: map[string]string{"marker": "HA"}}.ToQuery()
 	if strings.Contains(got, "limit=") || strings.Contains(got, "offset=") {
 		t.Errorf("query = %q, zero limit/offset must be omitted", got)
 	}
@@ -34,7 +45,7 @@ func TestQuery_ZeroLimitOffsetOmitted(t *testing.T) {
 }
 
 func TestQuery_NilFilters(t *testing.T) {
-	got := query("/v1/x", listOpts{Limit: 10, filters: nil})
+	got := "/v1/x" + keyvrm.ListOpts{Limit: 10, Filters: nil}.ToQuery()
 	if got != "/v1/x?limit=10" {
 		t.Errorf("query = %q, want limit only with nil filters map", got)
 	}
@@ -54,7 +65,7 @@ func TestGetMarkers_Decode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	got, err := getMarkers(context.Background(), sc)
+	got, err := keyvrm.GetMarkers(context.Background(), sc)
 	if err != nil {
 		t.Fatalf("getMarkers: %v", err)
 	}
@@ -78,7 +89,7 @@ func TestGetMarkers_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := getMarkers(context.Background(), sc); err == nil {
+	if _, err := keyvrm.GetMarkers(context.Background(), sc); err == nil {
 		t.Fatal("expected error from 500 response, got nil")
 	}
 }
@@ -93,7 +104,7 @@ func TestGetMarkers_MalformedBody(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := getMarkers(context.Background(), sc); err == nil {
+	if _, err := keyvrm.GetMarkers(context.Background(), sc); err == nil {
 		t.Fatal("expected decode error for object body into []string, got nil")
 	}
 }
@@ -114,7 +125,7 @@ func TestListHostAggregateEvents_RequestAndDecode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	p, err := listHostAggregateEvents(context.Background(), sc, "ha-1", listOpts{Limit: 50, filters: map[string]string{"status": "active"}})
+	p, err := keyvrm.ListHostAggregateEvents(context.Background(), sc, "ha-1", keyvrm.ListOpts{Limit: 50, Filters: map[string]string{"status": "active"}})
 	if err != nil {
 		t.Fatalf("listHostAggregateEvents: %v", err)
 	}
@@ -138,7 +149,7 @@ func TestListHostAggregateEvents_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := listHostAggregateEvents(context.Background(), sc, "missing", listOpts{}); err == nil {
+	if _, err := keyvrm.ListHostAggregateEvents(context.Background(), sc, "missing", keyvrm.ListOpts{}); err == nil {
 		t.Fatal("expected error from 404 response, got nil")
 	}
 }
@@ -159,8 +170,8 @@ func TestListZoneHostAggregates_RequestAndDecode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	opts := listOpts{Limit: 50, filters: map[string]string{"host_aggregate_name": "agg2", "no_op_mode": "true"}}
-	p, err := listZoneHostAggregates(context.Background(), sc, "az1", opts)
+	opts := keyvrm.ListOpts{Limit: 50, Filters: map[string]string{"host_aggregate_name": "agg2", "no_op_mode": "true"}}
+	p, err := keyvrm.ListZoneHostAggregates(context.Background(), sc, "az1", opts)
 	if err != nil {
 		t.Fatalf("listZoneHostAggregates: %v", err)
 	}
@@ -182,7 +193,7 @@ func TestListZoneHostAggregates_MalformedBody(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := listZoneHostAggregates(context.Background(), sc, "az1", listOpts{}); err == nil {
+	if _, err := keyvrm.ListZoneHostAggregates(context.Background(), sc, "az1", keyvrm.ListOpts{}); err == nil {
 		t.Fatal("expected decode error for malformed body, got nil")
 	}
 }
@@ -201,7 +212,7 @@ func TestGetEvent_RequestAndDecode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	e, err := getEvent(context.Background(), sc, "ev-1")
+	e, err := keyvrm.GetEvent(context.Background(), sc, "ev-1")
 	if err != nil {
 		t.Fatalf("getEvent: %v", err)
 	}
@@ -219,7 +230,7 @@ func TestGetEvent_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := getEvent(context.Background(), sc, "missing"); err == nil {
+	if _, err := keyvrm.GetEvent(context.Background(), sc, "missing"); err == nil {
 		t.Fatal("expected error from 404 response, got nil")
 	}
 }
@@ -239,8 +250,8 @@ func TestListRecommendations_RequestAndDecode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	opts := listOpts{Limit: 25, filters: map[string]string{"host_aggregate_event_id": "ev-1", "status": "pending"}}
-	p, err := listRecommendations(context.Background(), sc, opts)
+	opts := keyvrm.ListOpts{Limit: 25, Filters: map[string]string{"host_aggregate_event_id": "ev-1", "status": "pending"}}
+	p, err := keyvrm.ListRecommendations(context.Background(), sc, opts)
 	if err != nil {
 		t.Fatalf("listRecommendations: %v", err)
 	}
@@ -261,7 +272,7 @@ func TestListRecommendations_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := listRecommendations(context.Background(), sc, listOpts{}); err == nil {
+	if _, err := keyvrm.ListRecommendations(context.Background(), sc, keyvrm.ListOpts{}); err == nil {
 		t.Fatal("expected error from 400 response, got nil")
 	}
 }
@@ -280,7 +291,7 @@ func TestGetRecommendation_RequestAndDecode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	r, err := getRecommendation(context.Background(), sc, "rec-1")
+	r, err := keyvrm.GetRecommendation(context.Background(), sc, "rec-1")
 	if err != nil {
 		t.Fatalf("getRecommendation: %v", err)
 	}
@@ -298,7 +309,7 @@ func TestGetRecommendation_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := getRecommendation(context.Background(), sc, "missing"); err == nil {
+	if _, err := keyvrm.GetRecommendation(context.Background(), sc, "missing"); err == nil {
 		t.Fatal("expected error from 404 response, got nil")
 	}
 }
@@ -319,8 +330,8 @@ func TestListRecommendationOperations_RequestAndDecode(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	opts := listOpts{Limit: 50, filters: map[string]string{"status": "failed"}}
-	p, err := listRecommendationOperations(context.Background(), sc, "rec-1", opts)
+	opts := keyvrm.ListOpts{Limit: 50, Filters: map[string]string{"status": "failed"}}
+	p, err := keyvrm.ListRecommendationOperations(context.Background(), sc, "rec-1", opts)
 	if err != nil {
 		t.Fatalf("listRecommendationOperations: %v", err)
 	}
@@ -341,7 +352,7 @@ func TestListRecommendationOperations_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if _, err := listRecommendationOperations(context.Background(), sc, "missing", listOpts{}); err == nil {
+	if _, err := keyvrm.ListRecommendationOperations(context.Background(), sc, "missing", keyvrm.ListOpts{}); err == nil {
 		t.Fatal("expected error from 500 response, got nil")
 	}
 }
@@ -360,7 +371,7 @@ func TestStopRecommendation_Request(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if err := stopRecommendation(context.Background(), sc, "rec-1"); err != nil {
+	if err := keyvrm.StopRecommendation(context.Background(), sc, "rec-1"); err != nil {
 		t.Fatalf("stopRecommendation: %v", err)
 	}
 	if !hit {
@@ -377,7 +388,7 @@ func TestStopRecommendation_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if err := stopRecommendation(context.Background(), sc, "rec-1"); err == nil {
+	if err := keyvrm.StopRecommendation(context.Background(), sc, "rec-1"); err == nil {
 		t.Fatal("expected error from 409 response, got nil")
 	}
 }
@@ -396,7 +407,7 @@ func TestRunEventRecommendations_Request(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if err := runEventRecommendations(context.Background(), sc, "ev-1"); err != nil {
+	if err := keyvrm.RunEventRecommendations(context.Background(), sc, "ev-1"); err != nil {
 		t.Fatalf("runEventRecommendations: %v", err)
 	}
 	if !hit {
@@ -413,7 +424,40 @@ func TestRunEventRecommendations_ErrorPath(t *testing.T) {
 	})
 
 	sc := keyvrmTestClient(fakeServer)
-	if err := runEventRecommendations(context.Background(), sc, "missing"); err == nil {
+	if err := keyvrm.RunEventRecommendations(context.Background(), sc, "missing"); err == nil {
 		t.Fatal("expected error from 404 response, got nil")
+	}
+}
+
+func TestQuery(t *testing.T) {
+	got := "/v1/host_aggregates" + keyvrm.ListOpts{Limit: 50, Offset: 10, Filters: map[string]string{"marker": "HA", "empty": ""}}.ToQuery()
+	if !strings.Contains(got, "limit=50") || !strings.Contains(got, "offset=10") || !strings.Contains(got, "marker=HA") {
+		t.Errorf("query = %q", got)
+	}
+	if strings.Contains(got, "empty=") {
+		t.Errorf("empty filter should be omitted: %q", got)
+	}
+	if base := "/v1/x" + (keyvrm.ListOpts{}).ToQuery(); base != "/v1/x" {
+		t.Errorf("no-params query = %q", base)
+	}
+}
+
+func TestRunRecommendationTrigger(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+
+	hit := false
+	fakeServer.Mux.HandleFunc("/v1/recommendations/rec-1/run", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, "POST")
+		hit = true
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	sc := keyvrmTestClient(fakeServer)
+	if err := keyvrm.RunRecommendation(context.Background(), sc, "rec-1"); err != nil {
+		t.Fatalf("runRecommendation: %v", err)
+	}
+	if !hit {
+		t.Error("expected POST to /v1/recommendations/rec-1/run")
 	}
 }
