@@ -305,9 +305,9 @@ func TestShell_AuditThroughTheTree(t *testing.T) {
 	writeScope(t, path, rc.base, "tokA", "R1", "projA", time.Now().Add(time.Hour))
 
 	in := &steppedInput{
-		lines: []string{"server li --os-token tokB", "server li --lo", "image save x", "server list"},
+		lines: []string{"server li --os-token tokB", "server li --lo", "image save x", "server list --os-region-name R2", "server list"},
 		steps: map[int]func(){
-			3: func() { writeScope(t, path, rc.base, "tokA", "R1", "projA", time.Now().Add(-time.Minute)) },
+			4: func() { writeScope(t, path, rc.base, "tokA", "R1", "projA", time.Now().Add(-time.Minute)) },
 		},
 	}
 	var out, errOut bytes.Buffer
@@ -340,6 +340,7 @@ func TestShell_AuditThroughTheTree(t *testing.T) {
 		`["server" "list" "--os-token" "***"] server list R1/projA 1 credential`,
 		`["server" "list" "--long"] server list R1/projA 0 `,
 		`["image" "save" "x"] image save R1/projA 1 file`,
+		`["server" "list" "--os-region-name" "R2"] server list R1/projA 1 scope`,
 		`["server" "list"] server list R1/projA 1 expired`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
