@@ -104,6 +104,8 @@ type Shell struct {
 	now func() time.Time
 	// sigterm records a SIGTERM; the shell ends once the current line is done.
 	sigterm atomic.Bool
+	// audit is the KOC_AUDIT_FD / KOC_AUDIT_FILE sink; nil without one.
+	audit *auditLog
 }
 
 // Run runs the shell until exit, Ctrl-D, end of input or SIGTERM.
@@ -138,6 +140,7 @@ func newShell(cfg Config, con console, out, errOut io.Writer) *Shell {
 		s.warnf("history: %v; keeping it in memory only", err)
 	}
 	s.hist = hist
+	s.audit = openAudit(errOut)
 	if tc, ok := con.(*termConsole); ok {
 		tc.t.History = hist
 		tc.t.AutoCompleteCallback = s.autoComplete
@@ -148,6 +151,7 @@ func newShell(cfg Config, con console, out, errOut io.Writer) *Shell {
 // loop reads and runs lines until the shell ends.
 func (s *Shell) loop(ctx context.Context) error {
 	defer s.hist.close()
+	defer s.audit.close()
 	for {
 		s.width = s.con.width()
 		s.refreshScope()
@@ -186,23 +190,47 @@ func (s *Shell) terminated() bool {
 	}
 }
 
-// runLine runs one line and reports whether the shell should end.
+// runLine runs one line, records it in the audit log, and reports whether the
+// shell should end.
 func (s *Shell) runLine(ctx context.Context, line string) (exit bool) {
+	sc := s.scope()
+	rec := &lineRecord{start: s.now(), region: sc.region, projectID: sc.projectID}
 	args, err := splitLine(line)
 	if err != nil {
 		s.status = 2
 		s.errorf("%v", err)
+		rec.argv = redactArgs(s.cfg.NewRoot(), strings.Fields(line))
+		rec.refused = refusedSyntax
+		s.record(rec)
 		return false
 	}
 	args = stripPrefix(args)
 	if len(args) == 0 {
 		return false
 	}
-	if done, exit := s.builtin(ctx, args); done {
+	defer s.record(rec)
+	// Redacted up front; a line that reaches the command tree replaces it
+	// with the expanded form.
+	rec.argv, rec.command = redactArgs(s.cfg.NewRoot(), args), args[0]
+	if done, exit := s.builtin(ctx, args, rec); done {
 		return exit
 	}
-	s.status = s.exec(ctx, args)
+	s.status = s.exec(ctx, args, rec)
 	return false
+}
+
+// record writes the audit event for a finished line.
+func (s *Shell) record(rec *lineRecord) {
+	s.audit.write(auditEvent{
+		TS:         rec.start.UTC().Format(time.RFC3339Nano),
+		Argv:       rec.argv,
+		Command:    rec.command,
+		Region:     rec.region,
+		ProjectID:  rec.projectID,
+		ExitCode:   s.status,
+		DurationMS: s.now().Sub(rec.start).Milliseconds(),
+		Refused:    rec.refused,
+	})
 }
 
 // stripPrefix drops a pasted leading "koc" or "openstack".
@@ -214,9 +242,10 @@ func stripPrefix(args []string) []string {
 }
 
 // builtin runs the shell's own commands. done is false for a koc command.
-func (s *Shell) builtin(ctx context.Context, args []string) (done, exit bool) {
+func (s *Shell) builtin(ctx context.Context, args []string, rec *lineRecord) (done, exit bool) {
 	switch args[0] {
 	case "exit", "quit":
+		s.status = 0
 		return true, true
 	case "clear":
 		_, _ = io.WriteString(s.out, "\x1b[H\x1b[2J")
@@ -228,10 +257,11 @@ func (s *Shell) builtin(ctx context.Context, args []string) (done, exit bool) {
 		return true, false
 	case "help":
 		// Help needs no credentials, so an expired scope does not block it.
-		s.status = s.run(ctx, args)
+		s.status = s.run(ctx, args, rec)
 		return true, false
 	case "shell":
 		s.status = 2
+		rec.refused = refusedNested
 		s.errorf("already in koc shell")
 		return true, false
 	}
@@ -254,19 +284,23 @@ func (s *Shell) refreshScope() {
 }
 
 // exec runs one koc command in the current scope.
-func (s *Shell) exec(ctx context.Context, args []string) int {
+func (s *Shell) exec(ctx context.Context, args []string, rec *lineRecord) int {
 	// The host may have rotated the token or switched the scope while the
 	// line was being typed.
 	s.refreshScope()
-	if _, err := s.scopeFile.checkLine(s.now()); err != nil {
+	sc := s.scope()
+	rec.region, rec.projectID = sc.region, sc.projectID
+	if reason, err := s.scopeFile.checkLine(s.now()); err != nil {
 		s.errorf("%v", err)
+		rec.argv, rec.command = s.preview(args)
+		rec.refused = reason
 		return 1
 	}
-	return s.run(ctx, args)
+	return s.run(ctx, args, rec)
 }
 
 // run executes one koc command, with Ctrl-C cancelling only it.
-func (s *Shell) run(ctx context.Context, args []string) int {
+func (s *Shell) run(ctx context.Context, args []string, rec *lineRecord) int {
 	lineCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan struct{})
@@ -282,7 +316,19 @@ func (s *Shell) run(ctx context.Context, args []string) int {
 		}
 	}()
 
-	cmd, err := s.cfg.Run(lineCtx, args, s.prepare)
+	var root *cobra.Command
+	cmd, err := s.cfg.Run(lineCtx, args, func(r *cobra.Command, expanded []string) {
+		root = r
+		s.prepare(r)
+		rec.argv = redactArgs(r, expanded)
+	})
+	if root != nil {
+		s.describe(rec, root, cmd)
+	}
+	var ref refusal
+	if errors.As(err, &ref) {
+		rec.refused = ref.RefusalReason()
+	}
 	code, msg := s.cfg.ExitStatus(cmd, err)
 	if msg != "" {
 		s.println(msg)
@@ -290,8 +336,35 @@ func (s *Shell) run(ctx context.Context, args []string) int {
 	return code
 }
 
+// preview resolves a line that will not run the way running it would have:
+// expanded, redacted, and with the command path it names.
+func (s *Shell) preview(args []string) (argv []string, command string) {
+	root := s.cfg.NewRoot()
+	args = s.cfg.Expand(root, args)
+	command = args[0]
+	if c, _, err := root.Find(args); err == nil && c != root {
+		command = strings.TrimSpace(strings.TrimPrefix(c.CommandPath(), root.Name()))
+	}
+	return redactArgs(root, args), command
+}
+
+// describe fills in what the line actually ran: the resolved command path and
+// the region and project in effect once the line's own flags were parsed.
+func (s *Shell) describe(rec *lineRecord, root, cmd *cobra.Command) {
+	if cmd != nil && cmd != root {
+		rec.command = strings.TrimSpace(strings.TrimPrefix(cmd.CommandPath(), root.Name()))
+	}
+	pf := root.PersistentFlags()
+	if f := pf.Lookup("os-region-name"); f != nil && f.Value.String() != "" {
+		rec.region = f.Value.String()
+	}
+	if f := pf.Lookup("os-project-id"); f != nil && f.Value.String() != "" {
+		rec.projectID = f.Value.String()
+	}
+}
+
 // prepare runs on each line's fresh tree before it executes.
-func (s *Shell) prepare(root *cobra.Command, _ []string) {
+func (s *Shell) prepare(root *cobra.Command) {
 	root.SetOut(s.out)
 	root.SetErr(s.errOut)
 	if s.scopeFile != nil {

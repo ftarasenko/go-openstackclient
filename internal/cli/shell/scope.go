@@ -121,20 +121,20 @@ func setSession(root *cobra.Command, region, projectID string) {
 	root.Annotations[SessionAnnotation+"os-project-id"] = projectID
 }
 
-// checkLine reports why a koc command may not run now: the scope file is
-// unusable, or its token has expired. "" means it may.
+// checkLine reports why a koc command may not run now — the scope file is
+// unusable, or its token has expired — as the audit log's refusal reason.
 func (f *scopeFile) checkLine(now time.Time) (reason string, err error) {
 	if f == nil {
 		return "", nil
 	}
 	switch {
 	case f.err != nil:
-		return "scope", f.err
+		return refusedScope, f.err
 	case f.current == nil:
-		return "scope", errors.New("scope file not read yet")
+		return refusedScope, errors.New("scope file not read yet")
 	}
 	if f.current.Expired(now) {
-		return "expired", fmt.Errorf("the session expired at %s; the console will renew it",
+		return refusedExpired, fmt.Errorf("the session expired at %s; the console will renew it",
 			f.current.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	return "", nil

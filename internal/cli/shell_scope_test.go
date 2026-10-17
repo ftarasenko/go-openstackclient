@@ -290,3 +290,59 @@ func TestShell_EmbeddedScopeFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestShell_AuditThroughTheTree: the audit event records the expanded argv
+// and the resolved command path, with the embedded profile's refusal reason.
+func TestShell_AuditThroughTheTree(t *testing.T) {
+	rc := newRegionCloud(t, "tokA")
+	clearOSEnv(t)
+	t.Setenv("KOC_PROFILE", "embedded")
+	t.Setenv("KOC_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "scope.json")
+	t.Setenv("KOC_SCOPE_FILE", path)
+	audit := filepath.Join(t.TempDir(), "audit.jsonl")
+	t.Setenv("KOC_AUDIT_FILE", audit)
+	writeScope(t, path, rc.base, "tokA", "R1", "projA", time.Now().Add(time.Hour))
+
+	in := &steppedInput{
+		lines: []string{"server li --os-token tokB", "server li --lo", "image save x", "server list"},
+		steps: map[int]func(){
+			3: func() { writeScope(t, path, rc.base, "tokA", "R1", "projA", time.Now().Add(-time.Minute)) },
+		},
+	}
+	var out, errOut bytes.Buffer
+	if err := shell.Run(context.Background(), shellConfig("test"), in, &out, &errOut, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "tokB") || strings.Contains(string(raw), "web-R1") {
+		t.Fatalf("the audit log holds a token or command output:\n%s", raw)
+	}
+	var got []string
+	for _, l := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var ev struct {
+			Argv      []string `json:"argv"`
+			Command   string   `json:"command"`
+			Region    string   `json:"region"`
+			ProjectID string   `json:"project_id"`
+			ExitCode  int      `json:"exit_code"`
+			Refused   string   `json:"refused"`
+		}
+		if err := json.Unmarshal([]byte(l), &ev); err != nil {
+			t.Fatalf("%q: %v", l, err)
+		}
+		got = append(got, fmt.Sprintf("%q %s %s/%s %d %s", ev.Argv, ev.Command, ev.Region, ev.ProjectID, ev.ExitCode, ev.Refused))
+	}
+	want := []string{
+		`["server" "list" "--os-token" "***"] server list R1/projA 1 credential`,
+		`["server" "list" "--long"] server list R1/projA 0 `,
+		`["image" "save" "x"] image save R1/projA 1 file`,
+		`["server" "list"] server list R1/projA 1 expired`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("audit events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
