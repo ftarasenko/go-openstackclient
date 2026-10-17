@@ -200,3 +200,24 @@ func TestDebugTransport_DumpsBothDirectionsRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestIsSecretName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"os-password":                      true,
+		"--os-token":                       true,
+		"os-application-credential-secret": true,
+		"vault-secret-id":                  true,
+		"vault-token":                      true,
+		"admin-pass":                       true,
+		"secret-key":                       true,
+		"os-passcode":                      true,
+		"os-username":                      false,
+		"os-region-name":                   false,
+		"public-key":                       false,
+		"long":                             false,
+	} {
+		if got := IsSecretName(name); got != want {
+			t.Errorf("IsSecretName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

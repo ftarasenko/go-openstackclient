@@ -30,9 +30,9 @@ const (
 // (which --watch enables) and the --timing summary (auth.ReportTiming hands it
 // out once).
 //
-// prepare, when non-nil, sees the tree after the prefix expansion and before
-// execution; the shell uses it to apply the scope file.
-func Run(ctx context.Context, version string, args []string, prepare func(root *cobra.Command)) (*cobra.Command, error) {
+// prepare, when non-nil, sees the tree and the expanded args before execution;
+// the shell uses it to apply the scope file and to record what it ran.
+func Run(ctx context.Context, version string, args []string, prepare func(root *cobra.Command, args []string)) (*cobra.Command, error) {
 	resolve.Reset()
 	defer resolve.Reset()
 
@@ -47,9 +47,10 @@ func Run(ctx context.Context, version string, args []string, prepare func(root *
 	// Command names expand first: flag expansion resolves abbreviations against
 	// the flags of the command the args point at, which is only the right command
 	// once its name is spelled in full.
-	root.SetArgs(ExpandArgs(root, args))
+	args = ExpandArgs(root, args)
+	root.SetArgs(args)
 	if prepare != nil {
-		prepare(root)
+		prepare(root, args)
 	}
 	// ExecuteContextC (rather than ExecuteContext) also hands back the command
 	// cobra resolved the args to, which is what lets ExitStatus tell "cobra

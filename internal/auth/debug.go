@@ -64,6 +64,23 @@ var secretKeys = map[string]bool{
 	"blob":                          true,
 }
 
+// IsSecretName reports whether a flag or key name carries a credential, by the
+// same list --debug redacts JSON keys with: the name is lower-cased, dashes
+// become underscores, and it matches when any underscore-separated tail of it
+// (os_password → password, vault_secret_id → secret_id) or any one segment of
+// it (secret_key → secret) is on the list. `koc shell` uses it for its audit
+// events and history file, so a value that never reaches a --debug dump never
+// reaches those either.
+func IsSecretName(name string) bool {
+	segs := strings.Split(strings.ToLower(strings.ReplaceAll(strings.TrimLeft(name, "-"), "-", "_")), "_")
+	for i := range segs {
+		if secretKeys[strings.Join(segs[i:], "_")] || secretKeys[segs[i]] {
+			return true
+		}
+	}
+	return false
+}
+
 // secretJSONRe is the fallback for a body that is not valid JSON (a truncated
 // dump, a form-encoded payload). The value pattern tolerates escaped quotes:
 // `"[^"]*"` stopped at the backslash-quote inside a password, leaking its tail
