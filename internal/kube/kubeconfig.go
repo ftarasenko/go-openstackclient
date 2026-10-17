@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ftarasenko/go-openstackclient/internal/kochome"
 )
 
 // kubeconfig is the minimal subset of a kubeconfig document koc needs to reach
@@ -69,7 +71,7 @@ type Options struct {
 // Client for the target cluster.
 func Load(o Options) (*Client, error) {
 	path := resolveKubeconfigPath(o.Kubeconfig)
-	raw, err := os.ReadFile(path) //nolint:gosec // G304: operator-controlled kubeconfig path (--kubeconfig/$KUBECONFIG)
+	raw, err := kochome.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading kubeconfig %q: %w", path, err)
 	}
@@ -127,17 +129,18 @@ func Load(o Options) (*Client, error) {
 }
 
 // resolveKubeconfigPath applies the standard precedence: explicit path, then the
-// first entry of $KUBECONFIG, then ~/.kube/config.
+// first entry of $KUBECONFIG, then ~/.kube/config — "~" being KOC_HOME when
+// that is set (see internal/kochome).
 func resolveKubeconfigPath(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	if env := os.Getenv("KUBECONFIG"); env != "" {
+	if env := kochome.ExplicitPath("KUBECONFIG"); env != "" {
 		if parts := filepath.SplitList(env); len(parts) > 0 && parts[0] != "" {
 			return parts[0]
 		}
 	}
-	home, err := os.UserHomeDir()
+	home, err := kochome.UserHomeDir()
 	if err != nil {
 		return filepath.Join(".kube", "config")
 	}
