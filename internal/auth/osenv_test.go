@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -239,6 +240,9 @@ func TestCloudsSearch_MissingOverrideFallsBackAndYml(t *testing.T) {
 }
 
 func TestCloudsSearch_SiteConfigDir(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		t.Skip("XDG_CONFIG_DIRS is the site config dir only on Linux and the BSDs")
+	}
 	home := isolateConfig(t)
 	writeConfig(t, filepath.Join(home, "xdg", "openstack", "clouds.yaml"), cloudNoPassword("https://site.example/v3"))
 	t.Setenv("OS_PASSWORD", "p")

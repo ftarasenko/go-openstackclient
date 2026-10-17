@@ -73,6 +73,7 @@ func TestWrapService(t *testing.T) {
 }
 
 func TestNewServiceClient_PropagatesAuthenticateError(t *testing.T) {
+	isolateConfig(t)
 	resetBadEnv()
 	t.Cleanup(resetBadEnv)
 
@@ -92,6 +93,7 @@ func TestNewServiceClient_PropagatesAuthenticateError(t *testing.T) {
 }
 
 func TestNewServiceSession_PropagatesAuthenticateError(t *testing.T) {
+	isolateConfig(t)
 	resetBadEnv()
 	t.Cleanup(resetBadEnv)
 
@@ -119,6 +121,7 @@ func TestResolveAuth_EnvMissingCredentials(t *testing.T) {
 }
 
 func TestResolveAuth_CloudsFileNotFound(t *testing.T) {
+	isolateConfig(t)
 	t.Setenv("OS_CLIENT_CONFIG_FILE", filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 
 	o := &Options{Cloud: "example"}

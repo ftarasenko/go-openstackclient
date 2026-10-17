@@ -149,6 +149,7 @@ func TestResolveAuth_EnvSplitDomainNoProjectID(t *testing.T) {
 }
 
 func TestResolveAuth_EnvMissingAuthURL(t *testing.T) {
+	isolateConfig(t)
 	o := &Options{Username: "admin", Password: "x"}
 	if _, _, _, err := o.resolveAuth(); err == nil {
 		t.Error("expected an error when no cloud and no OS_AUTH_URL are set")
