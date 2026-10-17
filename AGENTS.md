@@ -217,12 +217,19 @@ internal/cli/s3/           "koc s3" bucket/object lifecycle, du, download/upload
 internal/cli/quota/        "koc quota show|set" — the one cross-service noun (nova+cinder+neutron)
 internal/cli/              root.go wires every service's command group onto the root;
                            watch.go gives every read verb --watch in the same final pass
-internal/cli/resolve/      cross-service name→ID (image→glance, network→neutron, project→keystone)
+internal/cli/resolve/      the CLI's name→ID policy (zero-match fallback, --watch memo) over pkg/openstack/resolve
 internal/cli/<service>/    one package per service; one file per noun; a client.go helper
+pkg/                       the PUBLIC Go API (see "Public Go API"); the CLI is its first consumer
+  openstack/               Session: New/FromProvider/ForRegion + per-service client constructors
+  openstack/paging/        Collect[T]: page until a result cap is met
+  openstack/resolve/       strict name→ID resolvers, Resolver + endpoint-keyed Cache
+  openstack/<service>/     one package per service: the API half of its runXxx seams (image so far)
+  keyvrm/                  KeyVRM typed requests + DTOs
 scripts/devstack/          up.sh (single-node devstack per series, local VM or --gha runner),
                            smoke.sh (per-feature proof + koc read verbs), collect-logs.sh
 test/functional/           Go functional tests (build tag "functional"): the koc binary against
                            a devstack from up.sh, plus the Vault CLI against vaulttest
+test/importer/             nested module (own go.mod): pkg/ used from outside, run in supply-chain.yml
 ```
 
 Services: `baremetal` (ironic), `server`+`compute` (nova), `identity` (keystone),
@@ -258,6 +265,10 @@ Every command file mirrors `internal/cli/baremetal/node.go`:
    ```
    The seam takes an already-built `*gophercloud.ServiceClient` and an
    `io.Writer` so tests drive it directly against a mock endpoint — no auth.
+   In a service that has moved behind `pkg/` (image, keyvrm so far), the seam's
+   API half — build opts, call, page, extract, wrap the error — is a public
+   function there, and the seam is that call plus the render step. Add the
+   public function first, then the seam over it (see "Public Go API").
 3. Results route through the output layer: `o.WriteList(w, output.Table{...})`
    for lists, `o.WriteSingle(w, fields, values)` for a single resource. Never
    `fmt.Println` structured output.
@@ -282,6 +293,78 @@ Client helpers (`client.go`) authenticate once via `a.Authenticate(ctx)` then
 call the right `auth.Client` factory. When a command needs a **second** service
 (cross-service name resolution), return the `*auth.Client` too and derive the
 secondary client lazily (see `server/client.go` `newComputeSession`).
+
+## Public Go API (`pkg/`)
+
+`pkg/` is a public, versioned Go API: the OpenStack service layer the CLI is
+built on, for downstream importers (multi-region resource views, services that
+need koc's resolve-by-name and paging). The CLI is its first consumer, so the
+same requests leave either way. The plan, the per-service checklist for the
+services not yet moved, and the open questions are in
+`docs/proposals/public-api.md`.
+
+Rules, enforced where a tool can:
+
+- **No CLI in `pkg/`.** depguard (`.golangci.yml`, rule `public-api`) denies
+  `pkg/**` cobra, pflag, `golang.org/x/term` and every `internal/...` import —
+  a helper both need moves into `pkg/`. forbidigo, scoped to `pkg/`, denies
+  `os.Getenv`/`LookupEnv`/`Environ`, the standard streams, `fmt.Print*`, `log`
+  and `os.Exit`. Paths, prompts, environment variables and file locations are
+  the caller's: pass them in (a later embedded/`koc shell` mode depends on it).
+- **No mutable package state.** `pkg/openstack`'s `TestNoPackageState` walks
+  every `pkg/` source and allows a package-level `var` only for an
+  `errors.New` sentinel, a `regexp.MustCompile` or a blank interface check. A
+  cache, clock or hook lives on a value the caller owns — `resolve.Cache` is
+  the model; the CLI's process-wide memo is one such value held in
+  `internal/cli/resolve`.
+- **Plain functions on a `*gophercloud.ServiceClient`**, gophercloud-style,
+  returning gophercloud v2 types where they exist; koc's own extension structs
+  (raw-request fallbacks, request-body splices like `image.ImportOpts`) are
+  exported with doc comments. Wait helpers take a `context.Context` (the
+  deadline) and an explicit interval — `image.WaitForStatus` is the model.
+  Cross-service calls take a `*openstack.Session` or the extra clients
+  explicitly.
+- **Errors.** A public function wraps with the text the CLI printed, naming
+  the ID it was given (`"getting image %s: %w"`), and never prints. Where the
+  CLI has always named the operator's *reference* instead, the CLI re-labels
+  the same inner error (`internal/cli/image` `relabel`), so its output stays
+  byte-identical; a CLI-flag-specific message (`--import: …`) is a sentinel in
+  `pkg/` (`image.ErrGlanceDirectUnavailable`) that the CLI prefixes. Errors
+  importers branch on are exported types or sentinels: `openstack.ServiceError`,
+  `openstack.ErrNotFound` (matched by `resolve.NotFoundError`).
+- **Strict resolution.** `pkg/openstack/resolve` errors on zero matches; the
+  literal-ref fallback the older CLI packages still use is CLI policy, applied
+  in `internal/cli/resolve`.
+- **Tests.** Every public package has black-box tests (`package xxx_test`,
+  exported identifiers only; httptest + `th`/`fakeclient`, asserting method,
+  URL, microversion header and body) and runnable `Example…` functions with
+  `// Output:` for the common path. Moving a service never edits its seam
+  tests beyond an import path; tests of code that moved move with it.
+- **Same bytes.** A `refactor(<service>)` move changes no command, flag,
+  request or message: diff `koc <every leaf> --help` before and after, and run
+  the affected verbs against a fake endpoint with the old and new binary.
+
+**What counts as the API, and how it versions.** Exported identifiers under
+`pkg/...` and the gophercloud v2 types they accept and return. One module, one
+tag stream: while `0.y.z`, a breaking `pkg/` change bumps MINOR **and** follows
+the deprecation policy; from `v1.0.0`, a breaking change is a major version and
+a `/vN` path. A gophercloud major bump is therefore a koc major bump. The CLI's
+flags and output are a separate contract and not covered by it.
+
+**Deprecation policy.** An exported identifier is removed only after it has
+carried `// Deprecated: use X instead.` for at least **two MINOR releases and
+90 days**, whichever is longer. The commit that deprecates it carries a
+`Deprecated: <identifier>` footer, which `scripts/release-notes.sh` lists under
+`### Deprecations`. The same text is in `pkg/openstack/doc.go`, which godoc
+shows.
+
+**Checks.** `supply-chain.yml`'s `importer` job builds `test/importer` (a
+nested module using `pkg/` only by its public paths) and fails if its graph
+picks up a CLI dependency; `api-compat` (`scripts/api-compat.sh`, also runnable
+locally with apidiff on `PATH`) fails an incompatible `pkg/` change the commit
+range does not mark breaking. Both are network-allowed; the offline gate
+covers the rest. Do not add a second `go.mod` for `pkg/`: one module keeps
+`vendor/`, the offline gate and GoReleaser as they are.
 
 ## Minimum supported cloud: Zed (2022.2)
 
@@ -796,6 +879,9 @@ refs no matter what the history says afterwards.
   change.
 - **Do** give every leaf command a functional test — and a new one before it
   lands (`TestEveryLeafIsCovered`).
+- **Do** keep `pkg/` free of the CLI, the environment and package state, and
+  follow the deprecation policy before removing or changing an exported
+  identifier there (see "Public Go API").
 - **Don't** hand-edit `vendor/`, import gophercloud v1, format structured output
   inline, land a new command without touching `docs/coverage.md` or without a
   functional test, add a line to `test/functional/uncovered.txt`, push private
