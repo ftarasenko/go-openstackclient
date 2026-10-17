@@ -106,8 +106,12 @@ func TestEmbeddedTableIsCurrent(t *testing.T) {
 		}
 		return c
 	}
+	// A koc_embedded build leaves the vault, s3 and credential-source surface
+	// out, so entries for it guard nothing there; the default build is where
+	// every entry must still name something real.
+	built := kochome.BuiltEmbedded()
 	for _, r := range embeddedCommandRefusals {
-		if find(r.path) == nil {
+		if find(r.path) == nil && !built {
 			t.Errorf("embeddedCommandRefusals: no command %q", r.path)
 		}
 	}
@@ -119,7 +123,7 @@ func TestEmbeddedTableIsCurrent(t *testing.T) {
 				continue
 			}
 		}
-		if c.Flags().Lookup(r.flag) == nil && root.PersistentFlags().Lookup(r.flag) == nil {
+		if c.Flags().Lookup(r.flag) == nil && root.PersistentFlags().Lookup(r.flag) == nil && !built {
 			t.Errorf("embeddedFlagRefusals: %q has no flag --%s", r.path, r.flag)
 		}
 	}
@@ -174,7 +178,7 @@ func TestEmbeddedRefusals(t *testing.T) {
 		{"baremetal node clean n --clean-steps steps.yaml", RefusedFile, "give the document inline"},
 		{"baremetal node clean n --clean-steps -", RefusedFile, ""},
 		{"zone import create zone.txt", RefusedFile, msgFiles},
-		{"vault kv list x", RefusedCommand, ""},
+		{"vault kv list x", RefusedCommand, ""}, // unknown in a koc_embedded build
 		{"s3 bucket list", RefusedCommand, ""},
 		{"server set vm --root-password", RefusedPrompt, "use --password"},
 		{"keypair create k", RefusedPrivateKey, "--print-private-key"},
@@ -194,6 +198,12 @@ func TestEmbeddedRefusals(t *testing.T) {
 			}
 			err = runEmbedded(t, args...)
 			var refused *RefusedError
+			if tc.reason == RefusedCommand && kochome.BuiltEmbedded() {
+				if err == nil || !errors.Is(err, ErrUnknownCommand) {
+					t.Errorf("want an unknown command in a koc_embedded build, got %v", err)
+				}
+				return
+			}
 			switch {
 			case tc.reason == "" && errors.As(err, &refused):
 				t.Fatalf("refused (%s): %v", refused.Reason, err)
@@ -239,6 +249,9 @@ func splitForTest(s string) ([]string, error) {
 // TestDefaultProfileRefusesNothing: without the embedded profile every one of
 // those lines reaches authentication as before.
 func TestDefaultProfileRefusesNothing(t *testing.T) {
+	if kochome.BuiltEmbedded() {
+		t.Skip("a koc_embedded build is always the embedded profile")
+	}
 	clearOSEnv(t)
 	t.Setenv(kochome.EnvProfile, "")
 	for _, line := range [][]string{
@@ -257,5 +270,28 @@ func TestDefaultProfileRefusesNothing(t *testing.T) {
 	}
 	if c, _, err := NewRootCommand("test").Find([]string{"keypair", "create"}); err != nil || c.Flags().Lookup(flagPrintPrivateKey) != nil {
 		t.Errorf("--%s exists outside the embedded profile", flagPrintPrivateKey)
+	}
+}
+
+// TestEmbeddedBuildLeavesOut: a koc_embedded build carries no Vault, S3 or
+// Kubernetes surface — no commands, no flags, no help lines — and the default
+// build carries all of it. (CI checks the package graph itself with go list.)
+func TestEmbeddedBuildLeavesOut(t *testing.T) {
+	root := NewRootCommand("test")
+	built := kochome.BuiltEmbedded()
+	for _, name := range []string{"vault", "s3"} {
+		c, _, err := root.Find([]string{name})
+		present := err == nil && c != root
+		if present == built {
+			t.Errorf("koc %s present = %v in a build with koc_embedded = %v", name, present, built)
+		}
+	}
+	for _, flag := range []string{
+		"creds-from-ns", "creds-from-vault", "kubeconfig", "kube-context",
+		"vault-addr", "vault-token", "vault-role-id", "vault-secret-id", "vault-cacert", "insecure-vault",
+	} {
+		if present := root.PersistentFlags().Lookup(flag) != nil; present == built {
+			t.Errorf("--%s present = %v in a build with koc_embedded = %v", flag, present, built)
+		}
 	}
 }

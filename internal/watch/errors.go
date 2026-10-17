@@ -8,8 +8,6 @@ import (
 	"syscall"
 
 	"github.com/gophercloud/gophercloud/v2"
-
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
 )
 
 // A watched command fails in two very different ways, and the loop has to tell
@@ -49,11 +47,7 @@ func httpStatus(err error) (int, bool) {
 	if errors.As(err, &unexpected) {
 		return unexpected.Actual, true
 	}
-	var apiErr *s3.APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode, true
-	}
-	return 0, false
+	return s3Status(err)
 }
 
 // isAuthFailure reports whether err is the endpoint refusing the credential

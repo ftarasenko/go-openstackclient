@@ -11,7 +11,21 @@ export GOFLAGS     := -mod=vendor
 # CI cross-compile matrix stay in sync with the release matrix.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
-.PHONY: all build static test functional race cover sonar crossbuild vet lint fmt tidy vendor completions size clean
+# koc-embedded: the web-console sandbox build (docs/shell.md). The koc_embedded
+# tag leaves the Vault, S3 and Kubernetes code out and makes the embedded
+# profile permanent. Containers only, so Linux only; kept in sync with the
+# koc-embedded build in .goreleaser.yaml and the CI cross-compile matrix.
+EMBEDDED_BINARY    := koc-embedded
+EMBEDDED_TAGS      := koc_embedded
+EMBEDDED_PLATFORMS := linux/amd64 linux/arm64
+# The packages the embedded binary is made of and tested through. `./...` also
+# holds internal/cli/vault and internal/cli/s3, which the tag only unregisters:
+# they are not part of koc-embedded and do not build without the Vault and
+# credential-source code it leaves out.
+EMBEDDED_VET   := ./cmd/... ./internal/auth/ ./internal/cli/ ./internal/cli/shell/ ./internal/kochome/
+EMBEDDED_TESTS := ./internal/cli/ ./internal/cli/shell/ ./internal/kochome/
+
+.PHONY: all build static embedded embedded-check test functional race cover sonar crossbuild vet lint fmt tidy vendor completions size clean
 
 all: build
 
@@ -21,6 +35,19 @@ build: static
 ## static: fully static, stripped, trimmed binary
 static:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) $(PKG)
+
+## embedded: build the static koc-embedded binary for the host platform
+embedded:
+	CGO_ENABLED=0 go build -tags $(EMBEDDED_TAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(EMBEDDED_BINARY) $(PKG)
+
+## embedded-check: vet and test the koc_embedded build, and prove its package
+## graph holds no Vault, S3 or Kubernetes code. Offline.
+embedded-check:
+	GOPROXY=off go vet -tags $(EMBEDDED_TAGS) $(EMBEDDED_VET)
+	@if GOPROXY=off go list -deps -tags $(EMBEDDED_TAGS) $(PKG) | grep -E '/internal/(kube|vault|s3|cli/s3|cli/vault)$$'; then \
+		echo "koc-embedded links code the koc_embedded tag must leave out" >&2; exit 1; fi
+	GOPROXY=off go test -tags $(EMBEDDED_TAGS) $(EMBEDDED_TESTS)
+	GOPROXY=off go test -tags $(EMBEDDED_TAGS) -run 'KOCHome|ScopeFile|IsSecretName' ./internal/auth/
 
 ## test: run unit tests
 test:
@@ -76,6 +103,11 @@ crossbuild:
 		echo "==> $$os/$$arch"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 GOPROXY=off go build ./...; \
 	done
+	@set -e; for p in $(EMBEDDED_PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; \
+		echo "==> $$os/$$arch ($(EMBEDDED_BINARY))"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 GOPROXY=off go build -tags $(EMBEDDED_TAGS) -o /dev/null $(PKG); \
+	done
 
 ## vet: run go vet
 vet:
@@ -112,11 +144,12 @@ completions:
 	go run $(PKG) completion zsh  > completions/koc.zsh
 	go run $(PKG) completion fish > completions/koc.fish
 
-## size: print the built binary size in bytes (watch for size regressions)
-size: static
+## size: print the built binaries' sizes in bytes (watch for size regressions)
+size: static embedded
 	@echo "$(BINARY) size: $$(stat -c%s $(BINARY)) bytes"
+	@echo "$(EMBEDDED_BINARY) size: $$(stat -c%s $(EMBEDDED_BINARY)) bytes"
 
 ## clean: remove build artifacts
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) $(EMBEDDED_BINARY)
 	rm -rf dist completions
