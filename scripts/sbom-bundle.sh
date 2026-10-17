@@ -3,8 +3,7 @@
 # sbom-bundle.sh — produce ONE SPDX SBOM bundle for the whole release.
 #
 # Called by GoReleaser's `sboms:` pipe (see .goreleaser.yaml). It runs syft once
-# per shipped artifact — 6 koc archives, 2 koc-embedded archives and 4 nfpm
-# packages — and tars the resulting
+# per shipped artifact — 6 archives + 4 nfpm packages — and tars the resulting
 # per-artifact SPDX documents into a single `koc_<version>_sboms.tar.gz`.
 #
 # WHY A BUNDLE

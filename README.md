@@ -572,7 +572,7 @@ Arguments are quoted as in a POSIX shell, but there are no pipes, redirects,
 globbing or variables — such a line is refused with the feature named. The
 shell is also the terminal a web console embeds: `KOC_SCOPE_FILE` hands it the
 user's token and scope and rotates them without a restart, `KOC_PROFILE=embedded`
-(or the `koc-embedded` release binary) refuses credentials, scope switches,
+refuses credentials, scope switches,
 local files and prompts, `KOC_HOME` confines every config read to one directory,
 and `KOC_AUDIT_FD`/`KOC_AUDIT_FILE` record each line as a JSON event. See
 [`docs/shell.md`](docs/shell.md).
@@ -1047,11 +1047,9 @@ make test        # go test ./...
 make race        # go test -race ./...  (needs cgo; shipped binaries stay CGO_ENABLED=0)
 make vet         # go vet ./...
 make lint        # golangci-lint run ./...
-make crossbuild  # compile all six release targets plus koc-embedded's two (build-only, offline)
-make embedded    # build koc-embedded (-tags koc_embedded; docs/shell.md)
-make embedded-check # vet/test the koc_embedded build and check it links no Vault/S3/k8s code
+make crossbuild  # compile all six release targets (build-only, offline)
 make completions # generate completions/koc.{bash,zsh,fish}
-make size        # print the built binaries' sizes
+make size        # print the built binary size
 make tidy        # go mod tidy && go mod vendor
 ```
 

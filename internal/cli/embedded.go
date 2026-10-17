@@ -11,8 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/kochome"
 )
 
-// The embedded profile (KOC_PROFILE=embedded, always on in a koc_embedded
-// build) is koc inside a web-console terminal: a short-lived sandbox holding
+// The embedded profile (KOC_PROFILE=embedded) is koc inside a web-console terminal: a short-lived sandbox holding
 // only koc, a read-only root, a throwaway home on tmpfs the browser cannot
 // reach, and the signed-in user's own token handed over by the host. What
 // makes no sense or is unsafe there is refused here, in one table keyed by
@@ -65,7 +64,6 @@ type flagRefusal struct {
 
 // embeddedCommandRefusals are the commands the embedded profile refuses whole.
 var embeddedCommandRefusals = []commandRefusal{
-	// Absent from a koc_embedded build; refused under KOC_PROFILE=embedded.
 	{path: "vault", reason: RefusedCommand, msg: "koc vault is not available in the console terminal"},
 	{path: "s3", reason: RefusedCommand, msg: "koc s3 is not available in the console terminal"},
 	// Uploads image data from a local file or standard input.

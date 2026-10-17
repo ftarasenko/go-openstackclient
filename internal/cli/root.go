@@ -20,7 +20,9 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/network"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/placement"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/quota"
+	s3cli "github.com/ftarasenko/go-openstackclient/internal/cli/s3"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/server"
+	vaultcli "github.com/ftarasenko/go-openstackclient/internal/cli/vault"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/volume"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -87,8 +89,8 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(image.NewCommand(authOpts, outOpts))
 	root.AddCommand(keyvrm.NewCommand(authOpts, outOpts))
 	root.AddCommand(loadbalancer.NewCommand(authOpts, outOpts))
-	// koc s3 and koc vault; absent from a koc_embedded build (root_stores.go).
-	addStoreCommands(root, authOpts, outOpts)
+	root.AddCommand(s3cli.NewCommand(authOpts, outOpts))
+	root.AddCommand(vaultcli.NewCommand(authOpts, outOpts))
 	root.AddCommand(server.NewCommands(authOpts, outOpts)...)
 	root.AddCommand(compute.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(identity.NewCommand(authOpts, outOpts)...)

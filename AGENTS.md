@@ -26,14 +26,12 @@ Everything runs offline from `vendor/`. Prefer the Makefile:
 make build       # CGO_ENABLED=0 static, -trimpath, -ldflags "-s -w -X main.version=..."
 make test        # go test ./...
 make race        # CGO_ENABLED=1 go test -race ./...   (still offline; see below)
-make crossbuild  # build all six release targets (GOOS/GOARCH matrix, build-only), plus koc-embedded's two
-make embedded    # build koc-embedded: -tags koc_embedded (docs/shell.md)
-make embedded-check # vet + test the koc_embedded build; fail if it links internal/{kube,vault,s3}
+make crossbuild  # build all six release targets (GOOS/GOARCH matrix, build-only)
 make vet         # go vet ./...
 make lint        # golangci-lint run ./...   (golangci-lint v2; config in .golangci.yml)
 make fmt         # gofmt -w
 make completions # generate completions/koc.{bash,zsh,fish} for the release archives
-make size        # build, then print both binaries' sizes in bytes
+make size        # build, then print the binary's size in bytes
 make tidy        # GOFLAGS= go mod tidy && go mod vendor   (only when deps change)
 ```
 
@@ -46,21 +44,14 @@ cgo never leaks into the static binaries the release ships; those stay
 to six platforms: a build-tag or syscall mistake in a `darwin`/`windows` path used
 to surface first at release time, and a size regression used to surface never.
 `PLATFORMS` in the Makefile must stay in sync with `.goreleaser.yaml`'s
-`goos`/`goarch` and the CI cross-compile matrix; so must `EMBEDDED_PLATFORMS`
-with the `koc-embedded` build there and the matrix's `koc_embedded` rows.
+`goos`/`goarch` and the CI cross-compile matrix.
 
-**The embedded profile and `koc_embedded`** (docs/shell.md). Its refusals live
+**The embedded profile** (`KOC_PROFILE=embedded`, docs/shell.md). Its refusals live
 in one table, `internal/cli/embedded.go`, enforced from the root's
 `PersistentPreRunE` — never inside a service package. A new flag or argument
 that reads or writes a local file must be added there (or to the test's
 `notFileFlags` with the reason it is not one): `TestEmbeddedFileFlags` walks the
-tree and fails otherwise. Code the `koc_embedded` tag leaves out (Vault, S3,
-Kubernetes) is cut at registration — build-tagged `root_stores*.go`,
-`options_credsources.go`/`options_embedded.go`, `credsfrom.go`/
-`credsfrom_embedded.go`, `watch/errors_s3*.go` — and `make embedded-check`
-fails if the binary's package graph reaches it again. `./...` does not build
-under the tag (internal/cli/vault and internal/cli/s3 are unregistered, not
-tagged out); use the package lists in the Makefile.
+tree and fails otherwise.
 
 The air-gap invariant — every build/test must pass with **no module proxy**:
 
@@ -209,7 +200,7 @@ and honours `sonar.coverage.exclusions` (which drops `cmd/koc/main.go`), while
 
 ```
 cmd/koc/main.go            cobra root entrypoint; version var; signal-cancelled context
-internal/kochome/          KOC_HOME: the one resolver for config/state paths; KOC_PROFILE / koc_embedded
+internal/kochome/          KOC_HOME: the one resolver for config/state paths; KOC_PROFILE
 internal/auth/             one authenticated ProviderClient per invocation + per-service clients
   options.go               global flags (auth/TLS/microversion/output/debug/timing/timeout + creds-from-*), env-defaulted
   transport.go             http.Client construction: --timeout whole-exchange cap (0 = off) + fixed 60s response-header timeout
@@ -217,7 +208,6 @@ internal/auth/             one authenticated ProviderClient per invocation + per
   tls.go                   explicit *tls.Config (CA bundle, mTLS, --insecure, TLS 1.2 min)
   services.go              auth.Client factory methods: Compute()/Identity()/Volume()/...
   credsfrom.go             --creds-from-ns/-vault: standalone basic-auth ironic + Vault openrc → OS_*
-                           (not in a koc_embedded build: credsfrom_embedded.go / options_credsources.go)
   scopefile.go             KOC_SCOPE_FILE: a host-written token + scope, mapped onto the OS_* options
   debug.go                 --debug transport: redacts tokens+secrets, elides large bodies
 internal/kube/             minimal read-only k8s REST client (kubeconfig + secret/Ironic reads); no client-go
@@ -531,9 +521,7 @@ being quietly weakened by a check that happens to need a proxy.
   separate job because `-race` needs `CGO_ENABLED=1` and that must never leak into
   the shipped static binaries; and `lint`, with golangci-lint pinned and its
   download checksum-verified against the release's published `checksums.txt`
-  (it lints the `functional` build tag too, and the `koc_embedded` files in a
-  second run). `build-test` also builds and sizes `koc-embedded` and runs
-  `make embedded-check`; `crossbuild` carries two `koc_embedded` rows. `build-test` also runs
+  (it lints the `functional` build tag too). `build-test` also runs
   `test/functional` with no cloud: its devstack tests skip, and the harness's
   own tests plus the Vault CLI against the fake server run offline.
   Go is resolved as `1.27.x` + `check-latest` rather than `go-version-file:
@@ -595,8 +583,7 @@ being quietly weakened by a check that happens to need a proxy.
   a ref pushed with `GITHUB_TOKEN`. Tag-driven instead means the environment rule
   is meaningful, immutability needs no scripted pre-check, and an agent cannot cut
   a release unilaterally. GoReleaser builds the six static binaries (linux/darwin/windows ×
-  amd64/arm64), two `koc-embedded` Linux archives (amd64/arm64, `-tags koc_embedded`;
-  in `checksums.txt` and the SBOM bundle, not in the packages or the cask), four **`.rpm`/`.deb` packages** (nfpms — the target is an
+  amd64/arm64), four **`.rpm`/`.deb` packages** (nfpms — the target is an
   air-gapped RHEL-derivative node where Homebrew is useless; these install the
   shell completions to the system directories, which the cask cannot), a
   `checksums.txt`, a **bundle of per-artifact SPDX SBOMs** (syft, tarred by

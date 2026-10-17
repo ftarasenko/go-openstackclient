@@ -10,8 +10,7 @@
 // KUBECONFIG, --kubeconfig) still wins in the default profile: it is as
 // deliberate as a flag.
 //
-// The embedded profile (KOC_PROFILE=embedded, or a binary built with the
-// koc_embedded tag) is stricter. KOC_HOME defaults to a directory under
+// The embedded profile (KOC_PROFILE=embedded) is stricter. KOC_HOME defaults to a directory under
 // $TMPDIR, explicit config paths are ignored, and clouds.yaml is not read at
 // all: the host supplies the scope, the user acts only as themselves.
 //
@@ -43,15 +42,11 @@ const (
 // embedded profile.
 const embeddedHomeName = "koc-home"
 
-// Embedded reports whether koc runs under the embedded profile: always in a
-// koc_embedded build, and when KOC_PROFILE=embedded otherwise.
+// Embedded reports whether koc runs under the embedded profile
+// (KOC_PROFILE=embedded).
 func Embedded() bool {
-	return builtEmbedded || strings.EqualFold(strings.TrimSpace(os.Getenv(EnvProfile)), ProfileEmbedded)
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(EnvProfile)), ProfileEmbedded)
 }
-
-// BuiltEmbedded reports whether this binary was built with the koc_embedded
-// tag, which leaves the Vault, S3 and Kubernetes code out entirely.
-func BuiltEmbedded() bool { return builtEmbedded }
 
 // Dir returns the directory koc is confined to, or "" when it is not confined
 // (no KOC_HOME, default profile). A relative KOC_HOME is made absolute against
