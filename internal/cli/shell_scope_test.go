@@ -252,3 +252,37 @@ func TestShell_ScopeTokenRedactedUnderDebug(t *testing.T) {
 		t.Errorf("--debug leaked the scope file's token:\n%s", dump)
 	}
 }
+
+// TestShell_EmbeddedScopeFlags: in the embedded profile --os-region-name and
+// --os-project-id are accepted only with the scope file's own values.
+func TestShell_EmbeddedScopeFlags(t *testing.T) {
+	rc := newRegionCloud(t, "tokA")
+	clearOSEnv(t)
+	t.Setenv("OS_REGION_NAME", "R3") // the environment is not the session
+	t.Setenv("KOC_PROFILE", "embedded")
+	t.Setenv("KOC_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "scope.json")
+	t.Setenv("KOC_SCOPE_FILE", path)
+	writeScope(t, path, rc.base, "tokA", "R1", "projA", time.Now().Add(time.Hour))
+
+	var out, errOut bytes.Buffer
+	lines := "server list --os-region-name R1 --os-project-id projA\n" +
+		"server list --os-region-name R3\n" +
+		"server list --os-project-id projB\n" +
+		"server list --os-token tokB\n"
+	if err := shell.Run(context.Background(), shellConfig("test"), strings.NewReader(lines), &out, &errOut, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, hits := rc.take(); strings.Join(hits, ",") != "R1" {
+		t.Errorf("regions reached: %v, want only the matching line's R1", hits)
+	}
+	for _, want := range []string{
+		"--os-region-name R3 is not this session's region; switch region in the console",
+		"--os-project-id projB is not this session's project",
+		"--os-token is not available in the console terminal",
+	} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr lacks %q:\n%s", want, errOut.String())
+		}
+	}
+}
