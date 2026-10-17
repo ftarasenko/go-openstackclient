@@ -172,6 +172,9 @@ type runner struct {
 
 	// stopWinch unsubscribes from window-resize notifications.
 	stopWinch func()
+	// stopKeys stops the keyboard reader and waits for it to exit, so it
+	// cannot take keystrokes meant for whatever runs after the watch.
+	stopKeys func()
 }
 
 // Run drives render on a ticker until ctx ends, the refresh count is reached, a
@@ -222,7 +225,7 @@ func Run(ctx context.Context, o Options, out, errOut io.Writer, render Renderer)
 // has already supplied either.
 func (r *runner) attachInputs() {
 	if r.o.Keys && r.o.keys == nil {
-		r.o.keys = readKeys(os.Stdin)
+		r.o.keys, r.stopKeys = stdinKeys(os.Stdin)
 	}
 	if !r.o.Plain && r.o.winch == nil {
 		r.o.winch, r.stopWinch = winchSignals()
@@ -232,6 +235,9 @@ func (r *runner) attachInputs() {
 func (r *runner) detachInputs() {
 	if r.stopWinch != nil {
 		r.stopWinch()
+	}
+	if r.stopKeys != nil {
+		r.stopKeys()
 	}
 }
 
