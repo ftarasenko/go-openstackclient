@@ -42,6 +42,9 @@ type RefusedError struct {
 
 func (e *RefusedError) Error() string { return e.Msg }
 
+// RefusalReason is the reason the shell's audit event records.
+func (e *RefusedError) RefusalReason() string { return e.Reason }
+
 // commandRefusal refuses a command and everything under it.
 type commandRefusal struct {
 	path   string // without the leading "koc "

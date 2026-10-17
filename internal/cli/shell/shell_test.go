@@ -48,11 +48,15 @@ func (k *fakeKoc) config() Config {
 			k.calls = append(k.calls, args)
 			fn := k.behave[args[0]]
 			k.mu.Unlock()
+			cmd := root
+			if c, _, err := root.Find(args); err == nil {
+				cmd = c
+			}
 			if fn == nil {
 				_, _ = io.WriteString(root.OutOrStdout(), "ran "+strings.Join(args, " ")+"\n")
-				return root, nil
+				return cmd, nil
 			}
-			return root, fn(ctx, args, root.OutOrStdout())
+			return cmd, fn(ctx, args, root.OutOrStdout())
 		},
 		ExitStatus: func(_ *cobra.Command, err error) (int, string) {
 			var f failure
