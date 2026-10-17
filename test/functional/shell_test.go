@@ -103,4 +103,29 @@ func TestShellScopeFile(t *testing.T) {
 	if strings.Contains(res.stdout+res.stderr, str(tok["id"])) {
 		t.Error("the session printed the scope file's token")
 	}
+
+	// The same session under the embedded profile: the token still works,
+	// a local file and a credential flag are refused, and every line is an
+	// audit event.
+	audit := filepath.Join(t.TempDir(), "audit.jsonl")
+	emb := r.with("KOC_PROFILE=embedded", "KOC_AUDIT_FILE="+audit)
+	res = emb.withStdin("token issue -f json\nimage save cirros\nserver list --os-password x\n").run(t, "shell")
+	if res.code != 0 {
+		t.Fatalf("koc shell (embedded): exit %d\nstderr: %s", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stdout, str(tok["project_id"])) {
+		t.Errorf("token issue under the embedded profile:\n%s\n%s", res.stdout, res.stderr)
+	}
+	for _, want := range []string{"files stay inside the session", "you act as yourself"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, res.stderr)
+		}
+	}
+	raw, err = os.ReadFile(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(raw), "\n"); n != 3 || strings.Contains(string(raw), `"x"`) {
+		t.Errorf("audit log (%d events):\n%s", n, raw)
+	}
 }
