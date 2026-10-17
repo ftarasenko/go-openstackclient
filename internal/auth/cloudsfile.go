@@ -330,7 +330,7 @@ func (cf *cloudsFile) parseOptions(name string) ([]clouds.ParseOption, func(), e
 		// clouds.yaml; upstream does not, unless that directory is on the
 		// search list, in which case findCloudsFile already found it.
 		opts = append(opts, clouds.WithSecureYAML(strings.NewReader("{}")))
-		return opts, func() {}, nil
+		return opts, func() { /* nothing opened */ }, nil
 	}
 	f, err := kochome.Open(cf.securePath)
 	if err != nil {

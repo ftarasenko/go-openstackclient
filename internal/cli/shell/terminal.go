@@ -137,7 +137,7 @@ func (c *plainConsole) readLine(string) (string, error) {
 	return "", io.EOF
 }
 
-func (c *plainConsole) writeAbovePrompt(string) {}
+func (c *plainConsole) writeAbovePrompt(string) { /* no prompt line to redraw around */ }
 func (c *plainConsole) width() int              { return defaultWidth }
 
 // History is kept in memory only, unless KOC_HISTORY_FILE names a file: then

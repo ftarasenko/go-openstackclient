@@ -27,6 +27,7 @@ func stdinKeys(f *os.File) (<-chan keyCode, func()) {
 		_ = stopW.Close()
 		// Drain until the reader has returned and closed the channel.
 		for range ch {
+			// discard: only the close matters
 		}
 		_ = stopR.Close()
 	}
