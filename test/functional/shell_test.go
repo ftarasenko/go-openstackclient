@@ -4,8 +4,11 @@ package functional
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // `koc shell` with its lines piped in, as a script would run it: every line
@@ -51,5 +54,53 @@ func TestShell(t *testing.T) {
 	}
 	if dec.More() {
 		t.Errorf("output after exit:\n%s", res.stdout)
+	}
+}
+
+// TestShellScopeFile: the embedding host's path — no credentials in the
+// environment at all, only a scope file holding a token koc issued itself —
+// against a real Keystone. Each line re-authenticates with the token, scoped
+// to the file's project.
+func TestShellScopeFile(t *testing.T) {
+	c := ft(t)
+	var tok map[string]any
+	defaultRunner(c).json(t, &tok, "token", "issue")
+	expires, err := time.Parse(time.RFC3339, str(tok["expires"]))
+	if err != nil {
+		t.Fatalf("token issue: expires %q: %v", tok["expires"], err)
+	}
+	scope := map[string]any{
+		"auth_url":   openrcValue(c, "OS_AUTH_URL"),
+		"token":      str(tok["id"]),
+		"region":     openrcValue(c, "OS_REGION_NAME"),
+		"project_id": str(tok["project_id"]),
+		"expires_at": expires.UTC().Format(time.RFC3339),
+	}
+	if ca := openrcValue(c, "OS_CACERT"); ca != "" {
+		scope["cacert"] = ca
+	}
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scope.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runner{env: append(baseEnv(), "KOC_SCOPE_FILE="+path, "KOC_HOME="+t.TempDir())}
+	res := r.withStdin("token issue -f json\nscope\n").run(t, "shell")
+	if res.code != 0 {
+		t.Fatalf("koc shell: exit %d\nstderr: %s", res.code, res.stderr)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(strings.NewReader(res.stdout)).Decode(&got); err != nil {
+		t.Fatalf("token issue: %v\n%s", err, res.stdout)
+	}
+	if str(got["project_id"]) != str(tok["project_id"]) || str(got["user_id"]) != str(tok["user_id"]) {
+		t.Errorf("scoped to %v/%v, want %v/%v", got["project_id"], got["user_id"], tok["project_id"], tok["user_id"])
+	}
+	if strings.Contains(res.stdout+res.stderr, str(tok["id"])) {
+		t.Error("the session printed the scope file's token")
 	}
 }

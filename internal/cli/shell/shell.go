@@ -98,6 +98,10 @@ type Shell struct {
 	interrupts <-chan os.Signal
 	// envScope is the scope the OS_* environment describes, read once.
 	envScope scopeInfo
+	// scopeFile is KOC_SCOPE_FILE, re-read before every line; nil without it.
+	scopeFile *scopeFile
+	// now is the clock, seamed for the expiry tests.
+	now func() time.Time
 	// sigterm records a SIGTERM; the shell ends once the current line is done.
 	sigterm atomic.Bool
 }
@@ -128,7 +132,7 @@ func Run(ctx context.Context, cfg Config, in io.Reader, out, errOut io.Writer, o
 }
 
 func newShell(cfg Config, con console, out, errOut io.Writer) *Shell {
-	s := &Shell{cfg: cfg, con: con, out: out, errOut: errOut, envScope: envScope()}
+	s := &Shell{cfg: cfg, con: con, out: out, errOut: errOut, envScope: envScope(), scopeFile: newScopeFile(), now: time.Now}
 	hist, err := openHistory(func(l string) string { return redactLine(cfg.NewRoot, l) })
 	if err != nil {
 		s.warnf("history: %v; keeping it in memory only", err)
@@ -146,6 +150,7 @@ func (s *Shell) loop(ctx context.Context) error {
 	defer s.hist.close()
 	for {
 		s.width = s.con.width()
+		s.refreshScope()
 		line, err := s.con.readLine(s.prompt())
 		if errors.Is(err, io.EOF) {
 			if _, ok := s.con.(*termConsole); ok {
@@ -222,7 +227,8 @@ func (s *Shell) builtin(ctx context.Context, args []string) (done, exit bool) {
 		s.status = 0
 		return true, false
 	case "help":
-		s.status = s.exec(ctx, args)
+		// Help needs no credentials, so an expired scope does not block it.
+		s.status = s.run(ctx, args)
 		return true, false
 	case "shell":
 		s.status = 2
@@ -232,8 +238,35 @@ func (s *Shell) builtin(ctx context.Context, args []string) (done, exit bool) {
 	return false, false
 }
 
-// exec runs one koc command, with Ctrl-C cancelling only it.
+// refreshScope re-reads the scope file and announces a change of scope.
+func (s *Shell) refreshScope() {
+	if s.scopeFile == nil {
+		return
+	}
+	if s.scopeFile.refresh() {
+		p := s.scope().prompt()
+		inner := p.project
+		if p.region != "" {
+			inner = p.region + " · " + p.project
+		}
+		s.println("scope: " + inner)
+	}
+}
+
+// exec runs one koc command in the current scope.
 func (s *Shell) exec(ctx context.Context, args []string) int {
+	// The host may have rotated the token or switched the scope while the
+	// line was being typed.
+	s.refreshScope()
+	if _, err := s.scopeFile.checkLine(s.now()); err != nil {
+		s.errorf("%v", err)
+		return 1
+	}
+	return s.run(ctx, args)
+}
+
+// run executes one koc command, with Ctrl-C cancelling only it.
+func (s *Shell) run(ctx context.Context, args []string) int {
 	lineCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan struct{})
@@ -261,6 +294,11 @@ func (s *Shell) exec(ctx context.Context, args []string) int {
 func (s *Shell) prepare(root *cobra.Command, _ []string) {
 	root.SetOut(s.out)
 	root.SetErr(s.errOut)
+	if s.scopeFile != nil {
+		s.scopeFile.apply(root)
+	} else {
+		setSession(root, s.envScope.region, s.envScope.projectID)
+	}
 	for _, kv := range s.outer {
 		_ = root.PersistentFlags().Set(kv[0], kv[1])
 	}
@@ -271,7 +309,12 @@ func (s *Shell) prompt() string {
 }
 
 // scope is the scope the next line runs in.
-func (s *Shell) scope() scopeInfo { return s.envScope }
+func (s *Shell) scope() scopeInfo {
+	if s.scopeFile != nil {
+		return s.scopeFile.info()
+	}
+	return s.envScope
+}
 
 // scopeInfo is what the shell knows of the scope commands run in.
 type scopeInfo struct {
