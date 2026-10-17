@@ -78,7 +78,7 @@ type Resolver struct {
 
 // ImageID resolves a glance image name (or ID) to an image ID.
 func (r Resolver) ImageID(ctx context.Context, imageClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, imageClient, "image", "", ref, func(ctx context.Context) ([]images.Image, error) {
+	return byName(ctx, r.Cache, lookup{imageClient, "image", "", ref}, func(ctx context.Context) ([]images.Image, error) {
 		pages, err := images.List(imageClient, images.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -89,7 +89,7 @@ func (r Resolver) ImageID(ctx context.Context, imageClient *gophercloud.ServiceC
 
 // NetworkID resolves a neutron network name (or ID) to a network ID.
 func (r Resolver) NetworkID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, networkClient, "network", "", ref, func(ctx context.Context) ([]networks.Network, error) {
+	return byName(ctx, r.Cache, lookup{networkClient, "network", "", ref}, func(ctx context.Context) ([]networks.Network, error) {
 		pages, err := networks.List(networkClient, networks.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -100,7 +100,7 @@ func (r Resolver) NetworkID(ctx context.Context, networkClient *gophercloud.Serv
 
 // SubnetID resolves a neutron subnet name (or ID) to a subnet ID.
 func (r Resolver) SubnetID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, networkClient, "subnet", "", ref, func(ctx context.Context) ([]subnets.Subnet, error) {
+	return byName(ctx, r.Cache, lookup{networkClient, "subnet", "", ref}, func(ctx context.Context) ([]subnets.Subnet, error) {
 		pages, err := subnets.List(networkClient, subnets.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -111,7 +111,7 @@ func (r Resolver) SubnetID(ctx context.Context, networkClient *gophercloud.Servi
 
 // PortID resolves a neutron port name (or ID) to a port ID.
 func (r Resolver) PortID(ctx context.Context, networkClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, networkClient, "port", "", ref, func(ctx context.Context) ([]ports.Port, error) {
+	return byName(ctx, r.Cache, lookup{networkClient, "port", "", ref}, func(ctx context.Context) ([]ports.Port, error) {
 		pages, err := ports.List(networkClient, ports.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -122,7 +122,7 @@ func (r Resolver) PortID(ctx context.Context, networkClient *gophercloud.Service
 
 // VolumeID resolves a cinder volume name (or ID) to a volume ID.
 func (r Resolver) VolumeID(ctx context.Context, volumeClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, volumeClient, "volume", "", ref, func(ctx context.Context) ([]volumes.Volume, error) {
+	return byName(ctx, r.Cache, lookup{volumeClient, "volume", "", ref}, func(ctx context.Context) ([]volumes.Volume, error) {
 		pages, err := volumes.List(volumeClient, volumes.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -138,7 +138,7 @@ func (r Resolver) VolumeID(ctx context.Context, volumeClient *gophercloud.Servic
 // AllTenants lets an admin token resolve another project's server; nova
 // ignores it for other tokens, so it widens no one's visibility.
 func (r Resolver) ServerID(ctx context.Context, computeClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, computeClient, "server", "", ref, func(ctx context.Context) ([]servers.Server, error) {
+	return byName(ctx, r.Cache, lookup{computeClient, "server", "", ref}, func(ctx context.Context) ([]servers.Server, error) {
 		// The non-detail listing carries the ID and name this needs; the detail
 		// view would ship every attribute of every regex match.
 		pages, err := servers.ListSimple(computeClient, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
@@ -183,7 +183,7 @@ func (r Resolver) ProjectIDInDomain(ctx context.Context, identityClient *gopherc
 // domain's ID is "default", its name "Default". An empty domainID is
 // ProjectID.
 func (r Resolver) ProjectIDInDomainID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref, domainID string) (string, error) {
-	return byName(ctx, r.Cache, identityClient, "project", domainID, ref, func(ctx context.Context) ([]projects.Project, error) {
+	return byName(ctx, r.Cache, lookup{identityClient, "project", domainID, ref}, func(ctx context.Context) ([]projects.Project, error) {
 		pages, err := projects.List(identityClient, projects.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -194,7 +194,7 @@ func (r Resolver) ProjectIDInDomainID(ctx context.Context, identityClient *gophe
 
 // DomainID resolves a keystone domain name (or ID) to a domain ID.
 func (r Resolver) DomainID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref string) (string, error) {
-	return byName(ctx, r.Cache, identityClient, "domain", "", ref, func(ctx context.Context) ([]domains.Domain, error) {
+	return byName(ctx, r.Cache, lookup{identityClient, "domain", "", ref}, func(ctx context.Context) ([]domains.Domain, error) {
 		pages, err := domains.List(identityClient, domains.ListOpts{Name: ref}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -224,7 +224,7 @@ func (r Resolver) UserIDInDomain(ctx context.Context, identityClient *gopherclou
 // UserIDInDomainID is UserIDInDomain for a domain already known by ID. An
 // empty domainID is UserID.
 func (r Resolver) UserIDInDomainID(ctx context.Context, identityClient *gophercloud.ServiceClient, ref, domainID string) (string, error) {
-	return byName(ctx, r.Cache, identityClient, "user", domainID, ref, func(ctx context.Context) ([]users.User, error) {
+	return byName(ctx, r.Cache, lookup{identityClient, "user", domainID, ref}, func(ctx context.Context) ([]users.User, error) {
 		pages, err := users.List(identityClient, users.ListOpts{Name: ref, DomainID: domainID}).AllPages(ctx)
 		if err != nil {
 			return nil, err
@@ -233,18 +233,26 @@ func (r Resolver) UserIDInDomainID(ctx context.Context, identityClient *gophercl
 	}, func(u users.User) string { return u.ID })
 }
 
+// lookup names one resolution: the client it runs against, the resource kind,
+// the scope (a domain ID, or empty) and the operator's reference.
+type lookup struct {
+	client           *gophercloud.ServiceClient
+	kind, scope, ref string
+}
+
 // byName is the shared engine: an empty ref or a UUID short-circuits without
 // an API call; otherwise fetch runs a name-filtered list, and exactly one
 // result is the answer (and is cached).
-func byName[T any](ctx context.Context, cache *Cache, client *gophercloud.ServiceClient, kind, scope, ref string,
+func byName[T any](ctx context.Context, cache *Cache, l lookup,
 	fetch func(context.Context) ([]T, error), idOf func(T) string,
 ) (string, error) {
+	kind, ref := l.kind, l.ref
 	if ref == "" || IsUUID(ref) {
 		return ref, nil
 	}
 	var key cacheKey
 	if cache != nil {
-		key = newCacheKey(client, kind, scope, ref)
+		key = newCacheKey(l.client, kind, l.scope, ref)
 		if id, ok := cache.get(key); ok {
 			return id, nil
 		}
