@@ -1,5 +1,5 @@
 // Package paging collects paginated gophercloud results, stopping as soon as a
-// --limit has been satisfied.
+// result cap has been satisfied.
 package paging
 
 import (
@@ -15,7 +15,7 @@ import (
 // so the obvious AllPages-then-truncate spelling walks the whole collection no
 // matter how small the cap: "server list --limit 1" issued 35 requests against
 // a 34-server project to render one row. Stopping as soon as the cap is met
-// bounds the request count by --limit instead of by collection size.
+// bounds the request count by the cap instead of by collection size.
 //
 // Only use this where the cap applies to what the API returned. A command that
 // filters or de-duplicates client-side between extraction and truncation must

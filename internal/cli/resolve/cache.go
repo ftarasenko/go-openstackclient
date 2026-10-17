@@ -1,9 +1,10 @@
 package resolve
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // A resolver turns a name into an ID with an API call, and every command that
@@ -16,6 +17,11 @@ import (
 // So a successful resolution is memoized for the life of the process, with a
 // short expiry — but only once something has said it will resolve the same name
 // repeatedly. Enable is what says so, and only the --watch wiring calls it.
+//
+// The memo itself is the public API's resolve.Cache, which keys every entry by
+// the endpoint and token project as well as the name: the process holds one,
+// and this package is its only owner. The public package keeps no state of
+// its own — a long-running importer creates its own Cache per need.
 //
 // The gate is not timidity. A one-shot invocation resolves each name exactly
 // once, so a cache buys it nothing, and leaving the memo permanently on would
@@ -31,28 +37,10 @@ import (
 // rename is picked up while the operator is still looking at the screen.
 const cacheTTL = 5 * time.Minute
 
-// cacheKey identifies one resolution. scope is what distinguishes two lookups
-// of the same kind and name that do not have the same answer: the domain in
-// ProjectIDInDomain / UserIDInDomain. Without it, `--project payments
-// --project-domain a` and `--project payments --project-domain b` would share
-// an entry and one of them would get the other's ID.
-type cacheKey struct {
-	kind  string
-	scope string
-	ref   string
-}
-
-type cacheEntry struct {
-	id string
-	at time.Time
-}
-
 var (
-	cacheMu sync.RWMutex
-	cache   = map[cacheKey]cacheEntry{}
-	// cacheOn gates the memo. Atomic because it is read from the resolvers,
-	// which a fanned-out command may reach from several goroutines.
-	cacheOn atomic.Bool
+	// memo is the process's cache, nil until Enable. Atomic because the
+	// resolvers may be reached from several goroutines of a fanned-out command.
+	memo atomic.Pointer[resolve.Cache]
 	// cacheNow is the clock, seamed for the expiry test.
 	cacheNow = time.Now
 )
@@ -60,44 +48,14 @@ var (
 // Enable turns the memo on for the rest of the process. It is idempotent, and
 // there is deliberately no way to turn it off again: the only caller is the
 // --watch wiring, and a watch runs until the process ends.
-func Enable() { cacheOn.Store(true) }
-
-// cacheGet returns a memoized ID that has not yet expired.
-func cacheGet(k cacheKey) (string, bool) {
-	if !cacheOn.Load() {
-		return "", false
-	}
-	cacheMu.RLock()
-	e, ok := cache[k]
-	cacheMu.RUnlock()
-	if !ok || cacheNow().Sub(e.at) >= cacheTTL {
-		return "", false
-	}
-	return e.id, true
+func Enable() {
+	memo.CompareAndSwap(nil, resolve.NewCache(cacheTTL, resolve.WithClock(func() time.Time { return cacheNow() })))
 }
 
-// cachePut memoizes a resolution.
-//
-// Only a real match is ever stored. The zero-match case falls back to treating
-// the reference as an opaque ID (see pick), and caching that would break the
-// one thing a watch is for: `server list --project payments --watch` started
-// before the project exists must start working when it does, not stay wrong for
-// five minutes.
-func cachePut(k cacheKey, id string) {
-	if !cacheOn.Load() {
-		return
-	}
-	cacheMu.Lock()
-	cache[k] = cacheEntry{id: id, at: cacheNow()}
-	cacheMu.Unlock()
-}
+// resolver is the public Resolver with the process's memo, if enabled.
+func resolver() resolve.Resolver { return resolve.Resolver{Cache: memo.Load()} }
 
 // ResetCacheForTest empties the memo and turns it off again. Test-only; the
 // cache is process-global, so without it one test's resolutions would leak into
 // the next.
-func ResetCacheForTest() {
-	cacheMu.Lock()
-	cache = map[cacheKey]cacheEntry{}
-	cacheMu.Unlock()
-	cacheOn.Store(false)
-}
+func ResetCacheForTest() { memo.Store(nil) }

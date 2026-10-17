@@ -17,9 +17,9 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 )
 
 // NewCommand builds the "volume" command group and returns it as a slice so the

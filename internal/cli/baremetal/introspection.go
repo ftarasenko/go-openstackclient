@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 )
 
 // newIntrospectionClient derives the ironic-inspector client. The inspector is a

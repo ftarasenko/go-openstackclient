@@ -14,8 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 )
 
 // glance tasks (the async import/export jobs), the staging upload, and the

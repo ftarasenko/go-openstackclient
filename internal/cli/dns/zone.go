@@ -13,8 +13,8 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/paging"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 )
 
 // newZoneCommand builds "dns zone ..." (exposed as the top-level "zone" noun).
