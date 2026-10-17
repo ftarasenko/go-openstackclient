@@ -25,7 +25,7 @@ PREV="$(git tag --sort=v:refname | awk -v t="$TAG" '$0==t{exit} {print}' | tail 
 if [ -n "$PREV" ]; then REV="${PREV}...${END}"; else REV="$END"; fi
 
 # Collect one bullet per commit into its type's bucket.
-feat=(); fix=(); perf=(); refactor=(); docs=(); tests=(); tooling=(); other=(); breaking=()
+feat=(); fix=(); perf=(); refactor=(); docs=(); tests=(); tooling=(); other=(); breaking=(); deprecated=()
 
 # Iterated by hash rather than by subject line so the commit BODY is available:
 # Conventional Commits 1.0.0 marks a breaking change with "!" after the
@@ -44,7 +44,14 @@ while IFS= read -r sha; do
   else
     type="_"; scope=""; bang=""; desc="$subject"
   fi
-  if [ -n "$scope" ]; then bullet="- **${scope}:** ${desc}"; else bullet="- ${desc}"; fi
+  if [ -n "$scope" ]; then prefix="- **${scope}:** "; else prefix="- "; fi
+  bullet="${prefix}${desc}"
+  # A "Deprecated: <identifier> …" footer (the public Go API's deprecation
+  # policy, pkg/openstack/doc.go) adds a bullet under its own heading; the
+  # commit is still listed under its type. One footer per identifier.
+  while IFS= read -r note; do
+    [ -n "$note" ] && deprecated+=("${prefix}${note}")
+  done < <(printf '%s\n' "$body" | sed -n 's/^Deprecated:[[:space:]]*//p')
   # A breaking change is listed once, under its own heading, keeping its scope.
   # Listing it again under "Bug fixes"/"Features" reads as a duplicated bullet
   # and buries the one line a consumer most needs to see.
@@ -77,6 +84,7 @@ emit() { # heading, array-name
   # ${arr[@]+"${arr[@]}"} expands to nothing when the array is empty, instead of
   # tripping "unbound variable" under `set -u` on bash 3.2 (macOS default).
   emit "### ⚠️ Breaking changes" ${breaking[@]+"${breaking[@]}"}
+  emit "### Deprecations" ${deprecated[@]+"${deprecated[@]}"}
   emit "### Features" ${feat[@]+"${feat[@]}"}
   emit "### Bug fixes" ${fix[@]+"${fix[@]}"}
   emit "### Performance" ${perf[@]+"${perf[@]}"}

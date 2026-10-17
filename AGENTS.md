@@ -711,11 +711,18 @@ to `master`, so it would yield only a compare link. Commit-type → heading:
 | `test`                 | `### Tests`                |
 | `build`/`ci`/`chore`   | `### Build & tooling`      |
 | (unrecognized)         | `### Other`                |
+| `Deprecated:` footer   | `### Deprecations` (too)   |
 
 **The quality of the notes is the quality of the subject lines** — each commit's
 `<description>` becomes one bullet verbatim (its scope is bolded). So keep
 commits focused and their subjects self-describing; a single mega-commit yields a
 single vague bullet.
+
+A `Deprecated: <identifier> …` footer — what the public Go API's deprecation
+policy asks of the commit that deprecates an exported identifier (see "Public
+Go API") — adds a bullet under `### Deprecations`, right after the breaking
+changes; the commit itself is still listed under its type. Use one footer per
+identifier.
 
 A breaking change is listed **once**, under `### ⚠️ Breaking changes`, and not
 again under its own type — the heading is the one line a consumer must not miss,
