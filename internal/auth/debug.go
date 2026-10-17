@@ -267,9 +267,11 @@ type timingTransport struct {
 }
 
 // activeTiming is the transport --timing installed for this invocation, so main
-// can print the summary once the command has finished. koc authenticates at most
-// once per process, so a single handle is enough; it stays nil when --timing was
-// not given, which is what makes ReportTiming a no-op then.
+// can print the summary once the command has finished. An invocation
+// authenticates at most once, so a single handle is enough; it stays nil when
+// --timing was not given, which is what makes ReportTiming a no-op then.
+// ReportTiming takes it back, so a `koc shell` line without --timing does not
+// repeat the previous line's summary.
 var activeTiming atomic.Pointer[timingTransport]
 
 func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
@@ -288,7 +290,7 @@ func newTimingTransport(rt http.RoundTripper, w io.Writer) *timingTransport {
 // nothing when --timing was not given. Call it once the command has run,
 // including when it failed: a slow call is often exactly why it failed.
 func ReportTiming() {
-	if t := activeTiming.Load(); t != nil {
+	if t := activeTiming.Swap(nil); t != nil {
 		t.report()
 	}
 }
