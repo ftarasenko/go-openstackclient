@@ -266,7 +266,7 @@ func runDeployTemplateSet(ctx context.Context, client *gophercloud.ServiceClient
 		}
 		ops.add("/steps", steps)
 	}
-	if err := ops.addKV("/extra", "extra", f.extra); err != nil {
+	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	if len(ops) == 0 {
@@ -315,7 +315,7 @@ func runDeployTemplateUnset(ctx context.Context, client *gophercloud.ServiceClie
 		return err
 	}
 	var ops patchBuilder
-	ops.removeKeys("/extra", extra)
+	ops.removeKeys(pathExtra, extra)
 	if len(ops) == 0 {
 		return fmt.Errorf("deploy template unset requires at least one attribute flag")
 	}

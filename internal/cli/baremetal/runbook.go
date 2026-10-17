@@ -159,13 +159,13 @@ func (f *runbookFlags) register(cmd *cobra.Command, verb string) {
 	fl.StringVar(&f.steps, "steps", "",
 		"the runbook steps: a JSON or YAML string, a path to a JSON or YAML file, or '-' to read standard input")
 	fl.StringArrayVar(&f.extra, "extra", nil, verb+" arbitrary metadata key=value (repeatable)")
-	fl.BoolVar(&f.disableRamdisk, "disable-ramdisk", false,
+	fl.BoolVar(&f.disableRamdisk, flagDisableRamdisk, false,
 		"do not boot ironic-python-agent when this runbook runs; only steps marked as not requiring it can run")
 }
 
 func (f *runbookFlags) changed(cmd *cobra.Command) {
 	f.publicSet = cmd.Flags().Changed("public")
-	f.ramdiskSet = cmd.Flags().Changed("disable-ramdisk")
+	f.ramdiskSet = cmd.Flags().Changed(flagDisableRamdisk)
 }
 
 // explain names the microversion a rejected request needed.
@@ -272,7 +272,7 @@ func runRunbookSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		}
 		ops.add("/steps", steps)
 	}
-	if err := ops.addKV("/extra", "extra", f.extra); err != nil {
+	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	if f.ramdiskSet {
@@ -309,7 +309,7 @@ func newRunbookUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.BoolVar(&f.description, "description", false, "unset the description of the runbook (requires ironic API 1.112)")
 	fl.BoolVar(&f.public, "public", false, "make a public runbook private")
 	fl.BoolVar(&f.owner, "owner", false, "unset the owner of the runbook")
-	fl.BoolVar(&f.disableRamdisk, "disable-ramdisk", false, "unset disable_ramdisk of the runbook")
+	fl.BoolVar(&f.disableRamdisk, flagDisableRamdisk, false, "unset disable_ramdisk of the runbook")
 	fl.StringArrayVar(&f.extra, "extra", nil, "extra key to unset (repeatable)")
 	return cmd
 }
@@ -333,7 +333,7 @@ func runRunbookUnset(ctx context.Context, client *gophercloud.ServiceClient, o *
 			ops.remove(u.path)
 		}
 	}
-	ops.removeKeys("/extra", f.extra)
+	ops.removeKeys(pathExtra, f.extra)
 	if len(ops) == 0 {
 		return fmt.Errorf("runbook unset requires at least one attribute flag")
 	}

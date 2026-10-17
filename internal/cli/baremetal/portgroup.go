@@ -237,7 +237,7 @@ func (f *portGroupAttrFlags) register(cmd *cobra.Command, verb string) {
 	fl.StringVar(&f.address, "address", "", "MAC address for this port group")
 	fl.StringVar(&f.name, "name", "", "name of the port group")
 	fl.StringVar(&f.mode, "mode", "", "bonding mode, e.g. 802.3ad, balance-rr, active-backup")
-	fl.StringVar(&f.physicalNetwork, "physical-network", "",
+	fl.StringVar(&f.physicalNetwork, flagPhysicalNetwork, "",
 		"physical network of the port group's ports (requires ironic API 1.102, OpenStack 2026.1)")
 	fl.StringVar(&f.category, "category", "", "category of the port group (requires ironic API 1.103, OpenStack 2026.1)")
 	fl.StringArrayVar(&f.extra, "extra", nil, verb+" arbitrary metadata key=value (repeatable)")
@@ -386,7 +386,7 @@ func runPortGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if f.standalone || f.noStandalone {
 		ops.replace("/standalone_ports_supported", f.standalone)
 	}
-	if err := ops.addKV("/extra", "extra", f.extra); err != nil {
+	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	if err := ops.addKV("/properties", "property", f.properties); err != nil {
@@ -429,7 +429,7 @@ func newPortGroupUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command
 	fl := cmd.Flags()
 	fl.BoolVar(&f.name, "name", false, "unset the name of the port group")
 	fl.BoolVar(&f.address, "address", false, "unset the address of the port group")
-	fl.BoolVar(&f.physicalNetwork, "physical-network", false, "unset the physical network of the port group")
+	fl.BoolVar(&f.physicalNetwork, flagPhysicalNetwork, false, "unset the physical network of the port group")
 	fl.BoolVar(&f.category, "category", false, "unset the category of the port group")
 	fl.StringArrayVar(&f.extra, "extra", nil, "extra key to unset (repeatable)")
 	fl.StringArrayVar(&f.properties, "property", nil, "property key to unset (repeatable)")
@@ -451,7 +451,7 @@ func runPortGroupUnset(ctx context.Context, client *gophercloud.ServiceClient, o
 		}
 	}
 	slices.SortStableFunc(ops, func(a, b patchOp) int { return strings.Compare(a.Path, b.Path) })
-	ops.removeKeys("/extra", f.extra)
+	ops.removeKeys(pathExtra, f.extra)
 	ops.removeKeys("/properties", f.properties)
 	if len(ops) == 0 {
 		return fmt.Errorf("port group unset requires at least one attribute flag")

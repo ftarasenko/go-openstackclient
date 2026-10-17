@@ -14,6 +14,9 @@ const (
 	flagPXEEnabled          = "pxe-enabled"
 	flagNoAutomatedClean    = "no-automated-clean"
 	flagLocalLinkConnection = "local-link-connection"
+	flagPhysicalNetwork     = "physical-network"
+	flagBootIndex           = "boot-index"
+	flagDisableRamdisk      = "disable-ramdisk"
 )
 
 // Repeated cobra Use lines.
@@ -28,6 +31,8 @@ const (
 	flagInterfaceSuffix = "-interface"
 
 	pathAutomatedClean = "/automated_clean"
+	pathExtra          = "/extra"
+	keyVIFType         = "binding:vif_type"
 	releaseAntelope    = "OpenStack 2023.1"
 	releaseBobcat      = "OpenStack 2023.2"
 	releaseCaracal     = "OpenStack 2024.1"

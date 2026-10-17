@@ -317,7 +317,7 @@ func runVolumeConnectorSet(ctx context.Context, client *gophercloud.ServiceClien
 	if f.connectorID != "" {
 		ops.add("/connector_id", f.connectorID)
 	}
-	if err := ops.addKV("/extra", "extra", f.extra); err != nil {
+	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	return volumePatch(ctx, client, o, volumeConnector, id, ops, w)
@@ -336,14 +336,14 @@ func (f *volumeTargetFlags) register(cmd *cobra.Command, verb string) {
 	fl := cmd.Flags()
 	fl.StringVar(&f.node, "node", "", "node this volume target belongs to (name or UUID)")
 	fl.StringVar(&f.volumeType, "type", "", "type of the volume target, e.g. iscsi, fibre_channel")
-	fl.IntVar(&f.bootIndex, "boot-index", 0, "boot index of the volume target; 0 is the boot volume")
+	fl.IntVar(&f.bootIndex, flagBootIndex, 0, "boot index of the volume target; 0 is the boot volume")
 	fl.StringVar(&f.volumeID, "volume-id", "", "ID of the volume (cinder volume UUID)")
 	fl.StringArrayVar(&f.properties, "property", nil, verb+" a volume property key=value (repeatable)")
 	fl.StringArrayVar(&f.extra, "extra", nil, verb+" arbitrary metadata key=value (repeatable)")
 }
 
 func (f *volumeTargetFlags) changed(cmd *cobra.Command) error {
-	f.bootIndexSet = cmd.Flags().Changed("boot-index")
+	f.bootIndexSet = cmd.Flags().Changed(flagBootIndex)
 	if f.bootIndexSet && f.bootIndex < 0 {
 		return fmt.Errorf("expected non-negative --boot-index, got %d", f.bootIndex)
 	}
@@ -373,7 +373,7 @@ func newVolumeTargetCreateCommand(a *auth.Options, o *output.Options) *cobra.Com
 	}
 	f.register(cmd, "set")
 	cmd.Flags().StringVar(&f.uuid, "uuid", "", "UUID of the volume target")
-	for _, flag := range []string{"node", "type", "boot-index", "volume-id"} {
+	for _, flag := range []string{"node", "type", flagBootIndex, "volume-id"} {
 		_ = cmd.MarkFlagRequired(flag)
 	}
 	return cmd
@@ -448,7 +448,7 @@ func runVolumeTargetSet(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err := ops.addKV("/properties", "property", f.properties); err != nil {
 		return err
 	}
-	if err := ops.addKV("/extra", "extra", f.extra); err != nil {
+	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	return volumePatch(ctx, client, o, volumeTarget, id, ops, w)
@@ -489,7 +489,7 @@ func runVolumeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	r volumeResource, id string, f *volumeUnsetFlags, w io.Writer,
 ) error {
 	var ops patchBuilder
-	ops.removeKeys("/extra", f.extra)
+	ops.removeKeys(pathExtra, f.extra)
 	ops.removeKeys("/properties", f.properties)
 	return volumePatch(ctx, client, o, r, id, ops, w)
 }

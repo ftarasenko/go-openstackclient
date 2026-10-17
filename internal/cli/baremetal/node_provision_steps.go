@@ -73,7 +73,7 @@ func addStepsFlags(cmd *cobra.Command, f *stepsFlags, stepsFlag, noun string) {
 		fmt.Sprintf("the %s steps: a JSON or YAML string, a path to a JSON or YAML file, or '-' to read standard input", noun))
 	fl.StringVar(&f.runbook, "runbook", "",
 		fmt.Sprintf("identifier of a predefined runbook to use for %s (requires ironic API 1.92)", noun))
-	fl.BoolVar(&f.disableRamdisk, "disable-ramdisk", false,
+	fl.BoolVar(&f.disableRamdisk, flagDisableRamdisk, false,
 		"do not boot ironic-python-agent; only steps marked as not requiring it can run")
 	cmd.MarkFlagsMutuallyExclusive(stepsFlag, "runbook")
 	cmd.MarkFlagsOneRequired(stepsFlag, "runbook")

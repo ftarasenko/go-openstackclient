@@ -80,12 +80,12 @@ func TestRunInspectionRuleCreate_BodyFromInlineFileAndStdin(t *testing.T) {
 	}
 	o := &output.Options{Format: output.FormatValue, Columns: []string{"uuid"}}
 	var buf bytes.Buffer
-	f := &inspectionRuleAttrFlags{
+	f := &inspectionRuleCreateFlags{inspectionRuleAttrFlags: inspectionRuleAttrFlags{
 		description: "tag nvme", descriptionSet: true, priority: 10, prioritySet: true, phase: "main",
 		actions: "-", conditions: condFile,
-	}
+	}, sensitive: "true"}
 	stdin := strings.NewReader(`[{"op":"add-trait","args":{"name":"CUSTOM_NVME"}}]`)
-	if err := runInspectionRuleCreate(context.Background(), client, o, f, "", "true", stdin, &buf); err != nil {
+	if err := runInspectionRuleCreate(context.Background(), client, o, f, stdin, &buf); err != nil {
 		t.Fatal(err)
 	}
 	jsonEq(t, "create body", fake.call("POST /inspection_rules").Body, `{
@@ -100,11 +100,11 @@ func TestRunInspectionRuleCreate_BodyFromInlineFileAndStdin(t *testing.T) {
 func TestRunInspectionRuleCreate_BadJSONAndSensitive(t *testing.T) {
 	client, _ := newFakeIronic(t, nil)
 	o := &output.Options{Format: output.FormatTable}
-	err := runInspectionRuleCreate(context.Background(), client, o, &inspectionRuleAttrFlags{actions: "not json"}, "", "", nil, &bytes.Buffer{})
+	err := runInspectionRuleCreate(context.Background(), client, o, &inspectionRuleCreateFlags{inspectionRuleAttrFlags: inspectionRuleAttrFlags{actions: "not json"}}, nil, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "cannot be parsed as JSON") {
 		t.Errorf("err = %v", err)
 	}
-	err = runInspectionRuleCreate(context.Background(), client, o, &inspectionRuleAttrFlags{actions: "[]"}, "", "maybe", nil, &bytes.Buffer{})
+	err = runInspectionRuleCreate(context.Background(), client, o, &inspectionRuleCreateFlags{inspectionRuleAttrFlags: inspectionRuleAttrFlags{actions: "[]"}, sensitive: "maybe"}, nil, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "--sensitive") {
 		t.Errorf("err = %v", err)
 	}
@@ -145,7 +145,7 @@ func TestRunInspectionRuleCreate_OldCloudNamesVersion(t *testing.T) {
 	})
 	fake.max = "1.82"
 	o := &output.Options{Format: output.FormatTable}
-	err := runInspectionRuleCreate(context.Background(), client, o, &inspectionRuleAttrFlags{actions: "[]"}, "", "", nil, &bytes.Buffer{})
+	err := runInspectionRuleCreate(context.Background(), client, o, &inspectionRuleCreateFlags{inspectionRuleAttrFlags: inspectionRuleAttrFlags{actions: "[]"}}, nil, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "requires ironic API 1.96 (OpenStack 2025.1); this cloud supports up to 1.82") {
 		t.Errorf("err = %v", err)
 	}

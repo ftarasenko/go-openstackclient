@@ -175,9 +175,14 @@ func (f *inspectionRuleAttrFlags) changed(cmd *cobra.Command) {
 	f.prioritySet = cmd.Flags().Changed("priority")
 }
 
+// inspectionRuleCreateFlags adds the attributes only create takes.
+type inspectionRuleCreateFlags struct {
+	inspectionRuleAttrFlags
+	uuid, sensitive string
+}
+
 func newInspectionRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
-	f := &inspectionRuleAttrFlags{}
-	var uuid, sensitive string
+	f := &inspectionRuleCreateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create --actions <actions>",
 		Short: "Create an ironic inspection rule (requires ironic API 1.96, OpenStack 2025.1)",
@@ -192,25 +197,25 @@ func newInspectionRuleCreateCommand(a *auth.Options, o *output.Options) *cobra.C
 			if err != nil {
 				return err
 			}
-			return runInspectionRuleCreate(ctx, client, o, f, uuid, sensitive, cmd.InOrStdin(), cmd.OutOrStdout())
+			return runInspectionRuleCreate(ctx, client, o, f, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
 	f.register(cmd)
-	cmd.Flags().StringVar(&uuid, "uuid", "", "UUID of the rule")
-	cmd.Flags().StringVar(&sensitive, "sensitive", "",
+	cmd.Flags().StringVar(&f.uuid, "uuid", "", "UUID of the rule")
+	cmd.Flags().StringVar(&f.sensitive, "sensitive", "",
 		"true to hide the rule's conditions and actions from reads; it cannot be unset later")
 	_ = cmd.MarkFlagRequired("actions")
 	return cmd
 }
 
 func runInspectionRuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	f *inspectionRuleAttrFlags, uuid, sensitive string, stdin io.Reader, w io.Writer,
+	f *inspectionRuleCreateFlags, stdin io.Reader, w io.Writer,
 ) error {
 	if err := o.CheckColumns(inspectionRuleColumns...); err != nil {
 		return err
 	}
 	body := map[string]any{}
-	setIf(body, "uuid", uuid)
+	setIf(body, "uuid", f.uuid)
 	setIf(body, "phase", f.phase)
 	if f.descriptionSet {
 		body["description"] = f.description
@@ -218,10 +223,10 @@ func runInspectionRuleCreate(ctx context.Context, client *gophercloud.ServiceCli
 	if f.prioritySet {
 		body["priority"] = f.priority
 	}
-	if sensitive != "" {
-		b, err := strconv.ParseBool(sensitive)
+	if f.sensitive != "" {
+		b, err := strconv.ParseBool(f.sensitive)
 		if err != nil {
-			return fmt.Errorf("--sensitive %q: want true or false", sensitive)
+			return fmt.Errorf("--sensitive %q: want true or false", f.sensitive)
 		}
 		body["sensitive"] = b
 	}

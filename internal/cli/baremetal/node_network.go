@@ -270,7 +270,7 @@ func (nw *nodeWiring) vifCells(id string) []any {
 	td, _ := port["trunk_details"].(map[string]any)
 	return []any{
 		firstNonEmpty(str(net, "name"), str(port, "network_id")), net["provider:segmentation_id"],
-		port["status"], port["binding:vif_type"], boundDrivers(port), str(td, "trunk_id"),
+		port["status"], port[keyVIFType], boundDrivers(port), str(td, "trunk_id"),
 	}
 }
 
@@ -286,7 +286,7 @@ func (nw *nodeWiring) subportRows(parentVIF string) [][]any {
 		rows = append(rows, []any{
 			"subport", "", str(sub, "name"), str(sub, "mac_address"), nil, "", "", "", "",
 			id, firstNonEmpty(str(net, "name"), str(sub, "network_id")), sp["segmentation_id"],
-			sub["status"], sub["binding:vif_type"], boundDrivers(sub), str(trunk, "id"),
+			sub["status"], sub[keyVIFType], boundDrivers(sub), str(trunk, "id"),
 		})
 	}
 	return rows
@@ -357,7 +357,7 @@ func (nw *nodeWiring) check() []string {
 				"or not visible to this token (neutron shows a system-scoped token no project's ports)", vif, what))
 			continue
 		}
-		switch vt := str(port, "binding:vif_type"); vt {
+		switch vt := str(port, keyVIFType); vt {
 		case "binding_failed", "unbound":
 			warns = append(warns, fmt.Sprintf("VIF %s on %s: binding:vif_type is %s", vif, what, vt))
 		}
