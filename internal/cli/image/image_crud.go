@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // imageColumns are the fields of a single image.
@@ -53,15 +54,6 @@ type imageListFlags struct {
 	all          bool
 }
 
-// imageVisibilityAll is glance's fifth visibility *filter* value: it disables the
-// visibility restriction the API otherwise applies, so the list spans public,
-// private, shared and community images at once. gophercloud has no constant for
-// it because it is a query value only and never an image's own visibility
-// (`glance/api/v2/images.py _get_filters` accepts it; `db/sqlalchemy/api.py`
-// skips the filter when it is set), which is also why `--all` is not simply the
-// default: without it glance hides other projects' community images.
-const imageVisibilityAll images.ImageVisibility = "all"
-
 func (f *imageListFlags) visibility() images.ImageVisibility {
 	switch {
 	case f.public:
@@ -73,7 +65,9 @@ func (f *imageListFlags) visibility() images.ImageVisibility {
 	case f.community:
 		return images.ImageVisibilityCommunity
 	case f.all:
-		return imageVisibilityAll
+		// Not simply the default: without it glance hides other projects'
+		// community images (`glance/api/v2/images.py _get_filters`).
+		return imageapi.VisibilityAll
 	default:
 		return ""
 	}
@@ -122,13 +116,9 @@ func runImageList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		Name:       f.name,
 		Visibility: f.visibility(),
 	}
-	pages, err := images.List(client, opts).AllPages(ctx)
+	all, err := imageapi.ListImages(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing images: %w", err)
-	}
-	all, err := images.ExtractImages(pages)
-	if err != nil {
-		return fmt.Errorf("parsing image list: %w", err)
+		return err
 	}
 	return o.WriteList(w, imageListTable(filterImagesByNameSubstring(all, f.nameContains), f.long))
 }
@@ -212,9 +202,9 @@ func newImageShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runImageShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	img, err := images.Get(ctx, client, id).Extract()
+	img, err := imageapi.GetImage(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting image %s: %w", id, err)
+		return err
 	}
 	fields, values := imageShowFields(img)
 	return o.WriteSingle(w, fields, values)
@@ -249,8 +239,8 @@ func runImageDelete(ctx context.Context, client *gophercloud.ServiceClient, refs
 		if err != nil {
 			return err
 		}
-		if err := images.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting image %s: %w", ref, err)
+		if err := imageapi.DeleteImage(ctx, client, id); err != nil {
+			return relabel(err, "deleting image %s", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted image %s\n", ref); err != nil {
 			return err

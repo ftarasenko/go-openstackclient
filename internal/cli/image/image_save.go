@@ -7,11 +7,11 @@ import (
 	"os"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // imageSaveFlags holds the options accepted by "image save".
@@ -50,9 +50,9 @@ func newImageSaveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // runImageSave downloads the image data and streams it to --file or, when unset,
 // to w (stdout). w is the seam for testability.
 func runImageSave(ctx context.Context, client *gophercloud.ServiceClient, id string, f *imageSaveFlags, w io.Writer) (err error) {
-	body, err := imagedata.Download(ctx, client, id).Extract()
+	body, err := imageapi.DownloadImage(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("downloading image %s: %w", id, err)
+		return err
 	}
 	defer func() { _ = body.Close() }()
 

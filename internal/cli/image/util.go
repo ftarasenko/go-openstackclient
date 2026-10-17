@@ -2,13 +2,14 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may
@@ -51,13 +52,9 @@ func resolveImageID(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	if resolve.IsUUID(ref) {
 		return ref, nil
 	}
-	pages, err := images.List(client, images.ListOpts{Name: ref}).AllPages(ctx)
+	all, err := imageapi.FindByName(ctx, client, ref)
 	if err != nil {
-		return "", fmt.Errorf("listing images named %q: %w", ref, err)
-	}
-	all, err := images.ExtractImages(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing image list for %q: %w", ref, err)
+		return "", err
 	}
 	switch len(all) {
 	case 0:
@@ -70,14 +67,10 @@ func resolveImageID(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	}
 }
 
-// escapeJSONPointer escapes a single JSON Pointer reference token per RFC 6901:
-// '~' becomes "~0" and '/' becomes "~1". glance image properties are patched at
-// path "/<key>", so a key containing these characters must be escaped or the
-// resulting pointer is invalid. gophercloud's UpdateImageProperty builds the
-// path as fmt.Sprintf("/%s", Name) without escaping, so callers must pass an
-// already-escaped Name.
-func escapeJSONPointer(token string) string {
-	token = strings.ReplaceAll(token, "~", "~0")
-	token = strings.ReplaceAll(token, "/", "~1")
-	return token
+// relabel rewords an error from pkg/openstack/image the way this command has
+// always printed it. The public functions name the image by the ID they were
+// given; a few verbs name it by the reference the operator typed, so they
+// keep their own wording around the same underlying error.
+func relabel(err error, format string, args ...any) error {
+	return fmt.Errorf(format+": %w", append(args, errors.Unwrap(err))...)
 }

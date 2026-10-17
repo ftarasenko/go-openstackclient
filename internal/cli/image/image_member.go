@@ -12,6 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // newImageAddCommand builds "image add ..." (currently just "project").
@@ -70,9 +71,9 @@ func runImageAddProject(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err := o.CheckColumns(memberColumns...); err != nil {
 		return err
 	}
-	m, err := members.Create(ctx, client, imageID, projectID).Extract()
+	m, err := imageapi.AddMember(ctx, client, imageID, projectID)
 	if err != nil {
-		return fmt.Errorf("adding project %s to image %s: %w", projectID, imageID, err)
+		return err
 	}
 	fields, values := memberFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -108,8 +109,8 @@ func newImageRemoveProjectCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runImageRemoveProject(ctx context.Context, client *gophercloud.ServiceClient, imageID, projectID string, w io.Writer) error {
-	if err := members.Delete(ctx, client, imageID, projectID).ExtractErr(); err != nil {
-		return fmt.Errorf("removing project %s from image %s: %w", projectID, imageID, err)
+	if err := imageapi.RemoveMember(ctx, client, imageID, projectID); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Removed project %s from image %s\n", projectID, imageID); err != nil {
 		return err
@@ -182,13 +183,9 @@ func newImageMemberListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runImageMemberList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, imageID string, w io.Writer) error {
-	pages, err := members.List(client, imageID).AllPages(ctx)
+	all, err := imageapi.ListMembers(ctx, client, imageID)
 	if err != nil {
-		return fmt.Errorf("listing members of image %s: %w", imageID, err)
-	}
-	all, err := members.ExtractMembers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing member list for image %s: %w", imageID, err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"Image ID", "Member ID", "Status"},
@@ -268,9 +265,9 @@ func runImageMemberSet(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err := o.CheckColumns(memberColumns...); err != nil {
 		return err
 	}
-	m, err := members.Update(ctx, client, imageID, memberID, members.UpdateOpts{Status: status}).Extract()
+	m, err := imageapi.UpdateMember(ctx, client, imageID, memberID, status)
 	if err != nil {
-		return fmt.Errorf("setting member %s status on image %s: %w", memberID, imageID, err)
+		return err
 	}
 	fields, values := memberFields(m)
 	return o.WriteSingle(w, fields, values)

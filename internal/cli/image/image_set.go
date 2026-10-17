@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 )
 
 // imageSetFlags holds the mutable attributes accepted by "image set".
@@ -107,13 +108,18 @@ func runImageSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		// gophercloud builds the patch path as "/<Name>" without RFC 6901
 		// escaping, so escape the key here to keep the JSON pointer valid when it
 		// contains '/' or '~'.
-		ops = append(ops, images.UpdateImageProperty{Op: images.AddOp, Name: escapeJSONPointer(k), Value: v})
+		ops = append(ops, images.UpdateImageProperty{Op: images.AddOp, Name: imageapi.EscapePropertyName(k), Value: v})
 	}
 
-	// activate/deactivate use dedicated glance action endpoints; there is no typed
-	// gophercloud verb, so they are issued via the raw client (see setImageActive).
-	if f.activate || f.deactivate {
-		if err := setImageActive(ctx, client, id, f.activate); err != nil {
+	// activate/deactivate use dedicated glance action endpoints with no typed
+	// gophercloud verb (see imageapi.ActivateImage).
+	switch {
+	case f.activate:
+		if err := imageapi.ActivateImage(ctx, client, id); err != nil {
+			return err
+		}
+	case f.deactivate:
+		if err := imageapi.DeactivateImage(ctx, client, id); err != nil {
 			return err
 		}
 	}
@@ -126,32 +132,12 @@ func runImageSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		return fmt.Errorf("image set requires at least one attribute flag")
 	}
 
-	img, err := images.Update(ctx, client, id, ops).Extract()
+	img, err := imageapi.UpdateImage(ctx, client, id, ops)
 	if err != nil {
-		return fmt.Errorf("updating image %s: %w", id, err)
+		return err
 	}
 	fields, values := imageShowFields(img)
 	return o.WriteSingle(w, fields, values)
-}
-
-// setImageActive issues the glance action to (de)activate an image. glance
-// exposes POST /v2/images/{id}/actions/{reactivate|deactivate} (204). gophercloud
-// v2.13.0 has no typed verb for this, so the request is built on the raw client.
-func setImageActive(ctx context.Context, client *gophercloud.ServiceClient, id string, activate bool) error {
-	action := "deactivate"
-	if activate {
-		action = "reactivate"
-	}
-	url := client.ServiceURL("images", id, "actions", action)
-	resp, err := client.Post(ctx, url, nil, nil, &gophercloud.RequestOpts{OkCodes: []int{204}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	if err != nil {
-		return fmt.Errorf("%s image %s: %w", action, id, err)
-	}
-	return nil
 }
 
 // imageUnsetFlags holds the attributes removable by "image unset".
@@ -196,11 +182,11 @@ func runImageUnset(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	for _, k := range f.property {
 		// Escape the key per RFC 6901 so a '/' or '~' produces a valid pointer
 		// (gophercloud builds the path as "/<Name>" without escaping).
-		ops = append(ops, images.UpdateImageProperty{Op: images.RemoveOp, Name: escapeJSONPointer(k)})
+		ops = append(ops, images.UpdateImageProperty{Op: images.RemoveOp, Name: imageapi.EscapePropertyName(k)})
 	}
-	img, err := images.Update(ctx, client, id, ops).Extract()
+	img, err := imageapi.UpdateImage(ctx, client, id, ops)
 	if err != nil {
-		return fmt.Errorf("updating image %s: %w", id, err)
+		return err
 	}
 	fields, values := imageShowFields(img)
 	return o.WriteSingle(w, fields, values)
