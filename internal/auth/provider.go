@@ -9,8 +9,9 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/config"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
 )
 
 // Client bundles the authenticated provider with the resolved endpoint options
@@ -109,15 +110,26 @@ func (o *Options) Authenticate(ctx context.Context) (*Client, error) {
 	// NewProviderClient POSTs /v3/auth/tokens *inside* the call — so anything
 	// attached afterwards cannot see the token request, the returned catalog, or an
 	// authentication failure.
-	provider, err := config.NewProviderClient(ctx, ao, config.WithHTTPClient(o.httpClient(tlsCfg)))
+	//
+	// The token request itself is the public API's (pkg/openstack.New), handed
+	// the AuthOptions this package resolved from flags, env and clouds.yaml, so
+	// the CLI authenticates exactly the way an importer does.
+	hc := o.httpClient(tlsCfg)
+	session, err := openstack.New(ctx, openstack.Config{
+		AuthOptions: &ao,
+		Region:      eo.Region,
+		Interface:   string(eo.Availability),
+		HTTPClient:  &hc,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("authenticating to OpenStack: %w", err)
+		return nil, err
 	}
+	provider := session.Provider()
 	if len(o.endpointOverrides) > 0 {
 		provider.EndpointLocator = o.endpointLocator(provider.EndpointLocator)
 	}
 
-	return &Client{Provider: provider, Endpoint: eo, opts: o}, nil
+	return &Client{Provider: provider, Endpoint: session.EndpointOpts(), opts: o}, nil
 }
 
 // resolveAuth produces the AuthOptions, EndpointOpts and (optional) clouds.yaml
