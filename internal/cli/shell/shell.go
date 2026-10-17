@@ -322,12 +322,15 @@ func (s *Shell) run(ctx context.Context, args []string, rec *lineRecord) int {
 		s.prepare(r)
 		rec.argv = redactArgs(r, expanded)
 	})
-	if root != nil {
-		s.describe(rec, root, cmd)
-	}
 	var ref refusal
-	if errors.As(err, &ref) {
+	refused := errors.As(err, &ref)
+	if refused {
 		rec.refused = ref.RefusalReason()
+	}
+	if root != nil {
+		// A refused line ran in no scope of its own: it keeps the session's,
+		// not the region or project it was refused for asking.
+		s.describe(rec, root, cmd, !refused)
 	}
 	code, msg := s.cfg.ExitStatus(cmd, err)
 	if msg != "" {
@@ -348,11 +351,15 @@ func (s *Shell) preview(args []string) (argv []string, command string) {
 	return redactArgs(root, args), command
 }
 
-// describe fills in what the line actually ran: the resolved command path and
-// the region and project in effect once the line's own flags were parsed.
-func (s *Shell) describe(rec *lineRecord, root, cmd *cobra.Command) {
+// describe fills in what the line actually ran: the resolved command path and,
+// with scope, the region and project in effect once the line's own flags were
+// parsed.
+func (s *Shell) describe(rec *lineRecord, root, cmd *cobra.Command, scope bool) {
 	if cmd != nil && cmd != root {
 		rec.command = strings.TrimSpace(strings.TrimPrefix(cmd.CommandPath(), root.Name()))
+	}
+	if !scope {
+		return
 	}
 	pf := root.PersistentFlags()
 	if f := pf.Lookup("os-region-name"); f != nil && f.Value.String() != "" {

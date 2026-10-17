@@ -241,8 +241,8 @@ empty lines or comments. The command's output is never part of an event.
 | --- | --- |
 | `ts` | when the line started, RFC 3339 in UTC |
 | `argv` | the arguments after abbreviation expansion and prefix stripping, with every secret flag's value replaced by `"***"` |
-| `command` | the resolved command path (`server list`), or the built-in's name |
-| `region`, `project_id` | the scope the line ran in (the line's own matching flags included) |
+| `command` | the resolved command path (`server list`), or the built-in's name; empty for a line refused as `syntax` |
+| `region`, `project_id` | the scope the line ran in (a line's own `--os-region-name`/`--os-project-id` included); for a refused line, the session's |
 | `exit_code` | the line's status, as the prompt shows it |
 | `duration_ms` | wall-clock time of the line |
 | `refused` | present only for a refused line: `syntax`, `nested` (`shell` inside the shell), `expired`, `scope` (scope file unusable), or the embedded profile's `credential`, `scope`, `file`, `prompt`, `command`, `private-key` |
