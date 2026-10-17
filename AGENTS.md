@@ -523,7 +523,7 @@ being quietly weakened by a check that happens to need a proxy.
   outright otherwise. And when the golangci-lint pin moves to a build made with
   a newer Go, these pins and `make fmt` move with it.
 - `.github/workflows/supply-chain.yml` — the **network-allowed** checks, on the
-  same triggers plus a weekly cron and `workflow_dispatch`. Three jobs:
+  same triggers plus a weekly cron and `workflow_dispatch`. Five jobs:
   `vendor-integrity` re-derives the vendor tree (`go mod download && go mod
   verify`, then `go mod vendor`) and diffs it against the committed one — this
   closes a real gap, because `-mod=vendor` does not consult `go.sum`, so a
@@ -533,7 +533,14 @@ being quietly weakened by a check that happens to need a proxy.
   fails on high-severity advisories or copyleft/unknown licences entering the
   graph. If `vendor-integrity` fails, either a dependency change skipped `make
   tidy` or `vendor/` was hand-edited — which AGENTS.md forbids and this job now
-  actually catches.
+  actually catches. The other two guard the public Go API (see "Public Go API"):
+  `importer` builds and tests `test/importer`, a nested module that uses `pkg/`
+  only through its public import paths (and fails if its dependency graph
+  picks up cobra, pflag, x/term or `internal/`), and `api-compat` runs
+  `scripts/api-compat.sh` — apidiff, pinned, between the latest `v*` tag and
+  HEAD — which fails on an incompatible `pkg/` change the range does not mark
+  breaking. Both need the network (the nested module resolves its own graph;
+  apidiff installs from the proxy), which is why they live here.
 - `.github/workflows/functional.yml` — the **nightly devstack run**, also
   network-allowed: `schedule` (02:23 UTC), `workflow_dispatch`, and a push to
   `master`/`claude/**` that touches the workflow, `scripts/devstack/**`,

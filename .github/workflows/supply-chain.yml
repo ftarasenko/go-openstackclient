@@ -93,6 +93,77 @@ jobs:
       - name: govulncheck ./...
         run: govulncheck ./...
 
+  # The public Go API (pkg/) as a downstream importer sees it: test/importer is
+  # a separate module that requires this one through a replace directive and
+  # uses only pkg/ import paths. Go forbids it internal/, and it resolves its
+  # own dependency graph rather than reading vendor/, so a pkg/ package that
+  # only builds from inside this repository fails here. Network-allowed (the
+  # nested module's graph comes from the proxy, checked against its go.sum),
+  # hence here and not in the offline ci.yml.
+  importer:
+    name: pkg/ builds from another module
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: "" # the nested module has no vendor/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+          cache: false
+
+      - name: Test the importer module
+        working-directory: test/importer
+        run: |
+          go mod verify
+          go test ./...
+
+      # The point of keeping cobra, pflag and x/term out of pkg/ (depguard in
+      # .golangci.yml) is that an importer does not inherit them. Prove it on
+      # the graph the importer actually builds.
+      - name: The importer's graph carries no CLI dependency
+        working-directory: test/importer
+        run: |
+          if go list -deps -test ./... | grep -E '^(github.com/spf13/|golang.org/x/term|github.com/ftarasenko/go-openstackclient/internal/)'; then
+            echo "::error::pkg/ pulls a CLI-only dependency into an importer's build"
+            exit 1
+          fi
+
+  # API compatibility of pkg/ against the latest release tag: an incompatible
+  # change fails unless the commit range declares it breaking, as
+  # pkg/openstack/doc.go's versioning section requires. Until the first tag
+  # that carries pkg/, it only reports. The logic is scripts/api-compat.sh, so
+  # the same check runs locally.
+  api-compat:
+    name: pkg/ API compatibility
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: "" # `go install pkg@version` rejects -mod=vendor
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the base tag and the commit range since it
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+          cache: false
+
+      # Pinned like govulncheck above: from the module proxy, checksum-verified
+      # via sum.golang.org. x/exp has no tags, so this is the pseudo-version
+      # golangci-lint v2.14.0 itself depends on. Bump it deliberately.
+      - name: Install apidiff (x/exp v0.0.0-20250620022241-b7579e27df2b)
+        run: go install golang.org/x/exp/cmd/apidiff@v0.0.0-20250620022241-b7579e27df2b
+
+      - name: Compare pkg/ with the latest release
+        run: scripts/api-compat.sh
+
   # Flags dependency additions/upgrades that carry a known advisory or an
   # incompatible license, on the PR that introduces them. Pull-request only: the
   # action compares the PR's dependency graph against the base ref.
