@@ -1,13 +1,11 @@
 package identity
 
 import (
-	"errors"
-	"fmt"
 	"io"
-	"os"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
+
+	"github.com/ftarasenko/go-openstackclient/internal/cli/pwprompt"
 )
 
 // flagPasswordPrompt is upstream's `user create|set --password-prompt`: the
@@ -25,38 +23,13 @@ func addPasswordPromptFlag(cmd *cobra.Command, prompt *bool) {
 	cmd.MarkFlagsMutuallyExclusive("password", flagPasswordPrompt)
 }
 
-// readNewUserPassword prompts on w and reads stdin without echo, twice, with
-// upstream's wording. It refuses a stdin that is not a terminal rather than
-// read a password that would be echoed or come from a pipe by accident.
+// readNewUserPassword asks for the password twice, with upstream's wording.
 func readNewUserPassword(w io.Writer) (string, error) {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return "", errors.New("--password-prompt needs an interactive terminal; use --password instead")
-	}
-	read := func(prompt string) (string, error) {
-		if _, err := fmt.Fprint(w, prompt); err != nil {
-			return "", err
-		}
-		pw, err := term.ReadPassword(fd)
-		// The Enter the operator typed was swallowed with the echo.
-		if _, perr := fmt.Fprintln(w); perr != nil && err == nil {
-			err = perr
-		}
-		if err != nil {
-			return "", fmt.Errorf("reading the password: %w", err)
-		}
-		return string(pw), nil
-	}
-	first, err := read("User Password: ")
-	if err != nil {
-		return "", err
-	}
-	second, err := read("Repeat User Password: ")
-	if err != nil {
-		return "", err
-	}
-	if first != second {
-		return "", errors.New("passwords do not match")
-	}
-	return first, nil
+	return pwprompt.Confirmed(w, pwprompt.Wording{
+		Flag:     "--" + flagPasswordPrompt,
+		First:    "User Password: ",
+		Second:   "Repeat User Password: ",
+		ReadErr:  "reading the password",
+		Mismatch: "passwords do not match",
+	})
 }

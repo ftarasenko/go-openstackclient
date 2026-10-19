@@ -24,11 +24,11 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/pwprompt"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
@@ -1328,35 +1328,13 @@ func clearServerPassword(ctx context.Context, client *gophercloud.ServiceClient,
 // promptNewPassword reads a new admin password twice without echo, mirroring
 // "openstack server set --root-password".
 func promptNewPassword(w io.Writer) (string, error) {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return "", errors.New("--root-password needs an interactive terminal; use --password instead")
-	}
-	read := func(prompt string) (string, error) {
-		if _, err := fmt.Fprint(w, prompt); err != nil {
-			return "", err
-		}
-		pw, err := term.ReadPassword(fd)
-		if _, perr := fmt.Fprintln(w); perr != nil && err == nil {
-			err = perr
-		}
-		if err != nil {
-			return "", fmt.Errorf("reading password: %w", err)
-		}
-		return string(pw), nil
-	}
-	first, err := read("New password: ")
-	if err != nil {
-		return "", err
-	}
-	second, err := read("Retype new password: ")
-	if err != nil {
-		return "", err
-	}
-	if first != second {
-		return "", errors.New("passwords do not match, password unchanged")
-	}
-	return first, nil
+	return pwprompt.Confirmed(w, pwprompt.Wording{
+		Flag:     "--root-password",
+		First:    "New password: ",
+		Second:   "Retype new password: ",
+		ReadErr:  "reading password",
+		Mismatch: "passwords do not match, password unchanged",
+	})
 }
 
 // serverUnsetFlags holds what "server unset" can clear. The two --all-* forms are
