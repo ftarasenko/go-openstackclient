@@ -135,7 +135,7 @@ func (o *Options) keystonelessClient(ao gophercloud.AuthOptions, eo gophercloud.
 			hosts:    o.endpointHosts(),
 			username: ao.Username,
 			password: ao.Password,
-		})
+		}, tlsSkipsVerify(tlsCfg))
 	}
 	pc := &gophercloud.ProviderClient{HTTPClient: hc}
 	pc.UserAgent.Prepend("koc")

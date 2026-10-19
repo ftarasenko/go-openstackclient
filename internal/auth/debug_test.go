@@ -175,7 +175,7 @@ func TestDebugTransport_DumpsBothDirectionsRedacted(t *testing.T) {
 	defer srv.Close()
 
 	out := captureStderr(t, func() {
-		client := &http.Client{Transport: newDebugTransport(http.DefaultTransport)}
+		client := &http.Client{Transport: newDebugTransport(http.DefaultTransport, DebugFormatHTTP, nil)}
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v2.1/servers",
 			strings.NewReader(`{"server":{"name":"n","adminPass":"Hunter2Hunter2"}}`))
 		if err != nil {

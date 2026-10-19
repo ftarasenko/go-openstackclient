@@ -678,6 +678,17 @@ Ironic emits `X-OpenStack-Ironic-API-Version`; nova/cinder use the generic
 ### Diagnostics
 
 `--debug` logs each HTTP request/response to stderr with auth tokens redacted.
+`--debug-format curl` (env `KOC_DEBUG_FORMAT=curl`) prints them the way
+`openstack --debug` does instead: each request as a `REQ: curl …` command you
+can paste into a shell, each response as `RESP: [status] headers` and
+`RESP BODY: …`. Credentials stay redacted in either layout, so a pasted request
+needs its `X-Auth-Token` filled in by hand.
+
+```
+REQ: curl -g -i -X GET 'https://nova.example/v2.1/servers/detail' -H 'Accept: application/json' -H 'X-Auth-Token: <redacted>'
+RESP: [200] Content-Length: 105 Content-Type: application/json
+RESP BODY: {"servers":[…]}
+```
 
 `--timing` prints one line per API call to stderr with its method, URL, status
 and wall-clock duration — the signal for "why is this slow" without the body

@@ -21,15 +21,32 @@ import (
 // logs, and skips dumping large or binary payloads (e.g. image up/downloads) so
 // debug logging does not buffer multi-GB bodies in memory or spew binary to the
 // terminal.
+//
+// It has two layouts, picked by --debug-format: the raw HTTP messages (http, the
+// default), or keystoneauth's — each request as a `REQ: curl …` line that can be
+// pasted into a shell, each response as `RESP: [status] headers` plus `RESP
+// BODY:` — which is what `openstack --debug` prints. Both go through the same
+// redaction.
 type debugTransport struct {
-	rt http.RoundTripper
+	rt      http.RoundTripper
+	curl    bool
+	tlsArgs []string // curl's TLS options for this endpoint: --insecure, --cacert …
 }
 
-func newDebugTransport(rt http.RoundTripper) http.RoundTripper {
+// The --debug-format values.
+const (
+	DebugFormatHTTP = "http"
+	DebugFormatCurl = "curl"
+)
+
+// newDebugTransport wraps rt with the --debug dump in the given format. tlsArgs
+// are the curl options that reproduce the client's TLS settings; they appear
+// only in the curl layout.
+func newDebugTransport(rt http.RoundTripper, format string, tlsArgs []string) http.RoundTripper {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	return &debugTransport{rt: rt}
+	return &debugTransport{rt: rt, curl: format == DebugFormatCurl, tlsArgs: tlsArgs}
 }
 
 // maxDumpBody caps how much of a textual body we are willing to dump.
@@ -116,6 +133,9 @@ var secretJSONRe = regexp.MustCompile(`(?i)"((?:[a-z0-9]+_)*(?:` + secretKeyAlte
 const redactedValue = "<redacted>"
 
 func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if d.curl {
+		return d.roundTripCurl(req)
+	}
 	if dump, err := httputil.DumpRequestOut(req, dumpBody(req.Header)); err == nil {
 		fmt.Fprintf(os.Stderr, "> %s\n", redact(string(dump)))
 	}
