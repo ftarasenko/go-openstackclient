@@ -247,6 +247,41 @@ func TestShell_CtrlCAtThePromptAbandonsTheLine(t *testing.T) {
 	}
 }
 
+func TestShell_MetaKeysDoNotFreezeThePrompt(t *testing.T) {
+	// Option+Backspace (ESC DEL) deletes a word; a lone Escape, sent on its
+	// own as a terminal does, is dropped instead of swallowing the next keys.
+	k := &fakeKoc{}
+	in := io.MultiReader(
+		strings.NewReader("server lisx\x1b\x7flist\r"),
+		strings.NewReader("volume li"),
+		strings.NewReader("\x1b"),
+		strings.NewReader("st\r\x04"),
+	)
+	s := newSession(t, k, in)
+	s.run(t)
+	if got, want := k.ran(), [][]string{{"server", "list"}, {"volume", "list"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ran %q, want %q", got, want)
+	}
+}
+
+func TestAppendKeys(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		{"Meta+Backspace", "ab\x1b\x7f", "ab\x17"},
+		{"Meta+Ctrl-H", "ab\x1b\x08", "ab\x17"},
+		{"Meta+b", "\x1bb", "\x1b[1;3D"},
+		{"Meta+f", "\x1bf", "\x1b[1;3C"},
+		{"lone Escape", "\x1b", ""},
+		{"unknown Meta key", "a\x1bxb", "ab"},
+		{"CSI passes", "\x1b[A\x1b[3~", "\x1b[A\x1b[3~"},
+		{"SS3 passes", "\x1bOH", "\x1bOH"},
+		{"Ctrl-C", "\x03", string(keyInterrupt)},
+	} {
+		if got := string(appendKeys(nil, []byte(c.in))); got != c.want {
+			t.Errorf("%s: %q became %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
 func TestShell_Builtins(t *testing.T) {
 	t.Setenv("OS_AUTH_URL", "https://keystone.example.com:5000/v3")
 	t.Setenv("OS_REGION_NAME", "RegionOne")
