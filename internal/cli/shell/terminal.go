@@ -33,9 +33,28 @@ type console interface {
 // AutoCompleteCallback like any other key, and the callback clears the line.
 const keyInterrupt = ''
 
-const ctrlC = 0x03
+const (
+	ctrlC = 0x03
+	ctrlW = 0x17
+	esc   = 0x1b
+	del   = 0x7f
+	bs    = 0x08
+)
 
-// interruptFilter rewrites Ctrl-C in the terminal's input to keyInterrupt.
+// x/term's word moves; it knows these and no other Meta spelling.
+var (
+	wordLeft  = []byte("\x1b[1;3D")
+	wordRight = []byte("\x1b[1;3C")
+)
+
+// interruptFilter rewrites the terminal's input for x/term's line editor:
+// Ctrl-C to keyInterrupt, and the Meta keys terminals send as ESC plus a key.
+// x/term reads any ESC it does not know as the start of an unfinished escape
+// sequence and swallows everything up to the next letter, so a lone Escape or
+// Option+Backspace (ESC DEL) froze the prompt: Enter, Backspace and the
+// arrows all vanished. Meta+Backspace becomes Ctrl-W (delete a word), Meta+b
+// and Meta+f become x/term's word moves, a lone Escape and any other Meta key
+// are dropped. CSI and SS3 sequences (ESC [ and ESC O) pass untouched.
 type interruptFilter struct {
 	r       io.Reader
 	pending []byte
@@ -48,17 +67,47 @@ func (f *interruptFilter) Read(p []byte) (int, error) {
 		if n == 0 {
 			return 0, err
 		}
-		for _, b := range buf[:n] {
-			if b == ctrlC {
-				f.pending = utf8.AppendRune(f.pending, keyInterrupt)
-				continue
-			}
-			f.pending = append(f.pending, b)
+		f.pending = appendKeys(f.pending, buf[:n])
+		if len(f.pending) == 0 {
+			// Everything read was dropped (a lone Escape): read again rather
+			// than hand x/term an empty read.
+			return f.Read(p)
 		}
 	}
 	n := copy(p, f.pending)
 	f.pending = f.pending[n:]
 	return n, nil
+}
+
+// appendKeys appends in to out with the rewrites interruptFilter describes.
+// A terminal writes a whole key sequence at once, so an ESC that ends the
+// chunk is a lone Escape.
+func appendKeys(out, in []byte) []byte {
+	for i := 0; i < len(in); i++ {
+		b := in[i]
+		switch {
+		case b == ctrlC:
+			out = utf8.AppendRune(out, keyInterrupt)
+		case b != esc:
+			out = append(out, b)
+		case i+1 == len(in):
+			// A lone Escape: dropped.
+		default:
+			switch next := in[i+1]; next {
+			case '[', 'O':
+				out = append(out, b) // a sequence x/term reads itself
+				continue
+			case del, bs:
+				out = append(out, ctrlW)
+			case 'b':
+				out = append(out, wordLeft...)
+			case 'f':
+				out = append(out, wordRight...)
+			}
+			i++ // the Meta key's own byte; unknown ones are dropped with their ESC
+		}
+	}
+	return out
 }
 
 // termConsole is the interactive console: x/term's line editor, with the
