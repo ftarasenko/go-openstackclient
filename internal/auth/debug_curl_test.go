@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -123,5 +124,59 @@ func TestDebugFormatFlag(t *testing.T) {
 	}
 	if err := fs.Parse([]string{"--debug-format", "har"}); err == nil {
 		t.Error("--debug-format har was accepted")
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("reset") }
+
+// A body that cannot be read is named rather than failing the request, and a
+// body with no length says only its type.
+func TestCurlBodies_Unreadable(t *testing.T) {
+	newReq := func(body io.Reader) *http.Request {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://example.com/", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	getBodyFails := newReq(strings.NewReader("{}"))
+	getBodyFails.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("gone") }
+	getBodyReadFails := newReq(strings.NewReader("{}"))
+	getBodyReadFails.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(failingReader{}), nil }
+	bodyReadFails := newReq(io.NopCloser(failingReader{}))
+	streamed := newReq(io.NopCloser(strings.NewReader(`{"a":1}`)))
+
+	for name, tc := range map[string]struct {
+		req  *http.Request
+		want string
+	}{
+		"GetBody fails":      {getBodyFails, bodyUnreadable},
+		"GetBody read fails": {getBodyReadFails, bodyUnreadable},
+		"body read fails":    {bodyReadFails, bodyUnreadable},
+		"no GetBody":         {streamed, `{"a":1}`},
+	} {
+		if got, ok := requestBody(tc.req); !ok || got != tc.want {
+			t.Errorf("%s: requestBody = %q, %v; want %q", name, got, ok, tc.want)
+		}
+	}
+	// The streamed body was put back for the transport to send.
+	if b, _ := io.ReadAll(streamed.Body); string(b) != `{"a":1}` {
+		t.Errorf("streamed body after logging = %q", b)
+	}
+	if _, ok := requestBody(newReq(nil)); ok {
+		t.Error("a request without a body logged one")
+	}
+
+	resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(failingReader{})}
+	if got := responseBody(resp); got != bodyUnreadable {
+		t.Errorf("responseBody = %q", got)
+	}
+	if got := responseBody(&http.Response{Header: http.Header{}, Body: http.NoBody}); got != "" {
+		t.Errorf("empty responseBody = %q", got)
+	}
+	if got := omittedBody(http.Header{}, -1); got != "<omitted: Content-Type unset>" {
+		t.Errorf("omittedBody = %q", got)
 	}
 }

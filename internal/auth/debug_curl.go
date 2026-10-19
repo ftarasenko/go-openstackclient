@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// bodyUnreadable stands in for a body that could not be read for the log.
+const bodyUnreadable = "<body unreadable>"
+
 // roundTripCurl is --debug-format curl: keystoneauth's session log, the layout
 // `openstack --debug` prints. A request is one `REQ: curl …` line that replays
 // it from a shell (with the credentials replaced by <redacted>, so a replay
@@ -88,12 +91,12 @@ func requestBody(req *http.Request) (string, bool) {
 	if req.GetBody != nil {
 		rc, err := req.GetBody()
 		if err != nil {
-			return "<body unreadable>", true
+			return bodyUnreadable, true
 		}
 		raw, err = io.ReadAll(rc)
 		_ = rc.Close()
 		if err != nil {
-			return "<body unreadable>", true
+			return bodyUnreadable, true
 		}
 	} else {
 		var err error
@@ -101,7 +104,7 @@ func requestBody(req *http.Request) (string, bool) {
 		_ = req.Body.Close()
 		req.Body = io.NopCloser(bytes.NewReader(raw))
 		if err != nil {
-			return "<body unreadable>", true
+			return bodyUnreadable, true
 		}
 	}
 	return redactBody(string(raw)), true
@@ -120,7 +123,7 @@ func responseBody(resp *http.Response) string {
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(raw))
 	if err != nil {
-		return "<body unreadable>"
+		return bodyUnreadable
 	}
 	return redactBody(string(raw))
 }
