@@ -137,9 +137,16 @@ var embeddedFlagRefusals = func() []flagRefusal {
 		out = append(out, flagRefusal{path: pf[0], flag: pf[1], reason: RefusedFile,
 			msg: msgFiles + "; give the document inline", allow: inlineDocument})
 	}
+	// Access rules: inline JSON is fine; anything else is read as a path.
+	out = append(out, flagRefusal{path: "application credential create", flag: "access-rules", reason: RefusedFile,
+		msg: msgFiles + "; give the rules inline as JSON", allow: inlineJSON})
 	// Prompts on the terminal for a secret.
 	out = append(out, flagRefusal{path: "server set", flag: "root-password", reason: RefusedPrompt,
 		msg: "--root-password prompts for the password, which the console terminal cannot do; use --password"})
+	for _, path := range []string{"user create", "user set"} {
+		out = append(out, flagRefusal{path: path, flag: "password-prompt", reason: RefusedPrompt,
+			msg: "--password-prompt prompts for the password, which the console terminal cannot do; use --password"})
+	}
 	return out
 }()
 
@@ -149,6 +156,13 @@ func inlineDocument(val string) bool {
 	v := strings.TrimSpace(val)
 	return strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[") ||
 		(strings.HasPrefix(v, "- ") || strings.HasPrefix(v, "-\n"))
+}
+
+// inlineJSON reports whether a flag's value is a JSON document rather than a
+// path: what --access-rules parses inline instead of opening.
+func inlineJSON(val string) bool {
+	v := strings.TrimSpace(val)
+	return strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[")
 }
 
 // sessionScopeFlags are allowed on the line only with the session's own value.

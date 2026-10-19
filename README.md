@@ -1128,8 +1128,6 @@ items are deferred and worth noting:
   rest should be brought in line. UUIDs always short-circuit resolution.
 - **`baremetal node set` uses JSON-patch `replace`** for scalar attributes; on
   some ironic builds `add` is needed for a previously-absent attribute.
-- **`role assignment list` with both `--project` and `--domain`** sends both
-  scope qualifiers; keystone treats them as mutually exclusive.
 - **`--debug` elides large/binary bodies** (image up/downloads) and redacts
   tokens and credential fields; it does not pretty-print JSON.
 - **`-f json` mirrors the rendered table**, not the API object — see "Output

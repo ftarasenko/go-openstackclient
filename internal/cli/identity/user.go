@@ -121,6 +121,7 @@ type userWriteFlags struct {
 	projectDomain string
 	description   string
 	name          string
+	prompt        bool
 	enable        bool
 	enableSet     bool
 	disableSet    bool
@@ -161,6 +162,13 @@ func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := checkEnableDisable(f.enableSet, f.disableSet); err != nil {
 				return err
 			}
+			if f.prompt {
+				pw, err := promptUserPassword(cmd.ErrOrStderr())
+				if err != nil {
+					return err
+				}
+				f.password = pw
+			}
 			ctx := cmd.Context()
 			client, err := newIdentityClient(ctx, a)
 			if err != nil {
@@ -172,6 +180,7 @@ func newUserCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.domain, "domain", "", "domain to create the user in (name or ID)")
 	fl.StringVar(&f.password, "password", "", "user password")
+	addPasswordPromptFlag(cmd, &f.prompt)
 	fl.StringVar(&f.project, "project", "", "default project (name or ID)")
 	fl.StringVar(&f.projectDomain, "project-domain", "", helpDomainDefaultProject)
 	fl.StringVar(&f.description, "description", "", "user description")
@@ -264,6 +273,13 @@ func newUserSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err := checkEnableDisable(f.enableSet, f.disableSet); err != nil {
 				return err
 			}
+			if f.prompt {
+				pw, err := promptUserPassword(cmd.ErrOrStderr())
+				if err != nil {
+					return err
+				}
+				f.password = pw
+			}
 			ctx := cmd.Context()
 			client, err := newIdentityClient(ctx, a)
 			if err != nil {
@@ -276,6 +292,7 @@ func newUserSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&f.domain, "domain", "", helpDomainUser)
 	fl.StringVar(&f.name, "name", "", "new user name")
 	fl.StringVar(&f.password, "password", "", "new user password")
+	addPasswordPromptFlag(cmd, &f.prompt)
 	fl.StringVar(&f.project, "project", "", "new default project (name or ID)")
 	fl.StringVar(&f.projectDomain, "project-domain", "", helpDomainDefaultProject)
 	fl.StringVar(&f.description, "description", "", "new user description")

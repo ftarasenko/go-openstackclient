@@ -8,7 +8,11 @@ package identity
 const (
 	flagUserDomain  = "user-domain"
 	flagImpliedRole = "implied-role"
+	flagSystem      = "system"
 )
+
+// systemAll is keystone's one system-scope target.
+const systemAll = "all"
 
 // Column headers reused across this package's tables.
 const (
@@ -26,4 +30,5 @@ const (
 	helpDomainUser           = "domain owning the user (name or ID)"
 	helpDomainRole           = "domain the role belongs to (name or ID)"
 	helpOwningUser           = "owning user (name or ID; defaults to the current user)"
+	helpSystemGrant          = "system to scope the grant to (only \"all\")"
 )
