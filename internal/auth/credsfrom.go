@@ -58,6 +58,7 @@ type ironicCreds struct {
 	serverName string // cert SAN to verify while dialing by IP
 	insecure   bool
 	debug      bool
+	debugFmt   string // --debug-format
 	timing     bool
 	timeout    time.Duration
 }
@@ -98,6 +99,7 @@ func (o *Options) loadIronicCreds(ctx context.Context) (*ironicCreds, error) {
 		password: pass,
 		insecure: o.Insecure,
 		debug:    o.Debug,
+		debugFmt: o.DebugFormat,
 		timing:   o.Timing,
 		timeout:  o.Timeout,
 	}
@@ -165,7 +167,11 @@ func (ic *ironicCreds) baremetalClient(microversion string) (*gophercloud.Servic
 		password: ic.password,
 	}
 	if ic.debug {
-		rt = newDebugTransport(rt)
+		var tlsArgs []string // the CA comes from the Ironic CR's secret, not a file
+		if ic.insecure {
+			tlsArgs = []string{"--insecure"}
+		}
+		rt = newDebugTransport(rt, ic.debugFmt, tlsArgs)
 	}
 	if ic.timing {
 		rt = newTimingTransport(rt, os.Stderr)

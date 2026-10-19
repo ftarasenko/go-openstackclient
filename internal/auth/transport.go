@@ -86,9 +86,12 @@ func sameHostRedirect(req *http.Request, via []*http.Request) error {
 // that order, so the timing line follows the dump for the same call. It is
 // applied to the transport handed to gophercloud *before* authentication, so the
 // token request, the returned catalog and an auth failure are all visible.
-func (o *Options) instrument(rt http.RoundTripper) http.RoundTripper {
+//
+// insecure is whether the client skips TLS verification, for the curl layout's
+// --insecure.
+func (o *Options) instrument(rt http.RoundTripper, insecure bool) http.RoundTripper {
 	if o.Debug {
-		rt = newDebugTransport(rt)
+		rt = newDebugTransport(rt, o.DebugFormat, o.curlTLSArgs(insecure))
 	}
 	if o.Timing {
 		rt = newTimingTransport(rt, os.Stderr)
@@ -100,7 +103,7 @@ func (o *Options) instrument(rt http.RoundTripper) http.RoundTripper {
 // the --timeout cap and the same-host redirect policy.
 func (o *Options) httpClient(tlsCfg *tls.Config) http.Client {
 	return http.Client{
-		Transport:     o.instrument(newHTTPTransport(tlsCfg)),
+		Transport:     o.instrument(newHTTPTransport(tlsCfg), tlsSkipsVerify(tlsCfg)),
 		Timeout:       o.Timeout,
 		CheckRedirect: sameHostRedirect,
 	}
@@ -139,4 +142,9 @@ func isCleartextURL(rawURL string) bool {
 		return false
 	}
 	return true
+}
+
+// tlsSkipsVerify reports whether a client built on cfg skips verification.
+func tlsSkipsVerify(cfg *tls.Config) bool {
+	return cfg != nil && cfg.InsecureSkipVerify
 }

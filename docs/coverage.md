@@ -499,6 +499,13 @@ precisely what koc's output layer exists to guarantee; upstream can afford it
 because its table is itself a cliff formatter, whereas koc's `-f` applies to the
 command's result and not to its diagnostics.
 
+`--debug` deviates in its **default layout**. keystoneauth logs each request as
+a `REQ: curl -g -i …` line and each response as `RESP: [status] …` plus
+`RESP BODY:`; `koc --debug` dumps the raw HTTP messages instead, and
+`--debug-format curl` (or `KOC_DEBUG_FORMAT=curl`) switches to upstream's
+layout. Both redact the same credentials, which is why koc's curl line carries
+`X-Auth-Token: <redacted>` where keystoneauth prints a `{SHA256}` digest.
+
 `-f value` matches `cliff`'s `ValueFormatter` byte for byte: a row's cells
 joined by a single **space**, no header, one row per line. It used to join them
 with a tab, a deliberate deviation for unambiguous splitting (most OpenStack

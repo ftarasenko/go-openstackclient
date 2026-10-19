@@ -188,6 +188,11 @@ type Options struct {
 	// Diagnostics.
 	Debug bool
 
+	// DebugFormat is the layout of the --debug dump: DebugFormatHTTP (the raw
+	// messages) or DebugFormatCurl (keystoneauth's `REQ: curl …` lines, as
+	// `openstack --debug` prints them).
+	DebugFormat string
+
 	// Timing prints the wall-clock duration of each HTTP round trip to stderr.
 	// It is independent of Debug: timings without the full body dumps are what
 	// answer "why is this slow".
@@ -382,6 +387,12 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 
 	fs.BoolVar(&o.Debug, "debug", EnvBool("OS_DEBUG"),
 		"log HTTP requests and responses to stderr (tokens redacted)")
+	// UNVERIFIED against KeyStack: python-openstackclient has no --debug-format;
+	// its --debug always prints keystoneauth's curl layout, which is what
+	// --debug-format curl reproduces.
+	o.DebugFormat = envDebugFormat("KOC_DEBUG_FORMAT")
+	fs.Var((*debugFormatValue)(&o.DebugFormat), "debug-format",
+		"layout of the --debug dump: http (raw HTTP messages) or curl (curl commands, like openstack --debug) (env KOC_DEBUG_FORMAT)")
 	fs.BoolVar(&o.Timing, "timing", false,
 		"print the wall-clock duration of each API call to stderr")
 
@@ -564,4 +575,35 @@ func resetBadEnv() {
 	badEnv.mu.Lock()
 	defer badEnv.mu.Unlock()
 	badEnv.seen, badEnv.msgs = nil, nil
+}
+
+// debugFormatValue is --debug-format: a string that accepts only the two
+// layouts, so a typo fails at parse time instead of silently dumping http.
+type debugFormatValue string
+
+func (v *debugFormatValue) String() string { return string(*v) }
+
+func (v *debugFormatValue) Set(s string) error {
+	switch s {
+	case DebugFormatHTTP, DebugFormatCurl:
+		*v = debugFormatValue(s)
+		return nil
+	}
+	return fmt.Errorf("must be %s or %s", DebugFormatHTTP, DebugFormatCurl)
+}
+
+func (v *debugFormatValue) Type() string { return "format" }
+
+// envDebugFormat reads KOC_DEBUG_FORMAT, defaulting to http; an unknown value
+// is recorded like any other unusable variable.
+func envDebugFormat(key string) string {
+	v := os.Getenv(key)
+	switch v {
+	case "":
+		return DebugFormatHTTP
+	case DebugFormatHTTP, DebugFormatCurl:
+		return v
+	}
+	recordBadEnv(key, v, "must be "+DebugFormatHTTP+" or "+DebugFormatCurl)
+	return DebugFormatHTTP
 }
