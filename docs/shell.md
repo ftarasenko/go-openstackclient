@@ -209,7 +209,11 @@ profile it needs `--print-private-key` — a flag that exists only in that
 profile — and prints a warning before the key that it is shown once and kept
 nowhere.
 
-**Kept**: every output format, `--watch`, `--debug` (redacted), `--timing`,
+**Kept**: every output format, `--watch`, `--debug` (redacted: the token,
+every credential header, cookies, and every body field named as a secret —
+passwords including ironic's `*_password` driver fields and JSON-patch values
+written to them, application-credential and EC2 secrets, cinder transfer
+`auth_key`, generated private keys), `--timing`,
 `--timeout`, the microversion flags, `--os-interface`, and every other command.
 
 A refused line exits 1 with the message on stderr; in the shell, it sets the

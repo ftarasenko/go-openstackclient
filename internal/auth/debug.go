@@ -38,7 +38,9 @@ const maxDumpBody = 1 << 20 // 1 MiB
 // tokenHeaderRe matches the value of credential-bearing headers for redaction.
 // Authorization covers both the basic-auth standalone ironic path and a bearer
 // token; Proxy-Authorization covers a proxy's own credentials.
-var tokenHeaderRe = regexp.MustCompile(`(?i)^(X-Auth-Token|X-Subject-Token|X-Vault-Token|Authorization|Proxy-Authorization):\s*.*$`)
+// X-Service-Token is keystoneauth's service token; Cookie and Set-Cookie carry
+// a session wherever a load balancer or a web front end adds one.
+var tokenHeaderRe = regexp.MustCompile(`(?i)^(X-Auth-Token|X-Subject-Token|X-Service-Token|X-Vault-Token|Authorization|Proxy-Authorization|Cookie|Set-Cookie):\s*.*$`)
 
 // secretKeys are the JSON keys whose scalar value is a credential and must never
 // be printed. Matching is by KEY, case-insensitively, at any depth — matching the
@@ -62,6 +64,30 @@ var secretKeys = map[string]bool{
 	"role_id":                       true,
 	"token":                         true,
 	"blob":                          true,
+	// cinder's volume transfer: whoever holds it can take the volume.
+	"auth_key": true,
+	// ironic's SNMP driver_info (snmp_priv_key); snmp_auth_key matches auth_key.
+	"priv_key": true,
+}
+
+// isSecretKey reports whether a JSON key names a credential: it is on
+// secretKeys, or one of its underscore-separated tails is — so ironic's
+// ipmi_password and redfish_password, keystone's original_password and nova's
+// rescue_password are caught without listing every driver's spelling.
+// Unlike IsSecretName it does not match a single inner segment, so a field
+// that merely mentions a secret (password_expires_at) stays readable.
+func isSecretKey(key string) bool {
+	k := strings.ToLower(key)
+	for {
+		if secretKeys[k] {
+			return true
+		}
+		i := strings.IndexByte(k, '_')
+		if i < 0 {
+			return false
+		}
+		k = k[i+1:]
+	}
 }
 
 // IsSecretName reports whether a flag or key name carries a credential, by the
@@ -85,7 +111,7 @@ func IsSecretName(name string) bool {
 // dump, a form-encoded payload). The value pattern tolerates escaped quotes:
 // `"[^"]*"` stopped at the backslash-quote inside a password, leaking its tail
 // and corrupting the rest of the dump.
-var secretJSONRe = regexp.MustCompile(`(?i)"(` + secretKeyAlternation + `)"\s*:\s*"(?:[^"\\]|\\.)*"`)
+var secretJSONRe = regexp.MustCompile(`(?i)"((?:[a-z0-9]+_)*(?:` + secretKeyAlternation + `))"\s*:\s*"(?:[^"\\]|\\.)*"`)
 
 const redactedValue = "<redacted>"
 
@@ -211,7 +237,7 @@ func redactJSON(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if secretKeys[strings.ToLower(k)] && isScalar(val) {
+			if isSecretKey(k) && isScalar(val) {
 				t[k] = redactedValue
 				continue
 			}
@@ -223,6 +249,7 @@ func redactJSON(v any) any {
 			}
 			t[k] = redactJSON(val)
 		}
+		redactPatchValue(t)
 		return t
 	case []any:
 		for i, val := range t {
@@ -231,6 +258,23 @@ func redactJSON(v any) any {
 		return t
 	default:
 		return v
+	}
+}
+
+// redactPatchValue redacts one JSON-patch operation that writes a credential:
+// ironic's `node set --driver-info ipmi_password=…` sends
+// {"op":"add","path":"/driver_info/ipmi_password","value":"…"}, where the secret
+// sits under "value" and only the path names it.
+func redactPatchValue(op map[string]any) {
+	path, ok := op["path"].(string)
+	if !ok {
+		return
+	}
+	if _, ok := op["op"]; !ok {
+		return
+	}
+	if val, ok := op["value"]; ok && isScalar(val) && val != nil && isSecretKey(path[strings.LastIndexByte(path, '/')+1:]) {
+		op["value"] = redactedValue
 	}
 }
 
