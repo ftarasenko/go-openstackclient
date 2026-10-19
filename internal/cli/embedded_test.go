@@ -177,6 +177,10 @@ func TestEmbeddedRefusals(t *testing.T) {
 		{"vault kv list x", RefusedCommand, ""},
 		{"s3 bucket list", RefusedCommand, ""},
 		{"server set vm --root-password", RefusedPrompt, "use --password"},
+		{"user create bob --password-prompt", RefusedPrompt, "use --password"},
+		{"user set bob --password-prompt", RefusedPrompt, "use --password"},
+		{"application credential create c --access-rules rules.json", RefusedFile, "give the rules inline as JSON"},
+		{"application credential create c --access-rules '- service: compute'", RefusedFile, ""},
 		{"keypair create k", RefusedPrivateKey, "--print-private-key"},
 		// Allowed: they reach authentication, which has nothing to go on.
 		{"server list", "", ""},
@@ -185,6 +189,7 @@ func TestEmbeddedRefusals(t *testing.T) {
 		{"baremetal node clean n --clean-steps '[{\"interface\":\"deploy\",\"step\":\"erase_devices\"}]'", "", ""},
 		{"baremetal node inventory save n", "", ""},
 		{"keypair create k --print-private-key", "", ""},
+		{"application credential create c --access-rules '[{\"service\":\"compute\",\"method\":\"GET\",\"path\":\"/v2.1/servers\"}]'", "", ""},
 		{"help server", "", ""},
 	} {
 		t.Run(tc.args, func(t *testing.T) {

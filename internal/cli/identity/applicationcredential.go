@@ -2,8 +2,11 @@ package identity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -143,8 +146,8 @@ func runAppCredShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		return fmt.Errorf("showing application credential %q: %w", ref, err)
 	}
 	return o.WriteSingle(w,
-		[]string{"ID", "Name", colProjectID, "Description", "Unrestricted", colExpiresAt},
-		[]any{c.ID, c.Name, c.ProjectID, c.Description, c.Unrestricted, formatTime(c.ExpiresAt)})
+		[]string{"ID", "Name", colProjectID, "Description", "Unrestricted", "Access Rules", colExpiresAt},
+		[]any{c.ID, c.Name, c.ProjectID, c.Description, c.Unrestricted, accessRulesCell(c.AccessRules), formatTime(c.ExpiresAt)})
 }
 
 type appCredCreateFlags struct {
@@ -153,6 +156,7 @@ type appCredCreateFlags struct {
 	roles        []string
 	expiration   string
 	description  string
+	accessRules  string
 	unrestricted bool
 }
 
@@ -185,11 +189,13 @@ func newAppCredCreateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.expiration, "expiration", "", "expiry time in RFC3339, e.g. 2026-12-31T23:59:59Z")
 	fl.StringVar(&f.description, "description", "", "description of the application credential")
 	fl.BoolVar(&f.unrestricted, "unrestricted", false, "allow the credential to create and delete other credentials and trusts")
+	fl.StringVar(&f.accessRules, "access-rules", "",
+		`JSON list of access rules, inline or a file path, e.g. '[{"service":"compute","method":"GET","path":"/v2.1/servers"}]'`)
 	return cmd
 }
 
 // appCredCreateColumns are the fields application credential create renders.
-var appCredCreateColumns = []string{"ID", "Name", colProjectID, "Description", "Unrestricted", "Secret", colExpiresAt}
+var appCredCreateColumns = []string{"ID", "Name", colProjectID, "Description", "Unrestricted", "Access Rules", "Secret", colExpiresAt}
 
 func runAppCredCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, userID, name string, f *appCredCreateFlags, w io.Writer) error {
 	if err := o.CheckColumns(appCredCreateColumns...); err != nil {
@@ -215,13 +221,59 @@ func runAppCredCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		}
 		opts.ExpiresAt = &exp
 	}
+	if f.accessRules != "" {
+		rules, err := parseAccessRules(f.accessRules)
+		if err != nil {
+			return err
+		}
+		opts.AccessRules = rules
+	}
 	c, err := applicationcredentials.Create(ctx, client, userID, opts).Extract()
 	if err != nil {
 		return fmt.Errorf("creating application credential %q: %w", name, err)
 	}
 	return o.WriteSingle(w,
 		appCredCreateColumns,
-		[]any{c.ID, c.Name, c.ProjectID, c.Description, c.Unrestricted, c.Secret, formatTime(c.ExpiresAt)})
+		[]any{c.ID, c.Name, c.ProjectID, c.Description, c.Unrestricted, accessRulesCell(c.AccessRules), c.Secret, formatTime(c.ExpiresAt)})
+}
+
+// parseAccessRules reads --access-rules the way upstream does: inline JSON, or
+// else the path of a file holding it. The embedded profile admits the same
+// inline test (internal/cli/embedded.go inlineJSON), so the two must agree.
+// Each rule names a service type, an HTTP method and a URL path (with keystone's
+// "*"/"**" wildcards), or an existing rule's ID.
+func parseAccessRules(arg string) ([]applicationcredentials.AccessRule, error) {
+	raw := []byte(arg)
+	if t := strings.TrimSpace(arg); !strings.HasPrefix(t, "[") && !strings.HasPrefix(t, "{") {
+		b, err := os.ReadFile(arg) //nolint:gosec // G304: operator-supplied rules file path, as upstream
+		if err != nil {
+			return nil, fmt.Errorf("--access-rules is neither JSON nor a readable file: %w", err)
+		}
+		raw = b
+	}
+	var rules []applicationcredentials.AccessRule
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		return nil, fmt.Errorf("parsing --access-rules: want a JSON list of {\"service\", \"method\", \"path\"} objects: %w", err)
+	}
+	for i, r := range rules {
+		if r.ID == "" && (r.Service == "" || r.Method == "" || r.Path == "") {
+			return nil, fmt.Errorf("--access-rules rule %d: needs \"service\", \"method\" and \"path\" (or an existing rule's \"id\")", i)
+		}
+	}
+	return rules, nil
+}
+
+// accessRulesCell renders access rules one per entry as "METHOD service path",
+// or nothing when the credential is unrestricted by rules.
+func accessRulesCell(rules []applicationcredentials.AccessRule) []string {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, strings.TrimSpace(fmt.Sprintf("%s %s %s", r.Method, r.Service, r.Path)))
+	}
+	return out
 }
 
 func newAppCredDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {

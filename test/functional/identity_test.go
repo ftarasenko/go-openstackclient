@@ -119,7 +119,7 @@ func TestIdentityRolesAndGroups(t *testing.T) {
 	r.ok(t, "implied", "role", "delete", role, "--implied-role", "reader")
 
 	user := uniq("guser")
-	r.ok(t, "user", "create", user, "--password", "Ft-"+uniq("pw"))
+	userID := field(r.show(t, "user", "create", user, "--password", "Ft-"+uniq("pw")), "id")
 	t.Cleanup(func() { r.run(t, "user", "delete", user) })
 
 	grp := uniq("grp")
@@ -148,6 +148,9 @@ func TestIdentityRolesAndGroups(t *testing.T) {
 	if !in(rows, role) {
 		t.Errorf("role assignment list --group %s --names = %v, want %s", grp, rows, role)
 	}
+	if rows = r.list(t, "role", "assignment", "list", "--role", role); !in(rows, field(g, "id")) {
+		t.Errorf("role assignment list --role %s = %v, want group %s", role, rows, field(g, "id"))
+	}
 	r.ok(t, "role", "remove", role, "--group", grp, "--project", "admin")
 	if rows = r.list(t, "role", "assignment", "list", "--group", grp, "--names"); in(rows, role) {
 		t.Errorf("after role remove, assignments = %v", rows)
@@ -155,6 +158,57 @@ func TestIdentityRolesAndGroups(t *testing.T) {
 
 	r.ok(t, "group", "remove", "user", grp, user)
 	r.fails(t, "group", "contains", "user", grp, user)
+
+	// A system-scope grant, made and read back as the system admin keystone's
+	// scoped policies ask for.
+	sys := systemRunner(c)
+	sys.ok(t, "role", "add", "reader", "--user", user, "--system", "all")
+	t.Cleanup(func() { sys.run(t, "role", "remove", "reader", "--user", user, "--system", "all") })
+	rows = sys.list(t, "role", "assignment", "list", "--user", user, "--system", "all", "--names")
+	if len(rows) != 1 || field(rows[0], "system") != "all" || !strings.HasPrefix(field(rows[0], "role"), "reader") {
+		t.Errorf("role assignment list --user %s --system all = %v, want reader on the system", user, rows)
+	}
+	if rows = sys.list(t, "role", "assignment", "list", "--role", "reader", "--system", "all"); !in(rows, userID) {
+		t.Errorf("role assignment list --role reader --system all = %v, want user %s", rows, userID)
+	}
+	sys.ok(t, "role", "remove", "reader", "--user", user, "--system", "all")
+	if rows = sys.list(t, "role", "assignment", "list", "--user", user, "--system", "all"); len(rows) != 0 {
+		t.Errorf("after role remove --system all, assignments = %v", rows)
+	}
+}
+
+// --password-prompt reads from a terminal only; from a script it refuses
+// before anything reaches keystone.
+func TestIdentityUserPasswordPrompt(t *testing.T) {
+	c := ft(t)
+	r := defaultRunner(c)
+	user := uniq("puser")
+	if stderr := r.withStdin("Ft-pw\nFt-pw\n").fails(t, "user", "create", user, "--password-prompt"); !strings.Contains(stderr, "needs an interactive terminal") {
+		t.Errorf("user create --password-prompt without a terminal: %s", stderr)
+	}
+	if slices.Contains(column(r.list(t, "user", "list"), "name"), user) {
+		r.run(t, "user", "delete", user)
+		t.Errorf("a refused --password-prompt still created %s", user)
+	}
+}
+
+// An application credential restricted by --access-rules carries the rules
+// keystone stored, on create and on show.
+func TestIdentityApplicationCredentialAccessRules(t *testing.T) {
+	c := ft(t)
+	r := defaultRunner(c)
+	name := uniq("rules")
+	rule := "GET compute /v2.1/servers"
+	cr := r.show(t, "application", "credential", "create", name,
+		"--access-rules", `[{"service":"compute","method":"GET","path":"/v2.1/servers"}]`)
+	t.Cleanup(func() { r.run(t, "application", "credential", "delete", name) })
+	if !strings.Contains(field(cr, "access rules"), rule) || field(cr, "secret") == "" {
+		t.Fatalf("application credential create --access-rules = %v, want %q", cr, rule)
+	}
+	if got := r.show(t, "application", "credential", "show", name); !strings.Contains(field(got, "access rules"), rule) {
+		t.Errorf("application credential show = %v, want access rule %q", got, rule)
+	}
+	r.fails(t, "application", "credential", "create", uniq("bad"), "--access-rules", `[{"service":"compute"}]`)
 }
 
 func TestIdentityCatalogObjects(t *testing.T) {

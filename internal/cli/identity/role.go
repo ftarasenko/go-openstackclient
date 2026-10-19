@@ -109,8 +109,8 @@ func runRoleShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		[]any{r.ID, r.Name, r.DomainID, r.Description})
 }
 
-// grantFlags carries the actor (user/group) and scope (project/domain) shared
-// by "role add" and "role remove".
+// grantFlags carries the actor (user/group) and scope (project/domain/system)
+// shared by "role add" and "role remove".
 //
 // Names are unique only within a domain, so each actor/scope reference carries
 // its own domain qualifier (mirroring OSC's --user-domain/--group-domain/
@@ -124,6 +124,7 @@ type grantFlags struct {
 	group   string
 	project string
 	domain  string
+	system  string
 
 	userDomain    string
 	groupDomain   string
@@ -137,10 +138,23 @@ func addGrantFlags(cmd *cobra.Command, f *grantFlags) {
 	fl.StringVar(&f.group, "group", "", "group to grant the role to (name or ID)")
 	fl.StringVar(&f.project, "project", "", "project to scope the grant to (name or ID)")
 	fl.StringVar(&f.domain, "domain", "", "domain to scope the grant to (name or ID)")
+	fl.StringVar(&f.system, flagSystem, "", helpSystemGrant)
 	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning --user (name or ID)")
 	fl.StringVar(&f.groupDomain, "group-domain", "", "domain owning --group (name or ID)")
 	fl.StringVar(&f.projectDomain, "project-domain", "", "domain owning --project (name or ID)")
 	fl.StringVar(&f.roleDomain, "role-domain", "", "domain owning the role (name or ID)")
+}
+
+// systemScope validates a --system value. Keystone has one system target,
+// "all"; anything else is a 404 from the server, so it is refused up front.
+func systemScope(v string) (bool, error) {
+	switch v {
+	case "":
+		return false, nil
+	case systemAll:
+		return true, nil
+	}
+	return false, fmt.Errorf("--system %q: the only system scope is %q", v, systemAll)
 }
 
 // qualifierDomainID resolves a per-actor domain qualifier, falling back to the
@@ -154,63 +168,99 @@ func qualifierDomainID(ctx context.Context, client *gophercloud.ServiceClient, q
 	return resolveDomainID(ctx, client, qualifier)
 }
 
+// grant is a resolved role assignment target: the role, exactly one actor and
+// exactly one scope.
+type grant struct {
+	roleID, userID, groupID, projectID, domainID string
+	system                                       bool
+}
+
 // resolveGrant resolves the role plus the actor/scope IDs and validates the xor
 // constraints keystone enforces (exactly one actor, exactly one scope).
-func resolveGrant(ctx context.Context, client *gophercloud.ServiceClient, roleNameOrID string, f *grantFlags) (roleID, userID, groupID, projectID, domainID string, err error) {
+func resolveGrant(ctx context.Context, client *gophercloud.ServiceClient, roleNameOrID string, f *grantFlags) (grant, error) {
+	var g grant
 	if (f.user == "") == (f.group == "") {
-		return "", "", "", "", "", fmt.Errorf("exactly one of --user or --group is required")
+		return g, fmt.Errorf("exactly one of --user or --group is required")
 	}
-	if (f.project == "") == (f.domain == "") {
-		return "", "", "", "", "", fmt.Errorf("exactly one of --project or --domain is required")
+	system, err := systemScope(f.system)
+	if err != nil {
+		return g, err
 	}
+	if scopes := countSet(f.project != "", f.domain != "", system); scopes != 1 {
+		return g, fmt.Errorf("exactly one of --project, --domain or --system is required")
+	}
+	g.system = system
 
 	// Scope domain (only meaningful for a domain-scoped grant). It is the
 	// fallback qualifier for the actor lookups so domain-scoped grants keep
 	// resolving actors within that domain.
-	domainID, err = resolveDomainID(ctx, client, f.domain)
-	if err != nil {
-		return
+	if g.domainID, err = resolveDomainID(ctx, client, f.domain); err != nil {
+		return g, err
 	}
 	if f.project != "" {
-		var projDomID string
-		if projDomID, err = qualifierDomainID(ctx, client, f.projectDomain, ""); err != nil {
-			return
+		projDomID, err := qualifierDomainID(ctx, client, f.projectDomain, "")
+		if err != nil {
+			return g, err
 		}
-		if projectID, err = resolveProjectID(ctx, client, f.project, projDomID); err != nil {
-			return
-		}
-	}
-	if f.user != "" {
-		var userDomID string
-		if userDomID, err = qualifierDomainID(ctx, client, f.userDomain, domainID); err != nil {
-			return
-		}
-		if userID, err = resolveUserID(ctx, client, f.user, userDomID); err != nil {
-			return
+		if g.projectID, err = resolveProjectID(ctx, client, f.project, projDomID); err != nil {
+			return g, err
 		}
 	}
-	if f.group != "" {
-		var groupDomID string
-		if groupDomID, err = qualifierDomainID(ctx, client, f.groupDomain, domainID); err != nil {
-			return
+	if g.userID, g.groupID, err = resolveActor(ctx, client, f.user, f.userDomain, f.group, f.groupDomain, g.domainID); err != nil {
+		return g, err
+	}
+	roleDomID, err := qualifierDomainID(ctx, client, f.roleDomain, "")
+	if err != nil {
+		return g, err
+	}
+	g.roleID, err = resolveRoleID(ctx, client, roleNameOrID, roleDomID)
+	return g, err
+}
+
+// resolveActor resolves whichever of --user/--group is set, each within its own
+// qualifier or, absent one, within fallbackDomainID.
+func resolveActor(ctx context.Context, client *gophercloud.ServiceClient,
+	user, userDomain, group, groupDomain, fallbackDomainID string,
+) (userID, groupID string, err error) {
+	if user != "" {
+		userDomID, err := qualifierDomainID(ctx, client, userDomain, fallbackDomainID)
+		if err != nil {
+			return "", "", err
 		}
-		if groupID, err = resolveGroupID(ctx, client, f.group, groupDomID); err != nil {
-			return
+		userID, err = resolveUserID(ctx, client, user, userDomID)
+		if err != nil {
+			return "", "", err
 		}
 	}
-	var roleDomID string
-	if roleDomID, err = qualifierDomainID(ctx, client, f.roleDomain, ""); err != nil {
-		return
+	if group != "" {
+		groupDomID, err := qualifierDomainID(ctx, client, groupDomain, fallbackDomainID)
+		if err != nil {
+			return "", "", err
+		}
+		groupID, err = resolveGroupID(ctx, client, group, groupDomID)
+		if err != nil {
+			return "", "", err
+		}
 	}
-	roleID, err = resolveRoleID(ctx, client, roleNameOrID, roleDomID)
-	return
+	return userID, groupID, nil
+}
+
+// countSet counts the true values.
+func countSet(vals ...bool) int {
+	n := 0
+	for _, v := range vals {
+		if v {
+			n++
+		}
+	}
+	return n
 }
 
 func newRoleAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &grantFlags{}
 	cmd := &cobra.Command{
 		Use:   "add <role>",
-		Short: "Grant a role to a user or group on a project or domain",
+		Short: "Grant a role to a user or group on a project, domain or the system",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -229,12 +279,12 @@ func newRoleAddCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRoleAdd(ctx context.Context, client *gophercloud.ServiceClient, roleNameOrID string, f *grantFlags) error {
-	roleID, userID, groupID, projectID, domainID, err := resolveGrant(ctx, client, roleNameOrID, f)
+	g, err := resolveGrant(ctx, client, roleNameOrID, f)
 	if err != nil {
 		return err
 	}
-	opts := roles.AssignOpts{UserID: userID, GroupID: groupID, ProjectID: projectID, DomainID: domainID}
-	if err := roles.Assign(ctx, client, roleID, opts).ExtractErr(); err != nil {
+	opts := roles.AssignOpts{UserID: g.userID, GroupID: g.groupID, ProjectID: g.projectID, DomainID: g.domainID, System: g.system}
+	if err := roles.Assign(ctx, client, g.roleID, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("granting role %q: %w", roleNameOrID, err)
 	}
 	return nil
@@ -244,7 +294,7 @@ func newRoleRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &grantFlags{}
 	cmd := &cobra.Command{
 		Use:   "remove <role>",
-		Short: "Revoke a role from a user or group on a project or domain",
+		Short: "Revoke a role from a user or group on a project, domain or the system",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -263,12 +313,12 @@ func newRoleRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRoleRemove(ctx context.Context, client *gophercloud.ServiceClient, roleNameOrID string, f *grantFlags) error {
-	roleID, userID, groupID, projectID, domainID, err := resolveGrant(ctx, client, roleNameOrID, f)
+	g, err := resolveGrant(ctx, client, roleNameOrID, f)
 	if err != nil {
 		return err
 	}
-	opts := roles.UnassignOpts{UserID: userID, GroupID: groupID, ProjectID: projectID, DomainID: domainID}
-	if err := roles.Unassign(ctx, client, roleID, opts).ExtractErr(); err != nil {
+	opts := roles.UnassignOpts{UserID: g.userID, GroupID: g.groupID, ProjectID: g.projectID, DomainID: g.domainID, System: g.system}
+	if err := roles.Unassign(ctx, client, g.roleID, opts).ExtractErr(); err != nil {
 		return fmt.Errorf("revoking role %q: %w", roleNameOrID, err)
 	}
 	return nil
@@ -286,8 +336,11 @@ type assignmentListFlags struct {
 	group       string
 	project     string
 	domain      string
+	system      string
+	role        string
 	userDomain  string
 	groupDomain string
+	roleDomain  string
 	names       bool
 }
 
@@ -314,51 +367,19 @@ func newRoleAssignmentListCommand(a *auth.Options, o *output.Options) *cobra.Com
 	fl.StringVar(&f.group, "group", "", "filter by group (name or ID)")
 	fl.StringVar(&f.project, "project", "", "filter by project scope (name or ID)")
 	fl.StringVar(&f.domain, "domain", "", "filter by domain scope (name or ID)")
+	fl.StringVar(&f.system, flagSystem, "", "filter by system scope (only \"all\")")
+	fl.StringVar(&f.role, "role", "", "filter by role (name or ID)")
 	fl.StringVar(&f.userDomain, flagUserDomain, "", "domain owning --user (name or ID)")
 	fl.StringVar(&f.groupDomain, "group-domain", "", "domain owning --group (name or ID)")
+	fl.StringVar(&f.roleDomain, "role-domain", "", "domain owning --role (name or ID)")
 	fl.BoolVar(&f.names, "names", false, "display names instead of IDs (requires keystone 3.6+)")
 	return cmd
 }
 
 func runRoleAssignmentList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *assignmentListFlags, w io.Writer) error {
-	// Keystone rejects a scope that carries both a project and a domain.
-	if f.project != "" && f.domain != "" {
-		return fmt.Errorf("--project and --domain are mutually exclusive for role assignment scope")
-	}
-	// --domain is scope-only here; the actor lookups use their own domain
-	// qualifiers so names are resolved in the correct domain.
-	domainID, err := resolveDomainID(ctx, client, f.domain)
+	opts, err := assignmentListOpts(ctx, client, f)
 	if err != nil {
 		return err
-	}
-	projectID, err := resolveProjectID(ctx, client, f.project, domainID)
-	if err != nil {
-		return err
-	}
-	userDomID, err := resolveDomainID(ctx, client, f.userDomain)
-	if err != nil {
-		return err
-	}
-	userID, err := resolveUserID(ctx, client, f.user, userDomID)
-	if err != nil {
-		return err
-	}
-	groupDomID, err := resolveDomainID(ctx, client, f.groupDomain)
-	if err != nil {
-		return err
-	}
-	groupID, err := resolveGroupID(ctx, client, f.group, groupDomID)
-	if err != nil {
-		return err
-	}
-	opts := roles.ListAssignmentsOpts{
-		UserID:         userID,
-		GroupID:        groupID,
-		ScopeProjectID: projectID,
-		ScopeDomainID:  domainID,
-	}
-	if f.names {
-		opts.IncludeNames = &f.names
 	}
 	pages, err := roles.ListAssignments(client, opts).AllPages(ctx)
 	if err != nil {
@@ -402,6 +423,58 @@ func runRoleAssignmentList(ctx context.Context, client *gophercloud.ServiceClien
 		t.Rows = append(t.Rows, []any{role, user, group, project, domain, system, x.Scope.InheritedTo != ""})
 	}
 	return o.WriteList(w, t)
+}
+
+// assignmentListOpts resolves the filters of "role assignment list" into the
+// query keystone takes.
+func assignmentListOpts(ctx context.Context, client *gophercloud.ServiceClient, f *assignmentListFlags) (roles.ListAssignmentsOpts, error) {
+	var opts roles.ListAssignmentsOpts
+	system, err := systemScope(f.system)
+	if err != nil {
+		return opts, err
+	}
+	// Keystone rejects a scope that carries more than one target.
+	if countSet(f.project != "", f.domain != "", system) > 1 {
+		return opts, fmt.Errorf("--project, --domain and --system are mutually exclusive for role assignment scope")
+	}
+	if system {
+		opts.ScopeSystem = systemAll
+	}
+	// --domain is scope-only here; the actor lookups use their own domain
+	// qualifiers so names are resolved in the correct domain.
+	if opts.ScopeDomainID, err = resolveDomainID(ctx, client, f.domain); err != nil {
+		return opts, err
+	}
+	if opts.ScopeProjectID, err = resolveProjectID(ctx, client, f.project, opts.ScopeDomainID); err != nil {
+		return opts, err
+	}
+	userDomID, err := resolveDomainID(ctx, client, f.userDomain)
+	if err != nil {
+		return opts, err
+	}
+	if opts.UserID, err = resolveUserID(ctx, client, f.user, userDomID); err != nil {
+		return opts, err
+	}
+	groupDomID, err := resolveDomainID(ctx, client, f.groupDomain)
+	if err != nil {
+		return opts, err
+	}
+	if opts.GroupID, err = resolveGroupID(ctx, client, f.group, groupDomID); err != nil {
+		return opts, err
+	}
+	if f.role != "" {
+		roleDomID, err := resolveDomainID(ctx, client, f.roleDomain)
+		if err != nil {
+			return opts, err
+		}
+		if opts.RoleID, err = resolveRoleID(ctx, client, f.role, roleDomID); err != nil {
+			return opts, err
+		}
+	}
+	if f.names {
+		opts.IncludeNames = &f.names
+	}
+	return opts, nil
 }
 
 // assignmentExtra is what gophercloud's RoleAssignment leaves out: the

@@ -191,13 +191,14 @@ the session"*:
 | `baremetal node inventory save --file`, `baremetal introspection data save --file` | out (without `--file` they print the JSON) |
 | `zone import create <zonefile>` | in |
 | `baremetal deploy template create/set --steps`, `baremetal runbook create/set --steps`, `baremetal node clean --clean-steps`, `baremetal node service --service-steps`, `baremetal inspection rule create/set --actions/--conditions` — a path or `-` | in (an inline JSON/YAML document is allowed) |
+| `application credential create --access-rules` — a path | in (inline JSON is allowed) |
 
 `TestEmbeddedFileFlags` walks the whole command tree and fails for any flag or
 argument that looks like a local file and is not in the table, so a new one
 cannot slip into the console unnoticed.
 
-**Prompts**: the password prompt is off; `server set --root-password` is
-refused (use `--password`); the key passphrase prompt is unreachable because
+**Prompts**: the password prompt is off; `server set --root-password` and
+`user create/set --password-prompt` are refused (use `--password`); the key passphrase prompt is unreachable because
 `--private-key` is refused. koc has no other confirmation prompt.
 
 **Whole commands**: `koc vault` and `koc s3`.
