@@ -607,13 +607,14 @@ func runFloatingIPUnset(ctx context.Context, client *gophercloud.ServiceClient, 
 
 // helpFloatingIPRouter is --router's help on create and set, which
 // python-openstackclient 10.4.0 added.
-const helpFloatingIPRouter = "router hosting the floating IP (name or ID; requires the floating-ip-router-writable extension, neutron 2026.2)"
+const helpFloatingIPRouter = "router hosting the floating IP, used when it is associated with a port (name or ID; requires the floating-ip-router-writable extension, neutron 2026.2)"
 
 // withFloatingIPRouter adds --router as router_id. Neutron's floating IP
 // router_id is read-only unless the floating-ip-router-writable extension is
-// loaded (neutron-lib 5.0.1, neutron 29.0.0; under ML2/OVN only with
-// ovn_router_indirect_snat), so it rides the extension-attribute path and an
-// older cloud's 400 is explained by name.
+// loaded (neutron-lib 5.0.1, neutron 29.0.0; ML2/OVN drops it if
+// ovn_router_indirect_snat, on by default, is turned off), so it rides the extension-attribute path and an
+// older cloud's 400 is explained by name. Neutron uses the requested router only
+// while associating a port (l3_db._get_assoc_data) and ignores it otherwise.
 func withFloatingIPRouter(ctx context.Context, client *gophercloud.ServiceClient, attrs map[string]any, ref string) (map[string]any, error) {
 	if ref == "" {
 		return attrs, nil

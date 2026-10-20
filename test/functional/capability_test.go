@@ -61,6 +61,13 @@ func TestCapabilityMatrix(t *testing.T) {
 			ext["router-enable-snat"], c.Series, c.Backend, want)
 	}
 
+	// Both L3 plugins load floating-ip-router-writable from 2026.2 (neutron
+	// 29.0.0; ML2/OVN unless ovn_router_indirect_snat is turned off);
+	// TestFloatingIPs asserts --router when it is there.
+	if want := c.Series.atLeast("2026.2"); ext["floating-ip-router-writable"] != want {
+		t.Errorf("floating-ip-router-writable present = %v on %s, want %v", ext["floating-ip-router-writable"], c.Series, want)
+	}
+
 	// The backend follows the series (up.sh): OVS through 2024.1, OVN after.
 	if want := map[bool]string{true: "ovn", false: "ovs"}[c.Series.atLeast("2025.1")]; c.Backend != want {
 		t.Errorf("backend %q on %s, want %q", c.Backend, c.Series, want)

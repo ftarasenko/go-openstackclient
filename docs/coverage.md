@@ -148,8 +148,9 @@ follows upstream on the read side: `is_vlan_qinq` is the SDK's `vlan_qinq` and
 so always null, and neutron's `qinq` is shown under its own name when sent.
 The one option 10.4.0 added, `floating ip create/set --router`, writes
 `router_id`, which neutron accepts only with the `floating-ip-router-writable`
-extension (neutron 29.0.0, 2026.2; under ML2/OVN only with
-`ovn_router_indirect_snat` on).
+extension (neutron 29.0.0, 2026.2; ML2/OVN drops it if
+`ovn_router_indirect_snat`, on by default, is turned off), and uses only while
+associating a port.
 
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
 `image.v1` are excluded as legacy) plus the five plugins above, and since the
