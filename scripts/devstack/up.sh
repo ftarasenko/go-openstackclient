@@ -355,7 +355,8 @@ gha_workarounds() {
     sudo apt-get purge -y python3-simplejson python3-pyasn1-modules 'postgresql*' || true
     # ironic's zed and 2024.1 plugins `dpkg -r dnsmasq-base` on jammy to build
     # an older dnsmasq; the runner image's podman CNI dnsname plugin depends
-    # on it, so the removal fails and stack.sh with it.
+    # on it, so the removal fails and stack.sh with it. (The .patched-dnsmasq
+    # marker below now skips that rebuild; this goes once runs confirm it.)
     if has_feature ironic; then
         sudo apt-get purge -y golang-github-containernetworking-plugin-dnsname || true
     fi
@@ -425,6 +426,18 @@ DISK_BEFORE=$(disk_used_mb)
 SAMPLER=$!
 trap 'kill $SAMPLER 2>/dev/null || true' EXIT
 
+# ironic's plugin (zed through 2026.2) replaces the distro dnsmasq on Ubuntu
+# with one it clones in full from git://thekelleys.org.uk and builds from
+# source, a fix for real PXE/DHCP boots. The fake-hardware nodes never boot,
+# and that clone and build is the only part of ironic's bring-up devstack's
+# timers do not count. The plugin skips the rebuild when this marker exists
+# (lib/ironic downgrade_dnsmasq; the path is hard-coded there), and neutron
+# keeps the distro dnsmasq it used before ironic was stacked.
+if has_feature ironic; then
+    sudo install -d -o "$(id -un)" /opt/stack
+    touch /opt/stack/.patched-dnsmasq
+fi
+
 START=$(date +%s)
 set +e
 (cd "$DEVSTACK_DIR" && ./stack.sh)
@@ -433,6 +446,25 @@ set -e
 STACK_SECONDS=$(( $(date +%s) - START ))
 kill $SAMPLER 2>/dev/null || true
 MEM_PEAK=$(sort -n "$LOG_DIR/mem.samples" | tail -1)
+
+# phases.txt: how long each devstack milestone (its echo_summary lines, in the
+# timestamped stack.sh.log) took before the next one began. devstack's own
+# timing table counts only its wrapped commands; this covers everything, a
+# plugin's untimed git clones and builds included, and the step summary shows it.
+python3 - "$LOG_DIR/stack.sh.log" >"$LOG_DIR/phases.txt" <<'PY' || true
+import datetime, re, sys
+pat = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+) \| .*echo_summary ['\"](.*)['\"]\s*$")
+marks = []
+with open(sys.argv[1], errors="replace") as f:
+    for line in f:
+        m = pat.match(line)
+        if m:
+            marks.append((datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S.%f"), m.group(2)))
+for (t, msg), (t2, _) in zip(marks, marks[1:]):
+    secs = (t2 - t).total_seconds()
+    if secs >= 5:
+        print(f"{secs:6.0f}s  {msg}")
+PY
 DISK_DELTA=$(( $(disk_used_mb) - DISK_BEFORE ))
 
 # --- fixtures for the tests ----------------------------------------------------

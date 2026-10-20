@@ -148,7 +148,7 @@ jobs:
         run: |
           {
             echo "### devstack $SERIES"
-            for f in bringup.json refs.txt smoke.txt; do
+            for f in bringup.json phases.txt refs.txt smoke.txt; do
               if [[ -f "$LOG_DIR/$f" ]]; then printf '\n**%s**\n\n~~~\n' "$f"; cat "$LOG_DIR/$f"; echo '~~~'; fi
             done
             if [[ -f "$LOG_DIR/functional.log" ]]; then
