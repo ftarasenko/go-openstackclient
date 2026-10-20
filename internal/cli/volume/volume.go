@@ -50,6 +50,7 @@ func NewCommand(a *auth.Options, o *output.Options) []*cobra.Command {
 	cmd.AddCommand(newTransferCommand(a, o))
 	cmd.AddCommand(newQoSCommand(a, o))
 	cmd.AddCommand(newBackendCommand(a, o))
+	cmd.AddCommand(newMessageCommand(a, o))
 
 	// "block storage cluster …" is a separate top-level group: upstream spells
 	// the clustered-services noun that way, not as a verb under "volume".

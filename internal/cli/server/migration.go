@@ -69,6 +69,8 @@ func newServerMigrationCommand(a *auth.Options, o *output.Options) *cobra.Comman
 		newServerMigrationShowCommand(a, o),
 		newServerMigrationAbortCommand(a, o),
 		newServerMigrationForceCommand(a, o),
+		newResizeActionCommand(a, true, ""),
+		newResizeActionCommand(a, false, ""),
 	)
 	return cmd
 }

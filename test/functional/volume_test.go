@@ -411,3 +411,39 @@ func TestVolumeServicesAndBackends(t *testing.T) {
 	r.fails(t, "block", "storage", "cluster", "show", "ft-no-such-cluster")
 	r.fails(t, "block", "storage", "cluster", "set", "ft-no-such-cluster", "--enable")
 }
+
+// TestVolumeMessages provokes a scheduling failure — 800 GB fits devstack's
+// 1000 GB quota but no backend of its 10 GB volume group, even thin — and reads
+// the user message cinder records for it.
+func TestVolumeMessages(t *testing.T) {
+	c := ft(t)
+	requireFeature(t, "core")
+	r := defaultRunner(c)
+
+	name := uniq("vol-msg")
+	id := field(r.show(t, "volume", "create", name, "--size", "800"), "id")
+	t.Cleanup(func() { r.run(t, "volume", "delete", id) })
+	waitFor(t, "the oversized volume to go to error", 3*time.Minute, func() bool {
+		return field(r.show(t, "volume", "show", id), "status") == "error"
+	})
+
+	var msgID string
+	waitFor(t, "a message about the volume", time.Minute, func() bool {
+		for _, m := range r.list(t, "volume", "message", "list") {
+			if field(m, "Resource UUID") == id {
+				msgID = field(m, "ID")
+				return true
+			}
+		}
+		return false
+	})
+	got := r.show(t, "volume", "message", "show", msgID)
+	if field(got, "resource_type") != "VOLUME" || field(got, "user_message") == "" {
+		t.Errorf("volume message show = %v", got)
+	}
+	if rows := r.list(t, "volume", "message", "list", "--limit", "1"); len(rows) != 1 {
+		t.Errorf("volume message list --limit 1 = %d rows", len(rows))
+	}
+	r.ok(t, "volume", "message", "delete", msgID)
+	r.fails(t, "volume", "message", "show", msgID)
+}

@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-10-20 · `koc` @ this commit (base `5326953`) · 764 leaf
+**Snapshot:** 2026-10-20 · `koc` @ this commit (base `5326953`) · 773 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**708 of 947 in-scope upstream commands (75%).** Of `koc`'s 764 leaf commands,
-708 are upstream-equivalent and 56 are koc-native.
+**717 of 947 in-scope upstream commands (76%).** Of `koc`'s 773 leaf commands,
+717 are upstream-equivalent and 56 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -70,7 +70,7 @@ list` and `koc baremetal node reboot` (see "Naming deviations").
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
 Neutron VPNaaS/FWaaS/metering, Keystone federation, ironic runbooks). Excluding
-those, `koc` covers **81–97%** of each core OSC namespace, and 100% of ironic,
+those, `koc` covers **89–100%** of each core OSC namespace, and 100% of ironic,
 designate, octavia and placement — the commands operators actually run daily. The one outlier is
 `openstack.common` at 6/11: it is a grab-bag of cross-service odds and ends
 (`project cleanup`, `quota list/delete`, `configuration show`, `versions show`)
@@ -143,9 +143,9 @@ and Manila; 947 excluding them, since `koc` targets neither.
 
 | Namespace | Raw | Core (niche subsystems excluded) |
 | --- | --- | --- |
-| `openstack.compute.v2` | 75/100 (75%) | **73/88 (83%)** — `usage list/show` land outside the core denominator but are implemented; `server volume update`, upstream's deprecated alias of `server volume set`, is deliberately not implemented |
+| `openstack.compute.v2` | 81/100 (81%) | **79/88 (90%)** — `usage list/show` land outside the core denominator but are implemented; `server resize confirm/revert`, `server migration confirm/revert` and upstream's deprecated `server migrate confirm/revert` all post nova's confirmResize/revertResize; `server volume update`, upstream's deprecated alias of `server volume set`, is deliberately not implemented |
 | `openstack.image.v2` | 16/42 (38%) | **14/15 (93%)** — only `image member get` remains |
-| `openstack.volume.v3` | 52/94 (55%) | **34/38 (89%)** — QoS, transfers, the backend pool/capability reads and `block storage cluster` are outside the "core" denominator but now implemented |
+| `openstack.volume.v3` | 55/94 (59%) | **34/38 (89%)** — QoS, transfers, messages, the backend pool/capability reads and `block storage cluster` are outside the "core" denominator but now implemented |
 | `openstack.identity.v3` | 58/128 (45%) | **58/60 (97%)** — only `endpoint add/remove project` remain |
 | `openstack.network.v2` | 114/168 (68%) | **97/97 (100%)** — QoS and RBAC land outside the "core" denominator but are implemented |
 | `openstack.common` | 6/11 (55%) | 6/11 — `quota show/set`, `extension list/show`, `availability zone list`, `limits show` |
@@ -299,8 +299,9 @@ configure/delete/stats show`, `loadbalancer provider capability list`,
 attribute on an explicit JSON null, which `omitempty` pointers cannot send),
 `loadbalancer availabilityzone` and `availabilityzoneprofile` (gophercloud has
 no package for either; `internal/cli/loadbalancer/availabilityzone.go`), `volume backend pool list`, `volume backend
-capability show` (see below) and `block storage cluster list/set/show`
-(gophercloud has no `blockstorage/v3/clusters` package at all),
+capability show` (see below), `block storage cluster list/set/show`
+(gophercloud has no `blockstorage/v3/clusters` package at all) and `volume
+message list/show/delete` (nor a `messages` one),
 `flavor set --description` (same cause: `omitempty` on
 `flavors.UpdateOpts.Description` cannot send the explicit null nova wants to
 clear it), `network qos rule create/set/show/delete` (one raw
@@ -630,7 +631,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (764 leaf commands at the snapshot above)
+# 1. koc's own command tree (773 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -662,8 +663,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (708);
-2. leaf commands = headline numerator + koc-native (764 = 708 + 56);
+1. every raw row numerator summed = the headline numerator (717);
+2. leaf commands = headline numerator + koc-native (773 = 717 + 56);
 3. every raw row denominator summed = 1004, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (947).
 

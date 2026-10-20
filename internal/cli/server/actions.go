@@ -183,6 +183,10 @@ func newServerMigrateCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.BoolVar(&f.diskOverCommit, "disk-overcommit", false, "live migration only: allow disk over-commit on the destination (compute API <= 2.24)")
 	fl.BoolVar(&f.wait, "wait", false, "wait for the migration to finish (server reaches ACTIVE, or VERIFY_RESIZE for a cold migration)")
 	fl.DurationVar(&f.waitTimeout, flagWaitTimeout, migratePollTimeout, helpWaitTimeout)
+	cmd.AddCommand(
+		newResizeActionCommand(a, true, "server migration confirm"),
+		newResizeActionCommand(a, false, "server migration revert"),
+	)
 	return cmd
 }
 
@@ -464,7 +468,41 @@ func newServerResizeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	fl.StringVar(&flavor, "flavor", "", "flavor ID or name to resize to")
 	fl.BoolVar(&confirm, "confirm", false, "confirm a pending resize")
 	fl.BoolVar(&revert, "revert", false, "revert a pending resize")
+	cmd.AddCommand(newResizeActionCommand(a, true, ""), newResizeActionCommand(a, false, ""))
 	return cmd
+}
+
+// newResizeActionCommand builds upstream's "confirm <server>" / "revert
+// <server>" under "server resize", "server migration" and "server migrate":
+// all three are nova's confirmResize/revertResize, which settle a cold
+// migration exactly as they settle a resize. OSC deprecated the "server
+// migrate" pair in favour of "server migration"; replacedBy names the
+// successor, and a non-empty one prints upstream's warning.
+func newResizeActionCommand(a *auth.Options, confirm bool, replacedBy string) *cobra.Command {
+	verb, short := "revert", "Revert a pending resize or cold migration: release the new server and restart the old one"
+	if confirm {
+		verb, short = "confirm", "Confirm a pending resize or cold migration and release the old server"
+	}
+	if replacedBy != "" {
+		short = "DEPRECATED: use '" + replacedBy + "' instead"
+	}
+	return &cobra.Command{
+		Use:   verb + " <server>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if replacedBy != "" {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The '%s' command has been deprecated in favour of the '%s' command.\n",
+					strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" "), replacedBy)
+			}
+			ctx := cmd.Context()
+			client, err := newComputeClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runServerResize(ctx, client, args[0], "", confirm, !confirm, cmd.OutOrStdout())
+		},
+	}
 }
 
 func runServerResize(ctx context.Context, client *gophercloud.ServiceClient, ref, flavor string, confirm, revert bool, w io.Writer) error {

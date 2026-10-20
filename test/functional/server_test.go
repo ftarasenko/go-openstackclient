@@ -182,12 +182,15 @@ func TestServerLifecycle(t *testing.T) {
 	// Resize up and confirm, then again and revert (devstack allows a resize to
 	// the same host). The second target keeps m1.small's disk: libvirt refuses
 	// to shrink one, and rolls the resize back instead of reaching VERIFY_RESIZE.
+	// The first is settled with upstream's "server resize confirm", the second
+	// with its "server migration revert"; the remaining spellings, and koc's
+	// --confirm/--revert flags, are refused by nova on the ACTIVE server below.
 	r.ok(t, "server", "resize", id, "--flavor", "m1.small")
 	settle(t, r, id, "VERIFY_RESIZE")
-	r.ok(t, "server", "resize", id, "--confirm")
+	r.ok(t, "server", "resize", "confirm", id)
 	settle(t, r, id, "ACTIVE")
 	if f := field(r.show(t, "server", "show", id), "flavor"); !strings.Contains(f, "m1.small") {
-		t.Errorf("flavor after resize --confirm = %q", f)
+		t.Errorf("flavor after resize confirm = %q", f)
 	}
 	small := r.show(t, "flavor", "show", "m1.small")
 	flavor := uniq("resize")
@@ -195,11 +198,31 @@ func TestServerLifecycle(t *testing.T) {
 	t.Cleanup(func() { r.run(t, "flavor", "delete", flavor) })
 	r.ok(t, "server", "resize", id, "--flavor", flavor)
 	settle(t, r, id, "VERIFY_RESIZE")
-	r.ok(t, "server", "resize", id, "--revert")
+	r.ok(t, "server", "migration", "revert", id)
 	settle(t, r, id, "ACTIVE")
 	if f := field(r.show(t, "server", "show", id), "flavor"); !strings.Contains(f, "m1.small") {
-		t.Errorf("flavor after resize --revert = %q, want m1.small back", f)
+		t.Errorf("flavor after migration revert = %q, want m1.small back", f)
 	}
+
+	// With nothing pending nova refuses each confirm/revert spelling itself,
+	// naming the action: that is the proof the request was nova's
+	// confirmResize/revertResize (koc's own error prefix would match "resize"
+	// on any failure).
+	refused := func(what, action string, deprecated bool, res result) {
+		t.Helper()
+		if res.code == 0 || (!strings.Contains(res.stderr, action) && !strings.Contains(res.stderr, "has not been resized")) {
+			t.Errorf("koc %s: exit %d, stderr %q; want nova's refusal of %s", what, res.code, res.stderr, action)
+		}
+		if deprecated && !strings.Contains(res.stderr, "deprecated in favour of the 'server migration") {
+			t.Errorf("koc %s: no deprecation warning in %q", what, res.stderr)
+		}
+	}
+	refused("server resize --confirm", "confirmResize", false, r.run(t, "server", "resize", id, "--confirm"))
+	refused("server resize --revert", "revertResize", false, r.run(t, "server", "resize", id, "--revert"))
+	refused("server resize revert", "revertResize", false, r.run(t, "server", "resize", "revert", id))
+	refused("server migration confirm", "confirmResize", false, r.run(t, "server", "migration", "confirm", id))
+	refused("server migrate confirm", "confirmResize", true, r.run(t, "server", "migrate", "confirm", id))
+	refused("server migrate revert", "revertResize", true, r.run(t, "server", "migrate", "revert", id))
 
 	// The resizes are migrations. The per-server migration views and actions
 	// only apply to a live migration in progress, which one node never has.
