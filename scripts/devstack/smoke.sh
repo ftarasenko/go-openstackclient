@@ -184,6 +184,21 @@ if has_feature ironic; then
     sysadmin openstack baremetal node delete ft-smoke >/dev/null 2>&1
 fi
 
+# --- lb ------------------------------------------------------------------------
+
+# With octavia's no-op drivers a load balancer reaching ACTIVE proves the API,
+# the driver agent and the controller worker's flows, not a data plane: there
+# is no amphora VM (up.sh's header).
+lb_active() { [[ "$(openstack loadbalancer show ft-smoke -f value -c provisioning_status)" == ACTIVE ]]; }
+make_lb() {
+    openstack loadbalancer create --name ft-smoke --vip-subnet-id private-subnet >/dev/null && wait_for 300 lb_active
+}
+if has_feature lb; then
+    check "catalog: load-balancer" catalog_has load-balancer
+    check "load balancer reaches ACTIVE (no-op drivers)" make_lb
+    openstack loadbalancer delete --cascade ft-smoke >/dev/null 2>&1
+fi
+
 # --- koc ---------------------------------------------------------------------------
 
 if [[ -n "$KOC" ]]; then
@@ -202,6 +217,7 @@ if [[ -n "$KOC" ]]; then
         check "koc s3 bucket list" koc s3 bucket list
     fi
     if has_feature dns; then check "koc zone list" koc zone list; fi
+    if has_feature lb; then check "koc loadbalancer list" koc loadbalancer list; fi
     if has_feature ironic; then
         kocsys() { sysadmin "$KOC" "$@" -f json; }
         check "koc baremetal driver list" kocsys baremetal driver list

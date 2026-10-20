@@ -87,6 +87,9 @@ func TestCatalog(t *testing.T) {
 	if c.Features["dns"] {
 		want = append(want, "dns")
 	}
+	if c.Features["lb"] {
+		want = append(want, "load-balancer")
+	}
 	for _, typ := range want {
 		if !types[typ] {
 			t.Errorf("catalog has no %q service (auth=%s); got %v", typ, c.Auth, types)

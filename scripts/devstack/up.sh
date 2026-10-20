@@ -8,7 +8,7 @@
 # locally is byte-for-byte the config CI runs.
 #
 #   scripts/devstack/up.sh --series <zed|caracal|epoxy|latest|YYYY.N> \
-#       [--features core,net,dns,ironic] [--dest DIR] [--log-dir DIR] [--dry-run]
+#       [--features core,net,dns,ironic,lb] [--dest DIR] [--log-dir DIR] [--dry-run]
 #
 # Features (keystone + neutron are always on):
 #   core  nova, glance, cinder (+ backup to swift), placement, swift + s3api
@@ -19,6 +19,10 @@
 #   ironic  ironic's API and conductor with the fake-hardware type only: no
 #         VMs, no deploy ramdisk, no inspector. koc's baremetal tests enroll
 #         their own fake nodes, so the API is all they need.
+#   lb    octavia with its no-op amphora, compute, network and image drivers,
+#         as upstream's octavia-v2-dsvm-noop-api job runs it: the whole API,
+#         amphora records included, reaches ACTIVE with no amphora VM and no
+#         amphora image. Needs core (the plugin creates a nova flavor).
 #
 # Neutron backend by series: ML2/OVS through 2024.1, where fwaas, vpnaas and
 # bgp dynamic routing need the L3 agent; ML2/OVN, devstack's default, from
@@ -44,7 +48,7 @@ set -euo pipefail
 
 GIT_BASE=${GIT_BASE:-https://github.com}
 SERIES=""
-FEATURES="core,net,dns,ironic"
+FEATURES="core,net,dns,ironic,lb"
 DEST=${DEST:-/opt/stack}
 LOG_DIR=${LOG_DIR:-$PWD/devstack-logs}
 DEVSTACK_DIR=${DEVSTACK_DIR:-$PWD/devstack}
@@ -71,6 +75,7 @@ done
 $DRY_RUN || [[ $EUID -ne 0 ]] || die "devstack refuses to run as root; run as a user with passwordless sudo (devstack's tools/create-stack-user.sh)"
 
 has_feature() { [[ ",$FEATURES," == *",$1,"* ]]; }
+if has_feature lb && ! has_feature core; then die "the lb feature needs core"; fi
 
 # --- series → release name and the devstack branch it lives on -------------
 
@@ -154,6 +159,7 @@ if has_feature net; then
 fi
 if has_feature dns; then NEEDED+=(designate); fi
 if has_feature ironic; then NEEDED+=(ironic); fi
+if has_feature lb; then NEEDED+=(octavia); fi
 for p in "${NEEDED[@]}"; do ref_for "$p" >/dev/null; done
 DEVSTACK_REF=${REFS[devstack]}
 
@@ -269,6 +275,20 @@ DOWNLOAD_DEFAULT_IMAGES=False
 EOF
     fi
 
+    if has_feature lb; then
+        # o-cw, o-hm and o-hk still run: the controller worker drives each
+        # object to ACTIVE, with no-op drivers doing nothing in its flows (set
+        # in the post-config below). The health-manager port o-hm0 is still
+        # plugged into br-int, as on upstream's job.
+        cat <<EOF
+
+# lb: octavia with no-op drivers (see the header).
+$(plugin octavia)
+enable_service octavia o-api o-cw o-hm o-hk o-da
+DISABLE_AMP_IMAGE_BUILD=True
+EOF
+    fi
+
     # Meta sections end localrc, so they go last.
     if has_feature core; then
         # swift's s3token now authenticates to keystone's /v3/s3tokens with a
@@ -287,6 +307,21 @@ project_domain_name = Default
 username = swift
 user_domain_name = Default
 password = secret
+EOF
+    fi
+    if has_feature lb; then
+        # The drivers of upstream's octavia-dsvm-noop-base job, present by
+        # these names since before zed (octavia's setup.cfg).
+        cat <<EOF
+
+[[post-config|\$OCTAVIA_CONF]]
+[controller_worker]
+amphora_driver = amphora_noop_driver
+compute_driver = compute_noop_driver
+network_driver = network_noop_driver
+image_driver = image_noop_driver
+[certificates]
+cert_manager = local_cert_manager
 EOF
     fi
 }
