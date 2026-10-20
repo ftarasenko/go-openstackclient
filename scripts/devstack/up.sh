@@ -513,4 +513,8 @@ cat >"$LOG_DIR/bringup.json" <<EOF
 }
 EOF
 cat "$LOG_DIR/bringup.json"
+echo "== phases (seconds until the next devstack milestone, >= 5 s)"
+cat "$LOG_DIR/phases.txt" 2>/dev/null || true
+# Whether ironic's dnsmasq rebuild was skipped (see the marker above).
+grep -m2 -E "Dnsmasq already downgraded|Downgrading dnsmasq" "$LOG_DIR/stack.sh.log" 2>/dev/null || true
 exit $RC
