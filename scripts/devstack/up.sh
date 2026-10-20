@@ -361,7 +361,25 @@ gha_workarounds() {
         sudo apt-get purge -y golang-github-containernetworking-plugin-dnsname || true
     fi
 }
-if [[ "$GHA" == true ]]; then gha_workarounds; fi
+# ironic's configure_ironic_conductor (every branch) looks for isolinux.bin
+# with `find -L /usr -type f -name isolinux.bin | head -1`, which walks all of
+# /usr whatever head does. On a fresh VM that is quick; on a hosted runner /usr
+# carries tens of gigabytes of preinstalled toolchains, and the walk took 90-160
+# s of every cell's bring-up. Masking those trees with an empty read-only bind
+# mount costs nothing and no disk I/O; nothing devstack runs uses them, and the
+# runner is discarded after the job.
+mask_runner_toolchains() {
+    local empty dir
+    empty=$(mktemp -d)
+    for dir in /usr/local/lib/android /usr/local/.ghcup /usr/local/share/powershell \
+        /usr/local/share/chromium /usr/local/lib/node_modules /usr/local/julia* \
+        /usr/share/dotnet /usr/share/swift /usr/share/miniconda /usr/share/az_* \
+        /usr/lib/google-cloud-sdk /usr/lib/jvm; do
+        [[ -d $dir ]] || continue
+        sudo mount --bind -o ro "$empty" "$dir" && echo "up.sh: masked $dir"
+    done
+}
+if [[ "$GHA" == true ]]; then gha_workarounds; mask_runner_toolchains; fi
 
 # --- stack -------------------------------------------------------------------
 
