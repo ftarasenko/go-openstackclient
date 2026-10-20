@@ -6,6 +6,7 @@ package network
 // name as "not set" rather than erroring — so a typo in a lookup copy silently
 // disables the check it guards instead of failing loudly.
 const (
+	flagRouter              = "router"
 	flagNoShare             = "no-share"
 	flagNoDefault           = "no-default"
 	flagNoDHCP              = "no-dhcp"

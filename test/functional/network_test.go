@@ -301,4 +301,15 @@ func TestFloatingIPs(t *testing.T) {
 		r.ok(t, "floating", "ip", "port", "forwarding", "delete", fipID, pfID)
 		r.fails(t, "floating", "ip", "port", "forwarding", "show", fipID, pfID)
 	})
+	// --router (python-openstackclient 10.4.0) writes router_id, which neutron
+	// accepts only with floating-ip-router-writable (neutron 2026.2; under OVN
+	// only with ovn_router_indirect_snat, which devstack leaves off).
+	t.Run("router", func(t *testing.T) {
+		requireExtension(t, "floating-ip-router-writable")
+		routerID := field(r.show(t, "router", "show", router), "id")
+		r.ok(t, "floating", "ip", "set", fipID, "--router", router)
+		if got := field(r.show(t, "floating", "ip", "show", fipID), "router_id"); got != routerID {
+			t.Errorf("floating ip set --router: router_id = %q, want %s", got, routerID)
+		}
+	})
 }

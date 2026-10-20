@@ -205,3 +205,44 @@ func TestRunFloatingIPUnset_QoSAndTags(t *testing.T) {
 		t.Fatalf("runFloatingIPUnset: %v", err)
 	}
 }
+
+// --router (python-openstackclient 10.4.0) resolves the router and sends
+// router_id, on create and on set.
+func TestRunFloatingIP_RouterSendsRouterID(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	echoLookup(t, fakeServer, "/floatingips", "floatingips")
+	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
+		th.TestMethod(t, r, http.MethodPut)
+		th.TestJSONRequest(t, r, `{"floatingip":{"router_id":"edge-router"}}`)
+		writeJSON(t, w, http.StatusOK, `{"floatingip":{"id":"fip-1","router_id":"edge-router"}}`)
+	})
+	o := &output.Options{Format: output.FormatValue}
+	if err := runFloatingIPSet(context.Background(), networkClient(fakeServer), o, "fip-1",
+		&floatingIPSetFlags{router: "edge-router"}, fakeFlags{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runFloatingIPSet --router: %v", err)
+	}
+}
+
+// Without floating-ip-router-writable neutron rejects router_id as a bare
+// 400; the error names the extension.
+func TestRunFloatingIPCreate_RouterNamesMissingExtension(t *testing.T) {
+	fakeServer := th.SetupHTTP()
+	defer fakeServer.Teardown()
+	echoLookup(t, fakeServer, "/networks", "networks")
+	echoLookup(t, fakeServer, "/routers", "routers")
+	fakeServer.Mux.HandleFunc("/floatingips", func(w http.ResponseWriter, r *http.Request) {
+		th.TestJSONRequest(t, r, `{"floatingip":{"floating_network_id":"ext-net","router_id":"r1"}}`)
+		writeJSON(t, w, http.StatusBadRequest, `{"NeutronError":{"message":"Attribute 'router_id' not allowed in POST"}}`)
+	})
+	fakeServer.Mux.HandleFunc("/extensions", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, `{"extensions":[{"alias":"router"}]}`)
+	})
+	err := runFloatingIPCreate(context.Background(), networkClient(fakeServer), &output.Options{Format: output.FormatTable},
+		"ext-net", &floatingIPCreateFlags{router: "r1"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "floating-ip-router-writable (for router_id)") {
+		t.Fatalf("err = %v, want the missing extension named", err)
+	}
+}

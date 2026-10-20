@@ -7,6 +7,13 @@ actually thin. The trigger was a user report that `koc floating ip list
 --project` is rejected: the command exists and is counted as covered, but it
 takes no filter at all.
 
+> **Baseline moved to 10.4.0 on 2026-10-20.** The option table
+> (`upstream_flags_data_test.go`) was regenerated from 10.4.0's parsers; the
+> only new option is `floating ip create/set --router` (neutron's
+> `floating-ip-router-writable`, 2026.2), now implemented, and the only new
+> commands are `subnet pool add network` and its deprecated alias `network
+> onboard subnet`, open gaps. The measurements below are as of 10.3.0.
+
 **Measured 2026-09-25** at `e13309e`, against `python-openstackclient` **10.3.0**
 (PyPI sdist, now the latest; `coverage.md` still cites 10.2.1) and
 `gophercloud/v2` **v2.15.0** (the `go.mod` pin; `coverage.md` still cites

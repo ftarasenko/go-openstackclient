@@ -263,6 +263,7 @@ type floatingIPCreateFlags struct {
 	port              string
 	fixedIPAddr       string
 	qosPolicy         string
+	router            string
 	dnsDomain         string
 	dnsName           string
 	project           string
@@ -301,6 +302,7 @@ func newFloatingIPCreateCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	fl.StringVar(&f.port, "port", "", "port to associate the floating IP with at creation (name or ID)")
 	fl.StringVar(&f.fixedIPAddr, flagFixedIPAddress, "", "fixed IP of the associated port to bind the floating IP to")
 	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the floating IP (name or ID)")
+	fl.StringVar(&f.router, flagRouter, "", helpFloatingIPRouter)
 	fl.StringVar(&f.dnsDomain, flagDNSDomain, "", "DNS domain for the floating IP (requires the dns-integration extension)")
 	fl.StringVar(&f.dnsName, flagDNSName, "", "DNS name for the floating IP (requires the dns-integration extension)")
 	fl.StringVar(&f.project, flagProject, "", "owner's project (name or ID; admin)")
@@ -346,6 +348,9 @@ func runFloatingIPCreate(ctx context.Context, client *gophercloud.ServiceClient,
 			return err
 		}
 		attrs = mergeAttrs(attrs, map[string]any{"qos_policy_id": qosID})
+	}
+	if attrs, err = withFloatingIPRouter(ctx, client, attrs, f.router); err != nil {
+		return err
 	}
 	if f.dnsDomain != "" {
 		attrs = mergeAttrs(attrs, map[string]any{"dns_domain": f.dnsDomain})
@@ -413,6 +418,7 @@ type floatingIPSetFlags struct {
 	description   string
 	qosPolicy     string
 	noQoSPolicy   bool
+	router        string
 	extraProperty []string
 	tagWriteFlags
 }
@@ -441,6 +447,7 @@ func newFloatingIPSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	fl.StringVar(&f.description, flagDescription, "", "new description for the floating IP")
 	fl.StringVar(&f.qosPolicy, flagQoSPolicy, "", "QoS policy to attach to the floating IP (name or ID)")
 	fl.BoolVar(&f.noQoSPolicy, flagNoQoSPolicy, false, "detach the floating IP's QoS policy")
+	fl.StringVar(&f.router, flagRouter, "", helpFloatingIPRouter)
 	bindExtraPropertyFlag(fl, &f.extraProperty)
 	bindTagSetFlags(fl, &f.tagWriteFlags, nounFloatingIP)
 	cmd.MarkFlagsMutuallyExclusive(flagQoSPolicy, flagNoQoSPolicy)
@@ -479,6 +486,9 @@ func runFloatingIPSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 			return err
 		}
 		attrs = map[string]any{"qos_policy_id": qosID}
+	}
+	if attrs, err = withFloatingIPRouter(ctx, client, attrs, f.router); err != nil {
+		return err
 	}
 	extra, err := parseExtraProperties(f.extraProperty, false)
 	if err != nil {
@@ -593,4 +603,24 @@ func runFloatingIPUnset(ctx context.Context, client *gophercloud.ServiceClient, 
 	}
 	u := floatingIPUpdate{opts: opts, attrs: attrs, changed: changed, tags: tagEdit{applyTagsForUnset, &f.tagWriteFlags}}
 	return updateFloatingIP(ctx, client, o, addrOrID, id, u, w)
+}
+
+// helpFloatingIPRouter is --router's help on create and set, which
+// python-openstackclient 10.4.0 added.
+const helpFloatingIPRouter = "router hosting the floating IP (name or ID; requires the floating-ip-router-writable extension, neutron 2026.2)"
+
+// withFloatingIPRouter adds --router as router_id. Neutron's floating IP
+// router_id is read-only unless the floating-ip-router-writable extension is
+// loaded (neutron-lib 5.0.1, neutron 29.0.0; under ML2/OVN only with
+// ovn_router_indirect_snat), so it rides the extension-attribute path and an
+// older cloud's 400 is explained by name.
+func withFloatingIPRouter(ctx context.Context, client *gophercloud.ServiceClient, attrs map[string]any, ref string) (map[string]any, error) {
+	if ref == "" {
+		return attrs, nil
+	}
+	id, err := resolveRouterID(ctx, client, ref)
+	if err != nil {
+		return attrs, err
+	}
+	return mergeAttrs(attrs, map[string]any{"router_id": id}), nil
 }

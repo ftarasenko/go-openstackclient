@@ -56,6 +56,7 @@ var attrExtensions = map[string]string{
 	"numa_affinity_policy":      "port-numa-affinity-policy",
 	"device_profile":            "port-device-profile",
 	"dns_publish_fixed_ip":      "subnet-dns-publish-fixed-ip",
+	"router_id":                 "floating-ip-router-writable", // sent only by floating ip create/set
 	"service_types":             "subnet-service-types",
 	fieldBindingHostID:          "binding",
 	"binding:profile":           "binding",
