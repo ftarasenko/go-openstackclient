@@ -70,6 +70,12 @@ func TestLoadBalancer(t *testing.T) {
 		t.Errorf("after loadbalancer set: %v", got)
 	}
 
+	r.ok(t, "loadbalancer", "unset", id, "--description", "--tag", "ft-b", "--wait")
+	got = r.show(t, "loadbalancer", "show", id)
+	if field(got, "description") != "" || strings.Contains(field(got, "tags"), "ft-b") {
+		t.Errorf("after loadbalancer unset --description --tag: %v", got)
+	}
+
 	r.show(t, "loadbalancer", "stats", "show", id)
 	if tree := r.list(t, "loadbalancer", "status", "show", id); !in(tree, id) {
 		t.Errorf("loadbalancer status show = %v", tree)
@@ -106,6 +112,13 @@ func TestLoadBalancerChildren(t *testing.T) {
 		field(got, "description") != "functional" || field(got, "timeout_client_data") != "30000" {
 		t.Errorf("after listener set: %v", got)
 	}
+	r.ok(t, "loadbalancer", "listener", "unset", lsnID, "--description", "--connection-limit", "--wait")
+	lbActive(t, r, lbID)
+	if got := r.show(t, "loadbalancer", "listener", "show", lsnID); field(got, "description") != "" ||
+		field(got, "connection_limit") == "200" {
+		t.Errorf("after listener unset: %v", got)
+	}
+	r.show(t, "loadbalancer", "listener", "stats", "show", lsnID)
 
 	// pool
 	poolName := uniq("pool")
@@ -122,6 +135,12 @@ func TestLoadBalancerChildren(t *testing.T) {
 		field(got, "description") != "functional" {
 		t.Errorf("after pool set: %v", got)
 	}
+	r.ok(t, "loadbalancer", "pool", "unset", poolID, "--description", "--session-persistence", "--wait")
+	lbActive(t, r, lbID)
+	if got := r.show(t, "loadbalancer", "pool", "show", poolID); field(got, "description") != "" ||
+		strings.Contains(field(got, "session_persistence"), "SOURCE_IP") {
+		t.Errorf("after pool unset: %v", got)
+	}
 
 	// member
 	mem := r.show(t, "loadbalancer", "member", "create", poolID, "--name", uniq("mem"),
@@ -136,6 +155,12 @@ func TestLoadBalancerChildren(t *testing.T) {
 	if got := r.show(t, "loadbalancer", "member", "show", poolID, memID); field(got, "weight") != "7" ||
 		field(got, "monitor_port") != "9090" {
 		t.Errorf("after member set: %v", got)
+	}
+	r.ok(t, "loadbalancer", "member", "unset", poolID, memID, "--weight", "--monitor-port", "--wait")
+	lbActive(t, r, lbID)
+	if got := r.show(t, "loadbalancer", "member", "show", poolID, memID); field(got, "weight") == "7" ||
+		field(got, "monitor_port") == "9090" {
+		t.Errorf("after member unset: %v", got)
 	}
 
 	// health monitor
@@ -152,6 +177,12 @@ func TestLoadBalancerChildren(t *testing.T) {
 		field(got, "expected_codes") != "200-204" {
 		t.Errorf("after healthmonitor set: %v", got)
 	}
+	r.ok(t, "loadbalancer", "healthmonitor", "unset", hmID, "--url-path", "--expected-codes", "--wait")
+	lbActive(t, r, lbID)
+	if got := r.show(t, "loadbalancer", "healthmonitor", "show", hmID); field(got, "url_path") == "/healthz" ||
+		field(got, "expected_codes") == "200-204" {
+		t.Errorf("after healthmonitor unset: %v", got)
+	}
 
 	// L7 policy and rule
 	pol := r.show(t, "loadbalancer", "l7policy", "create", "--name", uniq("l7p"), "--listener", lsnID,
@@ -167,6 +198,11 @@ func TestLoadBalancerChildren(t *testing.T) {
 		field(got, "redirect_pool_id") != poolID {
 		t.Errorf("after l7policy set: %v", got)
 	}
+	r.ok(t, "loadbalancer", "l7policy", "unset", polID, "--name", "--wait")
+	lbActive(t, r, lbID)
+	if got := r.show(t, "loadbalancer", "l7policy", "show", polID); field(got, "name") != "" {
+		t.Errorf("after l7policy unset --name: %v", got)
+	}
 
 	rule := r.show(t, "loadbalancer", "l7rule", "create", polID, "--type", "PATH",
 		"--compare-type", "STARTS_WITH", "--value", "/api")
@@ -180,6 +216,11 @@ func TestLoadBalancerChildren(t *testing.T) {
 	if got := r.show(t, "loadbalancer", "l7rule", "show", polID, ruleID); field(got, "value") != "/v2" ||
 		field(got, "invert") != "true" {
 		t.Errorf("after l7rule set: %v", got)
+	}
+	r.ok(t, "loadbalancer", "l7rule", "unset", polID, ruleID, "--invert", "--wait")
+	lbActive(t, r, lbID)
+	if got := r.show(t, "loadbalancer", "l7rule", "show", polID, ruleID); field(got, "invert") != "false" {
+		t.Errorf("after l7rule unset --invert: %v", got)
 	}
 
 	// Children go leaf-first; each delete makes the load balancer immutable.
@@ -288,6 +329,10 @@ func TestLoadBalancerFlavors(t *testing.T) {
 		field(got, "description") != "functional 2" {
 		t.Errorf("after flavor set --disable: %v", got)
 	}
+	r.ok(t, "loadbalancer", "flavor", "unset", fvID, "--description")
+	if got := r.show(t, "loadbalancer", "flavor", "show", fvID); field(got, "description") != "" {
+		t.Errorf("after flavor unset --description: %v", got)
+	}
 
 	r.ok(t, "loadbalancer", "flavor", "delete", fvID)
 	r.fails(t, "loadbalancer", "flavor", "show", fvID)
@@ -326,4 +371,54 @@ func TestLoadBalancerQuotas(t *testing.T) {
 	if got := r.show(t, "loadbalancer", "quota", "show", "demo"); field(got, "loadbalancer") == "3" {
 		t.Errorf("after quota reset: %v", got)
 	}
+}
+
+// TestLoadBalancerAvailabilityZones walks a profile and a zone through their
+// whole lifecycle. The amphora driver validates the zone data against the
+// compute driver, which is the no-op one here, so "nova" is accepted as on a
+// real cloud whose nova has that zone.
+func TestLoadBalancerAvailabilityZones(t *testing.T) {
+	c := ft(t)
+	requireFeature(t, "lb")
+	r := defaultRunner(c)
+
+	azpName := uniq("azp")
+	azp := r.show(t, "loadbalancer", "availabilityzoneprofile", "create", "--name", azpName,
+		"--provider", "amphora", "--availability-zone-data", `{"compute_zone": "nova"}`)
+	azpID := field(azp, "id")
+	t.Cleanup(func() { r.run(t, "loadbalancer", "availabilityzoneprofile", "delete", azpID) })
+	if rows := r.list(t, "loadbalancer", "availabilityzoneprofile", "list", "--name", azpName, "--provider", "amphora"); !in(rows, azpID) {
+		t.Errorf("availabilityzoneprofile list --name --provider = %v", rows)
+	}
+	renamed := azpName + "-2"
+	r.ok(t, "loadbalancer", "availabilityzoneprofile", "set", azpID, "--name", renamed)
+	if got := r.show(t, "loadbalancer", "availabilityzoneprofile", "show", renamed); field(got, "id") != azpID ||
+		!strings.Contains(field(got, "availability_zone_data"), "nova") {
+		t.Errorf("after availabilityzoneprofile set --name: %v", got)
+	}
+
+	azName := uniq("az")
+	az := r.show(t, "loadbalancer", "availabilityzone", "create", "--name", azName,
+		"--availabilityzoneprofile", renamed, "--description", "koc functional")
+	t.Cleanup(func() { r.run(t, "loadbalancer", "availabilityzone", "delete", azName) })
+	if field(az, "availability_zone_profile_id") != azpID || field(az, "enabled") != "true" {
+		t.Errorf("availabilityzone create = %v", az)
+	}
+	if rows := r.list(t, "loadbalancer", "availabilityzone", "list", "--availabilityzoneprofile", azpID, "--enable"); !in(rows, azName) {
+		t.Errorf("availabilityzone list --availabilityzoneprofile --enable = %v", rows)
+	}
+	r.ok(t, "loadbalancer", "availabilityzone", "set", azName, "--disable", "--description", "functional 2")
+	if got := r.show(t, "loadbalancer", "availabilityzone", "show", azName); field(got, "enabled") != "false" ||
+		field(got, "description") != "functional 2" {
+		t.Errorf("after availabilityzone set --disable: %v", got)
+	}
+	r.ok(t, "loadbalancer", "availabilityzone", "unset", azName, "--description")
+	if got := r.show(t, "loadbalancer", "availabilityzone", "show", azName); field(got, "description") != "" {
+		t.Errorf("after availabilityzone unset --description: %v", got)
+	}
+
+	r.ok(t, "loadbalancer", "availabilityzone", "delete", azName)
+	r.fails(t, "loadbalancer", "availabilityzone", "show", azName)
+	r.ok(t, "loadbalancer", "availabilityzoneprofile", "delete", azpID)
+	r.fails(t, "loadbalancer", "availabilityzoneprofile", "show", azpID)
 }

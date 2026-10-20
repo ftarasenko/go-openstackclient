@@ -27,6 +27,7 @@ var notFileFlags = map[string]string{
 	"keypair show --public-key":                    "prints the public key; writes no file",
 	"loadbalancer healthmonitor create --url-path": "an HTTP path on the member, not a local file",
 	"loadbalancer healthmonitor set --url-path":    "an HTTP path on the member, not a local file",
+	"loadbalancer healthmonitor unset --url-path":  "a boolean that resets the member HTTP path, not a local file",
 }
 
 // embeddedTree builds the command tree under the embedded profile.

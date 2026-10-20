@@ -31,6 +31,7 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newLBShowCommand(a, o),
 		newLBCreateCommand(a, o),
 		newLBSetCommand(a, o),
+		newLBUnsetCommand(a, o),
 		newLBDeleteCommand(a, o),
 		newLBFailoverCommand(a, o),
 		newLBStatsCommand(a, o),
@@ -46,6 +47,8 @@ func NewCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newProviderCommand(a, o),
 		newFlavorCommand(a, o),
 		newFlavorProfileCommand(a, o),
+		newAZCommand(a, o),
+		newAZProfileCommand(a, o),
 	)
 	return cmd
 }

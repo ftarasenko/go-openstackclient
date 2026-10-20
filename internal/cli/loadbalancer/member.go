@@ -29,6 +29,7 @@ func newMemberCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newMemberShowCommand(a, o),
 		newMemberCreateCommand(a, o),
 		newMemberSetCommand(a, o),
+		newMemberUnsetCommand(a, o),
 		newMemberDeleteCommand(a, o),
 	)
 	return cmd

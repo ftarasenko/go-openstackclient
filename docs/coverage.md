@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-10-17 · `koc` @ this commit (base `28e9801`) · 733 leaf
+**Snapshot:** 2026-10-20 · `koc` @ this commit (base `5326953`) · 753 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -28,8 +28,8 @@ PyPI is the source of record.
 
 ## Headline
 
-**677 of 947 in-scope upstream commands (71%).** Of `koc`'s 733 leaf commands,
-677 are upstream-equivalent and 56 are koc-native.
+**697 of 947 in-scope upstream commands (74%).** Of `koc`'s 753 leaf commands,
+697 are upstream-equivalent and 56 are koc-native.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -70,8 +70,8 @@ list` and `koc baremetal node reboot` (see "Naming deviations").
 The raw percentage understates practical parity: roughly 45% of the upstream
 surface is niche subsystems (Glance metadefs, Cinder consistency/volume groups,
 Neutron VPNaaS/FWaaS/metering, Keystone federation, ironic runbooks). Excluding
-those, `koc` covers **81–97%** of each core OSC namespace, and 100% of designate
-and placement — the commands operators actually run daily. The one outlier is
+those, `koc` covers **81–97%** of each core OSC namespace, and 100% of designate,
+octavia and placement — the commands operators actually run daily. The one outlier is
 `openstack.common` at 6/11: it is a grab-bag of cross-service odds and ends
 (`project cleanup`, `quota list/delete`, `configuration show`, `versions show`)
 rather than a subsystem, so it admits no niche split. Both numbers are reported
@@ -183,7 +183,7 @@ counted in the compute row.
 | --- | --- | --- |
 | ironic (`baremetal`) | 107/118 (91%) | the full provision-state verb set, node lifecycle, power, ports, port groups, deploy templates, runbooks, inspection rules, volume connectors/targets, shards, traits, console, secure boot, history, child nodes, vendor passthru, VIFs, BIOS settings, firmware, allocations, the driver and conductor nouns and stored inventory are solid; missing `chassis` (6), `baremetal create`, `driver passthru list/call`, `node boot mode set` and `port unset`. Sequenced in `docs/proposals/coverage-tiers.md` |
 | designate (`dns`) | **60/60 (100%)** | complete against `entry_points.txt`, diffed name-for-name — every upstream `openstack` dns command has a `koc` equivalent and no `koc` dns command is invented. `koc` additionally ships `dns pool list/show`, which designate's SDK supports but its CLI never exposed (see "koc-native commands") |
-| python-octaviaclient (`load balancer`) | 62/82 (76%) | everything except availability zones and profiles (11 — `availabilityzone` ×6, `availabilityzoneprofile` ×5), eight of upstream's ten `unset` verbs (`loadbalancer`, `listener`, `pool`, `member`, `healthmonitor`, `l7policy`, `l7rule`, `flavor`; `quota unset` is implemented and `availability zone unset` is inside the 11) and `listener stats show` — 20 in all. Diffed name-for-name against `entry_points.txt`: all 62 `koc loadbalancer` leaves map to an upstream command, none is koc-invented |
+| python-octaviaclient (`load balancer`) | **82/82 (100%)** | complete against `entry_points.txt`, diffed name-for-name — load balancers and their children, all ten `unset` verbs, listener and load balancer stats, amphorae, providers, flavors and flavor profiles, availability zones and their profiles, quotas. No `koc loadbalancer` leaf is koc-invented. The unset verbs and both availability-zone nouns use the raw fallback (see Tier 3) |
 | osc-placement | **31/31 (100%)** | complete against `entry_points.txt`, diffed name-for-name — resource providers, classes, traits, inventories, aggregates, allocations, allocation candidates and usages, reads and writes alike |
 | python-ironic-inspector-client (`baremetal introspection`) | 6/13 (46%) | `start`, `status`, `list`, `abort`, `data save`, `interface list`; missing `interface show`, `reprocess` and the five `rule` verbs |
 
@@ -284,8 +284,7 @@ covers strictly more clouds than a four-way typed switch would.
 
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
 `block storage log level/manageable`; ironic chassis, driver passthru and node boot mode; Neutron metering, flavors, L3 conntrack helpers, local IPs,
-NDP proxies, segment ranges, default SG rules; octavia availability zones and
-profiles; TaaS tap services and flows (only tap mirrors have a gophercloud
+NDP proxies, segment ranges, default SG rules; TaaS tap services and flows (only tap mirrors have a gophercloud
 package); all of Swift and Manila. (Designate is no longer on this list — the raw
 fallback is written and its whole surface is covered; see below. Ironic VIFs and
 BIOS settings are no longer here either — `baremetal/v1/nodes` carries typed
@@ -296,7 +295,10 @@ Already using it: `baremetal deploy template`, `baremetal runbook`, `baremetal i
 (compute), `loadbalancer quota defaults show`, `loadbalancer amphora
 configure/delete/stats show`, `loadbalancer provider capability list`,
 `loadbalancer flavor set --disable` (gophercloud tags the field `omitempty`, so a
-`false` would be dropped), `volume backend pool list`, `volume backend
+`false` would be dropped), every `loadbalancer … unset` (octavia reverts an
+attribute on an explicit JSON null, which `omitempty` pointers cannot send),
+`loadbalancer availabilityzone` and `availabilityzoneprofile` (gophercloud has
+no package for either; `internal/cli/loadbalancer/availabilityzone.go`), `volume backend pool list`, `volume backend
 capability show` (see below) and `block storage cluster list/set/show`
 (gophercloud has no `blockstorage/v3/clusters` package at all),
 `flavor set --description` (same cause: `omitempty` on
@@ -628,12 +630,15 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (733 leaf commands at the snapshot above)
+# 1. koc's own command tree (753 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
 # import info`. Read runnability off the Usage block — a pure group's only usage
-# form is "<path> [command]".
+# form is "<path> [command]". `koc bgp speaker list` is the trap: a verb with no
+# positional that also parents `list advertised routes`, so its Usage shows both
+# "koc bgp speaker list [flags]" and "... [command]"; a rule keyed on a <positional>
+# in the usage line misses it and comes out one short.
 # Exclude cobra's five built-ins — `help` and `completion {bash,zsh,fish,powershell}`
 # appear under Available Commands but are not koc surface. Forgetting them is a
 # reliable +5.
@@ -657,8 +662,8 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (677);
-2. leaf commands = headline numerator + koc-native (733 = 677 + 56);
+1. every raw row numerator summed = the headline numerator (697);
+2. leaf commands = headline numerator + koc-native (753 = 697 + 56);
 3. every raw row denominator summed = 1004, and minus the two not-targeted rows
    (swift 17 + manila 40) = the in-scope denominator (947).
 

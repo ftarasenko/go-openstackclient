@@ -30,6 +30,7 @@ func newPoolCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newPoolShowCommand(a, o),
 		newPoolCreateCommand(a, o),
 		newPoolSetCommand(a, o),
+		newPoolUnsetCommand(a, o),
 		newPoolDeleteCommand(a, o),
 	)
 	return cmd

@@ -26,7 +26,9 @@ func newListenerCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newListenerShowCommand(a, o),
 		newListenerCreateCommand(a, o),
 		newListenerSetCommand(a, o),
+		newListenerUnsetCommand(a, o),
 		newListenerDeleteCommand(a, o),
+		newListenerStatsCommand(a, o),
 	)
 	return cmd
 }
@@ -478,4 +480,41 @@ func runListenerDelete(ctx context.Context, client *gophercloud.ServiceClient, r
 		}
 		return nil
 	})
+}
+
+// --- stats show --------------------------------------------------------------
+
+func newListenerStatsCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	cmd := &cobra.Command{Use: "stats", Short: "Listener traffic statistics"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show <listener>",
+		Short: "Show a listener's traffic statistics",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newLoadBalancerClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runListenerStatsShow(ctx, client, o, args[0], cmd.OutOrStdout())
+		},
+	})
+	return cmd
+}
+
+func runListenerStatsShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
+	id, err := resolveListenerID(ctx, client, ref)
+	if err != nil {
+		return err
+	}
+	stats, err := listeners.GetStats(ctx, client, id).Extract()
+	if err != nil {
+		return fmt.Errorf("getting statistics for listener %q: %w", ref, err)
+	}
+	return o.WriteSingle(w,
+		[]string{"active_connections", "bytes_in", "bytes_out", "request_errors", "total_connections"},
+		[]any{stats.ActiveConnections, stats.BytesIn, stats.BytesOut, stats.RequestErrors, stats.TotalConnections})
 }

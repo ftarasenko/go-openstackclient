@@ -514,6 +514,8 @@ func TestLoadBalancerCreateVerbs_AcceptNameFlagAndPositional(t *testing.T) {
 		{"l7policy", "create"},
 		{"flavor", "create"},
 		{"flavorprofile", "create"},
+		{"availabilityzone", "create"},
+		{"availabilityzoneprofile", "create"},
 	}
 	for _, path := range verbs {
 		leaf, _, err := root.Find(path)

@@ -297,9 +297,9 @@ many clouds never enable, and runbooks exist on none of the older fleet.
 
 Glance metadefs and cached images; Cinder consistency groups, volume groups,
 `block storage cluster/log level/manageable`; Neutron metering, flavors, L3
-conntrack helpers, local IPs, NDP proxies, segment ranges, default SG rules;
-Octavia availability zones and profiles, the seven remaining `unset` verbs and
-`listener stats show`.
+conntrack helpers, local IPs, NDP proxies, segment ranges, default SG rules.
+(Octavia availability zones and profiles, the remaining `unset` verbs and
+`listener stats show` are done: octavia is at 82/82.)
 
 Nothing here is daily-ops. Pull items forward only when the cloud actually uses
 the subsystem — §2 of the verification prompt is what tells you.

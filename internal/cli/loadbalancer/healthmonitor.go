@@ -26,6 +26,7 @@ func newHealthMonitorCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		newHealthMonitorShowCommand(a, o),
 		newHealthMonitorCreateCommand(a, o),
 		newHealthMonitorSetCommand(a, o),
+		newHealthMonitorUnsetCommand(a, o),
 		newHealthMonitorDeleteCommand(a, o),
 	)
 	return cmd

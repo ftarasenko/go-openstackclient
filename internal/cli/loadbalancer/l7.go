@@ -26,6 +26,7 @@ func newL7PolicyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newL7PolicyShowCommand(a, o),
 		newL7PolicyCreateCommand(a, o),
 		newL7PolicySetCommand(a, o),
+		newL7PolicyUnsetCommand(a, o),
 		newL7PolicyDeleteCommand(a, o),
 	)
 	return cmd
@@ -44,6 +45,7 @@ func newL7RuleCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newL7RuleShowCommand(a, o),
 		newL7RuleCreateCommand(a, o),
 		newL7RuleSetCommand(a, o),
+		newL7RuleUnsetCommand(a, o),
 		newL7RuleDeleteCommand(a, o),
 	)
 	return cmd

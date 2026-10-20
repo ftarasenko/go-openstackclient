@@ -914,6 +914,7 @@ func newFlavorCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newFlavorShowCommand(a, o),
 		newFlavorCreateCommand(a, o),
 		newFlavorSetCommand(a, o),
+		newFlavorUnsetCommand(a, o),
 		newFlavorDeleteCommand(a, o),
 	)
 	return cmd
