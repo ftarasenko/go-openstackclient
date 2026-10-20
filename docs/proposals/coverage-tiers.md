@@ -276,6 +276,9 @@ Four near-identical CRUD nouns over `/v1/chassis`, `/v1/portgroups`,
 `/v1/volume/connectors`, `/v1/volume/targets`. Once the first is written the
 other three are a table.
 
+**Done**, chassis last; with `baremetal create`, `driver passthru list/call`,
+`node boot mode set` and `port unset` the ironic row is at 118/118.
+
 ### T3.3 — ironic node extras (10 commands)
 
 `node trait add/list/remove` (3) · `node history list/get` (2) ·

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -55,7 +57,7 @@ func (f *execIronic) handle(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && !strings.HasSuffix(call.Path, execUUID) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"deploy_templates": []any{}, "inspection_rules": []any{}, "portgroups": []any{}, "ports": []any{},
-			"connectors": []any{}, "targets": []any{}, "runbooks": []any{}, "traits": []any{},
+			"connectors": []any{}, "targets": []any{}, "runbooks": []any{}, "traits": []any{}, "chassis": []any{},
 		})
 		return
 	}
@@ -153,6 +155,15 @@ var execLeaves = [][]string{
 	{"runbook", "trait", "list", execUUID},
 	{"runbook", "trait", "add", execUUID, "CUSTOM_T"},
 	{"runbook", "trait", "remove", execUUID, "--all"},
+	{"chassis", "list"},
+	{"chassis", "show", execUUID},
+	{"chassis", "create", "--description", "d", "--extra", "k=v"},
+	{"chassis", "set", execUUID, "--description", "e"},
+	{"chassis", "unset", execUUID, "--description"},
+	{"chassis", "delete", execUUID},
+	{"port", "unset", execUUID, "--name"},
+	{"node", "boot", "mode", "set", execUUID, "uefi"},
+	{"driver", "passthru", "call", execUUID, "m", "--arg", "k=v"},
 }
 
 func TestExec_BaremetalLeaves(t *testing.T) {
@@ -202,5 +213,23 @@ func TestExec_BaremetalFlagsReachTheBody(t *testing.T) {
 			t.Fatalf("%v: %v\n%s", tc.argv, err, out)
 		}
 		jsonEq(t, strings.Join(tc.argv[:3], " "), f.body(t, tc.method, tc.path), tc.want)
+	}
+}
+
+// baremetal create reads its files before authenticating, so it is run here
+// rather than from execLeaves, whose auth-error test expects auth first.
+func TestExec_BaremetalCreate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nodes.json")
+	if err := os.WriteFile(path, []byte(`{"nodes": [{"driver": "fake-hardware", "ports": [{"address": "52:54:00:00:00:01"}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authn, f := fakeIronicAuth(t)
+	out, err := execBaremetal(t, authn, "create", path)
+	if err != nil {
+		t.Fatalf("baremetal create: %v\n%s", err, out)
+	}
+	jsonEq(t, "port body", f.body(t, http.MethodPost, "/ports"), `{"address":"52:54:00:00:00:01","node_uuid":"`+execUUID+`"}`)
+	if !strings.Contains(out, "Created node "+execUUID) {
+		t.Errorf("output = %q", out)
 	}
 }

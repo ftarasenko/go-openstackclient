@@ -17,20 +17,42 @@ import (
 )
 
 // Vendor passthru: driver-specific methods a node's vendor interface exposes
-// under /nodes/<node>/vendor_passthru. gophercloud has no call for them.
+// under /nodes/<node>/vendor_passthru, and a driver's default vendor interface
+// under /drivers/<driver>/vendor_passthru. gophercloud has no call for either.
 
 // passthruHTTPMethods are python-ironicclient's v1/utils.py HTTP_METHODS.
 var passthruHTTPMethods = []string{http.MethodPost, http.MethodPut, http.MethodGet, http.MethodDelete, http.MethodPatch}
 
+// passthruTarget is what a passthru verb addresses: a node or a driver.
+type passthruTarget struct {
+	collection string // "nodes" or "drivers"
+	kind       string // "baremetal node" or "baremetal driver", for messages
+}
+
+var (
+	nodePassthru   = passthruTarget{"nodes", "baremetal node"}
+	driverPassthru = passthruTarget{"drivers", "baremetal driver"}
+)
+
 // newNodePassthruCommand builds "baremetal node passthru list|call".
 func newNodePassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return newPassthruCommand(a, o, nodePassthru, "node", useListNode)
+}
+
+// newDriverPassthruCommand builds "baremetal driver passthru list|call": the
+// driver-level methods of the driver's default vendor interface.
+func newDriverPassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	return newPassthruCommand(a, o, driverPassthru, "driver", "list <driver>")
+}
+
+func newPassthruCommand(a *auth.Options, o *output.Options, target passthruTarget, noun, listUse string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "passthru",
-		Short: "Call a node's vendor passthru methods",
+		Short: "Call a " + noun + "'s vendor passthru methods",
 	}
 	list := &cobra.Command{
-		Use:   useListNode,
-		Short: "List a node's vendor passthru methods",
+		Use:   listUse,
+		Short: "List a " + noun + "'s vendor passthru methods",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -41,7 +63,7 @@ func newNodePassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNodePassthruList(ctx, client, o, args[0], cmd.OutOrStdout())
+			return runPassthruList(ctx, client, o, target, args[0], cmd.OutOrStdout())
 		},
 	}
 	var (
@@ -49,8 +71,8 @@ func newNodePassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		httpMethod string
 	)
 	call := &cobra.Command{
-		Use:   "call <node> <method>",
-		Short: "Call a node's vendor passthru method",
+		Use:   "call <" + noun + "> <method>",
+		Short: "Call a " + noun + "'s vendor passthru method",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -58,7 +80,7 @@ func newNodePassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runNodePassthruCall(ctx, client, args[0], args[1], strings.ToUpper(httpMethod), callArgs, cmd.OutOrStdout())
+			return runPassthruCall(ctx, client, target, args[0], args[1], strings.ToUpper(httpMethod), callArgs, cmd.OutOrStdout())
 		},
 	}
 	call.Flags().StringArrayVar(&callArgs, "arg", nil, "argument key=value to pass to the method (repeatable)")
@@ -69,14 +91,20 @@ func newNodePassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodePassthruList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node string, w io.Writer) error {
+	return runPassthruList(ctx, client, o, nodePassthru, node, w)
+}
+
+func runPassthruList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
+	target passthruTarget, ref string, w io.Writer,
+) error {
 	var methods map[string]struct {
 		HTTPMethods []string `json:"http_methods"`
 		Async       bool     `json:"async"`
 		Description string   `json:"description"`
 		Attach      bool     `json:"attach"`
 	}
-	if err := ironicGet(ctx, client, joinPath("nodes", node, "vendor_passthru", "methods"), &methods); err != nil {
-		return fmt.Errorf("listing vendor passthru methods of baremetal node %s: %w", node, err)
+	if err := ironicGet(ctx, client, joinPath(target.collection, ref, "vendor_passthru", "methods"), &methods); err != nil {
+		return fmt.Errorf("listing vendor passthru methods of %s %s: %w", target.kind, ref, err)
 	}
 	fields := []string{"name", "http_methods", "async", "description", "attach"}
 	t := output.Table{Columns: labels(fields), Rows: make([][]any, 0, len(methods))}
@@ -100,6 +128,12 @@ func runNodePassthruList(ctx context.Context, client *gophercloud.ServiceClient,
 func runNodePassthruCall(ctx context.Context, client *gophercloud.ServiceClient, node, method, httpMethod string,
 	args []string, w io.Writer,
 ) error {
+	return runPassthruCall(ctx, client, nodePassthru, node, method, httpMethod, args, w)
+}
+
+func runPassthruCall(ctx context.Context, client *gophercloud.ServiceClient, target passthruTarget,
+	ref, method, httpMethod string, args []string, w io.Writer,
+) error {
 	if !slices.Contains(passthruHTTPMethods, httpMethod) {
 		return fmt.Errorf("--http-method %s: must be one of %s", httpMethod, strings.Join(passthruHTTPMethods, ", "))
 	}
@@ -117,12 +151,12 @@ func runNodePassthruCall(ctx context.Context, client *gophercloud.ServiceClient,
 	if httpMethod != http.MethodGet && httpMethod != http.MethodDelete {
 		opts.JSONBody = body
 	}
-	resp, err := client.Request(ctx, httpMethod, client.ServiceURL(joinPath("nodes", node, "vendor_passthru", method)), opts)
+	resp, err := client.Request(ctx, httpMethod, client.ServiceURL(joinPath(target.collection, ref, "vendor_passthru", method)), opts)
 	if resp != nil {
 		defer func() { _ = resp.Body.Close() }()
 	}
 	if err != nil {
-		return fmt.Errorf("calling vendor passthru %s on baremetal node %s: %w", method, node, err)
+		return fmt.Errorf("calling vendor passthru %s on %s %s: %w", method, target.kind, ref, err)
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {

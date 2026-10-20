@@ -72,6 +72,8 @@ var embeddedCommandRefusals = []commandRefusal{
 	{path: "image save", reason: RefusedFile, msg: msgFiles},
 	// Reads a zone file.
 	{path: "zone import create", reason: RefusedFile, msg: msgFiles},
+	// Reads resource description files.
+	{path: "baremetal create", reason: RefusedFile, msg: msgFiles},
 }
 
 // msgIdentity is the message for the credential and endpoint flags.

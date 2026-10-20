@@ -24,6 +24,7 @@ func newDriverCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd.AddCommand(newDriverShowCommand(a, o))
 	cmd.AddCommand(newDriverPropertyCommand(a, o))
 	cmd.AddCommand(newDriverRAIDCommand(a, o))
+	cmd.AddCommand(newDriverPassthruCommand(a, o))
 	return cmd
 }
 

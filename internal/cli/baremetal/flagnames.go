@@ -38,6 +38,7 @@ const (
 	releaseCaracal     = "OpenStack 2024.1"
 	releaseDalmatian   = "OpenStack 2024.2"
 	releaseEpoxy       = "OpenStack 2025.1"
+	releaseFlamingo    = "OpenStack 2025.2"
 	releaseGazpacho    = "OpenStack 2026.1"
 	releaseHibiscus    = "OpenStack 2026.2"
 )

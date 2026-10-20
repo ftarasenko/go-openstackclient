@@ -4,16 +4,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
 
-// newNodeBootDeviceCommand builds "baremetal node boot device set|show".
+// newNodeBootDeviceCommand builds "baremetal node boot device set|show" and
+// "baremetal node boot mode set".
 func newNodeBootDeviceCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "boot",
@@ -26,7 +30,50 @@ func newNodeBootDeviceCommand(a *auth.Options, o *output.Options) *cobra.Command
 	device.AddCommand(newNodeBootDeviceSetCommand(a, o))
 	device.AddCommand(newNodeBootDeviceShowCommand(a, o))
 	cmd.AddCommand(device)
+	mode := &cobra.Command{
+		Use:   "mode",
+		Short: "Manage a node's boot mode",
+	}
+	mode.AddCommand(newNodeBootModeSetCommand(a))
+	cmd.AddCommand(mode)
 	return cmd
+}
+
+// bootModes are python-ironicclient's choices for "node boot mode set".
+var bootModes = []string{"uefi", "bios"}
+
+// newNodeBootModeSetCommand builds "baremetal node boot mode set": a raw PUT of
+// {"target": <mode>} to /nodes/<node>/states/boot_mode (API 1.76, inside the
+// Zed cap), which gophercloud has no call for. Like secure boot, ironic
+// answers 202 and the conductor applies the change on the BMC.
+func newNodeBootModeSetCommand(a *auth.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <node> [<node> ...] <boot_mode>",
+		Short: "Set the boot mode (uefi or bios) for the next deployment of node(s)",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := args[len(args)-1]
+			if !slices.Contains(bootModes, mode) {
+				return fmt.Errorf("invalid boot mode %q: must be one of %s", mode, strings.Join(bootModes, ", "))
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runNodeBootModeSet(ctx, client, args[:len(args)-1], mode, cmd.OutOrStdout())
+		},
+	}
+}
+
+func runNodeBootModeSet(ctx context.Context, client *gophercloud.ServiceClient, nodes []string, mode string, w io.Writer) error {
+	return batchdelete.Each(nodes, func(node string) error {
+		if err := ironicPut(ctx, client, joinPath("nodes", node, "states", "boot_mode"), map[string]any{"target": mode}); err != nil {
+			return fmt.Errorf("setting boot mode %s for baremetal node %s: %w", mode, node, err)
+		}
+		_, err := fmt.Fprintf(w, "Requested boot mode %s for node %s\n", mode, node)
+		return err
+	})
 }
 
 func newNodeBootDeviceSetCommand(a *auth.Options, o *output.Options) *cobra.Command {

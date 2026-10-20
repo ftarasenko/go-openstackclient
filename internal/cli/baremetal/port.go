@@ -29,6 +29,7 @@ func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newPortCreateCommand(a, o),
 		newPortDeleteCommand(a, o),
 		newPortSetCommand(a, o),
+		newPortUnsetCommand(a, o),
 		newPortGroupCommand(a, o),
 	)
 	return cmd
@@ -423,6 +424,102 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 		if f.name != "" {
 			return fmt.Errorf("updating baremetal port %s: %w", id,
 				explainMicroversion(ctx, client, featurePortName, err))
+		}
+		return fmt.Errorf("updating baremetal port %s: %w", id, err)
+	}
+	fields, values := portShowFields(p)
+	return o.WriteSingle(w, fields, values)
+}
+
+// Port fields ironic added after the Zed cap (versions.py; ironic 32.0 is
+// 2025.2). Unsetting one on an older cloud is refused as an unknown path.
+var (
+	featurePortDescription = ironicFeature{"baremetal port --description", "1.97", releaseFlamingo}
+	featurePortVendor      = ironicFeature{"baremetal port --vendor", "1.100", releaseFlamingo}
+	featurePortCategory    = ironicFeature{"baremetal port --category", "1.101", releaseFlamingo}
+)
+
+// portUnsetFlags are python-ironicclient's UnsetBaremetalPort options.
+type portUnsetFlags struct {
+	extra, llc                             []string
+	portGroup, physicalNetwork, isSmartNIC bool
+	name, description, vendor, category    bool
+}
+
+func newPortUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
+	f := &portUnsetFlags{}
+	cmd := &cobra.Command{
+		Use:   "unset <port>",
+		Short: "Unset baremetal port properties",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.Validate(); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := newBaremetalClient(ctx, a)
+			if err != nil {
+				return err
+			}
+			return runPortUnset(ctx, client, o, args[0], f, cmd.OutOrStdout())
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringArrayVar(&f.extra, "extra", nil, "extra key to unset (repeatable)")
+	fl.StringArrayVar(&f.llc, flagLocalLinkConnection, nil, "local link connection key to remove (repeatable)")
+	fl.BoolVar(&f.portGroup, "port-group", false, "remove the port from its port group")
+	fl.BoolVar(&f.physicalNetwork, flagPhysicalNetwork, false, "unset the physical network")
+	fl.BoolVar(&f.isSmartNIC, "is-smartnic", false, "mark the port as not a Smart NIC port")
+	fl.BoolVar(&f.name, "name", false, "unset the port name (requires ironic API 1.88, OpenStack 2024.1)")
+	fl.BoolVar(&f.description, "description", false, "unset the port description (requires ironic API 1.97, OpenStack 2025.2)")
+	fl.BoolVar(&f.vendor, "vendor", false, "unset the port vendor (requires ironic API 1.100, OpenStack 2025.2)")
+	fl.BoolVar(&f.category, "category", false, "unset the port category (requires ironic API 1.101, OpenStack 2025.2)")
+	return cmd
+}
+
+// runPortUnset removes the named attributes, as upstream does; is_smartnic is
+// the exception, which upstream resets by adding false. It patches through
+// raw.go, as port group unset does, so a remove carries no "value" member.
+func runPortUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *portUnsetFlags, w io.Writer) error {
+	if err := o.CheckColumns(portColumns...); err != nil {
+		return err
+	}
+	var ops patchBuilder
+	ops.removeKeys(pathExtra, f.extra)
+	ops.removeKeys("/local_link_connection", f.llc)
+	if f.portGroup {
+		ops.remove("/portgroup_uuid")
+	}
+	if f.physicalNetwork {
+		ops.remove("/physical_network")
+	}
+	if f.isSmartNIC {
+		ops.add("/is_smartnic", false)
+	}
+	// The newest gated field named is the one an older cloud trips on first.
+	var gate *ironicFeature
+	for _, g := range []struct {
+		set     bool
+		path    string
+		feature *ironicFeature
+	}{
+		{f.name, "/name", &featurePortName},
+		{f.description, "/description", &featurePortDescription},
+		{f.vendor, "/vendor", &featurePortVendor},
+		{f.category, "/category", &featurePortCategory},
+	} {
+		if g.set {
+			ops.remove(g.path)
+			gate = g.feature
+		}
+	}
+	if len(ops) == 0 {
+		return fmt.Errorf("port unset requires at least one attribute flag")
+	}
+	var p map[string]any
+	if err := ironicPatch(ctx, client, joinPath("ports", id), ops, &p); err != nil {
+		if gate != nil {
+			err = explainMicroversion(ctx, client, *gate, err)
 		}
 		return fmt.Errorf("updating baremetal port %s: %w", id, err)
 	}
