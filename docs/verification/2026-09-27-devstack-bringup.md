@@ -358,6 +358,35 @@ so octavia's added startup time most likely exposes the race. `up.sh` now
 writes a systemd drop-in, before stack.sh, that restarts that agent on OVN
 (`Restart=always`, 5 s). A persistent failure still fails the check.
 
+### Where the stack time went (2026-10-20)
+
+The "Stack devstack" step grew from 8–13 minutes (September) to 16–20, and the
+nightly history dates the step to **3faa776**, which added the ironic feature
+(2026-10-14), not to octavia: the `lb` feature costs 50–85 s ("Initializing
+Octavia" + "Starting Octavia", about 38 sequential client calls). It builds
+and downloads no amphora image and boots no VM. `/dev/kvm` is available:
+the workflow opens it with a udev rule and every `bringup.json` reports
+`"kvm": true`.
+
+`up.sh` now prints two reports after stack.sh: `phases.txt`, the time from
+each devstack milestone to the next, and `slowest.txt`, the longest silences
+in `stack.sh.log` with the command before each. Those pinned ironic's cost:
+"Configuring Ironic" took 93–156 s on every cell. Most of it was one
+command in ironic's `configure_ironic_conductor`:
+`find -L /usr -type f -name isolinux.bin | head -1`. It walks all of
+`/usr`, because `head` does not stop `find` until its next write. On a
+hosted runner that tree holds tens of gigabytes of preinstalled toolchains.
+Under `--gha`, `up.sh` bind-mounts an empty directory over those trees,
+which cut the phase to 53–55 s. The rest of the walk is system packages
+(`/usr/lib/llvm-*`) and is left alone. Masking `/usr/share/swift` broke
+zed: the runner links `/usr/local/bin/swift` into it, and pip could not
+install python-swiftclient over the dangling link. So it is not masked.
+
+`up.sh` also creates the marker that skips ironic's dnsmasq source build,
+which matters only for real PXE boots. That saved little. Run-to-run variance
+on the hosted runners is ±3 minutes per cell (caracal 13:09–19:20 on the
+same tree), so compare the medians of several runs, not single runs.
+
 ### koc gaps found (not devstack's)
 
 Found by the Go functional suites on the runners, identically on every cell

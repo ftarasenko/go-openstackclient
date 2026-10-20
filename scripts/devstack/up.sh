@@ -367,13 +367,15 @@ gha_workarounds() {
 # carries tens of gigabytes of preinstalled toolchains, and the walk took 90-160
 # s of every cell's bring-up. Masking those trees with an empty read-only bind
 # mount costs nothing and no disk I/O; nothing devstack runs uses them, and the
-# runner is discarded after the job.
+# runner is discarded after the job. Not /usr/share/swift, the Swift language
+# toolchain: the runner links /usr/local/bin/swift into it, and pip, installing
+# python-swiftclient's own `swift`, fails on the dangling link.
 mask_runner_toolchains() {
     local empty dir
     empty=$(mktemp -d)
     for dir in /usr/local/lib/android /usr/local/.ghcup /usr/local/share/powershell \
         /usr/local/share/chromium /usr/local/lib/node_modules /usr/local/julia* \
-        /usr/share/dotnet /usr/share/swift /usr/share/miniconda /usr/share/az_* \
+        /usr/share/dotnet /usr/share/miniconda /usr/share/az_* \
         /usr/lib/google-cloud-sdk /usr/lib/jvm; do
         [[ -d $dir ]] || continue
         sudo mount --bind -o ro "$empty" "$dir" && echo "up.sh: masked $dir"
