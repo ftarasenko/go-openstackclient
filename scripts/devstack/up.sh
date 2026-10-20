@@ -465,6 +465,25 @@ for (t, msg), (t2, _) in zip(marks, marks[1:]):
     if secs >= 5:
         print(f"{secs:6.0f}s  {msg}")
 PY
+# slowest.txt: the longest single silences in stack.sh.log, each with the
+# line before it, i.e. the command that was running. A milestone in phases.txt
+# says which phase is slow; this says which command inside it.
+python3 - "$LOG_DIR/stack.sh.log" >"$LOG_DIR/slowest.txt" <<'PY' || true
+import datetime, re, sys
+pat = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+) \| (.*)$")
+prev, gaps = None, []
+with open(sys.argv[1], errors="replace") as f:
+    for line in f:
+        m = pat.match(line.rstrip("\n"))
+        if not m:
+            continue
+        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S.%f")
+        if prev:
+            gaps.append(((t - prev[0]).total_seconds(), prev[1]))
+        prev = (t, m.group(2))
+for secs, text in sorted(gaps, reverse=True)[:15]:
+    print(f"{secs:6.1f}s  {text[:200]}")
+PY
 DISK_DELTA=$(( $(disk_used_mb) - DISK_BEFORE ))
 
 # --- fixtures for the tests ----------------------------------------------------
@@ -517,4 +536,6 @@ echo "== phases (seconds until the next devstack milestone, >= 5 s)"
 cat "$LOG_DIR/phases.txt" 2>/dev/null || true
 # Whether ironic's dnsmasq rebuild was skipped (see the marker above).
 grep -m2 -E "Dnsmasq already downgraded|Downgrading dnsmasq" "$LOG_DIR/stack.sh.log" 2>/dev/null || true
+echo "== slowest single steps (silence after the line, top 15)"
+cat "$LOG_DIR/slowest.txt" 2>/dev/null || true
 exit $RC
