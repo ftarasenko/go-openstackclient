@@ -176,6 +176,10 @@ func TestServerLifecycle(t *testing.T) {
 	snap := uniq("snap")
 	r.ok(t, "server", "image", "create", id, "--name", snap, "--wait")
 	t.Cleanup(func() { r.run(t, "image", "delete", snap) })
+	// --wait ends when glance has the image; nova clears the server's
+	// image_uploading task state a moment later, and refuses a rebuild until it
+	// has (seen on epoxy).
+	settle(t, r, id, "ACTIVE")
 	r.ok(t, "server", "rebuild", id, "--image", c.Image)
 	settle(t, r, id, "ACTIVE")
 
