@@ -333,6 +333,19 @@ skips, from cirros's GitHub release mirror with the original host as a
 fallback and retries on both (`prefetch_cirros`). A fresh VM keeps stack.sh's
 own fetch.
 
+### The `lb` feature (octavia with no-op drivers)
+
+Added 2026-10-20 (run `39461802150`, on `ca76d76`): octavia stacked and smoke's
+load balancer reached ACTIVE on all four cells on the first attempt, with no
+`--gha`-only fix. It is the slowest feature to stack: the "Stack devstack"
+step took 18–21 minutes (epoxy 18m14s, caracal 18m26s, latest 18m59s, zed
+20m31s) against 7–12 before, still inside the step's 40-minute limit. The four
+no-op load balancer suites take about 90 s per cell. The first run found one
+koc bug, `loadbalancer provider capability list` calling a `/capabilities` route
+octavia does not have (405 on every release; fixed in the commit after this
+note). It also found a race in `TestServerLifecycle` on epoxy, where nova still
+held `image_uploading` after `server image create --wait` had returned.
+
 ### koc gaps found (not devstack's)
 
 Found by the Go functional suites on the runners, identically on every cell
