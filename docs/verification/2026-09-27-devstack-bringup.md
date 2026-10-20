@@ -346,6 +346,18 @@ octavia does not have (405 on every release; fixed in the commit after this
 note). It also found a race in `TestServerLifecycle` on epoxy, where nova still
 held `image_uploading` after `server image create --wait` had returned.
 
+The next two runs (`39467303156`, `39477338197`) stacked zed, caracal and
+latest and passed every suite there. Epoxy failed in "Stack devstack" both
+times, the same way each time. neutron-vpnaas's OVN VPN agent
+(`devstack@q-ovn-vpn-agent`) died about 2 s after starting with "OVSDB Error:
+The transaction failed because the IDL has been configured to require a
+database lock but didn't get it yet or has already lost it". It exited 0, so
+systemd left it dead, and stack.sh's final `service_check` exited 3. No
+octavia unit was involved. Before `lb`, epoxy had stacked cleanly every night,
+so octavia's added startup time most likely exposes the race. `up.sh` now
+writes a systemd drop-in, before stack.sh, that restarts that agent on OVN
+(`Restart=always`, 5 s). A persistent failure still fails the check.
+
 ### koc gaps found (not devstack's)
 
 Found by the Go functional suites on the runners, identically on every cell

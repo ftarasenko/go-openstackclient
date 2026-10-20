@@ -364,6 +364,21 @@ if [[ "$GHA" == true ]]; then gha_workarounds; fi
 
 # --- stack -------------------------------------------------------------------
 
+# neutron-vpnaas's OVN VPN agent can lose a startup race for its OVSDB lock
+# ("the IDL has been configured to require a database lock but didn't get it
+# yet"): it logs the error and exits 0, so systemd never restarts it and
+# stack.sh's final service_check fails on the dead unit. Seen on 2025.1 twice
+# in three runs once the lb feature joined the stack (octavia's startup moves
+# the timing; the agent is not octavia's). A drop-in written before stack.sh
+# creates the unit makes systemd start it again; a real, persistent failure
+# still leaves the unit cycling and service_check still fails.
+if has_feature net && [[ $BACKEND == ovn ]]; then
+    sudo mkdir -p /etc/systemd/system/devstack@q-ovn-vpn-agent.service.d
+    printf '[Service]\nRestart=always\nRestartSec=5\n' |
+        sudo tee /etc/systemd/system/devstack@q-ovn-vpn-agent.service.d/restart.conf >/dev/null
+fi
+
+
 if [[ ! -d "$DEVSTACK_DIR/.git" ]]; then
     git clone --depth 1 --branch "$DEVSTACK_REF" "$GIT_BASE/openstack/devstack" "$DEVSTACK_DIR"
 fi
