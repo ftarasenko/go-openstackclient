@@ -332,13 +332,22 @@ func TestRunProviderList_AndCapabilities(t *testing.T) {
           {"name": "ovn", "description": "Provider driver for OVN."}
         ]}`))
 	})
-	var gotCapPath string
-	fakeServer.Mux.HandleFunc("/v2.0/lbaas/providers/amphora/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		gotCapPath = r.URL.Path
+	// octavia has no /capabilities route (405); the two capability kinds have
+	// their own collections, which upstream reads and tags by type.
+	var gotCapPaths []string
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/providers/amphora/flavor_capabilities", func(w http.ResponseWriter, r *http.Request) {
+		gotCapPaths = append(gotCapPaths, r.URL.Path)
 		th.TestMethod(t, r, http.MethodGet)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"flavor_capabilities": [
           {"name": "loadbalancer_topology", "description": "The load balancer topology."}
+        ]}`))
+	})
+	fakeServer.Mux.HandleFunc("/v2.0/lbaas/providers/amphora/availability_zone_capabilities", func(w http.ResponseWriter, r *http.Request) {
+		gotCapPaths = append(gotCapPaths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"availability_zone_capabilities": [
+          {"name": "compute_zone", "description": "The compute availability zone."}
         ]}`))
 	})
 
@@ -354,14 +363,26 @@ func TestRunProviderList_AndCapabilities(t *testing.T) {
 	}
 
 	var caps bytes.Buffer
-	if err := runProviderCapabilityList(context.Background(), lbClient(fakeServer), o, "amphora", &caps); err != nil {
+	if err := runProviderCapabilityList(context.Background(), lbClient(fakeServer), &output.Options{Format: output.FormatValue},
+		"amphora", true, true, &caps); err != nil {
 		t.Fatalf("runProviderCapabilityList error: %v", err)
 	}
-	if gotCapPath != "/v2.0/lbaas/providers/amphora/capabilities" {
-		t.Errorf("capability path = %q", gotCapPath)
+	if strings.Join(gotCapPaths, ",") != "/v2.0/lbaas/providers/amphora/flavor_capabilities,/v2.0/lbaas/providers/amphora/availability_zone_capabilities" {
+		t.Errorf("capability paths = %v", gotCapPaths)
 	}
-	if !strings.Contains(caps.String(), "loadbalancer_topology") {
-		t.Errorf("capability output missing the capability\n---\n%s", caps.String())
+	for _, want := range []string{"flavor loadbalancer_topology", "availability_zone compute_zone"} {
+		if !strings.Contains(caps.String(), want) {
+			t.Errorf("capability output missing %q\n---\n%s", want, caps.String())
+		}
+	}
+
+	// --availability-zone reads only the zone capabilities.
+	gotCapPaths = nil
+	if err := runProviderCapabilityList(context.Background(), lbClient(fakeServer), o, "amphora", false, true, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotCapPaths) != 1 || !strings.HasSuffix(gotCapPaths[0], "/availability_zone_capabilities") {
+		t.Errorf("--availability-zone paths = %v", gotCapPaths)
 	}
 }
 

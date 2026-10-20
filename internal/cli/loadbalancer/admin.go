@@ -857,9 +857,10 @@ func runProviderList(ctx context.Context, client *gophercloud.ServiceClient, o *
 
 func newProviderCapabilityCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{Use: "capability", Short: "Provider driver capabilities"}
-	cmd.AddCommand(&cobra.Command{
+	var flavor, az bool
+	list := &cobra.Command{
 		Use:   "list <provider>",
-		Short: "List the flavor capabilities a provider driver supports",
+		Short: "List the flavor and availability zone capabilities a provider driver supports",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Validate(); err != nil {
@@ -870,34 +871,49 @@ func newProviderCapabilityCommand(a *auth.Options, o *output.Options) *cobra.Com
 			if err != nil {
 				return err
 			}
-			return runProviderCapabilityList(ctx, client, o, args[0], cmd.OutOrStdout())
+			return runProviderCapabilityList(ctx, client, o, args[0], !az, !flavor, cmd.OutOrStdout())
 		},
-	})
+	}
+	list.Flags().BoolVar(&flavor, "flavor", false, "list only flavor capabilities")
+	list.Flags().BoolVar(&az, "availability-zone", false, "list only availability zone capabilities")
+	list.MarkFlagsMutuallyExclusive("flavor", "availability-zone")
+	cmd.AddCommand(list)
 	return cmd
 }
 
-// runProviderCapabilityList reads GET /v2.0/lbaas/providers/<name>/capabilities,
-// which gophercloud's providers package (List only) does not cover. Raw fallback.
+// runProviderCapabilityList reads GET /v2.0/lbaas/providers/<name>/flavor_capabilities
+// and .../availability_zone_capabilities, as python-octaviaclient's
+// ListProviderCapability does, tagging each row with its type. gophercloud's
+// providers package (List only) covers neither. Raw fallback.
 func runProviderCapabilityList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	provider string, w io.Writer,
+	provider string, flavor, az bool, w io.Writer,
 ) error {
-	var body struct {
-		Capabilities []struct {
+	t := output.Table{Columns: []string{"Type", "Name", "Description"}}
+	for _, kind := range []struct {
+		want            bool
+		typ, collection string
+	}{
+		{flavor, "flavor", "flavor_capabilities"},
+		{az, "availability_zone", "availability_zone_capabilities"},
+	} {
+		if !kind.want {
+			continue
+		}
+		var body map[string][]struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
-		} `json:"flavor_capabilities"`
-	}
-	url := client.ServiceURL("lbaas", "providers", provider, "capabilities")
-	resp, err := client.Get(ctx, url, &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("listing capabilities of provider %q: %w", provider, err)
-	}
-	t := output.Table{Columns: []string{"Name", "Description"}, Rows: make([][]any, 0, len(body.Capabilities))}
-	for _, c := range body.Capabilities {
-		t.Rows = append(t.Rows, []any{c.Name, c.Description})
+		}
+		url := client.ServiceURL("lbaas", "providers", provider, kind.collection)
+		resp, err := client.Get(ctx, url, &body, nil)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
+			return fmt.Errorf("listing %s capabilities of provider %q: %w", kind.typ, provider, err)
+		}
+		for _, c := range body[kind.collection] {
+			t.Rows = append(t.Rows, []any{kind.typ, c.Name, c.Description})
+		}
 	}
 	return o.WriteList(w, t)
 }

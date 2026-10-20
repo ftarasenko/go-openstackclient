@@ -299,8 +299,12 @@ func TestLoadBalancerFlavors(t *testing.T) {
 	if rows := r.list(t, "loadbalancer", "provider", "list"); !in(rows, "amphora") {
 		t.Errorf("provider list has no amphora: %v", rows)
 	}
-	if caps := r.list(t, "loadbalancer", "provider", "capability", "list", "amphora"); !in(caps, "loadbalancer_topology") {
-		t.Errorf("provider capability list amphora = %v", caps)
+	if caps := r.list(t, "loadbalancer", "provider", "capability", "list", "amphora"); !in(caps, "loadbalancer_topology") ||
+		!in(caps, "availability_zone") {
+		t.Errorf("provider capability list amphora = %v, want flavor and availability zone capabilities", caps)
+	}
+	if caps := r.list(t, "loadbalancer", "provider", "capability", "list", "amphora", "--flavor"); in(caps, "availability_zone") {
+		t.Errorf("provider capability list --flavor = %v", caps)
 	}
 
 	fpName := uniq("fp")
