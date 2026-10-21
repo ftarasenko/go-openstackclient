@@ -126,6 +126,7 @@ func TestRunStopsAtCount(t *testing.T) {
 
 func TestRunStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	h := newHarness()
 	h.render = func(n int, out, _ io.Writer) error {
 		if n == 2 {
@@ -336,6 +337,7 @@ func TestBackoffWidensTheIntervalWhenRefreshesAreSlow(t *testing.T) {
 
 func TestRepaintEntersAndLeavesTheAlternateScreenExactlyOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	h := newHarness()
 	h.render = func(n int, out, _ io.Writer) error {
 		if n == 3 {
