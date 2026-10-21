@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -262,5 +265,33 @@ func TestDefaultProfileRefusesNothing(t *testing.T) {
 	}
 	if c, _, err := NewRootCommand("test").Find([]string{"keypair", "create"}); err != nil || c.Flags().Lookup(flagPrintPrivateKey) != nil {
 		t.Errorf("--%s exists outside the embedded profile", flagPrintPrivateKey)
+	}
+}
+
+// An unsafe default home stops the command before anything reads from it.
+func TestEmbeddedRefusesAnUnsafeDefaultHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not describe who may write on Windows")
+	}
+	clearOSEnv(t)
+	t.Setenv("OS_REGION_NAME", "RegionOne")
+	t.Setenv("OS_PROJECT_ID", "p1")
+	t.Setenv(kochome.EnvProfile, kochome.ProfileEmbedded)
+	t.Setenv(kochome.EnvHome, "")
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	home := filepath.Join(tmp, "koc-home")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), "test", []string{"server", "list"}, func(root *cobra.Command, _ []string) {
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+	})
+	if err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+		t.Errorf("server list with a 0777 default home: err = %v, want the home refused", err)
 	}
 }

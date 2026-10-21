@@ -129,6 +129,14 @@ func TestCheckEmbeddedHome(t *testing.T) {
 		}
 	})
 
+	t.Run("an uncreatable home is an error", func(t *testing.T) {
+		embedded(t)
+		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+		if err := CheckEmbeddedHome(); err == nil || !strings.Contains(err.Error(), "creating") {
+			t.Errorf("home under a missing TMPDIR: err = %v, want a creation error", err)
+		}
+	})
+
 	t.Run("a file is refused", func(t *testing.T) {
 		dir := embedded(t)
 		if err := os.WriteFile(dir, nil, 0o600); err != nil {
