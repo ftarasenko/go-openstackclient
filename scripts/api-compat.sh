@@ -37,11 +37,11 @@ echo "Public API changes, $base → HEAD:"
 apidiff -m "$work/base.export" "$work/head.export" 2>&1 | quiet
 incompatible=$(apidiff -m -incompatible "$work/base.export" "$work/head.export" 2>&1 | quiet)
 
-if [ -z "$incompatible" ]; then
+if [[ -z "$incompatible" ]]; then
 	echo "No incompatible change."
 	exit 0
 fi
-if [ ! -d "$work/base/pkg" ]; then
+if [[ ! -d "$work/base/pkg" ]]; then
 	echo "::notice::$base has no pkg/ yet; reporting only until the first release that carries the public API."
 	exit 0
 fi
