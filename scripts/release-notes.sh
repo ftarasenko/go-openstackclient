@@ -22,7 +22,7 @@ PREV="$(git tag --sort=v:refname | awk -v t="$TAG" '$0==t{exit} {print}' | tail 
 # A symmetric range with --cherry-pick --right-only drops a commit whose patch
 # already shipped under the previous tag with another hash, as a rebase merge
 # re-creates every commit of a tagged branch on master.
-if [ -n "$PREV" ]; then REV="${PREV}...${END}"; else REV="$END"; fi
+if [[ -n "$PREV" ]]; then REV="${PREV}...${END}"; else REV="$END"; fi
 
 # Collect one bullet per commit into its type's bucket.
 feat=(); fix=(); perf=(); refactor=(); docs=(); tests=(); tooling=(); other=(); breaking=(); deprecated=()
@@ -34,7 +34,7 @@ feat=(); fix=(); perf=(); refactor=(); docs=(); tests=(); tooling=(); other=(); 
 while IFS= read -r sha; do
   subject="$(git log -1 --format='%s' "$sha")"
   body="$(git log -1 --format='%b' "$sha")"
-  [ -z "$subject" ] && continue
+  [[ -z "$subject" ]] && continue
   # Match: type(scope)!: description
   if [[ "$subject" =~ ^([a-zA-Z]+)(\(([^\)]*)\))?(!)?:[[:space:]]*(.*)$ ]]; then
     type="${BASH_REMATCH[1],,}"
@@ -44,18 +44,18 @@ while IFS= read -r sha; do
   else
     type="_"; scope=""; bang=""; desc="$subject"
   fi
-  if [ -n "$scope" ]; then prefix="- **${scope}:** "; else prefix="- "; fi
+  if [[ -n "$scope" ]]; then prefix="- **${scope}:** "; else prefix="- "; fi
   bullet="${prefix}${desc}"
   # A "Deprecated: <identifier> …" footer (the public Go API's deprecation
   # policy, pkg/openstack/doc.go) adds a bullet under its own heading; the
   # commit is still listed under its type. One footer per identifier.
   while IFS= read -r note; do
-    [ -n "$note" ] && deprecated+=("${prefix}${note}")
+    [[ -n "$note" ]] && deprecated+=("${prefix}${note}")
   done < <(printf '%s\n' "$body" | sed -n 's/^Deprecated:[[:space:]]*//p')
   # A breaking change is listed once, under its own heading, keeping its scope.
   # Listing it again under "Bug fixes"/"Features" reads as a duplicated bullet
   # and buries the one line a consumer most needs to see.
-  if [ -n "$bang" ] || printf '%s\n' "$body" | grep -qE '^BREAKING[ -]CHANGE:'; then
+  if [[ -n "$bang" ]] || printf '%s\n' "$body" | grep -qE '^BREAKING[ -]CHANGE:'; then
     breaking+=("$bullet")
     continue
   fi
@@ -74,7 +74,7 @@ done < <(git log --no-merges --cherry-pick --right-only --format='%H' "$REV")
 emit() { # heading, array-name
   local heading="$1"; shift
   local arr=("$@")
-  [ "${#arr[@]}" -eq 0 ] && return 0
+  [[ "${#arr[@]}" -eq 0 ]] && return 0
   printf '%s\n' "$heading"
   printf '%s\n' "${arr[@]}"
   printf '\n'
@@ -93,7 +93,7 @@ emit() { # heading, array-name
   emit "### Tests" ${tests[@]+"${tests[@]}"}
   emit "### Build & tooling" ${tooling[@]+"${tooling[@]}"}
   emit "### Other" ${other[@]+"${other[@]}"}
-  if [ -n "$PREV" ]; then
+  if [[ -n "$PREV" ]]; then
     printf '**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
   fi
 }
