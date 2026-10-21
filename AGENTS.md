@@ -92,8 +92,9 @@ nil pointer meaning "leave this field unset". A sentinel error would make every
 call site worse. The reasoning is recorded in `.golangci.yml` next to the disabled
 entry; re-check it there before enabling.
 
-Gate before committing: `gofmt` clean, `go vet` clean, `golangci-lint` **0
-issues**, `go test ./...` green, the offline static build succeeds, and — if the
+Gate before a change is done (which parts an agent runs itself and which it
+leaves to GitHub is in "Where checks run (agent sessions)"): `gofmt` clean,
+`go vet` clean, `golangci-lint` **0 issues**, `go test ./...` green, the offline static build succeeds, and — if the
 commit changes the command surface — `docs/coverage.md` is updated (see "Coverage
 tracking") and every new leaf has a functional test (`go test -tags functional
 ./test/functional/` runs `TestEveryLeafIsCovered`, offline; see "Testing").
@@ -111,67 +112,110 @@ the golangci-lint pin ever moves to a build made with a newer Go, re-run
 can also outrun the pin: v2.13.2 could not read go1.27.2's export data
 ("export data version 5"), and v2.14.0 can — move the pin when that happens.
 
-## SonarQube (out-of-band static analysis)
+## Where checks run (agent sessions)
 
-SonarQube analysis is **not** part of the per-commit gate above and not part of
-CI — it needs network and a server token, so it lives outside the air-gap
-invariant on purpose (see "Releases & CI" for why that boundary is load-bearing).
-It is run manually, typically after a merge to `master` has already gone green
-offline. `sonar-project.properties` is committed; the server address and the
-token are not.
+An agent session — a cloud container or a laptop — runs the **cheap, fast**
+checks for the code it touched; GitHub runs the **whole matrix** on every push
+to `claude/**`. Measured in a 4-core cloud container on 2026-10-21:
 
-Point the scanner at the internal SonarQube server through the environment — the
-host name and token are private data and must never be committed (see "Private
-data never leaves the org"):
+| Check | Where | Cost |
+| --- | --- | --- |
+| `go vet ./...` | session | ~5 s |
+| `go test ./<pkg>/...` for the packages you changed | session | ~1 s each |
+| `go test ./...` (full unit suite) | session, before pushing a multi-package change | ~45 s, ~40 lines of output |
+| `go test -tags functional ./test/functional/` (no cloud; includes `TestEveryLeafIsCovered`) | session, when the command surface changed | seconds |
+| `gofmt` (Go **1.27**, see below) | session, on the files you changed | seconds |
+| `make lint` (golangci-lint **v2.14.0**) | GitHub `ci.yml` → `lint` | — |
+| `make race`, `make crossbuild` | GitHub `ci.yml` | — |
+| `make cover` + SonarQube Cloud | GitHub `sonar.yml` | ~1–5 min; never run it by hand |
+| vendor integrity, govulncheck, importer, api-compat | GitHub `supply-chain.yml` | — |
+| devstack functional run | GitHub `functional.yml` (nightly) | 75 min |
 
-```sh
-export SONAR_HOST_URL=https://<internal-sonarqube-host>   # ask a maintainer / LCM
-export SONAR_TOKEN=<project analysis token>               # sqp_… ; never commit
-```
+Rules that keep this cheap and correct:
 
-Then scan with **`make sonar`**, from the repo root:
+- **Filter test output.** `go test ./... 2>&1 | grep -v '^ok'` prints only
+  failures; a verbose `-v` run of the whole tree is thousands of lines that
+  nobody reads. Use `-run` to rerun one failing test.
+- **Format with Go 1.27's gofmt even when the session has an older Go.** The
+  cloud image ships an older toolchain, and its gofmt reverts 1.27's formatting
+  (see "Build / test / lint"). The go command fetches the right one through the
+  module proxy and caches it:
+  `"$(GOTOOLCHAIN=go1.27.2 go env GOROOT)/bin/gofmt" -l <files>` (`-w` to fix).
+  Never run `make fmt` on an older toolchain.
+- **Do not trust a local golangci-lint that is not v2.14.0.** The cloud image
+  carries an older one, which enables different checks; a clean run there proves
+  nothing. Push and read the `lint` job instead.
+- **After pushing, read the result.** Check the runs for the pushed commit on
+  GitHub (`ci`, `supply-chain`, `sonar`) and fix a red job before moving on —
+  the push is not done until they are green.
 
-```sh
-make sonar
-```
+## SonarQube Cloud (out-of-band static analysis)
 
-**Use the target, not the two steps by hand.** It refreshes `coverage.out` and
-passes `sonar.projectVersion`, and both were forgotten by hand on every scan
-between 2026-09-01 and 2026-09-22 — neither failure is loud:
+SonarQube Cloud (sonarcloud.io) analyses the project from
+**`.github/workflows/sonar.yml`**, on every push to `master`, on every pull
+request from this repository, and on `workflow_dispatch`. Nobody runs a scan by
+hand any more. It is **not** part of the per-commit offline gate: it needs
+network and a token, so it lives in its own network-allowed workflow, outside
+the air-gap invariant on purpose (see "Releases & CI" for why that boundary is
+load-bearing). The tests that produce its coverage profile still run offline.
+The code is public, so analysing it on an external service exposes nothing new;
+the token is the only secret.
 
-- A **stale `coverage.out`** does not error. The scanner uploads it happily, and
-  every line written since the profile was generated reports as uncovered. The
-  2026-09-22 scan read 25% new-code coverage against a profile from 2026-08-31;
-  the tree's actual figure for the same period was 83%.
-- A **missing `projectVersion`** makes every scan analyse the same version, so
-  `PREVIOUS_VERSION` never advances. The baseline froze at v0.26.0 across seven
-  releases, "new code" grew to 24.5k lines, and long-standing findings kept
-  counting as new.
+One-time setup, by a maintainer:
 
-`make sonar` needs network, podman and the two environment variables; it is the
-one target outside the offline gate. The image is `linux/amd64`, so on Apple
-silicon podman emulates it and prints a platform warning that is expected and
-harmless. Prefer `podman run --env-file <path outside the repo>` over the
-target's `-e` if you would rather the token stay out of the process list.
+1. Import the repository on sonarcloud.io. If it assigns a key or organization
+   other than `ftarasenko_go-openstackclient` / `ftarasenko`, change
+   `sonar-project.properties` to match.
+2. Turn **Automatic Analysis off** for the project (Administration → Analysis
+   Method). It conflicts with a CI-based scan, and it cannot import coverage.
+3. Set the **new-code definition to "Previous version"**.
+4. Store the project's analysis token as the repository secret **`SONAR_TOKEN`**.
+
+Until the secret exists, and on pull requests from forks or Dependabot (GitHub
+does not give those runs repository secrets), the `scan` job is skipped with a
+notice rather than failed.
+
+The workflow exists because the manual scan failed silently, twice over, on every
+scan between 2026-09-01 and 2026-09-22. It now does both steps every time:
+
+- It **generates `coverage.out` on the checkout it scans** (`make cover`). A
+  stale profile does not error. The scanner uploads it, and every line written
+  since the profile was generated reports as uncovered. The 2026-09-22 scan read
+  25% new-code coverage against a profile from 2026-08-31; the tree's actual
+  figure for the same period was 83%.
+- It **passes `sonar.projectVersion`** from `git describe --tags --abbrev=0
+  --match 'v*'`, and fails the job if no tag is reachable. A missing version
+  makes every scan analyse the same version, so `PREVIOUS_VERSION` never
+  advances. The baseline froze at v0.26.0 across seven releases, "new code" grew
+  to 24.5k lines, and long-standing findings kept counting as new. The checkout
+  is full-depth (`fetch-depth: 0`) for the same reason. A shallow clone has no
+  tags and no blame, and the scan degrades without saying so.
 
 **Coverage is generated by `make cover`, not a bare `go test -coverprofile`.**
 That target passes `-coverpkg=./...`, and the flag is load-bearing here: by default a test binary
 instruments only its own package, but `internal/cli`'s root tests build the
 *entire* command tree via `NewRootCommand`, so every service's flag registration
 already executes and would otherwise not be attributed to it. Measuring without
-`-coverpkg` under-reports the project by roughly 11 points (54% vs 65%) — the
-tests are the same either way.
+`-coverpkg` under-reported the project by roughly 11 points (54% vs 65% when
+measured). The figure with it was 76.3% on 2026-10-21. The tests are the same
+either way. Two consequences of the flag that the target handles:
+
+- Every test binary reports every block, so the raw profile repeats each block
+  once per package (about 36× and 800k lines). The target merges the repeats,
+  keeping the highest count, as `go tool cover` does. The total is unchanged, and
+  the upload is about 23k lines.
+- A package with no test file is reported through `go tool covdata`. Toolchains
+  fetched by `GOTOOLCHAIN` do not ship that tool, so a single test-less package
+  failed the whole run with `no such tool "covdata"`. `cmd/koc` has a test for
+  that reason. Keep every package that holds Go code tested.
 
 `/coverage.*` is gitignored (root-anchored, so `docs/coverage.md` survives), and
-`coverage.out` is in `sonar.exclusions` so the profile is not analysed as source.
-
-There is no scanner binary to install — the target runs the container image,
-which is also what keeps the Go plugin version matched to the server.
+`coverage.*` is in `sonar.exclusions` so the profile is not analysed as source.
 
 **Why `sonar.projectVersion` matters.** The project's new-code period is
 `PREVIOUS_VERSION`, so the version string is what makes "new code" mean *since
-the last release* instead of *since the previous scan* — otherwise a mechanical
-refactor re-attributes long-standing untested lines to new code and the gate
+the last release* instead of *since the previous scan*. Otherwise a mechanical
+refactor re-attributes long-standing untested lines to new code, and the gate
 fails on work nobody just wrote. The same note sits next to the setting in
 `sonar-project.properties`.
 
@@ -187,7 +231,7 @@ Two known, accepted divergences — neither is a regression to chase:
   through, so it wins; do not split a function only to satisfy S3776, and do not
   re-enable the rule without raising its threshold to 25 on a custom profile
   first.
-- **First scan of a fresh server.** With no prior analysis there is no previous
+- **First scan of a fresh project.** With no prior analysis there is no previous
   version to diff against, so the whole tree lands in "new code" and the gate can
   fail on pre-existing findings. Re-check against the second scan before treating
   anything as new.
@@ -591,7 +635,7 @@ Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommit
 The checks are split along the network boundary, and the split is
 load-bearing: everything in `ci.yml` is **offline** (`-mod=vendor`,
 `GOPROXY=off`), everything that needs network lives in its own workflow
-(`supply-chain.yml`, `functional.yml`), and **no network-allowed job is ever a
+(`supply-chain.yml`, `functional.yml`, `sonar.yml`), and **no network-allowed job is ever a
 dependency of an offline job**. That is what keeps the air-gap invariant from
 being quietly weakened by a check that happens to need a proxy.
 
@@ -659,6 +703,13 @@ being quietly weakened by a check that happens to need a proxy.
   journal, `functional.env` and `openrc.env` are excluded at upload. A red cell with a failed
   "Stack devstack" step is devstack or the runner image; a red "Smoke" step
   with a `koc …` FAIL line, or a red "Functional tests" step, is koc.
+- `.github/workflows/sonar.yml` — the **SonarQube Cloud scan**, network-allowed:
+  push to `master`, pull requests, `workflow_dispatch`. A `token` job turns
+  "is `SONAR_TOKEN` available?" into an output (a job-level `if` cannot read
+  secrets), so fork/Dependabot PRs and an unconfigured repository skip the
+  `scan` job instead of failing it. `scan` checks out full depth, runs `make
+  cover` offline, and passes `sonar.projectVersion` from the latest `v*` tag. It
+  refuses to scan without one. See "SonarQube Cloud".
 - `.github/dependabot.yml` — weekly `gomod` and `github-actions` updates, each
   grouped into a single PR. Commit-message prefixes are set to `build` (gomod) and
   `ci` (actions) so Dependabot speaks Conventional Commits and

@@ -17,6 +17,11 @@ below so there is a single source of truth.
 - **Every leaf command has a functional test** (`test/functional`), a new one
   included, in the same commit. `TestEveryLeafIsCovered` fails otherwise;
   `uncovered.txt` is old debt that only shrinks. See AGENTS.md → "Testing".
+- Run the cheap checks here (vet, the changed packages' tests, the full unit
+  suite at ~45 s, gofmt from Go 1.27) and leave lint, race, crossbuild, coverage
+  and SonarQube to GitHub — AGENTS.md → "Where checks run (agent sessions)". Pipe
+  test output through `grep -v '^ok'`; after a push, read the CI result and fix
+  red before moving on.
 - Prefer the dedicated file/search tools over shell `grep`/`find`.
 - This repo is developed on a feature branch — never push to `main` without
   explicit permission. Commit and push only when asked.

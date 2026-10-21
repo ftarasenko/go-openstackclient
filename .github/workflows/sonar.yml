@@ -1,0 +1,98 @@
+name: sonar
+
+# SonarQube Cloud analysis. NETWORK-ALLOWED (the scanner talks to sonarcloud.io),
+# so it lives in its own workflow and is never a dependency of the offline jobs
+# in ci.yml — the same boundary supply-chain.yml and functional.yml keep. The
+# tests that feed it still run offline (-mod=vendor, GOPROXY=off); only the
+# upload needs the network.
+#
+# Setup (once, by a maintainer — see AGENTS.md "SonarQube Cloud"): import the
+# repository on sonarcloud.io, turn its Automatic Analysis OFF (it conflicts with
+# a CI-based scan), set the new-code definition to "Previous version", and store
+# the analysis token as the repository secret SONAR_TOKEN. Until the secret
+# exists the scan job is skipped, not failed.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # A job-level `if` cannot read secrets, so this job turns "is SONAR_TOKEN
+  # set?" into an output. It is empty on fork and Dependabot PRs (GitHub does
+  # not hand them repository secrets) and before the secret is configured;
+  # either way the scan is skipped instead of going red on every push.
+  token:
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::SONAR_TOKEN is not available to this run; skipping the SonarQube Cloud scan."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  scan:
+    needs: token
+    if: needs.token.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Full history and tags: the scanner needs blame for new-code detection on
+      # a pull request, and `git describe` below needs the latest v* tag. A
+      # shallow clone silently loses both.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Same toolchain as ci.yml, for the same reasons (see the comment there).
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+          cache: false
+
+      # Generated here, against this exact checkout, so it can never be stale —
+      # the failure that read 25% new-code coverage against an 83% tree.
+      - name: Coverage profile (offline, from vendor/)
+        env:
+          GOFLAGS: -mod=vendor
+          GOPROXY: "off"
+          CGO_ENABLED: "0"
+        run: make cover
+
+      # The new-code period is "Previous version", so the version string is what
+      # makes "new code" mean "since the last release". An empty one makes every
+      # scan analyse the same version and freezes the baseline, so fail loudly.
+      - name: Resolve the release the new-code period starts from
+        id: version
+        run: |
+          v=$(git describe --tags --abbrev=0 --match 'v*') || {
+            echo "::error::no v* tag is reachable from HEAD; refusing to scan without sonar.projectVersion"
+            exit 1
+          }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectVersion=${{ steps.version.outputs.version }}
