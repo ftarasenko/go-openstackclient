@@ -19,6 +19,9 @@
 package kochome
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +65,35 @@ func Dir() string {
 		return filepath.Join(os.TempDir(), embeddedHomeName)
 	}
 	return ""
+}
+
+// CheckEmbeddedHome makes the embedded profile's default directory safe to use,
+// and is a no-op otherwise (default profile, or KOC_HOME named by the host).
+//
+// That default is a fixed name under $TMPDIR, which on a shared host is
+// world-writable: another user could create it first and plant the scope file
+// koc reads, or a symlink where the audit log is appended. So koc creates it
+// itself, 0700, and refuses one that is a symlink, belongs to someone else, or
+// is writable by group or others. Set KOC_HOME to choose another directory.
+func CheckEmbeddedHome() error {
+	if !Embedded() || strings.TrimSpace(os.Getenv(EnvHome)) != "" {
+		return nil
+	}
+	dir := Dir()
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("checking %s: %w", dir, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory koc created; set %s to another directory", dir, EnvHome)
+	}
+	if why := unsafeDir(fi); why != "" {
+		return fmt.Errorf("%s %s; set %s to another directory", dir, why, EnvHome)
+	}
+	return nil
 }
 
 // Confined reports whether every implicit config location is replaced by Dir.
