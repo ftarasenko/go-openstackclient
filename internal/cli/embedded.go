@@ -203,6 +203,9 @@ func checkEmbedded(cmd *cobra.Command) error {
 	case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd, "help", "completion":
 		return nil
 	}
+	if err := kochome.CheckEmbeddedHome(); err != nil {
+		return err
+	}
 	for _, r := range embeddedCommandRefusals {
 		if path == r.path || strings.HasPrefix(path, r.path+" ") {
 			return &RefusedError{Reason: r.reason, Msg: r.msg}

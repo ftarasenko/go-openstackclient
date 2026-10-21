@@ -86,7 +86,11 @@ directory, `$HOME`, `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, `/etc/openstack`),
 operator names explicitly — `OS_CLIENT_CONFIG_FILE`, `VAULT_TOKEN_FILE`,
 `KUBECONFIG`, `--kubeconfig` — still wins in the default profile. In the
 embedded profile `KOC_HOME` defaults to `$TMPDIR/koc-home`, explicit config
-paths are ignored, and `$HOME`, `XDG_*` and `/etc` are never read.
+paths are ignored, and `$HOME`, `XDG_*` and `/etc` are never read. koc creates
+that default directory itself, `0700`, and refuses to run when it is a symlink,
+belongs to another user, or is writable by group or others, since on a shared
+host another user could otherwise plant the scope file or redirect the audit
+log; set `KOC_HOME` to use another directory.
 
 ### History
 
