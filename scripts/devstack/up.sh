@@ -308,7 +308,7 @@ fi
 # from gophercloud/devstack-action (see the header); harmless on a fresh VM but
 # not needed there, so only on --gha.
 gha_workarounds() {
-    python3 -m pip install --upgrade pip
+    python3 -m pip install --upgrade --only-binary :all: pip
     sudo apt-get update
     sudo apt-get purge -y 'mysql-*' || true
     # A leading "-e " in /etc/hosts (actions/runner-images#12192) and a
