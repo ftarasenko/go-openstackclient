@@ -184,6 +184,7 @@ func TestDoDoesNotRetryASinkFailure(t *testing.T) {
 // A cancelled context ends the loop instead of sleeping out the budget.
 func TestDoStopsOnContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var calls atomic.Int32
 	c := retryClient(t, 5, func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
