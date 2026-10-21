@@ -152,8 +152,8 @@ Rules that keep this cheap and correct:
 ## SonarQube Cloud (out-of-band static analysis)
 
 SonarQube Cloud (sonarcloud.io) analyses the project from
-**`.github/workflows/sonar.yml`**, on every push to `master`, on every pull
-request from this repository, and on `workflow_dispatch`. Nobody runs a scan by
+**`.github/workflows/sonar.yml`**, on every push to `master` and `claude/**`, on
+every pull request from this repository, and on `workflow_dispatch`. Nobody runs a scan by
 hand any more. It is **not** part of the per-commit offline gate: it needs
 network and a token, so it lives in its own network-allowed workflow, outside
 the air-gap invariant on purpose (see "Releases & CI" for why that boundary is
@@ -704,7 +704,7 @@ being quietly weakened by a check that happens to need a proxy.
   "Stack devstack" step is devstack or the runner image; a red "Smoke" step
   with a `koc …` FAIL line, or a red "Functional tests" step, is koc.
 - `.github/workflows/sonar.yml` — the **SonarQube Cloud scan**, network-allowed:
-  push to `master`, pull requests, `workflow_dispatch`. A `token` job turns
+  push to `master`/`claude/**`, pull requests, `workflow_dispatch`. A `token` job turns
   "is `SONAR_TOKEN` available?" into an output (a job-level `if` cannot read
   secrets), so fork/Dependabot PRs and an unconfigured repository skip the
   `scan` job instead of failing it. `scan` checks out full depth, runs `make
