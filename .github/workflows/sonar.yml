@@ -12,10 +12,15 @@ name: sonar
 # the analysis token as the repository secret SONAR_TOKEN. Until the secret
 # exists the scan job is skipped, not failed.
 
+# Pushes to claude/** are scanned too, like ci.yml: an agent reads the result of
+# its push before moving on (AGENTS.md "Where checks run"), and it is how a
+# change to this workflow is proved before it reaches master, where
+# workflow_dispatch first becomes available.
 on:
   push:
     branches:
       - master
+      - "claude/**"
   pull_request:
   workflow_dispatch:
 
