@@ -182,8 +182,9 @@ jobs:
           VER=2.14.0
           TARBALL="golangci-lint-${VER}-linux-amd64.tar.gz"
           BASE="https://github.com/golangci/golangci-lint/releases/download/v${VER}"
-          curl -sSfL "${BASE}/${TARBALL}" -o "${TARBALL}"
-          curl -sSfL "${BASE}/golangci-lint-${VER}-checksums.txt" -o checksums.txt
+          # --proto '=https' keeps a redirect from downgrading to plain HTTP.
+          curl -sSfL --proto '=https' --tlsv1.2 "${BASE}/${TARBALL}" -o "${TARBALL}"
+          curl -sSfL --proto '=https' --tlsv1.2 "${BASE}/golangci-lint-${VER}-checksums.txt" -o checksums.txt
           # sha256sum -c matches by the filename recorded in checksums.txt, so the
           # tarball must be on disk under its canonical name.
           grep " ${TARBALL}\$" checksums.txt | sha256sum -c -
