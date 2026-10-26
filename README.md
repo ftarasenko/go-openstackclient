@@ -35,6 +35,10 @@ deployment. No Python at runtime.
 >   (62 of python-octaviaclient's 82 commands), plus failover, stats and a
 >   flattened status tree
 > - **placement** — resource provider (list/show/delete/trait), allocation, trait
+> - **key manager** (barbican) — `secret` store/get (incl. payload)/update/list/
+>   delete, secret consumers, `secret container`, `secret order` and `acl` on
+>   secrets and containers (python-barbicanclient's surface, less the CA API
+>   barbican removed before Zed)
 > - **keyvrm** (Keystack Virtual Resource Manager — in-house) — app-config,
 >   host-aggregate-config, availability-zone, event, recommendation
 >
@@ -174,6 +178,8 @@ koc hypervisor list --gauge --sort ram --aggregate compute-hp
 koc compute host drain cmp-039 --wait --parallel 2
 koc compute host drain cmp-039 --cold --dry-run
 koc keyvrm recommendation list
+koc secret store --name db-password --payload s3cr3t --payload-content-type text/plain
+koc secret get https://cloud.example.com:9311/v1/secrets/<uuid> --payload -f value
 koc vault kv copy -r deployments/example/dev deployments/example/staging
 ```
 
@@ -674,6 +680,8 @@ endpoint supports. Override per service:
 
 Ironic emits `X-OpenStack-Ironic-API-Version`; nova/cinder use the generic
 `OpenStack-API-Version` header (gophercloud sets this from `client.Type`).
+Barbican is pinned to `key-manager 1.1`, the highest microversion it defines
+from Zed through 2025.2.
 
 ### Diagnostics
 
@@ -1101,6 +1109,7 @@ internal/cli/shell/        "koc shell": the REPL, scope file reload, audit event
 internal/cli/resolve/      cross-service name→ID resolution
 internal/cli/baremetal/    baremetal (ironic) command group
 internal/cli/keyvrm/       KeyVRM in-house catalog service (CLI over pkg/keyvrm)
+internal/cli/keymanager/   barbican: secret, secret consumer/container/order, acl
 pkg/openstack/             public Go API: Session and per-service clients
 pkg/openstack/<service>/   public per-service calls (paging, resolve, image, …)
 pkg/keyvrm/                public KeyVRM request layer

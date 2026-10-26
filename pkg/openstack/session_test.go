@@ -50,6 +50,7 @@ func TestServiceConstructors_TypeAndMicroversion(t *testing.T) {
 		{"Placement", s.Placement, "placement", "latest"},
 		{"LoadBalancer", s.LoadBalancer, "load-balancer", ""},
 		{"KeyVRM", s.KeyVRM, "keyvrm", ""},
+		{"KeyManager", s.KeyManager, "key-manager", "1.1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sc, err := tc.build()

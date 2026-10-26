@@ -8,7 +8,7 @@
 # locally is byte-for-byte the config CI runs.
 #
 #   scripts/devstack/up.sh --series <zed|caracal|epoxy|latest|YYYY.N> \
-#       [--features core,net,dns,ironic] [--dest DIR] [--log-dir DIR] [--dry-run]
+#       [--features core,net,dns,ironic,keymanager] [--dest DIR] [--log-dir DIR] [--dry-run]
 #
 # Features (keystone + neutron are always on):
 #   core  nova, glance, cinder (+ backup to swift), placement, swift + s3api
@@ -19,6 +19,8 @@
 #   ironic  ironic's API and conductor with the fake-hardware type only: no
 #         VMs, no deploy ramdisk, no inspector. koc's baremetal tests enroll
 #         their own fake nodes, so the API is all they need.
+#   keymanager  barbican with its default simple_crypto backend: secrets,
+#         containers, orders, consumers and ACLs, all served from the database
 #
 # Neutron backend by series: ML2/OVS through 2024.1, where fwaas, vpnaas and
 # bgp dynamic routing need the L3 agent; ML2/OVN, devstack's default, from
@@ -44,7 +46,7 @@ set -euo pipefail
 
 GIT_BASE=${GIT_BASE:-https://github.com}
 SERIES=""
-FEATURES="core,net,dns,ironic"
+FEATURES="core,net,dns,ironic,keymanager"
 DEST=${DEST:-/opt/stack}
 LOG_DIR=${LOG_DIR:-$PWD/devstack-logs}
 DEVSTACK_DIR=${DEVSTACK_DIR:-$PWD/devstack}
@@ -154,6 +156,7 @@ if has_feature net; then
 fi
 if has_feature dns; then NEEDED+=(designate); fi
 if has_feature ironic; then NEEDED+=(ironic); fi
+if has_feature keymanager; then NEEDED+=(barbican); fi
 for p in "${NEEDED[@]}"; do ref_for "$p" >/dev/null; done
 DEVSTACK_REF=${REFS[devstack]}
 
@@ -241,6 +244,15 @@ $(plugin designate)
 enable_service designate designate-central designate-api designate-worker designate-producer designate-mdns
 EOF
         if has_feature net; then echo "enable_service neutron-dns"; fi
+    fi
+
+    if has_feature keymanager; then
+        cat <<EOF
+
+# keymanager: barbican, simple_crypto (its default), orders processed in the API.
+$(plugin barbican)
+enable_service barbican-svc barbican-retry barbican-keystone-listener
+EOF
     fi
 
     if has_feature ironic; then

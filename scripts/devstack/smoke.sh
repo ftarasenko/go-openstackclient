@@ -161,6 +161,12 @@ if has_feature dns; then
     openstack zone delete ft-smoke.example.org. >/dev/null 2>&1
 fi
 
+# --- keymanager -------------------------------------------------------------------
+
+# Catalog only: python-barbicanclient may not be installed, and koc's own
+# secret round trip is the Go suite's.
+if has_feature keymanager; then check "catalog: key-manager" catalog_has key-manager; fi
+
 # --- ironic ----------------------------------------------------------------------
 
 # Ironic's secure-RBAC defaults keep drivers, shards and inspection rules to a
@@ -202,6 +208,7 @@ if [[ -n "$KOC" ]]; then
         check "koc s3 bucket list" koc s3 bucket list
     fi
     if has_feature dns; then check "koc zone list" koc zone list; fi
+    if has_feature keymanager; then check "koc secret list" koc secret list; fi
     if has_feature ironic; then
         kocsys() { sysadmin "$KOC" "$@" -f json; }
         check "koc baremetal driver list" kocsys baremetal driver list

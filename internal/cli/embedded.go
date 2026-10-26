@@ -118,6 +118,8 @@ var embeddedFlagRefusals = func() []flagRefusal {
 		{"keypair create", "public-key"},
 		{"baremetal introspection data save", "file"},
 		{"baremetal node inventory save", "file"},
+		{"secret store", "file"},
+		{"secret get", "file"},
 	} {
 		out = append(out, flagRefusal{path: pf[0], flag: pf[1], reason: RefusedFile, msg: msgFiles})
 	}

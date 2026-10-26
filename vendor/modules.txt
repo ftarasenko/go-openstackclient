@@ -63,6 +63,10 @@ github.com/gophercloud/gophercloud/v2/openstack/image/v2/imageimport
 github.com/gophercloud/gophercloud/v2/openstack/image/v2/images
 github.com/gophercloud/gophercloud/v2/openstack/image/v2/members
 github.com/gophercloud/gophercloud/v2/openstack/image/v2/tasks
+github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/acls
+github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/containers
+github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/orders
+github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/secrets
 github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/amphorae
 github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/flavorprofiles
 github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/flavors

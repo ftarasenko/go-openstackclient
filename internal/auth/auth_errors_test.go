@@ -39,6 +39,7 @@ func TestClient_RequireKeystoneErrorsInIronicMode(t *testing.T) {
 		{"Placement", func() error { _, err := c.Placement(); return err }},
 		{"LoadBalancer", func() error { _, err := c.LoadBalancer(); return err }},
 		{"KeyVRM", func() error { _, err := c.KeyVRM(); return err }},
+		{"KeyManager", func() error { _, err := c.KeyManager(); return err }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
