@@ -113,6 +113,25 @@ func (s *Session) LoadBalancer() (*gophercloud.ServiceClient, error) {
 	return sc, nil
 }
 
+// KeyManagerMicroversion is the barbican microversion a [Session.KeyManager]
+// client sends. 1.1 adds secret consumers and is the highest microversion
+// barbican defines from Zed (15.0.0) through 2025.2 (21.0.0). It is pinned
+// rather than negotiated because 1.2 changes what a DELETE of a secret with
+// consumers does: below it the delete succeeds, at it the server refuses
+// unless force is asked for.
+const KeyManagerMicroversion = "1.1"
+
+// KeyManager returns a barbican (key-manager v1) client, rooted at its v1 API
+// and pinned to [KeyManagerMicroversion].
+func (s *Session) KeyManager() (*gophercloud.ServiceClient, error) {
+	sc, err := openstack.NewKeyManagerV1(s.provider, s.endpoint)
+	if err != nil {
+		return nil, wrapService("key-manager", err)
+	}
+	sc.Microversion = KeyManagerMicroversion
+	return sc, nil
+}
+
 // KeyVRMServiceType is the Keystone catalog service type of KeyVRM.
 const KeyVRMServiceType = "keyvrm"
 

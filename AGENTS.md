@@ -268,6 +268,7 @@ internal/cli/vault/        "koc vault kv" list/get/copy/export/decrypt (package 
 internal/cli/s3/           "koc s3" bucket/object lifecycle, du, download/upload (multipart, stdin,
                            recursive), server-side copy/move, presign, sync (package s3cli); S3 creds only
 internal/cli/quota/        "koc quota show|set" — the one cross-service noun (nova+cinder+neutron)
+internal/cli/keymanager/   barbican: "koc secret", "secret consumer|container|order", "koc acl"
 internal/cli/              root.go wires every service's command group onto the root;
                            watch.go gives every read verb --watch in the same final pass;
                            run.go is one invocation on a fresh tree (main and every shell line);
@@ -290,7 +291,8 @@ test/importer/             nested module (own go.mod): pkg/ used from outside, r
 
 Services: `baremetal` (ironic), `server`+`compute` (nova), `identity` (keystone),
 `volume` (cinder), `dns` (designate), `image` (glance), `network` (neutron),
-`placement`, `keyvrm` (Keystack Virtual Resource Manager — in-house).
+`placement`, `secret`+`acl` (barbican), `keyvrm` (Keystack Virtual Resource
+Manager — in-house).
 
 `keyvrm` is the first **non-standard catalog service**: its endpoint is resolved
 by catalog type `keyvrm` (there is no gophercloud package), it authenticates with
@@ -434,6 +436,7 @@ release caps its microversion at:
 | nova | 26.x | **2.93** |
 | cinder | 21.3.2 | **3.70** |
 | placement | 9.0.0 | **1.39** |
+| barbican | 15.0.0 | **1.1** (koc pins it) |
 | keystone, glance, neutron, designate, octavia | — | no microversions; capability is per-extension |
 
 The `--os-*-api-version` defaults are `latest`, which negotiates downward, so

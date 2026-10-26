@@ -3,7 +3,7 @@
 How much of the upstream OpenStack CLI surface `koc` implements, measured against
 primary sources rather than documentation.
 
-**Snapshot:** 2026-10-17 · `koc` @ this commit (base `28e9801`) · 733 leaf
+**Snapshot:** 2026-10-26 · `koc` @ this commit (base `c4f8c37`) · 754 leaf
 commands (visible tree; 2 more are hidden duplicates).
 
 **Keep this file current** — see "Updating this document" below. Any commit that
@@ -21,6 +21,7 @@ the gap list in the same commit.
 | `osc-placement` (OSC plugin) | 4.9.0 | PyPI sdist → `entry_points.txt` |
 | `gophercloud/v2` | v2.15.0 | module zip from `proxy.golang.org` (matches the `vendor/` pin) |
 | `python-ironic-inspector-client` (OSC plugin) | 5.4.0 | PyPI sdist → `entry_points.txt` (13 commands under `baremetal introspection`) |
+| `python-barbicanclient` (OSC plugin) | 7.6.0 | PyPI sdist → `entry_points.txt` (23 commands under `[openstack.key_manager.v1]`) |
 
 Entry points are the authoritative command list — `openstack`'s own docs lag the
 code, and `opendev.org` is unreachable from CI/agent environments (HTTP 403), so
@@ -28,8 +29,15 @@ PyPI is the source of record.
 
 ## Headline
 
-**677 of 947 in-scope upstream commands (71%).** Of `koc`'s 733 leaf commands,
-677 are upstream-equivalent and 56 are koc-native.
+**698 of 968 in-scope upstream commands (72%).** Of `koc`'s 754 leaf commands,
+698 are upstream-equivalent and 56 are koc-native.
+
+`python-barbicanclient` became a baseline with the key-manager pass, which
+implemented 21 of its 23 commands — every one a supported cloud can answer —
+so numerator and denominator both grew by 21. The other two, `ca get` and `ca
+list`, are counted in the raw total but not in scope: barbican removed its
+certificate-authority API before Zed (barbican 15.0.0 ships no `cas`
+controller), so on every cloud `koc` supports they could only return 404.
 
 Moving the `python-openstackclient` baseline from 10.2.1 to 10.3.0 changed one
 namespace: 10.3.0 registers `network trunk subport add/list/remove` as entry
@@ -136,8 +144,9 @@ so always null, and neutron's `qinq` is shown under its own name when sent.
 In-scope = OSC core (current API versions only — `identity.v2`, `volume.v2` and
 `image.v1` are excluded as legacy) plus the five plugins above, and since the
 network plugin pass the five neutron plugin namespaces OSC registers itself
-(VPNaaS, FWaaS, BGPVPN, dynamic routing, TaaS). 1004 commands including Swift
-and Manila; 947 excluding them, since `koc` targets neither.
+(VPNaaS, FWaaS, BGPVPN, dynamic routing, TaaS), and since the key-manager pass
+`python-barbicanclient`. 1027 commands including Swift, Manila and barbican's
+`ca get/list`; 968 excluding them, since `koc` targets none of them.
 
 ## vs python-openstackclient (core)
 
@@ -186,10 +195,11 @@ counted in the compute row.
 | python-octaviaclient (`load balancer`) | 62/82 (76%) | everything except availability zones and profiles (11 — `availabilityzone` ×6, `availabilityzoneprofile` ×5), eight of upstream's ten `unset` verbs (`loadbalancer`, `listener`, `pool`, `member`, `healthmonitor`, `l7policy`, `l7rule`, `flavor`; `quota unset` is implemented and `availability zone unset` is inside the 11) and `listener stats show` — 20 in all. Diffed name-for-name against `entry_points.txt`: all 62 `koc loadbalancer` leaves map to an upstream command, none is koc-invented |
 | osc-placement | **31/31 (100%)** | complete against `entry_points.txt`, diffed name-for-name — resource providers, classes, traits, inventories, aggregates, allocations, allocation candidates and usages, reads and writes alike |
 | python-ironic-inspector-client (`baremetal introspection`) | 6/13 (46%) | `start`, `status`, `list`, `abort`, `data save`, `interface list`; missing `interface show`, `reprocess` and the five `rule` verbs |
+| python-barbicanclient (`secret`, `acl`) | **21/21 (100%)** in scope; 21/23 raw | complete against `entry_points.txt` apart from `ca get`/`ca list` (not targeted: no CA API on any supported cloud), diffed name-for-name — secrets (`list`, `get` incl. payload, `store`, `update`, `delete`), secret consumers, containers (generic, rsa, certificate), key and asymmetric orders, and ACLs (`get`, `submit`, `delete`, `user add/remove`) on secrets and containers. Like upstream, the list verbs fetch one `--limit`/`--offset` window rather than every page |
 
 ## vs gophercloud v2
 
-`koc` imports **94 of 220** gophercloud service packages. Within services `koc`
+`koc` imports **98 of 220** gophercloud service packages. Within services `koc`
 already ships:
 
 | Service | Packages used |
@@ -204,10 +214,11 @@ already ships:
 | `dns` | 6/6 |
 | `loadbalancer` | 10/13 |
 | `baremetalintrospection` | 1/3 |
+| `keymanager` | 4/4 |
 
-Eleven services gophercloud supports have **zero** `koc` surface:
+Ten services gophercloud supports have **zero** `koc` surface:
 `sharedfilesystems` (14 pkgs), `orchestration` (7), `containerinfra` (6),
-`db` (6), `objectstorage` (5), `keymanager` (4), `messaging` (3), `workflow` (3),
+`db` (6), `objectstorage` (5), `messaging` (3), `workflow` (3),
 `metric` (1), `container` (1), `reservation` (1).
 
 ## Minimum supported cloud
@@ -223,6 +234,7 @@ What each service's Zed release caps at, read from the Zed sdists on PyPI:
 | nova | 26.x | **2.93** | `server list -c "Pinned Availability Zone"` (2.96) and `-c "Scheduler Hints"` (2.100) are refused |
 | cinder | 21.3.2 | **3.70** | |
 | placement | 9.0.0 | **1.39** | |
+| barbican | 15.0.0 | **1.1** | `koc` pins 1.1 (secret consumers) rather than negotiating: 1.2, where a secret with consumers needs `force` to delete, is in no release through 2025.2 (21.0.0) |
 | keystone, glance, neutron, designate, octavia | — | no microversions | capability is discovered per-extension (`network extension list`) |
 
 `koc`'s defaults (`--os-*-api-version=latest`) already negotiate downward, so the
@@ -323,6 +335,12 @@ raw capacity is visible next to cinder's post-replication one), so decoding into
 for the six keys it does model would also cost a `make tidy` for no gain.
 `/capabilities/{host}` has no gophercloud package at all.
 
+`secret consumer create/delete/list` are raw too: gophercloud's
+`keymanager/v1/containers` models container consumers, but `secrets` has no
+consumer calls (`internal/cli/keymanager/consumer.go`). `secret container list
+--type` is a typed call with a koc-owned `ListOptsBuilder`, since
+`containers.ListOpts` has no `type` filter.
+
 Follow the AGENTS.md raw-fallback rule: isolate behind a small helper, pin the
 microversion, and comment why the typed package is unavailable.
 
@@ -377,6 +395,15 @@ when `--domain` is given and the default project lives in another domain, which
 `--project-domain` then states explicitly; scoping to the user's domain is the
 safer reading of a project name that is ambiguous cloud-wide, and it keeps the
 two user write verbs consistent with each other.
+
+Two `secret` flags deviate in **spelling**. `koc secret get
+--payload-content-type` is upstream's `--payload_content_type` — `secret get`
+is the one barbican verb that spells it with underscores, where `secret store`
+and `secret order create` use hyphens. Both work; the underscored form is
+registered hidden. And `koc secret delete --force` has no `-f`: upstream's
+shorthand is `koc`'s global `--format`. `--expiration` is parsed by `koc`
+(RFC 3339, or a date or date-time without an offset, read as UTC) where
+upstream hands the string to barbican unparsed.
 
 One flag is **koc-native**: `koc image list --name-contains`, a case-insensitive
 substring filter applied client-side. Glance's query builder accepts only `in:`
@@ -551,7 +578,7 @@ them in line with `network`.
 ## koc-native commands
 
 No upstream equivalent, by design — **56 leaves**, itemised so the total
-reconciles with the headline (733 = 677 + 56):
+reconciles with the headline (754 = 698 + 56):
 
 | Count | Commands | Why it has no upstream equivalent |
 | --- | --- | --- |
@@ -628,7 +655,7 @@ The tables are derived, not hand-maintained. To re-derive after a version bump
 or a batch of new commands:
 
 ```sh
-# 1. koc's own command tree (733 leaf commands at the snapshot above)
+# 1. koc's own command tree (754 leaf commands at the snapshot above)
 make build
 # Walk `--help` recursively. Count a command when it is *runnable*, not merely when
 # it is childless: `koc image import <image>` is a verb that also parents `koc image
@@ -644,7 +671,7 @@ tar xzf osc/python_openstackclient-*.tar.gz
 awk '/^\[/{s=$0} /^[a-z0-9_]+ *=/{if (s ~ /^\[openstack\./) print s"\t"$1}' \
   python_openstackclient-*/python_openstackclient.egg-info/entry_points.txt
 # repeat for python-ironicclient, python-designateclient, python-octaviaclient,
-# osc-placement, python-ironic-inspector-client
+# osc-placement, python-ironic-inspector-client, python-barbicanclient
 
 # 3. gophercloud surface vs what koc imports
 curl -sSo gc.zip https://proxy.golang.org/github.com/gophercloud/gophercloud/v2/@v/v2.15.0.zip
@@ -657,10 +684,10 @@ grep -rho 'github.com/gophercloud/gophercloud/v2/openstack/[a-z0-9/]*' \
 Then **check the arithmetic**, because that is the only thing that makes these
 tables worth reading. Three identities must hold at every snapshot:
 
-1. every raw row numerator summed = the headline numerator (677);
-2. leaf commands = headline numerator + koc-native (733 = 677 + 56);
-3. every raw row denominator summed = 1004, and minus the two not-targeted rows
-   (swift 17 + manila 40) = the in-scope denominator (947).
+1. every raw row numerator summed = the headline numerator (698);
+2. leaf commands = headline numerator + koc-native (754 = 698 + 56);
+3. every raw row denominator summed = 1027, and minus what is not targeted
+   (swift 17 + manila 40 + barbican's `ca` 2) = the in-scope denominator (968).
 
 A row whose numerator is asserted rather than diffed will break (1) or (2). If
 either fails, the mechanical diff is right and the row is wrong — fix the row.

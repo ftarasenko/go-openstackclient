@@ -304,6 +304,16 @@ func (c *Client) LoadBalancer() (*gophercloud.ServiceClient, error) {
 	return c.Session().LoadBalancer()
 }
 
+// KeyManager returns a barbican (key-manager v1) service client, pinned to
+// openstack.KeyManagerMicroversion: gophercloud keys the generic
+// "OpenStack-API-Version: key-manager 1.1" header on client.Type.
+func (c *Client) KeyManager() (*gophercloud.ServiceClient, error) {
+	if err := c.requireKeystone("key-manager"); err != nil {
+		return nil, err
+	}
+	return c.Session().KeyManager()
+}
+
 // KeyVRM returns a client for the in-house KeyVRM service. Its endpoint is
 // resolved from the Keystone catalog (type "keyvrm"), unless an override is set.
 // KeyVRM authenticates with the standard Keystone token, so no microversion or

@@ -15,6 +15,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/dns"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/identity"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/image"
+	"github.com/ftarasenko/go-openstackclient/internal/cli/keymanager"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/keyvrm"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/loadbalancer"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/network"
@@ -98,6 +99,7 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(dns.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(network.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(placement.NewCommand(authOpts, outOpts)...)
+	root.AddCommand(keymanager.NewCommand(authOpts, outOpts)...)
 	root.AddCommand(quota.NewCommand(authOpts, outOpts))
 	root.AddCommand(crossservice.NewCommands(authOpts, outOpts)...)
 

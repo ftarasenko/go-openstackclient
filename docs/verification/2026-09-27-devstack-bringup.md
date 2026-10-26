@@ -325,6 +325,11 @@ and use a third less disk, so the workflow's job (now 75 minutes, for the Go
 suites) and 40-minute stack timeouts leave ample room. Peak RAM matches the VMs
 (≤ 7.3 GB of 16).
 
+`up.sh` gained a `keymanager` feature (barbican, simple_crypto) on
+2026-10-26, on by default, for the `koc secret`/`acl` suite. It was added
+without a VM re-stack; the first nightly cells to stack it are its proof, and
+a failure there that names barbican belongs in this section.
+
 The first runner-only failure came later (run `36323792743`, zed): stack.sh's
 single `wget` of cirros from download.cirros-cloud.net timed out on IPv4 after
 two minutes and the cell failed with `stack_rc` 4. `up.sh --gha` now
