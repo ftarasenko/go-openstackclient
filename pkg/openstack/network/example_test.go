@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/rules"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
@@ -216,4 +217,39 @@ func ExampleListRouterL3Agents() {
 	// Output:
 	// net-1 active
 	// net-2 standby
+}
+
+// Firewall rules, with the remote-group attributes rules.Rule lacks.
+func ExampleListFirewallRules() {
+	neutronAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"firewall_rules":[`+
+			`{"id":"rule-1","name":"web","action":"allow","protocol":"tcp","destination_port":"443"},`+
+			`{"id":"rule-2","name":"from-dmz","action":"deny","source_firewall_group_id":"group-dmz"}]}`)
+	}))
+	defer neutronAPI.Close()
+
+	pc := &gophercloud.ProviderClient{
+		EndpointLocator: func(gophercloud.EndpointOpts) (string, error) { return neutronAPI.URL + "/", nil },
+	}
+	nc, err := openstack.FromProvider(pc, gophercloud.EndpointOpts{}, openstack.Options{}).Network()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	all, err := network.ListFirewallRules(context.Background(), nc, rules.ListOpts{})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, r := range all {
+		from := r.SourceFirewallGroupID
+		if from == "" {
+			from = "any"
+		}
+		fmt.Println(r.Name, r.Action, "from", from)
+	}
+	// Output:
+	// web allow from any
+	// from-dmz deny from group-dmz
 }

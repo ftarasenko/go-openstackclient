@@ -144,29 +144,6 @@ func cliLookup(id string, err error) (string, error) {
 	return id, err
 }
 
-// resolveByName backs every neutron name→ID resolver. A UUID is returned as-is
-// with no request: every neutron resource this package resolves has a UUID ID,
-// so no GET-by-ID step is needed to recognise one. Anything else is looked up
-// with the name-filtered list and settled by pickID — one match wins, none is
-// an error, several are ambiguous.
-//
-// The zero-match error mirrors upstream openstacksdk's find_* ("No Network
-// found for typo"). koc used to fall back to the literal reference instead, so
-// `koc network delete typo` sent DELETE /v2.0/networks/typo and surfaced
-// neutron's bare 404.
-func resolveByName[T any](client *gophercloud.ServiceClient, kind, nameOrID string,
-	list func(*gophercloud.ServiceClient) ([]T, error), idOf func(T) string,
-) (string, error) {
-	if resolve.IsUUID(nameOrID) {
-		return nameOrID, nil
-	}
-	all, err := list(client)
-	if err != nil {
-		return "", fmt.Errorf("looking up %s %q: %w", kind, nameOrID, err)
-	}
-	return pickID(nameOrID, len(all), func(i int) string { return idOf(all[i]) }, kind)
-}
-
 // resolveSecGroupIDs resolves a list of security group names or IDs to IDs,
 // preserving order.
 func resolveSecGroupIDs(ctx context.Context, client *gophercloud.ServiceClient, nameOrIDs []string) ([]string, error) {

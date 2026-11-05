@@ -16,6 +16,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "bgpvpn" and its network/router/port associations — the networking-bgpvpn
@@ -112,13 +113,7 @@ func (b bgpvpnBody) ToBGPVPNUpdateMap() (map[string]any, error) {
 
 // resolveBGPVPNID resolves a BGP VPN name or ID to its ID.
 func resolveBGPVPNID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	id, err := resolveByName(client, "BGP VPN", nameOrID, func(c *gophercloud.ServiceClient) ([]bgpvpns.BGPVPN, error) {
-		pages, err := bgpvpns.List(c, bgpvpnQuery{"name": {nameOrID}}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return bgpvpns.ExtractBGPVPNs(pages)
-	}, func(b bgpvpns.BGPVPN) string { return b.ID })
+	id, err := cliLookup(networkapi.FindBGPVPNID(ctx, client, nameOrID))
 	return id, explainMissingService(ctx, client, err, extBGPVPN)
 }
 
@@ -194,9 +189,9 @@ func runBGPVPNShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	b, err := bgpvpns.Get(ctx, client, id).Extract()
+	b, err := networkapi.GetBGPVPN(ctx, client, id)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("showing BGP VPN %s: %w", ref, err), extBGPVPN)
+		return explainMissingService(ctx, client, relabel(err, "showing BGP VPN %s", ref), extBGPVPN)
 	}
 	fields, values := bgpvpnShowFields(b)
 	return o.WriteSingle(w, fields, values)
@@ -253,13 +248,9 @@ func runBGPVPNList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	for k, v := range props {
 		q[k] = v
 	}
-	pages, err := bgpvpns.List(client, q).AllPages(ctx)
+	all, err := networkapi.ListBGPVPNs(ctx, client, q)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("listing BGP VPNs: %w", err), extBGPVPN)
-	}
-	all, err := bgpvpns.ExtractBGPVPNs(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the BGP VPN list: %w", err)
+		return explainMissingService(ctx, client, err, extBGPVPN)
 	}
 	return o.WriteList(w, bgpvpnListTable(all, f.long))
 }
@@ -377,9 +368,9 @@ func runBGPVPNCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if f.projectID != "" {
 		body["project_id"] = f.projectID
 	}
-	b, err := bgpvpns.Create(ctx, client, body).Extract()
+	b, err := networkapi.CreateBGPVPN(ctx, client, body)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("creating BGP VPN: %w", err), extBGPVPN)
+		return explainMissingService(ctx, client, err, extBGPVPN)
 	}
 	fields, values := bgpvpnShowFields(b)
 	return o.WriteSingle(w, fields, values)
@@ -489,9 +480,9 @@ func runBGPVPNUpdate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if len(body) == 0 {
 		return fmt.Errorf("bgpvpn %s requires at least one attribute flag", verb)
 	}
-	b, err := bgpvpns.Update(ctx, client, id, body).Extract()
+	b, err := networkapi.UpdateBGPVPN(ctx, client, id, body)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("updating BGP VPN %s: %w", ref, err), extBGPVPN)
+		return explainMissingService(ctx, client, relabel(err, "updating BGP VPN %s", ref), extBGPVPN)
 	}
 	fields, values := bgpvpnShowFields(b)
 	return o.WriteSingle(w, fields, values)
@@ -510,8 +501,8 @@ func buildBGPVPNUpdateBody(ctx context.Context, client *gophercloud.ServiceClien
 	current := &bgpvpns.BGPVPN{}
 	if anyGiven && !allPurged {
 		var err error
-		if current, err = bgpvpns.Get(ctx, client, id).Extract(); err != nil {
-			return nil, explainMissingService(ctx, client, fmt.Errorf("getting BGP VPN %s: %w", id, err), extBGPVPN)
+		if current, err = networkapi.GetBGPVPN(ctx, client, id); err != nil {
+			return nil, explainMissingService(ctx, client, err, extBGPVPN)
 		}
 	}
 	body := bgpvpnBody{}
@@ -573,8 +564,8 @@ func runBGPVPNDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err != nil {
 			return err
 		}
-		if err := bgpvpns.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return explainMissingService(ctx, client, fmt.Errorf("deleting BGP VPN %s: %w", ref, err), extBGPVPN)
+		if err := networkapi.DeleteBGPVPN(ctx, client, id); err != nil {
+			return explainMissingService(ctx, client, relabel(err, "deleting BGP VPN %s", ref), extBGPVPN)
 		}
 		return nil
 	})

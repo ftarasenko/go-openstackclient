@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -12,6 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "bgpvpn network association" and "bgpvpn router association", plus the verb
@@ -181,10 +181,7 @@ func runBGPVPNAssocDelete(ctx context.Context, client *gophercloud.ServiceClient
 		return err
 	}
 	return batchdelete.Each(ids, func(id string) error {
-		if err := del(ctx, client, bgpvpnID, id); err != nil {
-			return kind.explain(ctx, client, fmt.Errorf("deleting %s %s: %w", kind.label(), id, err))
-		}
-		return nil
+		return kind.explain(ctx, client, del(ctx, client, bgpvpnID, id))
 	})
 }
 
@@ -205,7 +202,7 @@ func newBGPVPNNetworkAssocCommand(a *auth.Options, o *output.Options) *cobra.Com
 	return newBGPVPNAssocParent(kind,
 		create,
 		newBGPVPNAssocDeleteCommand(a, kind, func(ctx context.Context, client *gophercloud.ServiceClient, bgpvpnID, id string) error {
-			return bgpvpns.DeleteNetworkAssociation(ctx, client, bgpvpnID, id).ExtractErr()
+			return networkapi.DeleteBGPVPNNetworkAssociation(ctx, client, bgpvpnID, id)
 		}),
 		newBGPVPNAssocListCommand(a, o, kind, runBGPVPNNetworkAssocList),
 		newBGPVPNAssocShowCommand(a, o, kind, runBGPVPNNetworkAssocShow),
@@ -230,12 +227,12 @@ func runBGPVPNNetworkAssocCreate(ctx context.Context, client *gophercloud.Servic
 	if err != nil {
 		return err
 	}
-	n, err := bgpvpns.CreateNetworkAssociation(ctx, client, bgpvpnID, bgpvpns.CreateNetworkAssociationOpts{
+	n, err := networkapi.CreateBGPVPNNetworkAssociation(ctx, client, bgpvpnID, bgpvpns.CreateNetworkAssociationOpts{
 		NetworkID: networkID,
 		ProjectID: projectID,
-	}).Extract()
+	})
 	if err != nil {
-		return explainBGPVPN(ctx, client, fmt.Errorf("creating network association: %w", err))
+		return explainBGPVPN(ctx, client, err)
 	}
 	return writeBGPVPNNetworkAssoc(o, w, n)
 }
@@ -247,9 +244,9 @@ func runBGPVPNNetworkAssocShow(ctx context.Context, client *gophercloud.ServiceC
 	if err != nil {
 		return err
 	}
-	n, err := bgpvpns.GetNetworkAssociation(ctx, client, bgpvpnID, id).Extract()
+	n, err := networkapi.GetBGPVPNNetworkAssociation(ctx, client, bgpvpnID, id)
 	if err != nil {
-		return explainBGPVPN(ctx, client, fmt.Errorf("showing network association %s: %w", id, err))
+		return explainBGPVPN(ctx, client, relabel(err, "showing network association %s", id))
 	}
 	return writeBGPVPNNetworkAssoc(o, w, n)
 }
@@ -265,13 +262,9 @@ func runBGPVPNNetworkAssocList(ctx context.Context, client *gophercloud.ServiceC
 	if err != nil {
 		return err
 	}
-	pages, err := bgpvpns.ListNetworkAssociations(client, bgpvpnID, q).AllPages(ctx)
+	all, err := networkapi.ListBGPVPNNetworkAssociations(ctx, client, bgpvpnID, q)
 	if err != nil {
-		return explainBGPVPN(ctx, client, fmt.Errorf("listing network associations: %w", err))
-	}
-	all, err := bgpvpns.ExtractNetworkAssociations(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the network association list: %w", err)
+		return explainBGPVPN(ctx, client, err)
 	}
 	cols := []string{"ID", "Network ID"}
 	if f.long {
@@ -347,7 +340,7 @@ func newBGPVPNRouterAssocCommand(a *auth.Options, o *output.Options) *cobra.Comm
 	return newBGPVPNAssocParent(kind,
 		create,
 		newBGPVPNAssocDeleteCommand(a, kind, func(ctx context.Context, client *gophercloud.ServiceClient, bgpvpnID, id string) error {
-			return bgpvpns.DeleteRouterAssociation(ctx, client, bgpvpnID, id).ExtractErr()
+			return networkapi.DeleteBGPVPNRouterAssociation(ctx, client, bgpvpnID, id)
 		}),
 		newBGPVPNAssocListCommand(a, o, kind, runBGPVPNRouterAssocList),
 		newBGPVPNRouterAssocSetCommand(a, o, false),
@@ -376,13 +369,13 @@ func runBGPVPNRouterAssocCreate(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return err
 	}
-	r, err := bgpvpns.CreateRouterAssociation(ctx, client, bgpvpnID, bgpvpns.CreateRouterAssociationOpts{
+	r, err := networkapi.CreateBGPVPNRouterAssociation(ctx, client, bgpvpnID, bgpvpns.CreateRouterAssociationOpts{
 		RouterID:             routerID,
 		ProjectID:            projectID,
 		AdvertiseExtraRoutes: routerAdvertiseExtraRoutes(adv, false),
-	}).Extract()
+	})
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("creating router association: %w", err))
+		return explainBGPVPNRoutesCtl(ctx, client, err)
 	}
 	return writeBGPVPNRouterAssoc(o, w, r)
 }
@@ -423,11 +416,11 @@ func runBGPVPNRouterAssocUpdate(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return err
 	}
-	r, err := bgpvpns.UpdateRouterAssociation(ctx, client, bgpvpnID, ref.target, bgpvpns.UpdateRouterAssociationOpts{
+	r, err := networkapi.UpdateBGPVPNRouterAssociation(ctx, client, bgpvpnID, ref.target, bgpvpns.UpdateRouterAssociationOpts{
 		AdvertiseExtraRoutes: routerAdvertiseExtraRoutes(adv, unset),
-	}).Extract()
+	})
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("updating router association %s: %w", ref.target, err))
+		return explainBGPVPNRoutesCtl(ctx, client, err)
 	}
 	return writeBGPVPNRouterAssoc(o, w, r)
 }
@@ -439,9 +432,9 @@ func runBGPVPNRouterAssocShow(ctx context.Context, client *gophercloud.ServiceCl
 	if err != nil {
 		return err
 	}
-	r, err := bgpvpns.GetRouterAssociation(ctx, client, bgpvpnID, id).Extract()
+	r, err := networkapi.GetBGPVPNRouterAssociation(ctx, client, bgpvpnID, id)
 	if err != nil {
-		return explainBGPVPN(ctx, client, fmt.Errorf("showing router association %s: %w", id, err))
+		return explainBGPVPN(ctx, client, relabel(err, "showing router association %s", id))
 	}
 	return writeBGPVPNRouterAssoc(o, w, r)
 }
@@ -457,13 +450,9 @@ func runBGPVPNRouterAssocList(ctx context.Context, client *gophercloud.ServiceCl
 	if err != nil {
 		return err
 	}
-	pages, err := bgpvpns.ListRouterAssociations(client, bgpvpnID, q).AllPages(ctx)
+	all, err := networkapi.ListBGPVPNRouterAssociations(ctx, client, bgpvpnID, q)
 	if err != nil {
-		return explainBGPVPN(ctx, client, fmt.Errorf("listing router associations: %w", err))
-	}
-	all, err := bgpvpns.ExtractRouterAssociations(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the router association list: %w", err)
+		return explainBGPVPN(ctx, client, err)
 	}
 	cols := []string{"ID", "Router ID"}
 	if f.long {

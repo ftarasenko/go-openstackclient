@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file; the column names are shared with
@@ -200,13 +202,7 @@ func newIKEPolicyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func resolveIKEPolicyID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "IKE policy", nameOrID, func(c *gophercloud.ServiceClient) ([]ikepolicies.Policy, error) {
-		pages, err := ikepolicies.List(c, ikepolicies.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return ikepolicies.ExtractPolicies(pages)
-	}, func(p ikepolicies.Policy) string { return p.ID })
+	return cliLookup(networkapi.FindIKEPolicyID(ctx, client, nameOrID))
 }
 
 func ikePolicyShowFields(p *ikepolicies.Policy) ([]string, []any) {
@@ -224,13 +220,9 @@ func ikePolicyShowFields(p *ikepolicies.Policy) ([]string, []any) {
 var ikePolicyColumns = fieldNames(ikePolicyShowFields(&ikepolicies.Policy{}))
 
 func runIKEPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	pages, err := ikepolicies.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListIKEPolicies(ctx, client, nil)
 	if err != nil {
-		return explainVPNaaS(ctx, client, fmt.Errorf("listing IKE policies: %w", err))
-	}
-	all, err := ikepolicies.ExtractPolicies(pages)
-	if err != nil {
-		return fmt.Errorf("parsing IKE policy list: %w", err)
+		return explainVPNaaS(ctx, client, err)
 	}
 	cols := []string{"ID", "Name", colAuthAlgorithm, colEncryptionAlgorithm, "IKE Version", colPFS}
 	if long {
@@ -253,9 +245,9 @@ func runIKEPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	p, err := vpnExtracted(ikepolicies.Get(ctx, client, id).Extract())
+	p, err := networkapi.GetIKEPolicy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting IKE policy %s: %w", ref, err)
+		return relabel(err, "getting IKE policy %s", ref)
 	}
 	fields, values := ikePolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -263,7 +255,7 @@ func runIKEPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 
 func runIKEPolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return explainVPNaaS(ctx, client, runVPNDelete(ctx, client, "IKE policy", refs, resolveIKEPolicyID,
-		func(id string) error { return ikepolicies.Delete(ctx, client, id).ExtractErr() }, w))
+		func(id string) error { return errors.Unwrap(networkapi.DeleteIKEPolicy(ctx, client, id)) }, w))
 }
 
 func runIKEPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *vpnPolicyFlags, w io.Writer) (err error) {
@@ -275,9 +267,9 @@ func runIKEPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	p, err := vpnExtracted(ikepolicies.Create(ctx, client, vpnBody{key: "ikepolicy", attrs: attrs}).Extract())
+	p, err := networkapi.CreateIKEPolicy(ctx, client, vpnBody{key: "ikepolicy", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("creating IKE policy: %w", err)
+		return err
 	}
 	fields, values := ikePolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -299,9 +291,9 @@ func runIKEPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	p, err := vpnExtracted(ikepolicies.Update(ctx, client, id, vpnBody{key: "ikepolicy", attrs: attrs}).Extract())
+	p, err := networkapi.UpdateIKEPolicy(ctx, client, id, vpnBody{key: "ikepolicy", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("updating IKE policy %s: %w", ref, err)
+		return relabel(err, "updating IKE policy %s", ref)
 	}
 	fields, values := ikePolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -322,13 +314,7 @@ func newIPsecPolicyCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func resolveIPsecPolicyID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "IPsec policy", nameOrID, func(c *gophercloud.ServiceClient) ([]ipsecpolicies.Policy, error) {
-		pages, err := ipsecpolicies.List(c, ipsecpolicies.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return ipsecpolicies.ExtractPolicies(pages)
-	}, func(p ipsecpolicies.Policy) string { return p.ID })
+	return cliLookup(networkapi.FindIPsecPolicyID(ctx, client, nameOrID))
 }
 
 func ipsecPolicyShowFields(p *ipsecpolicies.Policy) ([]string, []any) {
@@ -344,13 +330,9 @@ func ipsecPolicyShowFields(p *ipsecpolicies.Policy) ([]string, []any) {
 var ipsecPolicyColumns = fieldNames(ipsecPolicyShowFields(&ipsecpolicies.Policy{}))
 
 func runIPsecPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	pages, err := ipsecpolicies.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListIPsecPolicies(ctx, client, nil)
 	if err != nil {
-		return explainVPNaaS(ctx, client, fmt.Errorf("listing IPsec policies: %w", err))
-	}
-	all, err := ipsecpolicies.ExtractPolicies(pages)
-	if err != nil {
-		return fmt.Errorf("parsing IPsec policy list: %w", err)
+		return explainVPNaaS(ctx, client, err)
 	}
 	cols := []string{"ID", "Name", colAuthAlgorithm, "Encapsulation Mode", "Transform Protocol", colEncryptionAlgorithm}
 	if long {
@@ -373,9 +355,9 @@ func runIPsecPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	p, err := vpnExtracted(ipsecpolicies.Get(ctx, client, id).Extract())
+	p, err := networkapi.GetIPsecPolicy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting IPsec policy %s: %w", ref, err)
+		return relabel(err, "getting IPsec policy %s", ref)
 	}
 	fields, values := ipsecPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -383,7 +365,7 @@ func runIPsecPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, 
 
 func runIPsecPolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return explainVPNaaS(ctx, client, runVPNDelete(ctx, client, "IPsec policy", refs, resolveIPsecPolicyID,
-		func(id string) error { return ipsecpolicies.Delete(ctx, client, id).ExtractErr() }, w))
+		func(id string) error { return errors.Unwrap(networkapi.DeleteIPsecPolicy(ctx, client, id)) }, w))
 }
 
 func runIPsecPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *vpnPolicyFlags, w io.Writer) (err error) {
@@ -395,9 +377,9 @@ func runIPsecPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	p, err := vpnExtracted(ipsecpolicies.Create(ctx, client, vpnBody{key: "ipsecpolicy", attrs: attrs}).Extract())
+	p, err := networkapi.CreateIPsecPolicy(ctx, client, vpnBody{key: "ipsecpolicy", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("creating IPsec policy: %w", err)
+		return err
 	}
 	fields, values := ipsecPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -419,9 +401,9 @@ func runIPsecPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	p, err := vpnExtracted(ipsecpolicies.Update(ctx, client, id, vpnBody{key: "ipsecpolicy", attrs: attrs}).Extract())
+	p, err := networkapi.UpdateIPsecPolicy(ctx, client, id, vpnBody{key: "ipsecpolicy", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("updating IPsec policy %s: %w", ref, err)
+		return relabel(err, "updating IPsec policy %s", ref)
 	}
 	fields, values := ipsecPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)

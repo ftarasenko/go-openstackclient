@@ -97,6 +97,16 @@ func TestFindIDs(t *testing.T) {
 		{"BGP speaker", "/bgp-speakers", "name", network.FindBGPSpeakerID},
 		{"BGP peer", "/bgp-peers", "name", network.FindBGPPeerID},
 		{"tap mirror", "/taas/tap_mirrors", "name", network.FindTapMirrorID},
+		{"BGP VPN", "/bgpvpn/bgpvpns", "name", network.FindBGPVPNID},
+		{"firewall group", "/fwaas/firewall_groups", "name", network.FindFirewallGroupID},
+		{"firewall policy", "/fwaas/firewall_policies", "name", network.FindFirewallPolicyID},
+		{"firewall rule", "/fwaas/firewall_rules", "name", network.FindFirewallRuleID},
+		{"flavor", "/flavors", "name", network.FindNetworkFlavorID},
+		{"VPN service", "/vpn/vpnservices", "name", network.FindVPNServiceID},
+		{"IKE policy", "/vpn/ikepolicies", "name", network.FindIKEPolicyID},
+		{"IPsec policy", "/vpn/ipsecpolicies", "name", network.FindIPsecPolicyID},
+		{"IPsec site connection", "/vpn/ipsec-site-connections", "name", network.FindIPsecSiteConnectionID},
+		{"endpoint group", "/vpn/endpoint-groups", "name", network.FindVPNEndpointGroupID},
 	}
 	for _, f := range finds {
 		t.Run(f.kind, func(t *testing.T) {

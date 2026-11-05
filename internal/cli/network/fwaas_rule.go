@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/rules"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -50,20 +50,8 @@ func newFirewallRuleCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// fwRule is a firewall rule plus the remote-group attributes gophercloud's
-// struct does not model. They arrive through an exported flat embed because
-// gophercloud's slice extraction decodes each embedded struct separately and
-// drops plain fields (see floatingIPExt).
-type fwRule struct {
-	rules.Rule
-	FirewallRuleGroupsExt
-}
-
-// FirewallRuleGroupsExt carries fwaas_v2's source/destination_firewall_group_id.
-type FirewallRuleGroupsExt struct {
-	SourceFirewallGroupID      string `json:"source_firewall_group_id"`
-	DestinationFirewallGroupID string `json:"destination_firewall_group_id"`
-}
+// fwRule is a firewall rule with its remote-group attributes.
+type fwRule = networkapi.FirewallRule
 
 // fwRuleFlags carries the create/set options (upstream rule _get_common_parser
 // plus --name/--project).
@@ -270,17 +258,17 @@ func fwRuleShowFields(r *fwRule) ([]string, []any) {
 
 var fwRuleColumns = fieldNames(fwRuleShowFields(&fwRule{}))
 
-// fwRuleResult is what the rules package's Create/Get/Update results share.
-type fwRuleResult interface {
-	ExtractIntoStructPtr(to any, label string) error
+// fwRuleErr relabels a rule request's error with the CLI's text. A body that
+// does not decode was always printed as the decoder worded it.
+func fwRuleErr(err error, format string, args ...any) error {
+	if strings.HasPrefix(err.Error(), "parsing ") {
+		return errors.Unwrap(err)
+	}
+	return relabel(err, format, args...)
 }
 
-func writeFWRule(o *output.Options, w io.Writer, res fwRuleResult) error {
-	var r fwRule
-	if err := res.ExtractIntoStructPtr(&r, "firewall_rule"); err != nil {
-		return err
-	}
-	fields, values := fwRuleShowFields(&r)
+func writeFWRule(o *output.Options, w io.Writer, r *fwRule) error {
+	fields, values := fwRuleShowFields(r)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -330,11 +318,11 @@ func runFirewallRuleCreate(ctx context.Context, client *gophercloud.ServiceClien
 	if f.projectID != "" {
 		attrs["project_id"] = f.projectID
 	}
-	res := rules.Create(ctx, client, fwRuleBody(attrs))
-	if res.Err != nil {
-		return fmt.Errorf("creating firewall rule: %w", res.Err)
+	r, err := networkapi.CreateFirewallRule(ctx, client, fwRuleBody(attrs))
+	if err != nil {
+		return fwRuleErr(err, "creating firewall rule")
 	}
-	return writeFWRule(o, w, res)
+	return writeFWRule(o, w, r)
 }
 
 func newFirewallRuleDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -360,7 +348,7 @@ func runFirewallRuleDelete(ctx context.Context, client *gophercloud.ServiceClien
 	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveFirewallRuleID(ctx, client, ref)
 		if err == nil {
-			err = rules.Delete(ctx, client, id).ExtractErr()
+			err = errors.Unwrap(networkapi.DeleteFirewallRule(ctx, client, id))
 		}
 		if err != nil {
 			return fwaasErr(ctx, client, fmt.Errorf("deleting firewall rule %s: %w", ref, err))
@@ -393,17 +381,9 @@ func newFirewallRuleListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 
 func runFirewallRuleList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) (err error) {
 	defer func() { err = fwaasErr(ctx, client, err) }()
-	pages, err := rules.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListFirewallRules(ctx, client, nil)
 	if err != nil {
-		return fmt.Errorf("listing firewall rules: %w", err)
-	}
-	page, ok := pages.(rules.RulePage)
-	if !ok {
-		return errors.New("parsing firewall rule list: unexpected page type")
-	}
-	var all []fwRule
-	if err := page.ExtractIntoSlicePtr(&all, "firewall_rules"); err != nil {
-		return fmt.Errorf("parsing firewall rule list: %w", err)
+		return err
 	}
 	return o.WriteList(w, fwRuleListTable(all, long))
 }
@@ -478,11 +458,11 @@ func updateFWRule(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	res := rules.Update(ctx, client, id, fwRuleBody(attrs))
-	if res.Err != nil {
-		return fmt.Errorf("updating firewall rule %s: %w", ref, res.Err)
+	r, err := networkapi.UpdateFirewallRule(ctx, client, id, fwRuleBody(attrs))
+	if err != nil {
+		return fwRuleErr(err, "updating firewall rule %s", ref)
 	}
-	return writeFWRule(o, w, res)
+	return writeFWRule(o, w, r)
 }
 
 func newFirewallRuleShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -510,11 +490,11 @@ func runFirewallRuleShow(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	res := rules.Get(ctx, client, id)
-	if res.Err != nil {
-		return fmt.Errorf("getting firewall rule %s: %w", ref, res.Err)
+	r, err := networkapi.GetFirewallRule(ctx, client, id)
+	if err != nil {
+		return fwRuleErr(err, "getting firewall rule %s", ref)
 	}
-	return writeFWRule(o, w, res)
+	return writeFWRule(o, w, r)
 }
 
 // fwRuleUnsetFlags mirrors upstream UnsetFirewallRule: every option is a
