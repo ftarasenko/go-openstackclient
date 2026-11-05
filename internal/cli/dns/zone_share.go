@@ -14,6 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // newZoneShareCommand builds "zone share ...".
@@ -97,9 +98,9 @@ func runZoneShareCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	share, err := zones.Share(ctx, client, zoneID, zones.ShareZoneOpts{TargetProjectID: targetProjectID}).Extract()
+	share, err := dnsapi.ShareZone(ctx, client, zoneID, targetProjectID)
 	if err != nil {
-		return fmt.Errorf("sharing zone %q with project %q: %w", zoneRef, targetProjectID, err)
+		return relabel(err, "sharing zone %q with project %q", zoneRef, targetProjectID)
 	}
 	fields, values := zoneShareFields(share)
 	return o.WriteSingle(w, fields, values)
@@ -140,13 +141,9 @@ func runZoneShareList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	pages, err := zones.ListShares(client, zoneID, zones.ListSharesOpts{}).AllPages(ctx)
+	all, err := dnsapi.ListZoneShares(ctx, client, zoneID)
 	if err != nil {
-		return fmt.Errorf("listing shares of zone %q: %w", zoneRef, err)
-	}
-	all, err := zones.ExtractZoneShares(pages)
-	if err != nil {
-		return fmt.Errorf("parsing zone share list: %w", err)
+		return relabelList(err, "listing shares of zone %q", zoneRef)
 	}
 	cols := []string{"ID", "Zone ID", "Target Project ID", "Created At"}
 	if allProjects {
@@ -194,9 +191,9 @@ func runZoneShareShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	share, err := zones.GetShare(ctx, client, zoneID, shareID).Extract()
+	share, err := dnsapi.GetZoneShare(ctx, client, zoneID, shareID)
 	if err != nil {
-		return fmt.Errorf("showing share %s of zone %q: %w", shareID, zoneRef, err)
+		return relabel(err, "showing share %s of zone %q", shareID, zoneRef)
 	}
 	fields, values := zoneShareFields(share)
 	return o.WriteSingle(w, fields, values)
@@ -234,8 +231,8 @@ func runZoneShareDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	return batchdelete.Each(shareIDs, func(shareID string) error {
-		if derr := zones.Unshare(ctx, client, zoneID, shareID).ExtractErr(); derr != nil {
-			return fmt.Errorf("removing share %s from zone %q: %w", shareID, zoneRef, derr)
+		if derr := dnsapi.UnshareZone(ctx, client, zoneID, shareID); derr != nil {
+			return relabel(derr, "removing share %s from zone %q", shareID, zoneRef)
 		}
 		if _, werr := fmt.Fprintf(w, "Removed share %s from zone %s\n", shareID, zoneRef); werr != nil {
 			return werr

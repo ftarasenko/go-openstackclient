@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // Zone exports and imports: designate's asynchronous zonefile tasks. Neither has
@@ -26,39 +26,12 @@ import (
 // (HTTP 403), so these are UNVERIFIED against KeyStack and fall back to upstream
 // semantics.
 
-// zoneExport is designate's export-task record.
-type zoneExport struct {
-	ID        string `json:"id"`
-	ZoneID    string `json:"zone_id"`
-	ProjectID string `json:"project_id"`
-	Status    string `json:"status"`
-	Location  string `json:"location"`
-	Message   string `json:"message"`
-	Version   int    `json:"version"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-}
-
-func zoneExportFields(e *zoneExport) ([]string, []any) {
+func zoneExportFields(e *dnsapi.ZoneExport) ([]string, []any) {
 	return []string{"id", "zone_id", "project_id", "status", "location", "message", "version", "created_at", "updated_at"},
 		[]any{e.ID, e.ZoneID, e.ProjectID, e.Status, e.Location, e.Message, e.Version, dnsTimeString(e.CreatedAt), dnsTimeString(e.UpdatedAt)}
 }
 
-// zoneImport is designate's import-task record. It carries the same shape as an
-// export minus the location, plus the parse error in Message when a zonefile is
-// rejected.
-type zoneImport struct {
-	ID        string `json:"id"`
-	ZoneID    string `json:"zone_id"`
-	ProjectID string `json:"project_id"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	Version   int    `json:"version"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-}
-
-func zoneImportFields(i *zoneImport) ([]string, []any) {
+func zoneImportFields(i *dnsapi.ZoneImport) ([]string, []any) {
 	return []string{"id", "zone_id", "project_id", "status", "message", "version", "created_at", "updated_at"},
 		[]any{i.ID, i.ZoneID, i.ProjectID, i.Status, i.Message, i.Version, dnsTimeString(i.CreatedAt), dnsTimeString(i.UpdatedAt)}
 }
@@ -111,17 +84,16 @@ func runZoneExportCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err := o.CheckColumns(zoneExportColumns...); err != nil {
 		return err
 	}
-	headers := common.headers()
-	zoneID, err := resolveZoneID(ctx, withCommonHeaders(client, common), zoneRef)
+	client = withCommonHeaders(client, common)
+	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
 	}
-	var export zoneExport
-	url := client.ServiceURL("zones", zoneID, "tasks", "export")
-	if err := dnsPostJSON(ctx, client, url, nil, &export, headers); err != nil {
-		return fmt.Errorf("exporting zone %q: %w", zoneRef, err)
+	export, err := dnsapi.CreateZoneExport(ctx, client, zoneID)
+	if err != nil {
+		return relabel(err, "exporting zone %q", zoneRef)
 	}
-	fields, values := zoneExportFields(&export)
+	fields, values := zoneExportFields(export)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -161,27 +133,10 @@ func newZoneExportListCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runZoneExportList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *zoneExportListFlags, common *commonOptions, w io.Writer,
 ) error {
-	q, err := dnsQuery(struct {
-		Status string `q:"status"`
-		ZoneID string `q:"zone_id"`
-	}{f.status, f.zoneID})
+	all, err := dnsapi.ListZoneExports(ctx, withCommonHeaders(client, common),
+		dnsapi.ZoneExportListOpts{Status: f.status, ZoneID: f.zoneID}, f.limit)
 	if err != nil {
 		return err
-	}
-	all, err := dnsListAll(ctx, client, client.ServiceURL("zones", "tasks", "exports")+q,
-		common.headers(), f.limit,
-		func(raw json.RawMessage) ([]zoneExport, string, error) {
-			var page struct {
-				Exports []zoneExport `json:"exports"`
-				Links   dnsLinks     `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing zone export list: %w", err)
-			}
-			return page.Exports, page.Links.Next, nil
-		})
-	if err != nil {
-		return fmt.Errorf("listing zone exports: %w", err)
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Zone ID", "Created At", "Status"},
@@ -218,12 +173,11 @@ func newZoneExportShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runZoneExportShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, common *commonOptions, w io.Writer,
 ) error {
-	var export zoneExport
-	url := client.ServiceURL("zones", "tasks", "exports", id)
-	if err := dnsGetJSON(ctx, client, url, common.headers(), &export); err != nil {
-		return fmt.Errorf("showing zone export %s: %w", id, err)
+	export, err := dnsapi.GetZoneExport(ctx, withCommonHeaders(client, common), id)
+	if err != nil {
+		return err
 	}
-	fields, values := zoneExportFields(&export)
+	fields, values := zoneExportFields(export)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -256,10 +210,9 @@ func newZoneExportShowFileCommand(a *auth.Options, o *output.Options) *cobra.Com
 func runZoneExportShowFile(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, common *commonOptions, w io.Writer,
 ) error {
-	url := client.ServiceURL("zones", "tasks", "exports", id, "export")
-	zonefile, err := dnsGetText(ctx, client, url, "text/dns", common.headers())
+	zonefile, err := dnsapi.GetZoneExportFile(ctx, withCommonHeaders(client, common), id)
 	if err != nil {
-		return fmt.Errorf("showing zonefile of export %s: %w", id, err)
+		return err
 	}
 	return o.WriteSingle(w, []string{"data"}, []any{zonefile})
 }
@@ -289,11 +242,10 @@ func newZoneExportDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runZoneExportDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	ids []string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
+	client = withCommonHeaders(client, common)
 	return batchdelete.Each(ids, func(id string) error {
-		url := client.ServiceURL("zones", "tasks", "exports", id)
-		if err := dnsDelete(ctx, client, url, headers); err != nil {
-			return fmt.Errorf("deleting zone export %s: %w", id, err)
+		if err := dnsapi.DeleteZoneExport(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted zone export %s\n", id); err != nil {
 			return err
@@ -381,20 +333,11 @@ func runZoneImportCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err := o.CheckColumns(zoneImportColumns...); err != nil {
 		return err
 	}
-	var record zoneImport
-	url := client.ServiceURL("zones", "tasks", "imports")
-	headers := common.headers()
-	var err error
-	if len(attributes) > 0 {
-		body := map[string]any{"zonefile": zonefile, "attributes": attributes}
-		err = dnsPostJSON(ctx, client, url, body, &record, headers)
-	} else {
-		err = dnsPostRaw(ctx, client, url, "text/dns", strings.NewReader(zonefile), &record, headers)
-	}
+	record, err := dnsapi.CreateZoneImport(ctx, withCommonHeaders(client, common), zonefile, attributes)
 	if err != nil {
-		return fmt.Errorf("importing zone: %w", err)
+		return err
 	}
-	fields, values := zoneImportFields(&record)
+	fields, values := zoneImportFields(record)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -436,28 +379,10 @@ func newZoneImportListCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runZoneImportList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *zoneImportListFlags, common *commonOptions, w io.Writer,
 ) error {
-	q, err := dnsQuery(struct {
-		Status  string `q:"status"`
-		ZoneID  string `q:"zone_id"`
-		Message string `q:"message"`
-	}{f.status, f.zoneID, f.message})
+	all, err := dnsapi.ListZoneImports(ctx, withCommonHeaders(client, common),
+		dnsapi.ZoneImportListOpts{Status: f.status, ZoneID: f.zoneID, Message: f.message}, f.limit)
 	if err != nil {
 		return err
-	}
-	all, err := dnsListAll(ctx, client, client.ServiceURL("zones", "tasks", "imports")+q,
-		common.headers(), f.limit,
-		func(raw json.RawMessage) ([]zoneImport, string, error) {
-			var page struct {
-				Imports []zoneImport `json:"imports"`
-				Links   dnsLinks     `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing zone import list: %w", err)
-			}
-			return page.Imports, page.Links.Next, nil
-		})
-	if err != nil {
-		return fmt.Errorf("listing zone imports: %w", err)
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Zone ID", "Created At", "Status", "Message"},
@@ -494,12 +419,11 @@ func newZoneImportShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runZoneImportShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, common *commonOptions, w io.Writer,
 ) error {
-	var record zoneImport
-	url := client.ServiceURL("zones", "tasks", "imports", id)
-	if err := dnsGetJSON(ctx, client, url, common.headers(), &record); err != nil {
-		return fmt.Errorf("showing zone import %s: %w", id, err)
+	record, err := dnsapi.GetZoneImport(ctx, withCommonHeaders(client, common), id)
+	if err != nil {
+		return err
 	}
-	fields, values := zoneImportFields(&record)
+	fields, values := zoneImportFields(record)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -530,11 +454,10 @@ func newZoneImportDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runZoneImportDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	ids []string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
+	client = withCommonHeaders(client, common)
 	return batchdelete.Each(ids, func(id string) error {
-		url := client.ServiceURL("zones", "tasks", "imports", id)
-		if err := dnsDelete(ctx, client, url, headers); err != nil {
-			return fmt.Errorf("deleting zone import %s: %w", id, err)
+		if err := dnsapi.DeleteZoneImport(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted zone import %s\n", id); err != nil {
 			return err

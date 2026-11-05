@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // The last of the designate surface: the deployment's own limits, and the four
@@ -68,9 +69,9 @@ func newDNSLimitListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runDNSLimitList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	common *commonOptions, w io.Writer,
 ) error {
-	var limits map[string]any
-	if err := dnsGetJSON(ctx, client, client.ServiceURL("limits"), common.headers(), &limits); err != nil {
-		return fmt.Errorf("listing DNS limits: %w", err)
+	limits, err := dnsapi.GetLimits(ctx, withCommonHeaders(client, common))
+	if err != nil {
+		return err
 	}
 	names := make([]string, 0, len(limits))
 	for name := range limits {
@@ -123,23 +124,20 @@ func newZoneNameserversListCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runZoneNameserversList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	zoneRef string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
-	zoneID, err := resolveZoneID(ctx, withCommonHeaders(client, common), zoneRef)
+	client = withCommonHeaders(client, common)
+	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
 	}
-	var body struct {
-		Nameservers []poolNS `json:"nameservers"`
-	}
-	url := client.ServiceURL("zones", zoneID, "nameservers")
-	if err := dnsGetJSON(ctx, client, url, headers, &body); err != nil {
-		return fmt.Errorf("listing nameservers of zone %q: %w", zoneRef, err)
+	nameservers, err := dnsapi.ListZoneNameservers(ctx, client, zoneID)
+	if err != nil {
+		return relabel(err, "listing nameservers of zone %q", zoneRef)
 	}
 	t := output.Table{
 		Columns: []string{"Hostname", "Priority"},
-		Rows:    make([][]any, 0, len(body.Nameservers)),
+		Rows:    make([][]any, 0, len(nameservers)),
 	}
-	for _, ns := range body.Nameservers {
+	for _, ns := range nameservers {
 		t.Rows = append(t.Rows, []any{ns.Hostname, ns.Priority})
 	}
 	return o.WriteList(w, t)
@@ -253,18 +251,13 @@ type zoneTask struct {
 func runZoneTask(ctx context.Context, client *gophercloud.ServiceClient,
 	zoneRef string, t zoneTask, w io.Writer,
 ) error {
-	headers := t.common.headers()
-	zoneID, err := resolveZoneID(ctx, withCommonHeaders(client, t.common), zoneRef)
+	client = withCommonHeaders(client, t.common)
+	zoneID, err := resolveZoneID(ctx, client, zoneRef)
 	if err != nil {
 		return err
 	}
-	url := client.ServiceURL("zones", zoneID, "tasks", t.task)
-	var jsonBody any
-	if t.body != nil {
-		jsonBody = t.body
-	}
-	if err := dnsPostNoContent(ctx, client, url, jsonBody, headers); err != nil {
-		return fmt.Errorf("%s %q: %w", t.task, zoneRef, err)
+	if err := dnsapi.ZoneTask(ctx, client, zoneID, t.task, t.body); err != nil {
+		return relabel(err, "%s %q", t.task, zoneRef)
 	}
 	if _, err := fmt.Fprintf(w, "%s %s\n", t.message, zoneRef); err != nil {
 		return err

@@ -2,14 +2,16 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/recordsets"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
 
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // withTrailingDot returns the DNS-canonical form of a name (designate zone and
@@ -46,30 +48,23 @@ func qualifyName(name, zoneName string) string {
 
 // resolveZone is resolveZoneID returning the whole zone, for callers that
 // also need its name.
-func resolveZone(ctx context.Context, client *gophercloud.ServiceClient, ref string) (zones.Zone, error) {
-	pages, err := zones.List(client, zones.ListOpts{}).AllPages(ctx)
-	if err != nil {
-		return zones.Zone{}, fmt.Errorf("resolving zone %q: %w", ref, err)
+func resolveZone(ctx context.Context, client *gophercloud.ServiceClient, ref string) (*zones.Zone, error) {
+	z, err := dnsapi.FindZone(ctx, client, ref)
+	var notFound *osresolve.NotFoundError
+	switch {
+	case err == nil:
+		return z, nil
+	case errors.As(err, &notFound):
+		return nil, fmt.Errorf("zone %q not found", ref)
 	}
-	all, err := zones.ExtractZones(pages)
-	if err != nil {
-		return zones.Zone{}, fmt.Errorf("resolving zone %q: %w", ref, err)
-	}
-	want := withTrailingDot(ref)
-	for _, z := range all {
-		if z.ID == ref || z.Name == ref || z.Name == want {
-			return z, nil
-		}
-	}
-	return zones.Zone{}, fmt.Errorf("zone %q not found", ref)
+	return nil, relabel(err, "resolving zone %q", ref)
 }
 
 // resolveRecordSetID turns a recordset reference (a name or an ID) into a
-// recordset ID within the given zone. It mirrors the shared name→ID policy in
-// internal/cli/resolve: a UUID is returned untouched with no API call, and a
-// name is resolved with a server-side name filter (not by listing the whole
-// zone) so a targeted verb such as "recordset delete" acts on exactly the named
-// recordset.
+// recordset ID within the given zone. A UUID is returned untouched with no API
+// call, and a name is resolved with a server-side name filter (not by listing
+// the whole zone) so a targeted verb such as "recordset delete" acts on
+// exactly the named recordset.
 //
 // A recordset name is *not* unique within a zone — an A and an AAAA record can
 // both be named "www.example.com." — so a name that matches more than one
@@ -79,21 +74,9 @@ func resolveRecordSetID(ctx context.Context, client *gophercloud.ServiceClient, 
 	if resolve.IsUUID(ref) {
 		return ref, nil
 	}
-	want := withTrailingDot(ref)
-	pages, err := recordsets.ListByZone(client, zoneID, recordsets.ListOpts{Name: want}).AllPages(ctx)
+	matches, err := dnsapi.FindRecordSets(ctx, client, zoneID, ref)
 	if err != nil {
-		return "", fmt.Errorf("resolving recordset %q: %w", ref, err)
-	}
-	all, err := recordsets.ExtractRecordSets(pages)
-	if err != nil {
-		return "", fmt.Errorf("resolving recordset %q: %w", ref, err)
-	}
-	// designate's ?name= filter can match loosely; keep only exact-name hits.
-	var matches []recordsets.RecordSet
-	for _, rs := range all {
-		if rs.Name == want || rs.Name == ref {
-			matches = append(matches, rs)
-		}
+		return "", relabel(err, "resolving recordset %q", ref)
 	}
 	switch len(matches) {
 	case 0:

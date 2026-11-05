@@ -14,7 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // newZoneCommand builds "dns zone ..." (exposed as the top-level "zone" noun).
@@ -40,42 +40,11 @@ func newZoneCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// zoneResult is what zones.Get, Create and Update return.
-type zoneResult interface {
-	Extract() (*zones.Zone, error)
-	ExtractInto(to any) error
-}
-
-// zoneDetail is a zone plus the attributes zones.Zone does not model. Shared is
-// designate's zone-sharing flag (2023.2 on): true once the zone is shared with
-// another project. A pointer, so an older designate, which does not send it,
-// leaves the field out rather than claiming false.
-type zoneDetail struct {
-	*zones.Zone
-	Shared *bool
-}
-
-// extractZone decodes a single-zone response into a zoneDetail. The body is
-// read twice because zones.Zone's UnmarshalJSON would swallow the extra key.
-func extractZone(r zoneResult) (*zoneDetail, error) {
-	z, err := r.Extract()
-	if err != nil {
-		return nil, err
-	}
-	var ext struct {
-		Shared *bool `json:"shared"`
-	}
-	if err := r.ExtractInto(&ext); err != nil {
-		return nil, err
-	}
-	return &zoneDetail{Zone: z, Shared: ext.Shared}, nil
-}
-
 // zoneShowFields is the curated Field/Value view for a single zone, matching the
 // most operationally useful attributes shown by `openstack zone show`. shared
 // follows them whenever designate sends it, as upstream prints every key the
 // response carries.
-func zoneShowFields(d *zoneDetail) ([]string, []any) {
+func zoneShowFields(d *dnsapi.ZoneDetail) ([]string, []any) {
 	z := d.Zone
 	fields := []string{
 		"id", "name", "type", "email", "ttl", "serial", "status", "action",
@@ -154,9 +123,9 @@ func runZoneList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		Marker: f.marker,
 	}
 	// Limit is only the page size to designate; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, zones.List(client, opts), f.limit, zones.ExtractZones)
+	all, err := dnsapi.ListZones(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing dns zones: %w", err)
+		return err
 	}
 	return o.WriteList(w, zoneListTable(all, allProjects))
 }
@@ -208,9 +177,9 @@ func runZoneShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	z, err := extractZone(zones.Get(ctx, client, id))
+	z, err := dnsapi.GetZone(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting dns zone %s: %w", ref, err)
+		return relabel(err, "getting dns zone %s", ref)
 	}
 	fields, values := zoneShowFields(z)
 	return o.WriteSingle(w, fields, values)
@@ -312,9 +281,9 @@ func runZoneCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Type:        zoneType(f.typ),
 		Masters:     f.masters,
 	}
-	z, err := extractZone(zones.Create(ctx, client, opts))
+	z, err := dnsapi.CreateZone(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating dns zone: %w", err)
+		return err
 	}
 	fields, values := zoneShowFields(z)
 	return o.WriteSingle(w, fields, values)
@@ -348,8 +317,8 @@ func runZoneDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 		if err != nil {
 			return err
 		}
-		if _, err := zones.Delete(ctx, client, id).Extract(); err != nil {
-			return fmt.Errorf("deleting dns zone %s: %w", ref, err)
+		if err := dnsapi.DeleteZone(ctx, client, id); err != nil {
+			return relabel(err, "deleting dns zone %s", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted zone %s\n", ref); err != nil {
 			return err
@@ -404,14 +373,6 @@ func newZoneSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// zoneUpdateBody is a raw designate zone-update builder. gophercloud's
-// zones.UpdateOpts marshals TTL only when it is > 0 (its ToZoneUpdateMap guards
-// on `opts.TTL > 0`), so it can never send `ttl: 0`. Building the request map
-// directly lets `zone set --ttl 0` reach the API.
-type zoneUpdateBody map[string]any
-
-func (b zoneUpdateBody) ToZoneUpdateMap() (map[string]any, error) { return b, nil }
-
 func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, f *zoneSetFlags, w io.Writer,
 ) error {
@@ -425,7 +386,7 @@ func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if err != nil {
 		return err
 	}
-	body := zoneUpdateBody{}
+	body := dnsapi.ZoneUpdateMap{}
 	if f.emailSet {
 		body["email"] = f.email
 	}
@@ -435,9 +396,10 @@ func runZoneSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if f.descSet {
 		body["description"] = f.description
 	}
-	z, err := extractZone(zones.Update(ctx, client, id, body))
+	// A raw map, because zones.UpdateOpts cannot send "ttl": 0.
+	z, err := dnsapi.UpdateZone(ctx, client, id, body)
 	if err != nil {
-		return fmt.Errorf("updating dns zone %s: %w", ref, err)
+		return relabel(err, "updating dns zone %s", ref)
 	}
 	fields, values := zoneShowFields(z)
 	return o.WriteSingle(w, fields, values)
