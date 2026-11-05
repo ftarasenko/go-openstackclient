@@ -191,19 +191,12 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 		return err
 	}
 	if f.live {
-		// Build the os-migrateLive body directly rather than via gophercloud's
-		// servers.LiveMigrateOpts: its BlockMigration is a *bool (omitempty), so it
-		// cannot send the "auto" string nova requires at microversion >= 2.25 and
-		// drops block_migration entirely when unset — while always emitting
-		// host:null — which nova 400s with "'block_migration' is a required
-		// property".
-		live, err := liveMigrateBody(client, f, w)
-		if err != nil {
+		if err := warnDiskOverCommit(client, f, w); err != nil {
 			return err
 		}
-		body := map[string]any{"os-migrateLive": live}
-		if err := serverActionNegotiated(ctx, client, id, body); err != nil {
-			return fmt.Errorf("live-migrating server %q: %w", ref, err)
+		if err := relabel(computeapi.LiveMigrateServer(ctx, client, id, f.liveMigrateOpts()),
+			"live-migrating server %q", ref); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Requested live migration of server %s\n", ref); err != nil {
 			return err
@@ -211,16 +204,8 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 		return waitForMigration(ctx, client, ref, id, f, w)
 	}
 
-	// Cold migration. gophercloud's servers.Migrate posts {"migrate": null} with
-	// no host; when a target host is requested (nova 2.56+) build the action body
-	// directly so the host reaches nova.
-	if f.host != "" {
-		body := map[string]any{"migrate": map[string]any{"host": f.host}}
-		if err := serverActionNegotiated(ctx, client, id, body); err != nil {
-			return fmt.Errorf("migrating server %q: %w", ref, err)
-		}
-	} else if err := servers.Migrate(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("migrating server %q: %w", ref, err)
+	if err := relabel(computeapi.MigrateServer(ctx, client, id, f.host), "migrating server %q", ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Migrated server %s\n", ref); err != nil {
 		return err
@@ -228,42 +213,36 @@ func runServerMigrate(ctx context.Context, client *gophercloud.ServiceClient, re
 	return waitForMigration(ctx, client, ref, id, f, w)
 }
 
-// liveMigrateBody builds the os-migrateLive action body, mirroring OSC's
-// "server migrate --live-migration". nova requires block_migration: it defaults
-// to "auto" at microversion >= 2.25 (nova picks block vs shared from the
-// instance's storage — the right default for shared storage), and false below;
-// --block-migration / --shared-migration force it. host is a *required*
-// property of os-migrateLive at every microversion (nova 400s "'host' is a
-// required property" without it) — it is nullable, so it is always sent, as
-// null when no target host is given to let the scheduler choose.
-// disk_over_commit exists only at <= 2.24, so it is sent there and dropped (with
-// a note) at higher microversions.
-func liveMigrateBody(client *gophercloud.ServiceClient, f *serverMigrateFlags, w io.Writer) (map[string]any, error) {
-	live := map[string]any{}
-	supports225 := computeSupportsMicroversion(client, "2.25")
+// liveMigrateOpts is the live migration the flags ask for.
+func (f *serverMigrateFlags) liveMigrateOpts() computeapi.LiveMigrateOpts {
+	opts := computeapi.LiveMigrateOpts{Host: f.host, DiskOverCommit: f.diskOverCommit}
 	switch {
 	case f.blockMigration:
-		live["block_migration"] = true
+		opts.BlockMigration = new(true)
 	case f.sharedMigration:
-		live["block_migration"] = false
-	case supports225:
-		live["block_migration"] = "auto"
-	default:
-		live["block_migration"] = false
+		opts.BlockMigration = new(false)
 	}
-	if f.host != "" {
-		live["host"] = f.host
-	} else {
-		live["host"] = nil
+	return opts
+}
+
+// liveMigrateBody is the os-migrateLive object, mirroring OSC's "server
+// migrate --live-migration" (computeapi.LiveMigrateBody), after the
+// --disk-overcommit warning.
+func liveMigrateBody(client *gophercloud.ServiceClient, f *serverMigrateFlags, w io.Writer) (map[string]any, error) {
+	if err := warnDiskOverCommit(client, f, w); err != nil {
+		return nil, err
 	}
-	if !supports225 {
-		live["disk_over_commit"] = f.diskOverCommit
-	} else if f.diskOverCommit {
-		if _, err := fmt.Fprintln(w, "warning: --disk-overcommit is only honored at compute API microversion <= 2.24; ignoring"); err != nil {
-			return nil, err
-		}
+	return computeapi.LiveMigrateBody(client, f.liveMigrateOpts()), nil
+}
+
+// warnDiskOverCommit says --disk-overcommit is dropped: nova removed it at
+// 2.25.
+func warnDiskOverCommit(client *gophercloud.ServiceClient, f *serverMigrateFlags, w io.Writer) error {
+	if !f.diskOverCommit || !computeSupportsMicroversion(client, computeapi.LiveMigrateAutoMicroversion) {
+		return nil
 	}
-	return live, nil
+	_, err := fmt.Fprintln(w, "warning: --disk-overcommit is only honored at compute API microversion <= 2.24; ignoring")
+	return err
 }
 
 // computeSupportsMicroversion reports whether the compute client's
@@ -286,11 +265,11 @@ func parseMicroversion(v string) (major, minor int, ok bool) {
 	return major, minor, true
 }
 
-// waitForMigration polls the server until its migration settles, when --wait is
-// set. Success mirrors OSC's "server migrate --wait": the server reaches ACTIVE
-// or PAUSED (live migration) or VERIFY_RESIZE (cold migration, awaiting
-// confirm) with no task in flight; an ERROR status is terminal — see
-// classifyMigrationState.
+// waitForMigration follows the migration until it settles, when --wait is set
+// (computeapi.WaitForMigration). Success mirrors OSC's "server migrate
+// --wait": the server reaches ACTIVE or PAUSED (live migration) or
+// VERIFY_RESIZE (cold migration, awaiting confirm) with no task in flight; an
+// ERROR status is terminal.
 //
 // "compute host drain" does not share this. It knows the host it is emptying,
 // so it can wait on the server having left it, which is exact where a status
@@ -308,77 +287,43 @@ func waitForMigration(ctx context.Context, client *gophercloud.ServiceClient, re
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(migratePollInterval)
-	defer ticker.Stop()
-
-	var getErrors int
-	for {
-		var s struct {
-			Status    string `json:"status"`
-			TaskState string `json:"OS-EXT-STS:task_state"`
-		}
-		if err := servers.Get(ctx, client, id).ExtractInto(&s); err != nil {
-			if ctx.Err() != nil {
-				return fmt.Errorf("waiting for migration of server %q: %w", ref, ctx.Err())
-			}
-			// Tolerate a few consecutive transient Get errors before giving up.
-			getErrors++
-			if getErrors > maxConsecutiveGetErrors {
-				return fmt.Errorf("polling server %q during migration: %w", ref, err)
-			}
-		} else {
-			getErrors = 0
-			done, cerr := classifyMigrationState(ref, s.Status, s.TaskState)
-			if cerr != nil {
-				return cerr
-			}
-			if done {
-				_, err := fmt.Fprintf(w, "Server %s migration complete (status %s)\n", ref, s.Status)
-				return err
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("waiting for migration of server %q: %w", ref, ctx.Err())
-		case <-ticker.C:
-		}
+	status, err := computeapi.WaitForMigration(ctx, client, id, migratePollInterval)
+	if err != nil {
+		return relabelMove(err, ref, "", "waiting for migration of server %q", "polling server %q during migration")
 	}
-}
-
-// classifyMigrationState decides, from one server read, whether a migration
-// --wait is over. It is pure, so every terminal combination of status and
-// task_state is reachable from a table test rather than only from a live nova
-// transition.
-//
-// task_state gates the settled check: nova leaves the status unchanged while
-// task_state is "migrating", so a live migration would otherwise be reported
-// done before it started.
-//
-// PAUSED is a settled status, not a transient one. A live migration preserves
-// the instance's power state — nova's post_live_migration_at_destination
-// (nova/compute/manager.py) clears task_state and refreshes power_state but
-// never writes vm_state except to set ERROR — so a server that was PAUSED when
-// the migration started is still PAUSED when it finishes. Waiting for ACTIVE
-// there waits for something that never happens.
-func classifyMigrationState(ref, status, taskState string) (bool, error) {
-	if strings.EqualFold(status, "ERROR") {
-		return false, fmt.Errorf("server %q entered ERROR status during migration", ref)
-	}
-	if taskState != "" {
-		return false, nil
-	}
-	// VERIFY_RESIZE is the cold-migration terminal state, awaiting confirm.
-	for _, settled := range []string{"ACTIVE", "PAUSED", "VERIFY_RESIZE"} {
-		if strings.EqualFold(status, settled) {
-			return true, nil
-		}
-	}
-	return false, nil
+	_, err = fmt.Fprintf(w, "Server %s migration complete (status %s)\n", ref, status)
+	return err
 }
 
 // maxConsecutiveGetErrors bounds how many consecutive servers.Get failures the
-// --wait poll tolerates before giving up; the counter resets on any success.
+// server-group --wait poll tolerates before giving up; the counter resets on
+// any success.
 const maxConsecutiveGetErrors = 5
+
+// relabelMove names the operator's reference in a migration wait's error:
+// timedOut and failedRead are the CLI's texts for the deadline and for
+// nova's reads failing.
+func relabelMove(err error, ref, host, timedOut, failedRead string) error {
+	var failed *computeapi.MigrationFailedError
+	switch {
+	case errors.As(err, &failed):
+		switch {
+		case failed.Arrived:
+			return fmt.Errorf("server %q reached its new host in ERROR status", ref)
+		case failed.Host != "":
+			return fmt.Errorf("server %q entered ERROR status while leaving host %q", ref, failed.Host)
+		default:
+			return fmt.Errorf("server %q entered ERROR status during migration", ref)
+		}
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+		if host != "" {
+			return relabel(err, timedOut, ref, host)
+		}
+		return relabel(err, timedOut, ref)
+	default:
+		return relabel(err, failedRead, ref)
+	}
+}
 
 // reboot -----------------------------------------------------------------------
 
@@ -1036,19 +981,6 @@ func runConsoleURLShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	return o.WriteSingle(w, consoleURLColumns, []any{rc.Type, rc.Protocol, rc.URL})
 }
 
-// serverActionNegotiated posts a server action at the compute client's
-// negotiated microversion (default "latest"). Used by migrate, evacuate and
-// the host verbs.
-func serverActionNegotiated(ctx context.Context, client *gophercloud.ServiceClient, id string, body map[string]any) error {
-	url := client.ServiceURL("servers", id, "action")
-	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
-}
-
 // serverAddServerGroupFlags holds "server add server-group" options.
 type serverAddServerGroupFlags struct {
 	wait        bool
@@ -1239,25 +1171,12 @@ func runServerEvacuate(ctx context.Context, client *gophercloud.ServiceClient, r
 	if err != nil {
 		return err
 	}
-	// Build the evacuate action body directly rather than via gophercloud's
-	// servers.EvacuateOpts, which is frozen at the pre-2.14 shape (it always
-	// emits onSharedStorage and lacks preserve_ephemeral); nova negotiates
-	// "latest", where that body is rejected.
-	action := map[string]any{}
-	if host != "" {
-		action["host"] = host
-	}
-	if password != "" {
-		action["adminPass"] = password
-	}
-	if preserveEphemeral {
-		action["preserve_ephemeral"] = true
-	}
-	if err := serverActionNegotiated(ctx, client, id, map[string]any{"evacuate": action}); err != nil {
+	opts := computeapi.EvacuateOpts{Host: host, AdminPass: password, PreserveEphemeral: preserveEphemeral}
+	if err := relabel(computeapi.EvacuateServer(ctx, client, id, opts), "evacuating server %q", ref); err != nil {
 		if preserveEphemeral {
-			return keystackExtErr(fmt.Errorf("evacuating server %q: %w", ref, err), "evacuate preserve_ephemeral")
+			return keystackExtErr(err, "evacuate preserve_ephemeral")
 		}
-		return fmt.Errorf("evacuating server %q: %w", ref, err)
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Requested evacuation of server %s\n", ref); err != nil {
 		return err

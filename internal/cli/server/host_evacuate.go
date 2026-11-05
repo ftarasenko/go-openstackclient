@@ -10,6 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // "compute host evacuate" — rebuild every server of a *failed* compute host on
@@ -112,34 +113,26 @@ type writerTo = interface{ Write(p []byte) (int, error) }
 
 // evacuateBody builds the evacuate action, shared by every server in the run.
 //
-// gophercloud's servers.EvacuateOpts is frozen at the pre-2.14 shape — it
-// always emits onSharedStorage and lacks preserve_ephemeral — which nova
-// rejects at the "latest" koc negotiates, so the body is built directly here
-// exactly as runServerEvacuate does for the single-server verb. adminPass is
-// deliberately absent: one password across a host's worth of servers is not a
-// thing worth offering, and novaclient's host-evacuate does not offer it either.
+// It is computeapi.EvacuateBody, as runServerEvacuate sends for the
+// single-server verb. adminPass is deliberately absent: one password across a
+// host's worth of servers is not a thing worth offering, and novaclient's
+// host-evacuate does not offer it either.
 func evacuateBody(client *gophercloud.ServiceClient, f *hostEvacuateFlags, progress writerTo) (map[string]any, error) {
-	action := map[string]any{}
-	if f.targetHost != "" {
-		action["host"] = f.targetHost
-	}
-	if f.preserveEphemeral {
-		action["preserve_ephemeral"] = true
-	}
-	if f.force {
-		// force was added at 2.29 and removed at 2.68. Sending it above that
-		// makes nova reject the whole request, so it is dropped with a warning
-		// rather than failing a drain over a flag that no longer exists.
-		if computeSupportsMicroversion(client, "2.68") {
-			if _, err := fmt.Fprintln(progress,
-				"warning: --force was removed from the evacuate action at compute API 2.68; ignoring"); err != nil {
-				return nil, err
-			}
-		} else {
-			action["force"] = true
+	// force was added at 2.29 and removed at 2.68. Sending it above that makes
+	// nova reject the whole request, so computeapi.EvacuateBody drops it there
+	// and the drain says so rather than failing over a flag that no longer
+	// exists.
+	if f.force && computeSupportsMicroversion(client, computeapi.EvacuateForceRemovedMicroversion) {
+		if _, err := fmt.Fprintln(progress,
+			"warning: --force was removed from the evacuate action at compute API 2.68; ignoring"); err != nil {
+			return nil, err
 		}
 	}
-	return action, nil
+	return computeapi.EvacuateBody(client, computeapi.EvacuateOpts{
+		Host:              f.targetHost,
+		PreserveEphemeral: f.preserveEphemeral,
+		Force:             f.force,
+	}), nil
 }
 
 // evacuable reports whether nova will accept an evacuation for a server in this

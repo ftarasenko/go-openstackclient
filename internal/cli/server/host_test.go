@@ -453,52 +453,6 @@ func TestAwaitServerLeft_Error(t *testing.T) {
 	}
 }
 
-// TestClassifyDrainState pins what ERROR means, which depends on where the
-// server started. An evacuation moves instances that are already in ERROR, so
-// treating the status alone as terminal aborts the very drain it exists for.
-func TestClassifyDrainState(t *testing.T) {
-	for _, tc := range []struct {
-		name                string
-		status, startStatus string
-		left                bool
-		wantErr             string
-	}{
-		{
-			name: "healthy server still moving", status: "ACTIVE", startStatus: "ACTIVE",
-		},
-		{
-			name: "healthy server that reached the destination", status: "ACTIVE",
-			startStatus: "ACTIVE", left: true,
-		},
-		{
-			// An evacuation's normal starting point: keep polling, do not abort.
-			name: "errored server still on the failed host", status: "ERROR", startStatus: "ERROR",
-		},
-		{
-			name: "healthy server that broke on the way", status: "ERROR", startStatus: "ACTIVE",
-			wantErr: `server "web-1" entered ERROR status while leaving host "cmp-1"`,
-		},
-		{
-			// It moved, so the rebuild ran — and failed.
-			name: "errored server that reached the destination still broken", status: "ERROR",
-			startStatus: "ERROR", left: true,
-			wantErr: `server "web-1" reached its new host in ERROR status`,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := classifyDrainState("web-1", "cmp-1", tc.status, tc.startStatus, tc.left)
-			switch {
-			case tc.wantErr == "" && err != nil:
-				t.Fatalf("unexpected error: %v", err)
-			case tc.wantErr != "" && err == nil:
-				t.Fatalf("error = nil, want %q", tc.wantErr)
-			case tc.wantErr != "" && err.Error() != tc.wantErr:
-				t.Fatalf("error = %q, want %q", err.Error(), tc.wantErr)
-			}
-		})
-	}
-}
-
 // TestDrainProgressNonTTY pins the log-file shape: one line per state change,
 // no carriage returns or escape sequences.
 func TestDrainProgressNonTTY(t *testing.T) {
