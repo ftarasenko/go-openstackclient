@@ -4,7 +4,8 @@ Status: phases 0–2 landed (scaffolding and guards; session, paging, resolve;
 the keyvrm and image pilots), and compute's flavors, keypairs, aggregates,
 hypervisors, compute services and every server verb (actions, migrations,
 the lifecycle, server groups, volume attachments, events and the password)
-have moved.
+have moved, and so have identity's domains, projects, users, groups, regions,
+services, endpoints, catalog and tokens.
 The remaining services move one `refactor(<service>)` series at a time,
 following the checklist below.
 
@@ -26,6 +27,7 @@ release pipeline do not change.
 | `pkg/openstack/resolve` | `ImageID`, `NetworkID`, `SubnetID`, `PortID`, `VolumeID`, `ServerID`, `ProjectID`, `ProjectIDInDomain`, `ProjectIDInDomainID`, `DomainID`, `UserID`, `UserIDInDomain`, `UserIDInDomainID` (package funcs and `Resolver` methods); `Resolver`, `Cache`, `NewCache`, `WithClock`, `CacheOption`; `NotFoundError`, `AmbiguousError`; `IsUUID` | 182 |
 | `pkg/openstack/image` | `ListImages`, `FindByName`, `GetImage`, `DeleteImage`, `UpdateImage`, `EscapePropertyName`, `ActivateImage`, `DeactivateImage`, `CreateImage`, `CreateImageWithData`, `UploadImageData`, `StageImageData`, `DiscardImage`, `DownloadImage`, `CreateImageFromVolume`, `ImportImage`, `ImportOpts`, `GetImportInfo`, `AddMember`, `RemoveMember`, `ListMembers`, `UpdateMember`, `ListTasks`, `TaskListOpts`, `GetTask`, `ListStores`, `Store`, `WaitForStatus`, `Data`, `VisibilityAll`, `ErrGlanceDirectUnavailable` | 217 |
 | `pkg/openstack/compute` | `ListFlavors`, `GetFlavor`, `FindFlavor`, `CreateFlavor`, `DeleteFlavor`, `ListFlavorAccess`, `AddFlavorAccess`, `RemoveFlavorAccess`, `SetFlavorExtraSpecs`, `DeleteFlavorExtraSpec`, `ClearFlavorExtraSpecs`, `UpdateFlavorDescription`, `FlavorDescriptionMicroversion`; `ListKeypairs`, `GetKeypair`, `CreateKeypair`, `DeleteKeypair`; `ListAggregates`, `FindAggregateID`, `HostAggregates`, `GetAggregate`, `CreateAggregate`, `UpdateAggregate`, `SetAggregateMetadata`, `DeleteAggregate`, `AddAggregateHost`, `RemoveAggregateHost`; `ListHypervisors`, `ListHypervisorsWithUsage`, `FindHypervisor`, `HypervisorIDs`, `PlacementUsage`, `ProviderUsage`; `ListServices`, `ExtractServiceAdminState`, `ServiceAdminState`, `FindServiceID`, `UpdateService`, `ServiceUpdateOpts`, `DeleteService`; `StartServer`, `StopServer`, `PauseServer`, `UnpauseServer`, `SuspendServer`, `ResumeServer`, `LockServer`, `UnlockServer`, `RebootServer`, `ResizeServer`, `ConfirmResize`, `RevertResize`, `RebuildServer`, `RebuildOpts`, `RebuildUserDataMicroversion`, `ShelveServer`, `ShelveOffloadServer`, `UnshelveServer`, `UnshelveOpts`, `RescueServer`, `UnrescueServer`, `CreateServerImage`, `AttachVolume`, `VolumeAttachOpts`, `DetachVolume`, `AddFloatingIP`, `RemoveFloatingIP`, `FloatingIPActionMicroversion`, `AddSecurityGroup`, `RemoveSecurityGroup`, `AddServerGroup`, `RemoveServerGroup`, `ConsoleOutput`, `CreateRemoteConsole`, `ListInterfaces`, `AttachInterface`, `DetachInterface`, `InterfaceAttachOpts`, `InterfaceTagMicroversion`, `SupportsMicroversion`, `WaitForServerStatus`, `WaitForServerDeleted`, `ErrServerSoftDeleted`; `MigrateServer`, `MigrateHostMicroversion`, `LiveMigrateServer`, `LiveMigrateOpts`, `LiveMigrateBody`, `LiveMigrateAutoMicroversion`, `EvacuateServer`, `EvacuateOpts`, `EvacuateBody`, `EvacuateForceRemovedMicroversion`, `ServerAction`, `ConfirmMigration`, `WaitForMigration`, `WaitForServerToLeaveHost`, `MigrationFailedError`, `ListServersOnHost`; `ListMigrations`, `MigrationListOpts`, `Migration`, `ListServerMigrations`, `GetServerMigration`, `ServerMigration`, `AbortServerMigration`, `ForceCompleteServerMigration`; `ListServers`, `ListServerNames`, `ListServersRaw`, `ServerListOpts`, `GetServer`, `GetServerRaw`, `EncodeUserData`, `CreateServer`, `ServerCreateOptsExt`, `DeleteServer`, `ForceDeleteServer`, `UpdateServer`, `ServerUpdateOpts`, `SetServerAvailabilityZone`, `UpdateServerMetadata`, `ReplaceServerMetadata`, `DeleteServerMetadatum`, `ChangeAdminPassword`, `ClearServerPassword`, `ResetServerState`, `AddServerTag`, `DeleteServerTag`, `DeleteServerTags`; `ListServerGroups`, `GetServerGroup`, `CreateServerGroup`, `DeleteServerGroup`, `ServerGroupPolicyMicroversion`; `ListVolumeAttachments`, `VolumeAttachment`, `SetVolumeDeleteOnTermination`, `VolumeAttachmentUpdateMicroversion`; `ListInstanceActions`, `InstanceAction`, `InstanceActionListOpts`, `GetInstanceAction`, `ListInstanceActionEvents`, `InstanceActionEvent`; `GetServerPassword` | 876 |
+| `pkg/openstack/identity` | `ListDomains`, `GetDomain`, `CreateDomain`, `UpdateDomain`, `DeleteDomain`; `ListProjects`, `GetProject`, `CreateProject`, `UpdateProject`, `DeleteProject`; `ListUsers`, `GetUser`, `CreateUser`, `UpdateUser`, `DeleteUser`, `ChangeUserPassword`; `ListGroups`, `ListUserGroups`, `GetGroup`, `CreateGroup`, `UpdateGroup`, `DeleteGroup`, `AddUserToGroup`, `RemoveUserFromGroup`, `IsUserInGroup`; `ListRegions`, `GetRegion`, `CreateRegion`, `UpdateRegion`, `DeleteRegion`; `ListServices`, `GetService`, `CreateService`, `UpdateService`, `DeleteService`; `ListEndpoints`, `GetEndpoint`, `CreateEndpoint`, `UpdateEndpoint`, `DeleteEndpoint`; `ListCatalog`, `IntrospectToken`, `TokenInfo`, `TokenUser`, `RevokeToken`; `ListRoles` | 169 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -154,6 +156,16 @@ with the logic they test. The os-migrations and os-server-migrations calls
 are raw requests decoding into `compute.Migration` and
 `compute.ServerMigration`, which gophercloud has no package for.
 
+Identity is plain calls over gophercloud's keystone packages; every listing
+collects all pages. `identity.IntrospectToken` returns the token with its
+project and user (`identity.TokenInfo`), and `identity.TokenUser` reads only
+the user. The CLI's name lookups list through the public functions but keep
+their literal-reference fallback (README "Known limitations"): moving them to
+the strict form, which `resolve.ProjectID`, `resolve.DomainID` and
+`resolve.UserID` already offer, is a behaviour change, not part of the move.
+Roles, role assignments and application credentials follow;
+`identity.ListRoles` moved early because the shared resolver needs it.
+
 **Shapes worth copying.** `image.CreateImageWithData` (a multi-step flow with
 its cleanup, behind one call, with the single steps public too);
 `image.ImportOpts` and `image.TaskListOpts` (gophercloud's opts plus the field
@@ -226,7 +238,7 @@ seams, 2k lines) took about a third of one.
 | 6 | `network`: the long tail (QoS, FWaaS, VPNaaS, BGP VPN, trunks, tap, …) | 14 212 | 166 | 69 | — | L, 4 sessions | Extension-gated; keep each extension's file as its own public file. |
 | 7 | `loadbalancer` | 5 367 / 3 008 | 62 | 28 | 1 | M, 2 sessions | `wait.go` provisioning poll. |
 | 8 | `dns` | 4 945 / 3 924 | 60 | 18 | — | M, 1½ sessions | Lenient resolvers move to strict on the public side. |
-| 9 | `identity` | 3 784 / 3 116 | 57 | 21 | — | M, 1½ sessions | Lenient resolvers; application credentials, roles. |
+| 9 | `identity` | 3 784 / 3 116 | 57 | 21 | — | M, 1½ sessions; domains, projects, users, groups, regions, services, endpoints, catalog and tokens **done**; roles, assignments and application credentials left | Lenient resolvers; application credentials, roles. |
 | 10 | `placement` | 2 076 / 2 094 | 31 | 13 | — | S–M, 1 session | Microversion-gated calls. |
 | 11 | `baremetal` (+ inspector) | 8 148 / 5 532 | 99 | 20 | 2 | L, 3 sessions | `explainMicroversion` → an exported `MicroversionError` (service, feature, required, cloud max) so importers can `errors.As`; provision-state `--wait`; both inspection dialects; `--creds-from-ns`'s standalone basic-auth ironic stays CLI-side (an importer brings its own ProviderClient). |
 

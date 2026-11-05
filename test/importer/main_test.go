@@ -1,6 +1,6 @@
 // Package importer_test builds a Session from FromProvider against an
-// httptest cloud and lists images, networks and flavors through pkg/, with nothing but
-// the module's public import paths.
+// httptest cloud and lists images, networks, flavors and projects through
+// pkg/, with nothing but the module's public import paths.
 package importer_test
 
 import (
@@ -16,11 +16,13 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
@@ -91,6 +93,16 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /compute/servers/srv-1/os-volume_attachments", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"volumeAttachments": []map[string]any{{"device": "/dev/vdb", "volumeId": "vol-1", "attachment_id": "att-1"}}})
+	})
+	mux.HandleFunc("GET /identity/v3/projects", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("domain_id") != "default" {
+			http.Error(w, "want domain_id", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"projects": []map[string]any{{"id": "prj-1", "name": "web", "domain_id": "default"}}})
+	})
+	mux.HandleFunc("PUT /identity/v3/groups/grp-1/users/usr-1", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -180,5 +192,16 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if vs, err := compute.ListVolumeAttachments(ctx, computeClient, "srv-1"); err != nil || len(vs) != 1 || vs[0].AttachmentID != "att-1" {
 		t.Fatalf("ListVolumeAttachments = %v, %v", vs, err)
+	}
+
+	identityClient, err := s.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps, err := identity.ListProjects(ctx, identityClient, projects.ListOpts{DomainID: "default"}); err != nil || len(ps) != 1 {
+		t.Fatalf("ListProjects = %v, %v", ps, err)
+	}
+	if err := identity.AddUserToGroup(ctx, identityClient, "grp-1", "usr-1"); err != nil {
+		t.Fatal(err)
 	}
 }

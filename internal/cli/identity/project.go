@@ -12,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack project ...`). The KeyStack command
@@ -58,13 +59,9 @@ func runProjectList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	pages, err := projects.List(client, projects.ListOpts{DomainID: domainID}).AllPages(ctx)
+	all, err := identityapi.ListProjects(ctx, client, projects.ListOpts{DomainID: domainID})
 	if err != nil {
-		return fmt.Errorf("listing projects: %w", err)
-	}
-	all, err := projects.ExtractProjects(pages)
-	if err != nil {
-		return fmt.Errorf("parsing project list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", colDomainID, "Enabled", "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
@@ -104,9 +101,9 @@ func runProjectShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	p, err := projects.Get(ctx, client, id).Extract()
+	p, err := identityapi.GetProject(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing project %q: %w", nameOrID, err)
+		return relabel(err, "showing project %q", nameOrID)
 	}
 	return o.WriteSingle(w,
 		[]string{"ID", "Name", colDomainID, "Enabled", "Description", "Parent ID"},
@@ -194,9 +191,9 @@ func runProjectCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		Enabled:     enabledFromFlags(f.enableSet, f.disableSet, f.enable),
 		Extra:       extra,
 	}
-	p, err := projects.Create(ctx, client, opts).Extract()
+	p, err := identityapi.CreateProject(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating project %q: %w", name, err)
+		return relabel(err, "creating project %q", name)
 	}
 	return o.WriteSingle(w,
 		projectCreateColumns,
@@ -234,8 +231,8 @@ func runProjectDelete(ctx context.Context, client *gophercloud.ServiceClient, na
 	if err != nil {
 		return err
 	}
-	if err := projects.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting project %q: %w", nameOrID, err)
+	if err := identityapi.DeleteProject(ctx, client, id); err != nil {
+		return relabel(err, "deleting project %q", nameOrID)
 	}
 	return nil
 }
@@ -294,8 +291,8 @@ func runProjectSet(ctx context.Context, client *gophercloud.ServiceClient, nameO
 	if descSet {
 		opts.Description = &f.description
 	}
-	if _, err := projects.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating project %q: %w", nameOrID, err)
+	if _, err := identityapi.UpdateProject(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating project %q", nameOrID)
 	}
 	return nil
 }

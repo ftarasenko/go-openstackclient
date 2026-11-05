@@ -12,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack endpoint ...`). UNVERIFIED against
@@ -79,20 +80,16 @@ func runEndpointList(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	pages, err := endpoints.List(client, endpoints.ListOpts{Availability: avail, ServiceID: serviceID, RegionID: region}).AllPages(ctx)
+	all, err := identityapi.ListEndpoints(ctx, client, endpoints.ListOpts{Availability: avail, ServiceID: serviceID, RegionID: region})
 	if err != nil {
-		return fmt.Errorf("listing endpoints: %w", err)
-	}
-	all, err := endpoints.ExtractEndpoints(pages)
-	if err != nil {
-		return fmt.Errorf("parsing endpoint list: %w", err)
+		return err
 	}
 	// Upstream `openstack endpoint list` renders the service name and type, not
 	// the raw service_id the endpoints API returns, so resolve them from the
 	// catalog with a single /services list keyed by ID.
 	catalog, err := serviceCatalog(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing services: %w", err)
+		return err
 	}
 	// Column order mirrors upstream OSC: Service Name/Type after Region, then
 	// Enabled before Interface.
@@ -115,11 +112,7 @@ type serviceInfo struct {
 // upstream OSC does. A service_id with no matching entry (e.g. a deleted
 // service) yields the zero serviceInfo, i.e. blank cells, matching OSC.
 func serviceCatalog(ctx context.Context, client *gophercloud.ServiceClient) (map[string]serviceInfo, error) {
-	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
-	if err != nil {
-		return nil, err
-	}
-	all, err := services.ExtractServices(pages)
+	all, err := identityapi.ListServices(ctx, client, services.ListOpts{})
 	if err != nil {
 		return nil, err
 	}
@@ -150,14 +143,14 @@ func newEndpointShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runEndpointShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	e, err := endpoints.Get(ctx, client, id).Extract()
+	e, err := identityapi.GetEndpoint(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing endpoint %q: %w", id, err)
+		return relabel(err, "showing endpoint %q", id)
 	}
 	// Enrich with the service name and type like upstream OSC; a lookup failure
 	// (e.g. the service was deleted) leaves them blank rather than failing show.
 	var svcName, svcType string
-	if s, err := services.Get(ctx, client, e.ServiceID).Extract(); err == nil {
+	if s, err := identityapi.GetService(ctx, client, e.ServiceID); err == nil {
 		svcName, svcType = s.Name, s.Type
 	}
 	return o.WriteSingle(w,
@@ -241,9 +234,9 @@ func runEndpointCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 		Description:  f.description,
 		Enabled:      enabledFromFlags(f.enableSet, f.disableSet, f.enable),
 	}
-	e, err := endpoints.Create(ctx, client, opts).Extract()
+	e, err := identityapi.CreateEndpoint(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating endpoint: %w", err)
+		return relabel(err, "creating endpoint")
 	}
 	return o.WriteSingle(w,
 		endpointCreateColumns,
@@ -270,8 +263,8 @@ func newEndpointDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runEndpointDelete(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-	if err := endpoints.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting endpoint %q: %w", id, err)
+	if err := identityapi.DeleteEndpoint(ctx, client, id); err != nil {
+		return relabel(err, "deleting endpoint %q", id)
 	}
 	return nil
 }
@@ -327,8 +320,8 @@ func runEndpointSet(ctx context.Context, client *gophercloud.ServiceClient, id s
 		Description:  f.description,
 		Enabled:      enabledFromFlags(f.enableSet, f.disableSet, f.enable),
 	}
-	if _, err := endpoints.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating endpoint %q: %w", id, err)
+	if _, err := identityapi.UpdateEndpoint(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating endpoint %q", id)
 	}
 	return nil
 }

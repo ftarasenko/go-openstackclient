@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -12,6 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack region ...`). UNVERIFIED against
@@ -50,13 +50,9 @@ func newRegionListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRegionList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := regions.List(client, regions.ListOpts{}).AllPages(ctx)
+	all, err := identityapi.ListRegions(ctx, client, regions.ListOpts{})
 	if err != nil {
-		return fmt.Errorf("listing regions: %w", err)
-	}
-	all, err := regions.ExtractRegions(pages)
-	if err != nil {
-		return fmt.Errorf("parsing region list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Parent Region", "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, r := range all {
@@ -105,13 +101,13 @@ func runRegionCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err := o.CheckColumns(regionColumns...); err != nil {
 		return err
 	}
-	r, err := regions.Create(ctx, client, regions.CreateOpts{
+	r, err := identityapi.CreateRegion(ctx, client, regions.CreateOpts{
 		ID:             id,
 		ParentRegionID: parent,
 		Description:    description,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating region %q: %w", id, err)
+		return relabel(err, "creating region %q", id)
 	}
 	return writeRegion(o, w, r)
 }
@@ -147,9 +143,9 @@ func newRegionShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRegionShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	r, err := regions.Get(ctx, client, id).Extract()
+	r, err := identityapi.GetRegion(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing region %q: %w", id, err)
+		return relabel(err, "showing region %q", id)
 	}
 	return writeRegion(o, w, r)
 }
@@ -175,8 +171,8 @@ func newRegionDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func runRegionDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := regions.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting region %q: %w", id, err)
+		if err := identityapi.DeleteRegion(ctx, client, id); err != nil {
+			return relabel(err, "deleting region %q", id)
 		}
 		return nil
 	})
@@ -211,8 +207,8 @@ func runRegionSet(ctx context.Context, client *gophercloud.ServiceClient, id, pa
 	if descSet {
 		opts.Description = &description
 	}
-	if _, err := regions.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating region %q: %w", id, err)
+	if _, err := identityapi.UpdateRegion(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating region %q", id)
 	}
 	return nil
 }
