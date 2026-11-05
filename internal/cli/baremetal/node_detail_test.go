@@ -11,6 +11,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // versionedNode is a node as ironic renders it: fields introduced after the
@@ -36,7 +37,7 @@ func versionedNode(r *http.Request) map[string]any {
 	}
 	v := r.Header.Get("X-OpenStack-Ironic-API-Version")
 	for _, g := range gated {
-		if v == "latest" || compareMicroversions(v, g.min) >= 0 {
+		if v == "latest" || bmapi.CompareMicroversions(v, g.min) >= 0 {
 			for k, val := range g.fields {
 				n[k] = val
 			}

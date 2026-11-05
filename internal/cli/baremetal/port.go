@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -14,7 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newPortCommand builds "baremetal port ...".
@@ -85,7 +84,7 @@ func newPortListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *portListFlags, w io.Writer) error {
-	opts := portListQuery{
+	opts := bmapi.PortListOpts{
 		ListOpts: ports.ListOpts{
 			Node:    f.node,
 			Address: f.address,
@@ -93,14 +92,14 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			SortKey: f.sortKey,
 			SortDir: f.sortDir,
 		},
-		portGroup: f.portGroup,
+		PortGroup: f.portGroup,
 	}
 	// The plain list carries only uuid and address; --long, a -c naming
 	// another column, or the physical-network filter need /ports/detail.
-	fields, list := portFields, ports.List
+	fields, detail := portFields, false
 	if f.long || f.physicalNetwork != "" ||
 		len(o.SelectedColumns(labels(portDetailFields)...)) > len(o.SelectedColumns(labels(portFields)...)) {
-		fields, list = portDetailFields, ports.ListDetail
+		fields, detail = portDetailFields, true
 	}
 	// ironic has no physical_network query parameter, so --limit cannot be
 	// handed to the API when filtering on it.
@@ -109,9 +108,9 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		limit = 0
 	}
 	opts.Limit = limit
-	all, err := paging.Collect(ctx, list(client, opts), limit, pageMaps("ports"))
+	all, err := bmapi.ListPorts(ctx, client, opts, detail, limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal ports: %w", err)
+		return err
 	}
 	if f.physicalNetwork != "" {
 		all = slices.DeleteFunc(all, func(p map[string]any) bool { return p["physical_network"] != f.physicalNetwork })
@@ -120,32 +119,6 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		}
 	}
 	return o.WriteList(w, listTable(all, fields))
-}
-
-// portListQuery adds ironic's portgroup filter, which gophercloud's
-// ports.ListOpts does not model.
-type portListQuery struct {
-	ports.ListOpts
-	portGroup string
-}
-
-// ToPortListQuery implements ports.ListOptsBuilder.
-func (q portListQuery) ToPortListQuery() (string, error) {
-	s, err := q.ListOpts.ToPortListQuery()
-	return q.withPortGroup(s, err)
-}
-
-// ToPortListDetailQuery implements ports.ListOptsBuilder for /ports/detail.
-func (q portListQuery) ToPortListDetailQuery() (string, error) {
-	s, err := q.ListOpts.ToPortListDetailQuery()
-	return q.withPortGroup(s, err)
-}
-
-func (q portListQuery) withPortGroup(s string, err error) (string, error) {
-	if err != nil || q.portGroup == "" {
-		return s, err
-	}
-	return appendQuery(s, "portgroup="+url.QueryEscape(q.portGroup)), nil
 }
 
 // portDetailFields are python-ironicclient's PORT_DETAILED_RESOURCE, the
@@ -189,9 +162,9 @@ func newPortShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runPortShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	p, err := resultMap(ports.Get(ctx, client, id).Result)
+	p, err := bmapi.GetPort(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting baremetal port %s: %w", id, err)
+		return err
 	}
 	fields, values := portShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -208,26 +181,6 @@ type portCreateFlags struct {
 	pxeEnabledSet   bool
 	extra           []string
 	llc             []string
-}
-
-// portNameOpts adds ironic's port `name` to a create body. gophercloud's
-// ports.CreateOpts has no such field — the attribute arrived in API 1.88, after
-// the package was written — so the builder interface is implemented here rather
-// than hand-rolling the whole request.
-type portNameOpts struct {
-	ports.CreateOpts
-	Name string
-}
-
-func (o portNameOpts) ToPortCreateMap() (map[string]any, error) {
-	b, err := o.CreateOpts.ToPortCreateMap()
-	if err != nil {
-		return nil, err
-	}
-	if o.Name != "" {
-		b["name"] = o.Name
-	}
-	return b, nil
 }
 
 func newPortCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -277,7 +230,7 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return fmt.Errorf("parsing --%s: %w", flagLocalLinkConnection, err)
 	}
-	opts := portNameOpts{
+	opts := bmapi.PortCreateOpts{
 		CreateOpts: ports.CreateOpts{
 			NodeUUID:            f.node,
 			Address:             f.address,
@@ -291,14 +244,9 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.pxeEnabledSet {
 		opts.PXEEnabled = &f.pxeEnabled
 	}
-	p, err := resultMap(ports.Create(ctx, client, opts).Result)
+	p, err := bmapi.CreatePort(ctx, client, opts)
 	if err != nil {
-		if f.name != "" {
-			// A port name is rejected as an unknown attribute below ironic 1.88,
-			// which surfaces as a bare 400 about the body rather than the version.
-			return fmt.Errorf("creating baremetal port: %w", explainMicroversion(ctx, client, featurePortName, err))
-		}
-		return fmt.Errorf("creating baremetal port: %w", err)
+		return explained(err)
 	}
 	fields, values := portShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -329,8 +277,8 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, ids [
 	// batchdelete.Each reports the successes and joins the failures into a
 	// single error.
 	return batchdelete.Each(ids, func(id string) error {
-		if err := ports.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting baremetal port %s: %w", id, err)
+		if err := bmapi.DeletePort(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted port %s\n", id); err != nil {
 			return err
@@ -418,13 +366,9 @@ func runPortSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if len(ops) == 0 {
 		return fmt.Errorf("port set requires at least one attribute flag")
 	}
-	p, err := resultMap(ports.Update(ctx, client, id, ops).Result)
+	p, err := bmapi.UpdatePort(ctx, client, id, ops)
 	if err != nil {
-		if f.name != "" {
-			return fmt.Errorf("updating baremetal port %s: %w", id,
-				explainMicroversion(ctx, client, featurePortName, err))
-		}
-		return fmt.Errorf("updating baremetal port %s: %w", id, err)
+		return explained(err)
 	}
 	fields, values := portShowFields(p)
 	return o.WriteSingle(w, fields, values)

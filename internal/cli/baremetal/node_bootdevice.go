@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newNodeBootDeviceCommand builds "baremetal node boot device set|show".
@@ -56,8 +57,8 @@ func newNodeBootDeviceSetCommand(a *auth.Options, o *output.Options) *cobra.Comm
 
 func runNodeBootDeviceSet(ctx context.Context, client *gophercloud.ServiceClient, id, device string, persistent bool, w io.Writer) error {
 	opts := nodes.BootDeviceOpts{BootDevice: device, Persistent: persistent}
-	if err := nodes.SetBootDevice(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("setting boot device for node %s: %w", id, err)
+	if err := bmapi.SetBootDevice(ctx, client, id, opts); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Set boot device of node %s to %s\n", id, device); err != nil {
 		return err
@@ -86,9 +87,9 @@ func newNodeBootDeviceShowCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runNodeBootDeviceShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	bd, err := nodes.GetBootDevice(ctx, client, id).Extract()
+	bd, err := bmapi.GetBootDevice(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting boot device for node %s: %w", id, err)
+		return err
 	}
 	fields := []string{"boot_device", "persistent"}
 	values := []any{bd.BootDevice, bd.Persistent}

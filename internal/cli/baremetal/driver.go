@@ -2,7 +2,6 @@ package baremetal
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"sort"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newDriverCommand builds "baremetal driver ...".
@@ -48,9 +48,9 @@ func newDriverShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runDriverShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	d, err := drivers.GetDriverDetails(ctx, client, name).Extract()
+	d, err := bmapi.GetDriver(ctx, client, name)
 	if err != nil {
-		return fmt.Errorf("showing baremetal driver %s: %w", name, err)
+		return err
 	}
 	fields, values := driverShowFields(d)
 	return o.WriteSingle(w, fields, values)
@@ -132,13 +132,9 @@ func runDriverList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.long {
 		opts.Detail = true
 	}
-	pages, err := drivers.ListDrivers(client, opts).AllPages(ctx)
+	all, err := bmapi.ListDrivers(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing baremetal drivers: %w", err)
-	}
-	all, err := drivers.ExtractDrivers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing baremetal driver list: %w", err)
+		return err
 	}
 	return o.WriteList(w, driverListTable(all, f.long))
 }
@@ -194,9 +190,9 @@ func newDriverPropertyListCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runDriverPropertyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	props, err := drivers.GetDriverProperties(ctx, client, name).Extract()
+	props, err := bmapi.GetDriverProperties(ctx, client, name)
 	if err != nil {
-		return fmt.Errorf("listing properties of baremetal driver %s: %w", name, err)
+		return err
 	}
 	return o.WriteList(w, propertyTable(*props))
 }
@@ -231,9 +227,9 @@ func newDriverRAIDCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runDriverRAIDPropertyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	props, err := drivers.GetDriverDiskProperties(ctx, client, name).Extract()
+	props, err := bmapi.GetDriverRAIDProperties(ctx, client, name)
 	if err != nil {
-		return fmt.Errorf("listing RAID properties of baremetal driver %s: %w", name, err)
+		return err
 	}
 	return o.WriteList(w, propertyTable(*props))
 }

@@ -2,9 +2,9 @@ package baremetal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // provisionPollInterval and provisionPollTimeout bound the --wait polling loop.
@@ -112,8 +113,8 @@ func newNodeAbortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func runNodeAbort(ctx context.Context, client *gophercloud.ServiceClient, id string, wait bool, waitTimeout time.Duration, w io.Writer) error {
 	opts := nodes.ProvisionStateOpts{Target: nodes.TargetAbort}
-	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("requesting abort on node %s: %w", id, err)
+	if err := bmapi.SetProvisionState(ctx, client, id, opts); err != nil {
+		return provisionErr("abort", id, err)
 	}
 	if !wait {
 		if _, err := fmt.Fprintf(w, "Requested abort for node %s\n", id); err != nil {
@@ -140,8 +141,8 @@ func runNodeAbort(ctx context.Context, client *gophercloud.ServiceClient, id str
 
 func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr provisionTransition, id string, wait bool, waitTimeout time.Duration, w io.Writer) error {
 	opts := nodes.ProvisionStateOpts{Target: tr.target}
-	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("requesting %s on node %s: %w", tr.verb, id, err)
+	if err := bmapi.SetProvisionState(ctx, client, id, opts); err != nil {
+		return provisionErr(tr.verb, id, err)
 	}
 	if !wait {
 		if _, err := fmt.Fprintf(w, "Requested %s for node %s\n", tr.verb, id); err != nil {
@@ -158,164 +159,36 @@ func runNodeProvision(ctx context.Context, client *gophercloud.ServiceClient, tr
 	return nil
 }
 
-// maxConsecutiveGetErrors bounds how many CONSECUTIVE nodes.Get failures the
-// --wait poll tolerates before giving up; the counter resets on any success.
-const maxConsecutiveGetErrors = 5
-
-// waitForProvisionState polls the node until it reaches want, or a terminal
-// failure/error state, or the timeout/context expires. Unlike gophercloud's
-// nodes.WaitForProvisionState it fails fast on error states instead of spinning
-// until timeout.
-//
-// Success and failure are keyed off ironic's target_provision_state: ironic
-// clears it only once a transition settles. This avoids returning immediately
-// when the node's starting ProvisionState already equals want (e.g. rebuild of
-// an "active" node, inspect of a "manageable" node) before ironic has begun the
-// transition, and avoids hanging the full timeout when a transition settles into
-// an unexpected state (e.g. manage verify failure → "enroll").
+// waitForProvisionState is bmapi.WaitForProvisionState with --wait-timeout
+// as its deadline (provisionPollTimeout when unset).
 func waitForProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id string, want nodes.ProvisionState, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = provisionPollTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	ticker := time.NewTicker(provisionPollInterval)
-	defer ticker.Stop()
-
-	var getErrors int
-	var last string
-	for {
-		n, err := nodes.Get(ctx, client, id).Extract()
-		if err != nil {
-			// Tolerate a small number of consecutive transient Get errors, but
-			// stop promptly if the context is done.
-			if ctx.Err() != nil {
-				return fmt.Errorf("waiting for node %s to reach %q%s: %w", id, want, lastProvisionState(last), ctx.Err())
-			}
-			getErrors++
-			if getErrors > maxConsecutiveGetErrors {
-				return fmt.Errorf("polling node %s%s: %w", id, lastProvisionState(last), err)
-			}
-		} else {
-			getErrors = 0
-			last = n.ProvisionState
-			done, cerr := classifyProvisionState(n, id, want)
-			if cerr != nil {
-				return cerr
-			}
-			if done {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("waiting for node %s to reach %q%s: %w", id, want, lastProvisionState(last), ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return bmapi.WaitForProvisionState(ctx, client, id, want, provisionPollInterval)
 }
 
-// classifyProvisionState decides, from a single node read, whether the wait for
-// want is over. Splitting it out of waitForProvisionState's loop makes every
-// terminal outcome reachable from a table test instead of only through a live
-// ironic transition.
-//
-// It returns (true, nil) when the node has settled in want, a non-nil error for
-// a terminal wrong outcome, and (false, nil) while the transition is still in
-// flight. "Settled" is target_provision_state being cleared — see
-// waitForProvisionState for why that, and not provision_state alone, is the
-// signal.
-func classifyProvisionState(n *nodes.Node, id string, want nodes.ProvisionState) (bool, error) {
-	settled := n.TargetProvisionState == ""
-	switch {
-	case settled && n.ProvisionState == string(want):
-		return true, nil
-	case isProvisionFailure(n.ProvisionState):
-		return false, fmt.Errorf("node %s entered failure state %q: %s", id, n.ProvisionState, n.LastError)
-	case settled && n.ProvisionState != string(want):
-		// The transition has settled (target_provision_state cleared) into a state
-		// that isn't the one we wanted. This is terminal — waiting longer will not
-		// change it — so fail immediately instead of hanging the full timeout.
-		// Include last_error when present.
-		if n.LastError != "" {
-			return false, fmt.Errorf("node %s settled in unexpected state %q instead of %q: %s", id, n.ProvisionState, want, n.LastError)
-		}
-		return false, fmt.Errorf("node %s settled in unexpected state %q instead of %q", id, n.ProvisionState, want)
-	}
-	return false, nil
-}
-
-// lastProvisionState renders the provision state last seen, for the error
-// message on a wait that gave up. Whether the node was still "deploying" or had
-// already settled somewhere unexpected is the difference between "ironic is
-// slow" and "koc stopped watching too early".
-func lastProvisionState(last string) string {
-	if last == "" {
-		return ""
-	}
-	return fmt.Sprintf(" (last provision_state %q)", last)
-}
-
-// waitForProvisionSettled polls the node until the transition settles and
-// returns the provision state it settled in, together with ironic's last_error.
-// It is the --wait body for verbs with no single expected destination (abort),
-// so a "* failed" state is a normal, successful outcome here rather than an
-// error.
-//
-// Settled means either of:
-//
-//   - the provision state is terminal on its own (isProvisionFailure): ironic
-//     leaves target_provision_state populated after a successful abort — e.g.
-//     provision_state="inspect failed" with target_provision_state="manageable"
-//     — so waiting for the target to clear would spin until the timeout on the
-//     SUCCESS path. Upstream python-ironicclient keys on provision_state for
-//     exactly this reason (ironicclient/v1/node.py: terminal when
-//     provision_state == "error" or provision_state ends in " failed"), and
-//     treats target_provision_state only as a secondary check.
-//   - ironic cleared target_provision_state, i.e. the transition finished
-//     normally (abort of a deploy lands back on "available", of a clean on
-//     "manageable", …).
+// waitForProvisionSettled is bmapi.WaitForProvisionSettled with
+// --wait-timeout as its deadline.
 func waitForProvisionSettled(ctx context.Context, client *gophercloud.ServiceClient, id string, timeout time.Duration) (state string, lastError string, err error) {
 	if timeout <= 0 {
 		timeout = provisionPollTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	ticker := time.NewTicker(provisionPollInterval)
-	defer ticker.Stop()
-
-	var getErrors int
-	var last string
-	for {
-		n, err := nodes.Get(ctx, client, id).Extract()
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", "", fmt.Errorf("waiting for node %s to settle%s: %w", id, lastProvisionState(last), ctx.Err())
-			}
-			getErrors++
-			if getErrors > maxConsecutiveGetErrors {
-				return "", "", fmt.Errorf("polling node %s%s: %w", id, lastProvisionState(last), err)
-			}
-		} else {
-			getErrors = 0
-			last = n.ProvisionState
-			if isProvisionFailure(n.ProvisionState) || n.TargetProvisionState == "" {
-				return n.ProvisionState, n.LastError, nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return "", "", fmt.Errorf("waiting for node %s to settle%s: %w", id, lastProvisionState(last), ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return bmapi.WaitForProvisionSettled(ctx, client, id, provisionPollInterval)
 }
 
-// isProvisionFailure reports whether a provision state is a terminal failure.
-// Mirrors python-ironicclient: the "error" state, or any "<verb> failed" state
-// ("deploy failed", "clean failed", "inspect failed", "rescue failed", …).
-func isProvisionFailure(state string) bool {
-	return strings.HasSuffix(state, " failed") || state == string(nodes.Error)
+// provisionErr names the CLI verb in a failed transition request, as koc
+// always has: "requesting <verb> on node <id>".
+func provisionErr(verb, id string, err error) error {
+	var me *bmapi.MicroversionError
+	if errors.As(err, &me) {
+		relabelled := *me
+		relabelled.Err = fmt.Errorf("requesting %s on node %s: %w", verb, id, errors.Unwrap(me.Err))
+		return explained(&relabelled)
+	}
+	return fmt.Errorf("requesting %s on node %s: %w", verb, id, errors.Unwrap(err))
 }

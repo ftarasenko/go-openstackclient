@@ -2,7 +2,6 @@ package baremetal
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -10,12 +9,8 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
-
-// Node history (API 1.78) and child nodes (1.83) — read-only sub-resources
-// gophercloud's nodes package does not model.
-
-var featureNodeChildren = ironicFeature{"baremetal node children list", "1.83", releaseBobcat}
 
 // History columns are python-ironicclient's NODE_HISTORY_RESOURCE and its
 // detailed form. ironic adds project at 1.113 and state, target state and
@@ -73,21 +68,21 @@ func newNodeHistoryCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeHistoryList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node string, long bool, w io.Writer) error {
-	fields, q := nodeHistoryFields, map[string][]string{}
+	fields := nodeHistoryFields
 	if long {
-		fields, q["detail"] = nodeHistoryDetailFields, []string{"True"}
+		fields = nodeHistoryDetailFields
 	}
-	events, err := ironicList(ctx, client, joinPath("nodes", node, "history"), "history", q, 0)
+	events, err := bmapi.ListNodeHistory(ctx, client, node, long)
 	if err != nil {
-		return fmt.Errorf("listing history of baremetal node %s: %w", node, err)
+		return err
 	}
 	return o.WriteList(w, listTable(events, fields))
 }
 
 func runNodeHistoryGet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node, event string, w io.Writer) error {
-	var body map[string]any
-	if err := ironicGet(ctx, client, joinPath("nodes", node, "history", event), &body); err != nil {
-		return fmt.Errorf("getting history event %s of baremetal node %s: %w", event, node, err)
+	body, err := bmapi.GetNodeHistoryEvent(ctx, client, node, event)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(body, nodeHistoryDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -119,15 +114,12 @@ func newNodeChildrenCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeChildrenList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node string, w io.Writer) error {
-	var body struct {
-		Children []string `json:"children"`
+	children, err := bmapi.ListNodeChildren(ctx, client, node)
+	if err != nil {
+		return explained(err)
 	}
-	if err := ironicGet(ctx, client, joinPath("nodes", node, "children"), &body); err != nil {
-		return fmt.Errorf("listing children of baremetal node %s: %w", node,
-			explainMicroversion(ctx, client, featureNodeChildren, err))
-	}
-	t := output.Table{Columns: []string{label("children")}, Rows: make([][]any, 0, len(body.Children))}
-	for _, c := range body.Children {
+	t := output.Table{Columns: []string{label("children")}, Rows: make([][]any, 0, len(children))}
+	for _, c := range children {
 		t.Rows = append(t.Rows, []any{c})
 	}
 	return o.WriteList(w, t)

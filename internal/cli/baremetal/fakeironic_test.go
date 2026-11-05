@@ -9,6 +9,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // fakeIronic is a scripted ironic for the raw-request verbs: each route answers
@@ -56,7 +58,7 @@ func newFakeIronic(t *testing.T, routes map[string]fakeRoute) (*gophercloud.Serv
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.Header().Set(ironicMaxVersionHeader, f.max)
+		w.Header().Set(bmapi.MaxVersionHeader, f.max)
 		if route.body == nil {
 			w.WriteHeader(route.status)
 			return

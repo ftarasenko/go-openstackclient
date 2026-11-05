@@ -12,6 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newNodeShowCommand builds "baremetal node show <node>".
@@ -37,9 +38,9 @@ func newNodeShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	n, err := resultMap(nodes.Get(ctx, client, id).Result)
+	n, err := bmapi.GetNode(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting baremetal node %s: %w", id, err)
+		return err
 	}
 	fields, values := nodeShowFields(n)
 	return o.WriteSingle(w, fields, values)
@@ -122,9 +123,9 @@ func runNodeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		DriverInfo:     dinfo,
 		Extra:          extra,
 	}
-	n, err := resultMap(nodes.Create(ctx, client, opts).Result)
+	n, err := bmapi.CreateNode(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating baremetal node: %w", err)
+		return err
 	}
 	fields, values := nodeShowFields(n)
 	return o.WriteSingle(w, fields, values)
@@ -155,8 +156,8 @@ func runNodeDelete(ctx context.Context, client *gophercloud.ServiceClient, ids [
 	// batchdelete.Each reports the successes and joins the failures into a
 	// single error.
 	return batchdelete.Each(ids, func(id string) error {
-		if err := nodes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting baremetal node %s: %w", id, err)
+		if err := bmapi.DeleteNode(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted node %s\n", id); err != nil {
 			return err
@@ -302,12 +303,9 @@ func runNodeSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if len(ops) == 0 {
 		return fmt.Errorf("node set requires at least one attribute flag")
 	}
-	n, err := resultMap(nodes.Update(ctx, client, id, ops).Result)
+	n, err := bmapi.UpdateNode(ctx, client, id, ops)
 	if err != nil {
-		if f.shard != "" {
-			err = explainMicroversion(ctx, client, featureShards, err)
-		}
-		return fmt.Errorf("updating baremetal node %s: %w", id, err)
+		return explained(err)
 	}
 	fields, values := nodeShowFields(n)
 	return o.WriteSingle(w, fields, values)
@@ -427,9 +425,9 @@ func runNodeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if len(ops) == 0 {
 		return fmt.Errorf("node unset requires at least one attribute flag")
 	}
-	n, err := resultMap(nodes.Update(ctx, client, id, ops).Result)
+	n, err := bmapi.UpdateNode(ctx, client, id, ops)
 	if err != nil {
-		return fmt.Errorf("updating baremetal node %s: %w", id, err)
+		return err
 	}
 	fields, values := nodeShowFields(n)
 	return o.WriteSingle(w, fields, values)

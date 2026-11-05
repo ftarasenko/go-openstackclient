@@ -6,11 +6,11 @@ import (
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newNodeMaintenanceCommand builds "baremetal node maintenance set|unset".
@@ -49,9 +49,8 @@ func newNodeMaintenanceSetCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runNodeMaintenanceSet(ctx context.Context, client *gophercloud.ServiceClient, id, reason string, w io.Writer) error {
-	opts := nodes.MaintenanceOpts{Reason: reason}
-	if err := nodes.SetMaintenance(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("setting maintenance on node %s: %w", id, err)
+	if err := bmapi.SetMaintenance(ctx, client, id, reason); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Set node %s into maintenance mode\n", id); err != nil {
 		return err
@@ -80,8 +79,8 @@ func newNodeMaintenanceUnsetCommand(a *auth.Options, o *output.Options) *cobra.C
 }
 
 func runNodeMaintenanceUnset(ctx context.Context, client *gophercloud.ServiceClient, id string, w io.Writer) error {
-	if err := nodes.UnsetMaintenance(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("unsetting maintenance on node %s: %w", id, err)
+	if err := bmapi.UnsetMaintenance(ctx, client, id); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Took node %s out of maintenance mode\n", id); err != nil {
 		return err

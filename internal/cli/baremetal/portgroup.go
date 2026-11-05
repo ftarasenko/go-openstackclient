@@ -2,6 +2,7 @@ package baremetal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,19 +15,8 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-)
-
-// Port groups model bonded NICs (LACP, vPC): member ports share the group's
-// address, and neutron binds the VIF to the group. gophercloud has no
-// portgroups package, so these verbs use the raw helpers in raw.go
-// (/v1/portgroups, API 1.23; mode and properties 1.26).
-//
-// Flag names follow python-ironicclient (`openstack baremetal port group`).
-// UNVERIFIED against KeyStack (docs.keystack.ru unreachable, HTTP 403).
-
-var (
-	featurePortGroupPhysnet  = ironicFeature{"baremetal port group --physical-network", "1.102", releaseGazpacho}
-	featurePortGroupCategory = ironicFeature{"baremetal port group --category", "1.103", releaseGazpacho}
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // portGroupDetailFields are python-ironicclient's PORTGROUP_DETAILED_RESOURCE
@@ -111,13 +101,13 @@ func runPortGroupList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if len(f.shards) > 0 {
 		q.Set("shard", strings.Join(f.shards, ","))
 	}
-	fields, path := portGroupFields, "portgroups"
+	fields, detail := portGroupFields, false
 	if f.long || len(o.SelectedColumns(labels(portGroupDetailFields)...)) > len(o.SelectedColumns(labels(portGroupFields)...)) {
-		fields, path = portGroupDetailFields, "portgroups/detail"
+		fields, detail = portGroupDetailFields, true
 	}
-	groups, err := ironicList(ctx, client, path, "portgroups", q, f.limit)
+	groups, err := bmapi.ListPortGroups(ctx, client, q, detail, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal port groups: %w", err)
+		return err
 	}
 	if slices.Contains(fields, "ports") && len(groups) > 0 && (len(o.Columns) == 0 || len(o.SelectedColumns("Ports")) > 0) {
 		if err := fillMemberPorts(ctx, client, f.node, groups); err != nil {
@@ -130,17 +120,9 @@ func runPortGroupList(ctx context.Context, client *gophercloud.ServiceClient, o 
 // fillMemberPorts sets each group's "ports" to its member port UUIDs, read in
 // one port listing rather than one request per group.
 func fillMemberPorts(ctx context.Context, client *gophercloud.ServiceClient, node string, groups []map[string]any) error {
-	members, err := ironicList(ctx, client, "ports", "ports",
-		url.Values{"node": {node}, "fields": {"uuid,portgroup_uuid"}}, 0)
+	byGroup, err := bmapi.PortGroupMembers(ctx, client, node)
 	if err != nil {
-		return fmt.Errorf("listing member ports: %w", err)
-	}
-	byGroup := map[string][]string{}
-	for _, p := range members {
-		if g, _ := p["portgroup_uuid"].(string); g != "" {
-			id, _ := p["uuid"].(string)
-			byGroup[g] = append(byGroup[g], id)
-		}
+		return err
 	}
 	for _, g := range groups {
 		id, _ := g["uuid"].(string)
@@ -183,29 +165,24 @@ func runPortGroupShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 // getPortGroup reads a port group by UUID or name, or by MAC address.
 func getPortGroup(ctx context.Context, client *gophercloud.ServiceClient, ref string, byAddress bool) (map[string]any, error) {
 	if !byAddress {
-		var pg map[string]any
-		if err := ironicGet(ctx, client, joinPath("portgroups", ref), &pg); err != nil {
-			return nil, fmt.Errorf("getting baremetal port group %s: %w", ref, err)
-		}
-		return pg, nil
+		return bmapi.GetPortGroup(ctx, client, ref)
 	}
-	groups, err := ironicList(ctx, client, "portgroups/detail", "portgroups", url.Values{"address": {ref}}, 0)
-	if err != nil {
-		return nil, fmt.Errorf("getting baremetal port group with address %s: %w", ref, err)
-	}
-	if len(groups) != 1 {
+	pg, err := bmapi.FindPortGroupByAddress(ctx, client, ref)
+	var none *resolve.NotFoundError
+	var several *resolve.AmbiguousError
+	if errors.As(err, &none) || errors.As(err, &several) {
 		return nil, fmt.Errorf("no baremetal port group found with address %q", ref)
 	}
-	return groups[0], nil
+	return pg, err
 }
 
 // writePortGroup renders a port group with its member ports.
 func writePortGroup(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, pg map[string]any, w io.Writer) error {
 	if len(o.Columns) == 0 || len(o.SelectedColumns("ports")) > 0 {
 		id, _ := pg["uuid"].(string)
-		members, err := ironicList(ctx, client, joinPath("portgroups", id, "ports"), "ports", nil, 0)
+		members, err := bmapi.ListPortGroupPorts(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("listing ports of port group %s: %w", id, err)
+			return err
 		}
 		uuids := make([]string, 0, len(members))
 		for _, p := range members {
@@ -245,18 +222,6 @@ func (f *portGroupAttrFlags) register(cmd *cobra.Command, verb string) {
 	fl.BoolVar(&f.standalone, "support-standalone-ports", false, "member ports may also be used as standalone ports")
 	fl.BoolVar(&f.noStandalone, "unsupport-standalone-ports", false, "member ports may not be used as standalone ports")
 	cmd.MarkFlagsMutuallyExclusive("support-standalone-ports", "unsupport-standalone-ports")
-}
-
-// explain names the microversion a rejected request needed, for the gated
-// attributes it carried.
-func (f *portGroupAttrFlags) explain(ctx context.Context, client *gophercloud.ServiceClient, err error) error {
-	switch {
-	case f.physicalNetwork != "":
-		return explainMicroversion(ctx, client, featurePortGroupPhysnet, err)
-	case f.category != "":
-		return explainMicroversion(ctx, client, featurePortGroupCategory, err)
-	}
-	return err
 }
 
 func newPortGroupCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -319,23 +284,16 @@ func runPortGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if props != nil {
 		body["properties"] = props
 	}
-	var pg map[string]any
-	if err := ironicPost(ctx, client, "portgroups", body, &pg); err != nil {
-		return fmt.Errorf("creating baremetal port group: %w", f.explain(ctx, client, err))
+	pg, err := bmapi.CreatePortGroup(ctx, client, body)
+	if err != nil {
+		return explained(err)
 	}
 	return writePortGroup(ctx, client, o, pg, w)
 }
 
-// nodeUUID resolves a node name to its UUID; a UUID-shaped ref is read too,
-// which also proves it exists before it is written into another resource.
+// nodeUUID resolves a node name to its UUID (bmapi.NodeUUID).
 func nodeUUID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	var n struct {
-		UUID string `json:"uuid"`
-	}
-	if err := ironicGet(ctx, client, joinPath("nodes", ref)+"?fields=uuid", &n); err != nil {
-		return "", fmt.Errorf("resolving baremetal node %s: %w", ref, err)
-	}
-	return n.UUID, nil
+	return bmapi.NodeUUID(ctx, client, ref)
 }
 
 func newPortGroupSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -367,38 +325,38 @@ func runPortGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err := o.CheckColumns(portGroupColumns...); err != nil {
 		return err
 	}
-	var ops patchBuilder
+	var ops bmapi.Patch
 	if f.node != "" {
 		node, err := nodeUUID(ctx, client, f.node)
 		if err != nil {
 			return err
 		}
-		ops.replace("/node_uuid", node)
+		ops.Replace("/node_uuid", node)
 	}
 	for path, v := range map[string]string{
 		"/address": f.address, "/name": f.name, "/mode": f.mode,
 		"/physical_network": f.physicalNetwork, "/category": f.category,
 	} {
 		if v != "" {
-			ops.replace(path, v)
+			ops.Replace(path, v)
 		}
 	}
 	if f.standalone || f.noStandalone {
-		ops.replace("/standalone_ports_supported", f.standalone)
+		ops.Replace("/standalone_ports_supported", f.standalone)
 	}
-	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
+	if err := addKV(&ops, pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
-	if err := ops.addKV("/properties", "property", f.properties); err != nil {
+	if err := addKV(&ops, "/properties", "property", f.properties); err != nil {
 		return err
 	}
 	if len(ops) == 0 {
 		return fmt.Errorf("port group set requires at least one attribute flag")
 	}
-	slices.SortStableFunc(ops, func(a, b patchOp) int { return strings.Compare(a.Path, b.Path) })
-	var pg map[string]any
-	if err := ironicPatch(ctx, client, joinPath("portgroups", ref), ops, &pg); err != nil {
-		return fmt.Errorf("updating baremetal port group %s: %w", ref, f.explain(ctx, client, err))
+	slices.SortStableFunc(ops, func(a, b bmapi.PatchOp) int { return strings.Compare(a.Path, b.Path) })
+	pg, err := bmapi.UpdatePortGroup(ctx, client, ref, ops)
+	if err != nil {
+		return explained(err)
 	}
 	return writePortGroup(ctx, client, o, pg, w)
 }
@@ -442,23 +400,23 @@ func runPortGroupUnset(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err := o.CheckColumns(portGroupColumns...); err != nil {
 		return err
 	}
-	var ops patchBuilder
+	var ops bmapi.Patch
 	for path, set := range map[string]bool{
 		"/name": f.name, "/address": f.address, "/physical_network": f.physicalNetwork, "/category": f.category,
 	} {
 		if set {
-			ops.remove(path)
+			ops.Remove(path)
 		}
 	}
-	slices.SortStableFunc(ops, func(a, b patchOp) int { return strings.Compare(a.Path, b.Path) })
-	ops.removeKeys(pathExtra, f.extra)
-	ops.removeKeys("/properties", f.properties)
+	slices.SortStableFunc(ops, func(a, b bmapi.PatchOp) int { return strings.Compare(a.Path, b.Path) })
+	removeKeys(&ops, pathExtra, f.extra)
+	removeKeys(&ops, "/properties", f.properties)
 	if len(ops) == 0 {
 		return fmt.Errorf("port group unset requires at least one attribute flag")
 	}
-	var pg map[string]any
-	if err := ironicPatch(ctx, client, joinPath("portgroups", ref), ops, &pg); err != nil {
-		return fmt.Errorf("updating baremetal port group %s: %w", ref, err)
+	pg, err := bmapi.UpdatePortGroup(ctx, client, ref, ops)
+	if err != nil {
+		return err
 	}
 	return writePortGroup(ctx, client, o, pg, w)
 }
@@ -484,8 +442,8 @@ func newPortGroupDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comman
 
 func runPortGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return batchdelete.Each(refs, func(ref string) error {
-		if err := ironicDelete(ctx, client, joinPath("portgroups", ref)); err != nil {
-			return fmt.Errorf("deleting baremetal port group %s: %w", ref, err)
+		if err := bmapi.DeletePortGroup(ctx, client, ref); err != nil {
+			return err
 		}
 		_, err := fmt.Fprintf(w, "Deleted port group %s\n", ref)
 		return err

@@ -15,17 +15,8 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
-
-// Inspection rules are ironic's own (API 1.96, /v1/inspection_rules), the
-// replacement for ironic-inspector's rules that `koc baremetal introspection`
-// still drives on older clouds. gophercloud has no package for them, so the
-// verbs use the raw helpers in raw.go.
-//
-// Flag names follow python-ironicclient (`openstack baremetal inspection
-// rule`). UNVERIFIED against KeyStack (docs.keystack.ru unreachable, HTTP 403).
-
-var featureInspectionRule = ironicFeature{"baremetal inspection rule", "1.96", releaseEpoxy}
 
 // inspectionRuleDetailFields are python-ironicclient's
 // INSPECTION_RULE_DETAILED_RESOURCE; inspectionRuleFields the short list's.
@@ -59,11 +50,6 @@ func newInspectionCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	)
 	cmd.AddCommand(rule)
 	return cmd
-}
-
-// inspectionRuleErr names the 1.96 requirement when an older cloud refuses.
-func inspectionRuleErr(ctx context.Context, client *gophercloud.ServiceClient, what string, err error) error {
-	return fmt.Errorf("%s: %w", what, explainMicroversion(ctx, client, featureInspectionRule, err))
 }
 
 type inspectionRuleListFlags struct {
@@ -111,9 +97,9 @@ func runInspectionRuleList(ctx context.Context, client *gophercloud.ServiceClien
 		fields = inspectionRuleDetailFields
 		q.Set("detail", "true")
 	}
-	rules, err := ironicList(ctx, client, "inspection_rules", "inspection_rules", q, f.limit)
+	rules, err := bmapi.ListInspectionRules(ctx, client, q, f.limit)
 	if err != nil {
-		return inspectionRuleErr(ctx, client, "listing inspection rules", err)
+		return explained(err)
 	}
 	return o.WriteList(w, listTable(rules, fields))
 }
@@ -140,9 +126,9 @@ func newInspectionRuleShowCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runInspectionRuleShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	var rule map[string]any
-	if err := ironicGet(ctx, client, joinPath("inspection_rules", id), &rule); err != nil {
-		return inspectionRuleErr(ctx, client, "getting inspection rule "+id, err)
+	rule, err := bmapi.GetInspectionRule(ctx, client, id)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rule, inspectionRuleDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -233,9 +219,9 @@ func runInspectionRuleCreate(ctx context.Context, client *gophercloud.ServiceCli
 	if err := f.readDocuments(body, stdin); err != nil {
 		return err
 	}
-	var rule map[string]any
-	if err := ironicPost(ctx, client, "inspection_rules", body, &rule); err != nil {
-		return inspectionRuleErr(ctx, client, "creating inspection rule", err)
+	rule, err := bmapi.CreateInspectionRule(ctx, client, body)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rule, inspectionRuleDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -294,19 +280,19 @@ func runInspectionRuleSet(ctx context.Context, client *gophercloud.ServiceClient
 	}
 	// python-ironicclient patches every attribute with "add", which replaces
 	// an existing member.
-	var ops patchBuilder
+	var ops bmapi.Patch
 	if f.descriptionSet {
-		ops.add("/description", f.description)
+		ops.Add("/description", f.description)
 	}
 	if f.prioritySet {
-		ops.add("/priority", f.priority)
+		ops.Add("/priority", f.priority)
 	}
 	if f.phase != "" {
-		ops.add("/phase", f.phase)
+		ops.Add("/phase", f.phase)
 	}
 	for _, key := range []string{"actions", "conditions"} {
 		if v, ok := docs[key]; ok {
-			ops.add("/"+key, v)
+			ops.Add("/"+key, v)
 		}
 	}
 	if len(ops) == 0 {
@@ -316,11 +302,11 @@ func runInspectionRuleSet(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func patchInspectionRule(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id string, ops patchBuilder, w io.Writer,
+	id string, ops bmapi.Patch, w io.Writer,
 ) error {
-	var rule map[string]any
-	if err := ironicPatch(ctx, client, joinPath("inspection_rules", id), ops, &rule); err != nil {
-		return inspectionRuleErr(ctx, client, "updating inspection rule "+id, err)
+	rule, err := bmapi.UpdateInspectionRule(ctx, client, id, ops)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rule, inspectionRuleDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -364,13 +350,13 @@ func runInspectionRuleUnset(ctx context.Context, client *gophercloud.ServiceClie
 	if err := o.CheckColumns(inspectionRuleColumns...); err != nil {
 		return err
 	}
-	var ops patchBuilder
+	var ops bmapi.Patch
 	for path, set := range map[string]bool{"/description": f.description, "/priority": f.priority, "/phase": f.phase} {
 		if set {
-			ops.remove(path)
+			ops.Remove(path)
 		}
 	}
-	slices.SortFunc(ops, func(a, b patchOp) int { return strings.Compare(a.Path, b.Path) })
+	slices.SortFunc(ops, func(a, b bmapi.PatchOp) int { return strings.Compare(a.Path, b.Path) })
 	// Highest index first, so each removal leaves the indices still to come
 	// pointing at the elements the operator named.
 	for _, list := range []struct {
@@ -384,7 +370,7 @@ func runInspectionRuleUnset(ctx context.Context, client *gophercloud.ServiceClie
 			if idx[i] < 0 {
 				return fmt.Errorf("--%s %d: an index is zero or more", strings.TrimSuffix(list.key, "s"), idx[i])
 			}
-			ops.remove("/" + list.key + "/" + strconv.Itoa(idx[i]))
+			ops.Remove("/" + list.key + "/" + strconv.Itoa(idx[i]))
 		}
 	}
 	if len(ops) == 0 {
@@ -414,8 +400,8 @@ func newInspectionRuleDeleteCommand(a *auth.Options, o *output.Options) *cobra.C
 
 func runInspectionRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := ironicDelete(ctx, client, joinPath("inspection_rules", id)); err != nil {
-			return inspectionRuleErr(ctx, client, "deleting inspection rule "+id, err)
+		if err := bmapi.DeleteInspectionRule(ctx, client, id); err != nil {
+			return explained(err)
 		}
 		_, err := fmt.Fprintf(w, "Deleted inspection rule %s\n", id)
 		return err

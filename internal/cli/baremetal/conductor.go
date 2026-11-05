@@ -2,7 +2,6 @@ package baremetal
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newConductorCommand builds "baremetal conductor ...".
@@ -76,9 +75,9 @@ func runConductorList(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if f.long {
 		opts.Detail = true
 	}
-	all, err := paging.Collect(ctx, conductors.List(client, opts), f.limit, conductors.ExtractConductors)
+	all, err := bmapi.ListConductors(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal conductors: %w", err)
+		return err
 	}
 	return o.WriteList(w, conductorListTable(all, f.long))
 }
@@ -121,9 +120,9 @@ func newConductorShowCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runConductorShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, hostname string, w io.Writer) error {
-	c, err := conductors.Get(ctx, client, hostname).Extract()
+	c, err := bmapi.GetConductor(ctx, client, hostname)
 	if err != nil {
-		return fmt.Errorf("showing baremetal conductor %s: %w", hostname, err)
+		return err
 	}
 	fields := []string{"hostname", "conductor_group", "alive", "drivers", "created_at", "updated_at"}
 	values := []any{c.Hostname, c.ConductorGroup, c.Alive, c.Drivers, c.CreatedAt, c.UpdatedAt}

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may
@@ -56,19 +57,6 @@ func setIf(body map[string]any, key, v string) {
 	}
 }
 
-// appendQuery appends already-encoded key=value pairs to a query string that
-// may be empty or start with "?".
-func appendQuery(s string, kv ...string) string {
-	if len(kv) == 0 {
-		return s
-	}
-	sep := "?"
-	if strings.Contains(s, "?") {
-		sep = "&"
-	}
-	return s + sep + strings.Join(kv, "&")
-}
-
 // fieldNames returns the headers of a field builder's result. Applied to a zero
 // value it gives the columns a write verb checks -c against before it writes.
 func fieldNames(fields []string, _ []any) []string { return fields }
@@ -104,5 +92,24 @@ func registerFieldsAliases(cmd *cobra.Command, o *output.Options, column func(st
 			o.Columns = append(o.Columns, column(f))
 		}
 		return nil
+	}
+}
+
+// addKV adds a key=value pair under prefix ("/extra") for each of pairs.
+func addKV(p *bmapi.Patch, prefix, flag string, pairs []string) error {
+	for _, kv := range pairs {
+		k, v, err := parseKeyVal(kv)
+		if err != nil {
+			return fmt.Errorf("parsing --%s: %w", flag, err)
+		}
+		p.Add(prefix+"/"+escapeJSONPointer(k), v)
+	}
+	return nil
+}
+
+// removeKeys removes each key under prefix.
+func removeKeys(p *bmapi.Patch, prefix string, keys []string) {
+	for _, k := range keys {
+		p.Remove(prefix + "/" + escapeJSONPointer(k))
 	}
 }

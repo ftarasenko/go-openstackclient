@@ -2,6 +2,7 @@ package baremetal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,15 +14,15 @@ import (
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 )
 
-// Raw ironic fallbacks.
+// Raw ironic requests.
 //
 // gophercloud v2.15.0 ships baremetal/v1 packages for nodes, ports, drivers,
-// conductors and allocations only. Every other ironic resource koc exposes —
+// conductors and allocations only. Every other ironic resource this package covers —
 // port groups, deploy templates, runbooks, inspection rules, volume connectors
 // and targets, shards — and the node sub-resources gophercloud does not model
 // (traits, console, history, passthru, children, vmedia, secure boot) go
-// through these helpers. The service client already carries the ironic
-// microversion, so every call here is versioned like a typed one.
+// through these helpers. The service client carries the ironic microversion,
+// so every call here is versioned like a typed one.
 
 // ironicGet GETs path (relative to the ironic endpoint) into out.
 func ironicGet(ctx context.Context, client *gophercloud.ServiceClient, path string, out any) error {
@@ -66,7 +67,7 @@ func ironicPut(ctx context.Context, client *gophercloud.ServiceClient, path stri
 
 // ironicPatch applies a JSON patch to the resource at path and decodes the
 // updated resource into out.
-func ironicPatch(ctx context.Context, client *gophercloud.ServiceClient, path string, ops []patchOp, out any) error {
+func ironicPatch(ctx context.Context, client *gophercloud.ServiceClient, path string, ops Patch, out any) error {
 	resp, err := client.Patch(ctx, client.ServiceURL(path), ops, out, &gophercloud.RequestOpts{
 		OkCodes: []int{http.StatusOK},
 	})
@@ -89,45 +90,30 @@ func ironicDelete(ctx context.Context, client *gophercloud.ServiceClient, path s
 	return err
 }
 
-// patchOp is one RFC 6902 operation, the body of every ironic update.
-type patchOp struct {
+// PatchOp is one RFC 6902 operation; a list of them is the body of every
+// ironic update.
+type PatchOp struct {
 	Op    string `json:"op"`
 	Path  string `json:"path"`
 	Value any    `json:"value,omitempty"`
 }
 
-// patchBuilder accumulates the operations of a set/unset verb.
-type patchBuilder []patchOp
+// Patch accumulates the operations of one update.
+type Patch []PatchOp
 
-func (b *patchBuilder) add(path string, v any) {
-	*b = append(*b, patchOp{Op: "add", Path: path, Value: v})
+// Add appends an "add" of v at path.
+func (p *Patch) Add(path string, v any) {
+	*p = append(*p, PatchOp{Op: "add", Path: path, Value: v})
 }
 
-func (b *patchBuilder) replace(path string, v any) {
-	*b = append(*b, patchOp{Op: "replace", Path: path, Value: v})
+// Replace appends a "replace" of path with v.
+func (p *Patch) Replace(path string, v any) {
+	*p = append(*p, PatchOp{Op: "replace", Path: path, Value: v})
 }
 
-func (b *patchBuilder) remove(path string) {
-	*b = append(*b, patchOp{Op: "remove", Path: path})
-}
-
-// addKV adds a key=value pair under prefix ("/extra") for each of pairs.
-func (b *patchBuilder) addKV(prefix, flag string, pairs []string) error {
-	for _, p := range pairs {
-		k, v, err := parseKeyVal(p)
-		if err != nil {
-			return fmt.Errorf("parsing --%s: %w", flag, err)
-		}
-		b.add(prefix+"/"+escapeJSONPointer(k), v)
-	}
-	return nil
-}
-
-// removeKeys removes each key under prefix.
-func (b *patchBuilder) removeKeys(prefix string, keys []string) {
-	for _, k := range keys {
-		b.remove(prefix + "/" + escapeJSONPointer(k))
-	}
+// Remove appends a "remove" of path.
+func (p *Patch) Remove(path string) {
+	*p = append(*p, PatchOp{Op: "remove", Path: path})
 }
 
 // ironicPage is one page of an ironic collection: the items under the
@@ -189,4 +175,47 @@ func joinPath(segments ...string) string {
 		segments[i] = url.PathEscape(s)
 	}
 	return strings.Join(segments, "/")
+}
+
+// pageMaps extracts the resources under key from a list page.
+func pageMaps(key string) func(pagination.Page) ([]map[string]any, error) {
+	return func(p pagination.Page) ([]map[string]any, error) {
+		var v map[string][]map[string]any
+		if err := decode(p.GetBody(), &v); err != nil {
+			return nil, err
+		}
+		return v[key], nil
+	}
+}
+
+// resultMap decodes a gophercloud result's body into a map.
+func resultMap(r gophercloud.Result) (map[string]any, error) {
+	if r.Err != nil {
+		return nil, r.Err
+	}
+	var m map[string]any
+	if err := r.ExtractInto(&m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// decode round-trips v through JSON into out.
+func decode(v any, out any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(b, out); err != nil {
+		return fmt.Errorf("decoding %s: %w", strings.TrimPrefix(fmt.Sprintf("%T", out), "*"), err)
+	}
+	return nil
+}
+
+// wrap prefixes err with the message the CLI prints; nil stays nil.
+func wrap(err error, format string, args ...any) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf(format+": %w", append(args, err)...)
 }

@@ -13,6 +13,7 @@ import (
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 const portShowBody = `{
@@ -284,7 +285,7 @@ func TestRunPortCreate_NameBelowMicroversionExplains(t *testing.T) {
 	defer fakeServer.Teardown()
 
 	fakeServer.Mux.HandleFunc("/ports", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(ironicMaxVersionHeader, "1.82")
+		w.Header().Set(bmapi.MaxVersionHeader, "1.82")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error_message": "Unknown attribute for argument port: name"}`))
 	})

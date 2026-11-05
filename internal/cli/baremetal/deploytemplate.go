@@ -12,6 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // Deploy templates bind deploy steps to a trait: a node scheduled to a flavor
@@ -124,9 +125,9 @@ func runDeployTemplateList(ctx context.Context, client *gophercloud.ServiceClien
 		fields = deployTemplateDetailFields
 		q.Set("detail", "True")
 	}
-	all, err := ironicList(ctx, client, "deploy_templates", "deploy_templates", q, f.limit)
+	all, err := bmapi.ListDeployTemplates(ctx, client, q, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal deploy templates: %w", err)
+		return err
 	}
 	return o.WriteList(w, listTable(all, fields))
 }
@@ -153,9 +154,9 @@ func newDeployTemplateShowCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runDeployTemplateShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	var t map[string]any
-	if err := ironicGet(ctx, client, joinPath("deploy_templates", ref), &t); err != nil {
-		return fmt.Errorf("getting baremetal deploy template %s: %w", ref, err)
+	t, err := bmapi.GetDeployTemplate(ctx, client, ref)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(t, deployTemplateDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -215,9 +216,9 @@ func runDeployTemplateCreate(ctx context.Context, client *gophercloud.ServiceCli
 	if extra != nil {
 		body["extra"] = extra
 	}
-	var t map[string]any
-	if err := ironicPost(ctx, client, "deploy_templates", body, &t); err != nil {
-		return fmt.Errorf("creating baremetal deploy template: %w", err)
+	t, err := bmapi.CreateDeployTemplate(ctx, client, body)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(t, deployTemplateDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -255,18 +256,18 @@ func runDeployTemplateSet(ctx context.Context, client *gophercloud.ServiceClient
 	if err := o.CheckColumns(deployTemplateColumns...); err != nil {
 		return err
 	}
-	var ops patchBuilder
+	var ops bmapi.Patch
 	if f.name != "" {
-		ops.add("/name", f.name)
+		ops.Add("/name", f.name)
 	}
 	if f.steps != "" {
 		steps, err := stepsArg(f.steps, stdin)
 		if err != nil {
 			return err
 		}
-		ops.add("/steps", steps)
+		ops.Add("/steps", steps)
 	}
-	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
+	if err := addKV(&ops, pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	if len(ops) == 0 {
@@ -276,11 +277,11 @@ func runDeployTemplateSet(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func patchDeployTemplate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	ref string, ops patchBuilder, w io.Writer,
+	ref string, ops bmapi.Patch, w io.Writer,
 ) error {
-	var t map[string]any
-	if err := ironicPatch(ctx, client, joinPath("deploy_templates", ref), ops, &t); err != nil {
-		return fmt.Errorf("updating baremetal deploy template %s: %w", ref, err)
+	t, err := bmapi.UpdateDeployTemplate(ctx, client, ref, ops)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(t, deployTemplateDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -314,8 +315,8 @@ func runDeployTemplateUnset(ctx context.Context, client *gophercloud.ServiceClie
 	if err := o.CheckColumns(deployTemplateColumns...); err != nil {
 		return err
 	}
-	var ops patchBuilder
-	ops.removeKeys(pathExtra, extra)
+	var ops bmapi.Patch
+	removeKeys(&ops, pathExtra, extra)
 	if len(ops) == 0 {
 		return fmt.Errorf("deploy template unset requires at least one attribute flag")
 	}
@@ -343,8 +344,8 @@ func newDeployTemplateDeleteCommand(a *auth.Options, o *output.Options) *cobra.C
 
 func runDeployTemplateDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return batchdelete.Each(refs, func(ref string) error {
-		if err := ironicDelete(ctx, client, joinPath("deploy_templates", ref)); err != nil {
-			return fmt.Errorf("deleting baremetal deploy template %s: %w", ref, err)
+		if err := bmapi.DeleteDeployTemplate(ctx, client, ref); err != nil {
+			return err
 		}
 		_, err := fmt.Fprintf(w, "Deleted deploy template %s\n", ref)
 		return err

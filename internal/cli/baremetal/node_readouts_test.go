@@ -12,6 +12,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 const readoutNodeID = "11111111-1111-1111-1111-111111111111"
@@ -219,7 +220,7 @@ func TestRunNodeFirmwareList_ExplainsMicroversionOnZed(t *testing.T) {
 	// On Zed the route does not exist at all, so ironic answers a bare 404 —
 	// which without the guard reads as "no such node".
 	fakeServer.Mux.HandleFunc("/nodes/"+readoutNodeID+"/firmware", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(ironicMaxVersionHeader, "1.82")
+		w.Header().Set(bmapi.MaxVersionHeader, "1.82")
 		w.WriteHeader(http.StatusNotFound)
 	})
 
@@ -243,7 +244,7 @@ func TestRunNodeFirmwareList_KeepsPlain404OnNewCloud(t *testing.T) {
 
 	// A 1.90 cloud returning 404 means the node is missing, not the feature.
 	fakeServer.Mux.HandleFunc("/nodes/"+readoutNodeID+"/firmware", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(ironicMaxVersionHeader, "1.90")
+		w.Header().Set(bmapi.MaxVersionHeader, "1.90")
 		w.WriteHeader(http.StatusNotFound)
 	})
 
@@ -315,25 +316,6 @@ func TestExplainMicroversion_NamesAnExplicitLowPin(t *testing.T) {
 	}
 }
 
-func TestCompareMicroversions(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want int
-	}{
-		{"1.82", "1.86", -1},
-		{"1.86", "1.86", 0},
-		{"1.90", "1.86", 1},
-		{"1.9", "1.86", -1}, // 9 < 86: minor is numeric, not lexicographic
-		{"2.1", "1.99", 1},
-		{"garbage", "1.86", -1}, // unparseable must never suppress the explanation
-	}
-	for _, c := range cases {
-		if got := compareMicroversions(c.a, c.b); got != c.want {
-			t.Errorf("compareMicroversions(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
-		}
-	}
-}
-
 func TestRunNodeInjectNMI_PostsToManagementEndpoint(t *testing.T) {
 	fakeServer := th.SetupHTTP()
 	defer fakeServer.Teardown()
@@ -351,22 +333,4 @@ func TestRunNodeInjectNMI_PostsToManagementEndpoint(t *testing.T) {
 	}
 	th.AssertEquals(t, "PUT", gotMethod)
 	th.AssertEquals(t, "Injected NMI into node "+readoutNodeID+"\n", out.String())
-}
-
-func TestExtractBIOSSetting_AcceptsBothKeyings(t *testing.T) {
-	// Ironic keys the object by the setting name; gophercloud's own fixture uses
-	// the literal "Setting". Both have to decode, or `bios setting show` returns
-	// a blank row against one of them.
-	for name, body := range map[string]any{
-		"ironic":      map[string]any{"BootMode": map[string]any{"name": "BootMode", "value": "Uefi"}},
-		"gophercloud": map[string]any{"Setting": map[string]any{"name": "BootMode", "value": "Uefi"}},
-	} {
-		var res nodes.GetBIOSSettingResult
-		res.Body = body
-		s, err := extractBIOSSetting(res, "BootMode")
-		if err != nil {
-			t.Fatalf("%s keying: %v", name, err)
-		}
-		th.AssertEquals(t, "Uefi", s.Value)
-	}
 }

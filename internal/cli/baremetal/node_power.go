@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newNodePowerCommand builds "baremetal node power on|off|reboot".
@@ -60,9 +61,8 @@ func runNodePower(ctx context.Context, client *gophercloud.ServiceClient, id str
 			target = nodes.SoftRebooting
 		}
 	}
-	opts := nodes.PowerStateOpts{Target: target}
-	if err := nodes.ChangePowerState(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("changing power state of node %s: %w", id, err)
+	if err := bmapi.SetPowerState(ctx, client, id, target); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Requested power state %q for node %s\n", target, id); err != nil {
 		return err

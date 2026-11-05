@@ -1,12 +1,14 @@
 // Package importer_test builds a Session from FromProvider against an
 // httptest cloud and lists images, networks, flavors, projects, role
-// assignments, volumes, load balancers, zones and placement through pkg/,
+// assignments, volumes, load balancers, zones, placement and baremetal
+// through pkg/,
 // with nothing but the module's public import paths.
 package importer_test
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +28,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
@@ -262,6 +265,20 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /placement/usages", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"usages": map[string]any{"INSTANCE": map[string]int{"VCPU": 2, "consumer_count": 1}}})
+	})
+	mux.HandleFunc("GET /baremetal/v1/nodes/detail", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("maintenance") != "false" || r.Header.Get("X-OpenStack-Ironic-API-Version") != "1.80" {
+			http.Error(w, `{}`, http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"nodes": []map[string]any{{"uuid": "node-1", "name": "bm-1", "provision_state": "available"}}})
+	})
+	mux.HandleFunc("GET /baremetal/v1/nodes/bm-1/firmware", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(baremetal.MaxVersionHeader, "1.80")
+		http.Error(w, `{}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("GET /baremetal-introspection/introspection/node-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"uuid": "node-1", "finished": true, "state": "finished"})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -501,5 +518,27 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if u, err := placement.GetProjectUsage(ctx, placementClient, "prj-1", ""); err != nil || u["VCPU"] != 2 || len(u) != 1 {
 		t.Fatalf("placement.GetProjectUsage = %v, %v", u, err)
+	}
+
+	ironic, err := openstack.FromProvider(pc, gophercloud.EndpointOpts{Region: "RegionOne"},
+		openstack.Options{Microversions: openstack.Microversions{Baremetal: "1.80"}}).Baremetal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inService := false
+	bm, err := baremetal.ListNodes(ctx, ironic, baremetal.NodeListOpts{Maintenance: &inService}, true, 0)
+	if err != nil || len(bm) != 1 || bm[0]["name"] != "bm-1" {
+		t.Fatalf("baremetal.ListNodes = %v, %v", bm, err)
+	}
+	var me *baremetal.MicroversionError
+	if _, err := baremetal.ListFirmware(ctx, ironic, "bm-1"); !errors.As(err, &me) || me.Feature != baremetal.FeatureNodeFirmware || me.Pinned != "1.80" {
+		t.Fatalf("baremetal.ListFirmware = %v", err)
+	}
+	inspector, err := s.Introspection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := baremetal.GetIntrospectionStatus(ctx, inspector, "node-1"); err != nil || st.State != "finished" {
+		t.Fatalf("baremetal.GetIntrospectionStatus = %+v, %v", st, err)
 	}
 }

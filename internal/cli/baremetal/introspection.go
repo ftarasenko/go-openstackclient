@@ -14,7 +14,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newIntrospectionClient derives the ironic-inspector client. The inspector is a
@@ -86,35 +86,13 @@ func runIntrospectionStart(ctx context.Context, client *gophercloud.ServiceClien
 	case f.noManageBoot:
 		opts.ManageBoot = gophercloud.Disabled
 	}
-	if err := startIntrospectionRaw(ctx, client, id, opts); err != nil {
-		return fmt.Errorf("starting introspection of node %s: %w", id, err)
+	if err := bmapi.StartIntrospection(ctx, client, id, opts); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Started introspection of node %s\n", id); err != nil {
 		return err
 	}
 	return nil
-}
-
-// startIntrospectionRaw POSTs to the inspector's introspection endpoint with the
-// manage_boot query parameter actually attached.
-//
-// It replaces introspection.StartIntrospection, which at gophercloud v2.13.0
-// builds the query string from StartOpts and then throws it away — it calls
-// ToStartIntrospectionQuery only to surface an encoding error and POSTs to the
-// bare URL, so --manage-boot / --no-manage-boot would be silently dropped.
-// Delete this helper and go back to the typed call once that is fixed upstream.
-func startIntrospectionRaw(ctx context.Context, client *gophercloud.ServiceClient, nodeID string, opts introspection.StartOpts) error {
-	query, err := opts.ToStartIntrospectionQuery()
-	if err != nil {
-		return err
-	}
-	url := client.ServiceURL("introspection", nodeID) + query
-	resp, err := client.Post(ctx, url, nil, nil, &gophercloud.RequestOpts{OkCodes: []int{202}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
 }
 
 // --- status ----------------------------------------------------------------
@@ -139,9 +117,9 @@ func newIntrospectionStatusCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runIntrospectionStatus(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	st, err := introspection.GetIntrospectionStatus(ctx, client, id).Extract()
+	st, err := bmapi.GetIntrospectionStatus(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting introspection status of node %s: %w", id, err)
+		return err
 	}
 	fields, values := introspectionFields(st)
 	return o.WriteSingle(w, fields, values)
@@ -188,9 +166,9 @@ func runIntrospectionList(ctx context.Context, client *gophercloud.ServiceClient
 	opts := introspection.ListIntrospectionsOpts{Limit: f.limit, Marker: f.marker}
 	// The inspector treats "limit" only as a page size, so --limit is enforced
 	// as a hard result cap; Collect also stops paging once it is met.
-	all, err := paging.Collect(ctx, introspection.ListIntrospections(client, opts), f.limit, introspection.ExtractIntrospections)
+	all, err := bmapi.ListIntrospections(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing introspections: %w", err)
+		return err
 	}
 
 	t := output.Table{
@@ -225,8 +203,8 @@ func newIntrospectionAbortCommand(a *auth.Options, o *output.Options) *cobra.Com
 }
 
 func runIntrospectionAbort(ctx context.Context, client *gophercloud.ServiceClient, id string, w io.Writer) error {
-	if err := introspection.AbortIntrospection(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("aborting introspection of node %s: %w", id, err)
+	if err := bmapi.AbortIntrospection(ctx, client, id); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Aborted introspection of node %s\n", id); err != nil {
 		return err
@@ -276,9 +254,9 @@ func newIntrospectionDataSaveCommand(a *auth.Options, o *output.Options) *cobra.
 // runIntrospectionDataSave dumps the untyped introspection blob so plugin-specific
 // keys koc has no struct for survive the round trip.
 func runIntrospectionDataSave(ctx context.Context, client *gophercloud.ServiceClient, id string, f *introspectionDataSaveFlags, w io.Writer) (err error) {
-	res := introspection.GetIntrospectionData(ctx, client, id)
-	if res.Err != nil {
-		return fmt.Errorf("getting introspection data for node %s: %w", id, res.Err)
+	data, err := bmapi.GetIntrospectionDataRaw(ctx, client, id)
+	if err != nil {
+		return err
 	}
 
 	dst := w
@@ -297,7 +275,7 @@ func runIntrospectionDataSave(ctx context.Context, client *gophercloud.ServiceCl
 
 	enc := json.NewEncoder(dst)
 	enc.SetIndent("", "  ")
-	if cerr := enc.Encode(res.Body); cerr != nil {
+	if cerr := enc.Encode(data); cerr != nil {
 		return fmt.Errorf("writing introspection data: %w", cerr)
 	}
 	return nil
@@ -351,9 +329,9 @@ func newIntrospectionInterfaceListCommand(a *auth.Options, o *output.Options) *c
 func runIntrospectionInterfaceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *introspectionInterfaceListFlags, w io.Writer,
 ) error {
-	data, err := introspection.GetIntrospectionData(ctx, client, id).Extract()
+	data, err := bmapi.GetIntrospectionData(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting introspection data for node %s: %w", id, err)
+		return err
 	}
 
 	src := data.AllInterfaces

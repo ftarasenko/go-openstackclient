@@ -1,9 +1,11 @@
-package baremetal
+package baremetal_test
 
 import (
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // classifyProvisionState is the decision waitForProvisionState makes on every
@@ -80,22 +82,22 @@ func TestClassifyProvisionState(t *testing.T) {
 				TargetProvisionState: tt.target,
 				LastError:            tt.lastError,
 			}
-			done, err := classifyProvisionState(n, id, tt.want)
+			done, err := baremetal.ClassifyProvisionState(n, id, tt.want)
 			switch {
 			case tt.wantErr != "":
 				if err == nil {
-					t.Fatalf("classifyProvisionState() error = nil, want %q", tt.wantErr)
+					t.Fatalf("baremetal.ClassifyProvisionState() error = nil, want %q", tt.wantErr)
 				}
 				if err.Error() != tt.wantErr {
-					t.Fatalf("classifyProvisionState() error = %q, want %q", err.Error(), tt.wantErr)
+					t.Fatalf("baremetal.ClassifyProvisionState() error = %q, want %q", err.Error(), tt.wantErr)
 				}
 				if done {
-					t.Fatalf("classifyProvisionState() done = true on a terminal error")
+					t.Fatalf("baremetal.ClassifyProvisionState() done = true on a terminal error")
 				}
 			case err != nil:
-				t.Fatalf("classifyProvisionState() unexpected error: %v", err)
+				t.Fatalf("baremetal.ClassifyProvisionState() unexpected error: %v", err)
 			case done != tt.wantDone:
-				t.Fatalf("classifyProvisionState() done = %v, want %v", done, tt.wantDone)
+				t.Fatalf("baremetal.ClassifyProvisionState() done = %v, want %v", done, tt.wantDone)
 			}
 		})
 	}

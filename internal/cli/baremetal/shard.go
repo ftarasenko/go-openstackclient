@@ -2,7 +2,6 @@ package baremetal
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -10,15 +9,12 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // Shards partition nodes between consumers such as nova-compute services
 // (API 1.82, /v1/shards). gophercloud has no package for them, so the list
 // uses the raw helpers in raw.go. A shard exists while some node names it.
-
-// featureShards dates from ironic 21.4, Zed's last point release and the
-// 2023.1 release; earlier Zed point releases stop at 1.80.
-var featureShards = ironicFeature{"baremetal shard list / node --shard", "1.82", releaseAntelope}
 
 // shardFields are python-ironicclient's SHARD_RESOURCE.
 var shardFields = []string{"name", "count"}
@@ -48,11 +44,9 @@ func newShardCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runShardList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	var body struct {
-		Shards []map[string]any `json:"shards"`
+	shards, err := bmapi.ListShards(ctx, client)
+	if err != nil {
+		return explained(err)
 	}
-	if err := ironicGet(ctx, client, "shards", &body); err != nil {
-		return fmt.Errorf("listing baremetal shards: %w", explainMicroversion(ctx, client, featureShards, err))
-	}
-	return o.WriteList(w, listTable(body.Shards, shardFields))
+	return o.WriteList(w, listTable(shards, shardFields))
 }
