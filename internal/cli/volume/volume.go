@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // NewCommand builds the "volume" command group and returns it as a slice so the
@@ -107,31 +106,6 @@ type volumeListFlags struct {
 	userDomain    string
 }
 
-// volumeListOptsExt adds cinder's user_id filter, which volumes.ListOpts has no
-// field for at gophercloud v2.13.0. It follows the ListOptsExt composition
-// pattern used elsewhere in this repo rather than reaching for a raw request.
-type volumeListOptsExt struct {
-	volumes.ListOptsBuilder
-	UserID string
-}
-
-func (opts volumeListOptsExt) ToVolumeListQuery() (string, error) {
-	q, err := opts.ListOptsBuilder.ToVolumeListQuery()
-	if err != nil {
-		return "", err
-	}
-	if opts.UserID == "" {
-		return q, nil
-	}
-	parsed, err := url.Parse(q)
-	if err != nil {
-		return "", err
-	}
-	params := parsed.Query()
-	params.Add("user_id", opts.UserID)
-	return (&url.URL{RawQuery: params.Encode()}).String(), nil
-}
-
 func newVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &volumeListFlags{}
 	cmd := &cobra.Command{
@@ -198,7 +172,7 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 	var opts volumes.ListOptsBuilder = base
 	if userID != "" {
-		opts = volumeListOptsExt{ListOptsBuilder: base, UserID: userID}
+		opts = volumeapi.ListOpts{ListOptsBuilder: base, UserID: userID}
 	}
 	// Limit is only the page size to cinder, so --limit is a hard result cap.
 	// With --type the cap applies to what survives the client-side filter below,
@@ -208,9 +182,9 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.volumeType != "" || f.host != "" {
 		collectCap = 0
 	}
-	all, err := paging.Collect(ctx, volumes.List(client, opts), collectCap, volumes.ExtractVolumes)
+	all, err := volumeapi.ListVolumes(ctx, client, opts, collectCap)
 	if err != nil {
-		return fmt.Errorf("listing volumes: %w", err)
+		return err
 	}
 	// Cinder's volume list has no volume_type query param (and upstream OSC has no
 	// --type on list), so filter by type client-side after extraction. --host is
@@ -343,9 +317,9 @@ func runVolumeShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	v, err := volumes.Get(ctx, client, id).Extract()
+	v, err := volumeapi.GetVolume(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting volume %q: %w", ref, err)
+		return relabel(err, "getting volume %q", ref)
 	}
 	fields, values := volumeShowFields(v)
 	return o.WriteSingle(w, fields, values)
@@ -478,9 +452,9 @@ func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		AvailabilityZone: f.availabilityZone,
 		Metadata:         meta,
 	}
-	v, err := volumes.Create(ctx, client, opts, nil).Extract()
+	v, err := volumeapi.CreateVolume(ctx, client, opts, nil)
 	if err != nil {
-		return fmt.Errorf("creating volume: %w", err)
+		return err
 	}
 	if f.wait {
 		if err := waitForVolumeAvailable(ctx, client, name, v.ID, f.waitTimeout); err != nil {
@@ -488,37 +462,23 @@ func runVolumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		}
 		// The volume was "creating" in the create response; re-read it so the
 		// rendered table reports the settled state rather than the stale one.
-		if v, err = volumes.Get(ctx, client, v.ID).Extract(); err != nil {
-			return fmt.Errorf("getting volume %q: %w", name, err)
+		if v, err = volumeapi.GetVolume(ctx, client, v.ID); err != nil {
+			return relabel(err, "getting volume %q", name)
 		}
 	}
 	// CreateOpts has no bootable field, so apply the requested bootable flag as a
 	// follow-up cinder volume action once the volume exists.
 	if f.bootable || f.nonBootable {
-		if err := setVolumeBootable(ctx, client, v.ID, f.bootable); err != nil {
-			return fmt.Errorf("setting bootable flag on volume %q: %w", v.ID, err)
+		if err := volumeapi.SetVolumeBootable(ctx, client, v.ID, f.bootable); err != nil {
+			return relabel(err, "setting bootable flag on volume %q", v.ID)
 		}
-		v, err = volumes.Get(ctx, client, v.ID).Extract()
+		v, err = volumeapi.GetVolume(ctx, client, v.ID)
 		if err != nil {
-			return fmt.Errorf("getting volume %q: %w", v.ID, err)
+			return relabel(err, "getting volume %q", v.ID)
 		}
 	}
 	fields, values := volumeShowFields(v)
 	return o.WriteSingle(w, fields, values)
-}
-
-// setVolumeBootable issues the cinder "os-set_bootable" volume action. The
-// gophercloud volumes package has no typed verb for it, so we POST the raw
-// action body ourselves; replace this with a typed call if one is added.
-func setVolumeBootable(ctx context.Context, client *gophercloud.ServiceClient, id string, bootable bool) error {
-	body := map[string]any{"os-set_bootable": map[string]any{"bootable": bootable}}
-	url := client.ServiceURL("volumes", id, "action")
-	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
 }
 
 func newVolumeDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -546,8 +506,8 @@ func runVolumeDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err != nil {
 			return err
 		}
-		if err := volumes.Delete(ctx, client, id, nil).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume %q: %w", ref, err)
+		if err := volumeapi.DeleteVolume(ctx, client, id, nil); err != nil {
+			return relabel(err, "deleting volume %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume: %s\n", ref); err != nil {
 			return err
@@ -668,29 +628,6 @@ func validateVolumeState(state string) error {
 	return fmt.Errorf("invalid --state %q: want one of %s", state, strings.Join(volumeStates, ", "))
 }
 
-// resetStatusOpts is a volumes.ResetStatusOptsBuilder that emits only the fields
-// the caller asked to change. volumes.ResetStatusOpts tags Status without
-// ",omitempty", so it always sends "status": "" — which cinder rejects as an
-// invalid status, making an --attached/--detached-only reset impossible.
-type resetStatusOpts struct {
-	status       string
-	attachStatus string
-}
-
-func (o resetStatusOpts) ToResetStatusMap() (map[string]any, error) {
-	action := map[string]any{}
-	if o.status != "" {
-		action["status"] = o.status
-	}
-	if o.attachStatus != "" {
-		action["attach_status"] = o.attachStatus
-	}
-	if len(action) == 0 {
-		return nil, fmt.Errorf("nothing to reset: specify --state, --attached or --detached")
-	}
-	return map[string]any{"os-reset_status": action}, nil
-}
-
 // validate rejects the flag combinations cinder cannot act on, before any
 // request is made.
 func (f *volumeSetFlags) validate(policy volumes.MigrationPolicy, attachStatus string) error {
@@ -727,11 +664,8 @@ func volumeSetResetStatus(ctx context.Context, client *gophercloud.ServiceClient
 	if state == "" && attachStatus == "" {
 		return nil
 	}
-	opts := resetStatusOpts{status: state, attachStatus: attachStatus}
-	if err := volumes.ResetStatus(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("resetting status of volume %q: %w", ref, err)
-	}
-	return nil
+	opts := volumeapi.ResetStatusOpts{Status: state, AttachStatus: attachStatus}
+	return relabel(volumeapi.ResetVolumeStatus(ctx, client, id, opts), "resetting status of volume %q", ref)
 }
 
 // volumeSetRetype retypes the volume, matching OSC's ordering by running before
@@ -750,8 +684,8 @@ func volumeSetRetype(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	opts := volumes.ChangeTypeOpts{NewType: typeID, MigrationPolicy: policy}
-	if err := volumes.ChangeType(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("retyping volume %q: %w", ref, err)
+	if err := volumeapi.RetypeVolume(ctx, client, id, opts); err != nil {
+		return relabel(err, "retyping volume %q", ref)
 	}
 	// The action only returns 202: cinder can still roll the retype back, and
 	// without --wait that failure is invisible.
@@ -772,9 +706,9 @@ func mergeVolumeMetadata(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return nil, fmt.Errorf("parsing --property: %w", err)
 	}
-	cur, err := volumes.Get(ctx, client, id).Extract()
+	cur, err := volumeapi.GetVolume(ctx, client, id)
 	if err != nil {
-		return nil, fmt.Errorf("getting volume %q: %w", ref, err)
+		return nil, relabel(err, "getting volume %q", ref)
 	}
 	merged := map[string]string{}
 	for k, v := range cur.Metadata {
@@ -812,10 +746,8 @@ func volumeSetUpdate(ctx context.Context, client *gophercloud.ServiceClient,
 	if !changed {
 		return nil
 	}
-	if _, err := volumes.Update(ctx, client, id, update).Extract(); err != nil {
-		return fmt.Errorf("updating volume %q: %w", ref, err)
-	}
-	return nil
+	_, err := volumeapi.UpdateVolume(ctx, client, id, update)
+	return relabel(err, "updating volume %q", ref)
 }
 
 // runVolumeSet applies "volume set" as an ordered sequence of independent cinder
@@ -844,8 +776,8 @@ func runVolumeSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	// Extend next, if requested: it is a separate action from the metadata/name
 	// update below.
 	if f.changed.Changed("size") {
-		if err := volumes.ExtendSize(ctx, client, id, volumes.ExtendSizeOpts{NewSize: f.size}).ExtractErr(); err != nil {
-			return fmt.Errorf("extending volume %q: %w", ref, err)
+		if err := volumeapi.ExtendVolume(ctx, client, id, f.size); err != nil {
+			return relabel(err, "extending volume %q", ref)
 		}
 	}
 	if err := volumeSetRetype(ctx, client, ref, id, f, policy, w); err != nil {
@@ -889,9 +821,9 @@ func runVolumeUnset(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	if err != nil {
 		return err
 	}
-	cur, err := volumes.Get(ctx, client, id).Extract()
+	cur, err := volumeapi.GetVolume(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting volume %q: %w", ref, err)
+		return relabel(err, "getting volume %q", ref)
 	}
 	merged := map[string]string{}
 	for k, v := range cur.Metadata {
@@ -900,25 +832,6 @@ func runVolumeUnset(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	for _, key := range f.property {
 		delete(merged, key)
 	}
-	if _, err := volumes.Update(ctx, client, id, metadataUpdateOpts{metadata: merged}).Extract(); err != nil {
-		return fmt.Errorf("updating volume %q: %w", ref, err)
-	}
-	return nil
-}
-
-// metadataUpdateOpts is a volumes.UpdateOptsBuilder that always emits the
-// "metadata" key in the PUT body — even when the map is empty. volumes.UpdateOpts
-// tags Metadata with `json:",omitempty"`, so unsetting the last key would drop
-// the field entirely and cinder (which replaces metadata wholesale) would keep
-// the old values. Sending "metadata":{} clears them as intended.
-type metadataUpdateOpts struct {
-	metadata map[string]string
-}
-
-func (o metadataUpdateOpts) ToVolumeUpdateMap() (map[string]any, error) {
-	m := map[string]string{}
-	for k, v := range o.metadata {
-		m[k] = v
-	}
-	return map[string]any{"volume": map[string]any{"metadata": m}}, nil
+	_, err = volumeapi.UpdateVolume(ctx, client, id, volumeapi.MetadataUpdateOpts{Metadata: merged})
+	return relabel(err, "updating volume %q", ref)
 }

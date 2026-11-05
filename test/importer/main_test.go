@@ -1,6 +1,7 @@
 // Package importer_test builds a Session from FromProvider against an
-// httptest cloud and lists images, networks, flavors, projects and role
-// assignments through pkg/, with nothing but the module's public import paths.
+// httptest cloud and lists images, networks, flavors, projects, role
+// assignments and volumes through pkg/, with nothing but the module's public
+// import paths.
 package importer_test
 
 import (
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
@@ -27,6 +29,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 func cloud(t *testing.T) *httptest.Server {
@@ -112,6 +115,16 @@ func cloud(t *testing.T) *httptest.Server {
 		}
 		answer(w, map[string]any{"role_assignments": []map[string]any{{"role": map[string]any{"id": "rol-1"},
 			"user": map[string]any{"id": "usr-1"}, "scope": map[string]any{"project": map[string]any{"id": "prj-1"}, "OS-INHERIT:inherited_to": "projects"}}}})
+	})
+	mux.HandleFunc("GET /block-storage/volumes/detail", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("user_id") != "usr-1" {
+			http.Error(w, "want user_id", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"volumes": []map[string]any{{"id": "vol-1", "name": "data", "status": "available"}}})
+	})
+	mux.HandleFunc("GET /block-storage/volumes/vol-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"volume": map[string]any{"id": "vol-1", "status": "available", "volume_type": "ssd"}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -216,5 +229,19 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	if as, err := identity.ListRoleAssignments(ctx, identityClient, roles.ListAssignmentsOpts{UserID: "usr-1"}); err != nil ||
 		len(as) != 1 || as[0].Role.ID != "rol-1" || as[0].InheritedTo != "projects" {
 		t.Fatalf("ListRoleAssignments = %+v, %v", as, err)
+	}
+
+	volumeClient, err := s.Volume()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vols, err := volume.ListVolumes(ctx, volumeClient, volume.ListOpts{
+		ListOptsBuilder: volumes.ListOpts{AllTenants: true}, UserID: "usr-1",
+	}, 0)
+	if err != nil || len(vols) != 1 || vols[0].ID != "vol-1" {
+		t.Fatalf("ListVolumes = %+v, %v", vols, err)
+	}
+	if err := volume.WaitForRetype(ctx, volumeClient, "vol-1", "", "ssd", time.Millisecond); err != nil {
+		t.Fatalf("WaitForRetype: %v", err)
 	}
 }

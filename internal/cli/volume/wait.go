@@ -4,90 +4,28 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumetypes"
+
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
-// Bounds for the --wait polling loops. A retype that has to migrate copies the
+// volumePollTimeout bounds a --wait. A retype that has to migrate copies the
 // whole volume, so the default cap is generous; --wait-timeout overrides it.
-const (
-	volumePollTimeout = 60 * time.Minute
-	// maxVolumeGetErrors bounds how many consecutive Get failures a poll tolerates
-	// before giving up; the counter resets on any success.
-	maxVolumeGetErrors = 5
-)
+const volumePollTimeout = 60 * time.Minute
 
 // volumePollInterval is a var so tests can shorten it; production never reassigns it.
 var volumePollInterval = 5 * time.Second
 
-// volumeWaitState is the subset of the volume body the --wait loops read.
-//
-// migration_status is only rendered for admins (cinder/api/v2/views/volumes.py
-// gates it on ctxt.is_admin), so it is empty for an ordinary user and must never
-// be the sole success signal. volume_type_id arrives from microversion 3.63 on.
-type volumeWaitState struct {
-	Status          string `json:"status"`
-	VolumeType      string `json:"volume_type"`
-	VolumeTypeID    string `json:"volume_type_id"`
-	MigrationStatus string `json:"migration_status"`
-}
-
-// migrationInFlight reports whether migration_status is one of the transient
-// values cinder sets while a migration runs (see cinder/volume/manager.py).
-func migrationInFlight(s string) bool {
-	switch strings.ToLower(s) {
-	case "starting", "migrating", "completing":
-		return true
-	}
-	return false
-}
-
-// pollVolume polls the volume until done reports it settled. done returns
-// (finished, err): a non-nil error ends the wait as a failure. Transient Get
-// failures are tolerated up to maxVolumeGetErrors.
-func pollVolume(ctx context.Context, client *gophercloud.ServiceClient, ref, id string,
-	timeout time.Duration, done func(volumeWaitState) (bool, error),
-) error {
+// waitContext bounds a --wait: timeout, or volumePollTimeout when it is not
+// positive.
+func waitContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		timeout = volumePollTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(volumePollInterval)
-	defer ticker.Stop()
-
-	var getErrors int
-	for {
-		var st volumeWaitState
-		if err := volumes.Get(ctx, client, id).ExtractInto(&st); err != nil {
-			if ctx.Err() != nil {
-				return fmt.Errorf("waiting for volume %q: %w", ref, ctx.Err())
-			}
-			getErrors++
-			if getErrors > maxVolumeGetErrors {
-				return fmt.Errorf("polling volume %q: %w", ref, err)
-			}
-		} else {
-			getErrors = 0
-			finished, err := done(st)
-			if err != nil {
-				return err
-			}
-			if finished {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("waiting for volume %q: %w", ref, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // newRetypeTarget looks up the resolved type's name so the wait can match cinder's
@@ -110,18 +48,6 @@ type retypeTarget struct {
 	name string
 }
 
-func (t retypeTarget) matches(st volumeWaitState) bool {
-	for _, got := range []string{st.VolumeType, st.VolumeTypeID} {
-		if got == "" {
-			continue
-		}
-		if got == t.id || (t.name != "" && got == t.name) {
-			return true
-		}
-	}
-	return false
-}
-
 // waitForRetype polls until a retype settles.
 //
 // Cinder restores the volume's previous status on both success and failure (it
@@ -133,24 +59,23 @@ func (t retypeTarget) matches(st volumeWaitState) bool {
 func waitForRetype(ctx context.Context, client *gophercloud.ServiceClient,
 	ref, id string, target retypeTarget, timeout time.Duration, w io.Writer,
 ) error {
-	err := pollVolume(ctx, client, ref, id, timeout, func(st volumeWaitState) (bool, error) {
-		switch {
-		case strings.EqualFold(st.Status, "error"):
-			return false, fmt.Errorf("volume %q entered error status during retype", ref)
-		case strings.EqualFold(st.Status, "retyping") || migrationInFlight(st.MigrationStatus):
-			return false, nil
-		case strings.EqualFold(st.MigrationStatus, "error"):
-			return false, fmt.Errorf("retype of volume %q failed: cinder reported migration_status=error "+
-				"and left it as type %q", ref, st.VolumeType)
-		case !target.matches(st):
+	ctx, cancel := waitContext(ctx, timeout)
+	defer cancel()
+	err := volumeapi.WaitForRetype(ctx, client, id, target.id, target.name, volumePollInterval)
+	if err = relabelWait(err, ref, func(f *volumeapi.WaitFailedError) error {
+		switch f.Reason {
+		case volumeapi.MigrationError:
+			return fmt.Errorf("retype of volume %q failed: cinder reported migration_status=error "+
+				"and left it as type %q", ref, f.State.VolumeType)
+		case volumeapi.RetypeRolledBack:
 			// Cinder rolled the retype back; the API already returned 202, so this
 			// is the only place the failure surfaces.
-			return false, fmt.Errorf("retype of volume %q did not take effect: type is %q, wanted %q",
-				ref, st.VolumeType, target.display())
+			return fmt.Errorf("retype of volume %q did not take effect: type is %q, wanted %q",
+				ref, f.State.VolumeType, target.display())
+		default:
+			return fmt.Errorf("volume %q entered error status during retype", ref)
 		}
-		return true, nil
-	})
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(w, "Volume %s retyped to %s\n", ref, target.display())
@@ -174,20 +99,15 @@ func (t retypeTarget) display() string {
 func waitForVolumeMigration(ctx context.Context, client *gophercloud.ServiceClient,
 	ref, id, host string, timeout time.Duration, w io.Writer,
 ) error {
-	err := pollVolume(ctx, client, ref, id, timeout, func(st volumeWaitState) (bool, error) {
-		switch {
-		case strings.EqualFold(st.MigrationStatus, "success"):
-			return true, nil
-		case strings.EqualFold(st.MigrationStatus, "error"):
-			return false, fmt.Errorf("migration of volume %q to host %q failed", ref, host)
-		case strings.EqualFold(st.Status, "error"):
-			return false, fmt.Errorf("volume %q entered error status during migration", ref)
+	ctx, cancel := waitContext(ctx, timeout)
+	defer cancel()
+	err := volumeapi.WaitForVolumeMigration(ctx, client, id, volumePollInterval)
+	if err = relabelWait(err, ref, func(f *volumeapi.WaitFailedError) error {
+		if f.Reason == volumeapi.MigrationError {
+			return fmt.Errorf("migration of volume %q to host %q failed", ref, host)
 		}
-		// An empty migration_status means cinder has not registered the migration
-		// yet (or the caller cannot see the field); keep waiting either way.
-		return false, nil
-	})
-	if err != nil {
+		return fmt.Errorf("volume %q entered error status during migration", ref)
+	}); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(w, "Volume %s migrated to host %s\n", ref, host)
@@ -203,13 +123,10 @@ func waitForVolumeMigration(ctx context.Context, client *gophercloud.ServiceClie
 func waitForVolumeAvailable(ctx context.Context, client *gophercloud.ServiceClient,
 	ref, id string, timeout time.Duration,
 ) error {
-	return pollVolume(ctx, client, ref, id, timeout, func(st volumeWaitState) (bool, error) {
-		switch strings.ToLower(st.Status) {
-		case "available":
-			return true, nil
-		case "error":
-			return false, fmt.Errorf("volume %q entered error status while being created", ref)
-		}
-		return false, nil
-	})
+	ctx, cancel := waitContext(ctx, timeout)
+	defer cancel()
+	return relabelWait(volumeapi.WaitForVolumeAvailable(ctx, client, id, volumePollInterval), ref,
+		func(*volumeapi.WaitFailedError) error {
+			return fmt.Errorf("volume %q entered error status while being created", ref)
+		})
 }
