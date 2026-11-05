@@ -2,7 +2,6 @@ package volume
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -12,7 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // "volume transfer request" — cinder's hand-off of a volume from one project to
@@ -22,12 +21,6 @@ import (
 // Flag names follow upstream OSC (`openstack volume transfer request ...`).
 // UNVERIFIED against KeyStack docs (https://docs.keystack.ru/ returned HTTP 403
 // at implementation time); falls back to upstream OSC semantics.
-
-// transferSnapshotsMicroversion is where cinder added the `no_snapshots` field,
-// on a new /volume-transfers endpoint. The legacy /os-volume-transfer route
-// gophercloud uses has no such field and always carries the snapshots, so
-// --no-snapshots has to go to the newer endpoint.
-const transferSnapshotsMicroversion = "3.55"
 
 func newTransferCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	request := &cobra.Command{Use: "request", Short: "Manage volume transfer requests"}
@@ -79,9 +72,9 @@ func runTransferList(ctx context.Context, client *gophercloud.ServiceClient, o *
 	allProjects bool, limit int, w io.Writer,
 ) error {
 	opts := transfers.ListOpts{AllTenants: allProjects, Limit: limit}
-	all, err := paging.Collect(ctx, transfers.List(client, opts), limit, transfers.ExtractTransfers)
+	all, err := volumeapi.ListTransfers(ctx, client, opts, limit)
 	if err != nil {
-		return fmt.Errorf("listing volume transfer requests: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Volume ID"}, Rows: make([][]any, 0, len(all))}
 	for _, tr := range all {
@@ -110,9 +103,9 @@ func newTransferShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTransferShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	tr, err := transfers.Get(ctx, client, id).Extract()
+	tr, err := volumeapi.GetTransfer(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing volume transfer request %s: %w", id, err)
+		return err
 	}
 	fields, values := transferShowFields(tr)
 	return o.WriteSingle(w, fields, values)
@@ -165,54 +158,15 @@ func runTransferCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 	}
 	var tr *transfers.Transfer
 	if noSnapshots {
-		if tr, err = createTransferWithoutSnapshots(ctx, client, volumeID, name); err != nil {
-			return fmt.Errorf("creating a transfer request for volume %q: %w", volumeRef, err)
-		}
+		tr, err = volumeapi.CreateTransferWithoutSnapshots(ctx, client, volumeID, name)
 	} else {
-		tr, err = transfers.Create(ctx, client, transfers.CreateOpts{VolumeID: volumeID, Name: name}).Extract()
-		if err != nil {
-			return fmt.Errorf("creating a transfer request for volume %q: %w", volumeRef, err)
-		}
+		tr, err = volumeapi.CreateTransfer(ctx, client, transfers.CreateOpts{VolumeID: volumeID, Name: name})
+	}
+	if err != nil {
+		return relabel(err, "creating a transfer request for volume %q", volumeRef)
 	}
 	fields, values := transferShowFields(tr)
 	return o.WriteSingle(w, fields, values)
-}
-
-// createTransferWithoutSnapshots POSTs to cinder's newer /volume-transfers
-// endpoint, the only one that accepts `no_snapshots` (microversion 3.55).
-// gophercloud v2.13.0 targets the legacy /os-volume-transfer route, which has
-// no such field, so this cannot go through the typed call. Delete it once
-// gophercloud grows the newer endpoint.
-func createTransferWithoutSnapshots(ctx context.Context, client *gophercloud.ServiceClient,
-	volumeID, name string,
-) (*transfers.Transfer, error) {
-	transfer := map[string]any{
-		"volume_id":    volumeID,
-		"no_snapshots": true,
-	}
-	if name != "" {
-		transfer["name"] = name
-	}
-	body := map[string]any{"transfer": transfer}
-	// Pin the request to the microversion that introduced the field: on a copy
-	// of the client, since setMicroversionHeader rewrites MoreHeaders on every
-	// request made with it.
-	pinned := *client
-	pinned.Microversion = transferSnapshotsMicroversion
-
-	var result struct {
-		Transfer transfers.Transfer `json:"transfer"`
-	}
-	resp, err := pinned.Post(ctx, pinned.ServiceURL("volume-transfers"), body, &result, &gophercloud.RequestOpts{
-		OkCodes: []int{202},
-	})
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &result.Transfer, nil
 }
 
 // --- delete / accept --------------------------------------------------------
@@ -238,10 +192,7 @@ func newTransferDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 
 func runTransferDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := transfers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume transfer request %s: %w", id, err)
-		}
-		return nil
+		return volumeapi.DeleteTransfer(ctx, client, id)
 	})
 }
 
@@ -274,9 +225,9 @@ func runTransferAccept(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err := o.CheckColumns(transferColumns...); err != nil {
 		return err
 	}
-	tr, err := transfers.Accept(ctx, client, id, transfers.AcceptOpts{AuthKey: authKey}).Extract()
+	tr, err := volumeapi.AcceptTransfer(ctx, client, id, authKey)
 	if err != nil {
-		return fmt.Errorf("accepting volume transfer request %s: %w", id, err)
+		return err
 	}
 	fields, values := transferShowFields(tr)
 	return o.WriteSingle(w, fields, values)

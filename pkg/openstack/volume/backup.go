@@ -20,6 +20,17 @@ func ListBackups(ctx context.Context, c *gophercloud.ServiceClient, opts backups
 	return all, nil
 }
 
+// ListBackupSummaries lists the backups opts selects, up to limit (0: all),
+// from cinder's summary view: ID, name and links only. It is the cheaper
+// call for finding a backup by name.
+func ListBackupSummaries(ctx context.Context, c *gophercloud.ServiceClient, opts backups.ListOptsBuilder, limit int) ([]backups.Backup, error) {
+	all, err := paging.Collect(ctx, backups.List(c, opts), limit, backups.ExtractBackups)
+	if err != nil {
+		return nil, wrap(err, "listing backups")
+	}
+	return all, nil
+}
+
 // detailOpts sends ListOpts's filters to the detail listing, whose own opts
 // type has no name, status or volume_id.
 type detailOpts struct{ backups.ListOpts }
