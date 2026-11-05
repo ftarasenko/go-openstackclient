@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -12,6 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Role writes and the role-inference (implied role) rules.
@@ -67,16 +67,16 @@ func runRoleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	r, err := roles.Create(ctx, client, roles.CreateOpts{
+	r, err := identityapi.CreateRole(ctx, client, roles.CreateOpts{
 		Name:        name,
 		Description: f.description,
 		DomainID:    domainID,
-	}).Extract()
+	})
 	if err != nil {
 		if f.orShow && gophercloud.ResponseCodeIs(err, 409) {
 			return runRoleShow(ctx, client, o, name, w)
 		}
-		return fmt.Errorf("creating role %q: %w", name, err)
+		return relabel(err, "creating role %q", name)
 	}
 	return writeRole(o, w, r)
 }
@@ -124,10 +124,7 @@ func runRoleDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 		if err != nil {
 			return err
 		}
-		if err := roles.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting role %q: %w", ref, err)
-		}
-		return nil
+		return relabel(identityapi.DeleteRole(ctx, client, id), "deleting role %q", ref)
 	})
 }
 
@@ -174,10 +171,8 @@ func runRoleSet(ctx context.Context, client *gophercloud.ServiceClient, ref, nam
 	if descSet {
 		opts.Description = &description
 	}
-	if _, err := roles.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating role %q: %w", ref, err)
-	}
-	return nil
+	_, err = identityapi.UpdateRole(ctx, client, id, opts)
+	return relabel(err, "updating role %q", ref)
 }
 
 // --- implied role -----------------------------------------------------------
@@ -233,9 +228,9 @@ func runImpliedRoleCreate(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	rule, err := roles.CreateRoleInferenceRule(ctx, client, priorID, impliedID).Extract()
+	rule, err := identityapi.CreateRoleInferenceRule(ctx, client, priorID, impliedID)
 	if err != nil {
-		return fmt.Errorf("creating role-inference rule %q implies %q: %w", priorRef, impliedRef, err)
+		return relabel(err, "creating role-inference rule %q implies %q", priorRef, impliedRef)
 	}
 	inf := rule.RoleInference
 	return o.WriteSingle(w,
@@ -271,10 +266,8 @@ func runImpliedRoleDelete(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	if err := roles.DeleteRoleInferenceRule(ctx, client, priorID, impliedID).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting role-inference rule %q implies %q: %w", priorRef, impliedRef, err)
-	}
-	return nil
+	return relabel(identityapi.DeleteRoleInferenceRule(ctx, client, priorID, impliedID),
+		"deleting role-inference rule %q implies %q", priorRef, impliedRef)
 }
 
 func newImpliedRoleListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -300,12 +293,12 @@ func newImpliedRoleListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 // role carrying every role it implies — into one row per (prior, implied) pair,
 // matching upstream's lister.
 func runImpliedRoleList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	list, err := roles.ListRoleInferenceRules(ctx, client).Extract()
+	list, err := identityapi.ListRoleInferenceRules(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing role-inference rules: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"Prior Role ID", "Prior Role Name", "Implied Role ID", "Implied Role Name"}}
-	for _, rule := range list.RoleInferenceRuleList {
+	for _, rule := range list {
 		for _, implied := range rule.ImpliedRoles {
 			t.Rows = append(t.Rows, []any{rule.PriorRole.ID, rule.PriorRole.Name, implied.ID, implied.Name})
 		}

@@ -1,5 +1,6 @@
 // Package identity is koc's keystone (identity v3) layer: domains, projects,
-// users, groups, regions, services, endpoints, the catalog and tokens.
+// users, groups, regions, services, endpoints, roles and their assignments,
+// application credentials, the catalog and tokens.
 //
 // Every function takes the identity client openstack.Session.Identity
 // returns and speaks gophercloud's types. Listings collect every page.
