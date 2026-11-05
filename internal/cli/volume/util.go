@@ -15,6 +15,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // volumeNamesForTable maps volume ID to name for a listing's Volume column, or
@@ -33,11 +34,7 @@ func volumeNamesForTable(ctx context.Context, client *gophercloud.ServiceClient,
 	if len(o.Columns) > 0 && len(o.SelectedColumns("Volume")) == 0 {
 		return nil
 	}
-	pages, err := volumes.List(client, volumes.ListOpts{}).AllPages(ctx)
-	if err != nil {
-		return nil
-	}
-	all, err := volumes.ExtractVolumes(pages)
+	all, err := volumeapi.ListVolumes(ctx, client, volumes.ListOpts{}, 0)
 	if err != nil {
 		return nil
 	}
@@ -108,17 +105,14 @@ func oneID(kind, ref string, ids []string) (string, error) {
 func resolveVolumeID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
 	return resolveByNameOrGet("volume", ref,
 		func() (string, bool) {
-			if v, err := volumes.Get(ctx, client, ref).Extract(); err == nil {
+			if v, err := volumeapi.GetVolume(ctx, client, ref); err == nil {
 				return v.ID, true
 			}
 			return "", false
 		},
 		func() ([]volumes.Volume, error) {
-			pages, err := volumes.List(client, volumes.ListOpts{Name: ref}).AllPages(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return volumes.ExtractVolumes(pages)
+			all, err := volumeapi.ListVolumes(ctx, client, volumes.ListOpts{Name: ref}, 0)
+			return all, inner(err)
 		},
 		func(v volumes.Volume) string { return v.Name },
 		func(v volumes.Volume) string { return v.ID },

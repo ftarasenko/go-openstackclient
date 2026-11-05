@@ -7,11 +7,11 @@ import (
 	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // newVolumeExtendCommand builds "volume extend <volume> <size>", the cinder CLI's
@@ -55,14 +55,14 @@ func runVolumeExtend(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	if err := volumes.ExtendSize(ctx, client, id, volumes.ExtendSizeOpts{NewSize: size}).ExtractErr(); err != nil {
-		return fmt.Errorf("extending volume %q to %d GiB: %w", ref, size, err)
+	if err := volumeapi.ExtendVolume(ctx, client, id, size); err != nil {
+		return relabel(err, "extending volume %q to %d GiB", ref, size)
 	}
 	// Cinder answers 202 with no body and resizes asynchronously, so the record is
 	// re-fetched to report the status the extend left the volume in.
-	v, err := volumes.Get(ctx, client, id).Extract()
+	v, err := volumeapi.GetVolume(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting volume %q after extend: %w", ref, err)
+		return relabel(err, "getting volume %q after extend", ref)
 	}
 	fields, values := volumeShowFields(v)
 	return o.WriteSingle(w, fields, values)

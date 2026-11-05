@@ -15,19 +15,19 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // Microversions the cinder attachments API needs. koc negotiates "latest" by
 // default, so these only bite when --os-volume-api-version pins an older version.
 const (
 	// attachmentsMicroversion gates the /attachments resource itself.
-	attachmentsMicroversion = "3.27"
+	attachmentsMicroversion = volumeapi.AttachmentsMicroversion
 	// completeMicroversion gates the os-complete action.
-	completeMicroversion = "3.44"
+	completeMicroversion = volumeapi.CompleteAttachmentMicroversion
 	// attachModeMicroversion gates the top-level "mode" key on create; from 3.27
 	// to 3.53 the mode rides in the connector instead.
-	attachModeMicroversion = "3.54"
+	attachModeMicroversion = volumeapi.AttachModeMicroversion
 )
 
 // newAttachmentCommand builds "volume attachment ...", the cinder attachments
@@ -146,9 +146,9 @@ func runAttachmentList(ctx context.Context, client *gophercloud.ServiceClient, o
 		Marker:     f.marker,
 	}
 	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, attachments.List(client, opts), f.limit, attachments.ExtractAttachments)
+	all, err := volumeapi.ListAttachments(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing volume attachments: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Volume ID", "Server ID", "Status"},
@@ -185,9 +185,9 @@ func runAttachmentShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err := requireVolumeMicroversion(client, attachmentsMicroversion, "volume attachment show"); err != nil {
 		return err
 	}
-	at, err := attachments.Get(ctx, client, id).Extract()
+	at, err := volumeapi.GetAttachment(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting volume attachment %q: %w", id, err)
+		return relabel(err, "getting volume attachment %q", id)
 	}
 	fields, values := attachmentShowFields(at)
 	return o.WriteSingle(w, fields, values)
@@ -328,9 +328,9 @@ func runAttachmentCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if f.connect {
 		opts.Connector = f.connector.connector()
 	}
-	at, err := attachments.Create(ctx, client, opts).Extract()
+	at, err := volumeapi.CreateAttachment(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating attachment for volume %q: %w", volumeRef, err)
+		return relabel(err, "creating attachment for volume %q", volumeRef)
 	}
 	fields, values := attachmentShowFields(at)
 	return o.WriteSingle(w, fields, values)
@@ -360,8 +360,8 @@ func runAttachmentDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	return batchdelete.Each(ids, func(id string) error {
-		if err := attachments.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume attachment %q: %w", id, err)
+		if err := volumeapi.DeleteAttachment(ctx, client, id); err != nil {
+			return relabel(err, "deleting volume attachment %q", id)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume attachment: %s\n", id); err != nil {
 			return err
@@ -410,9 +410,9 @@ func runAttachmentSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return fmt.Errorf("nothing to set: specify at least one of --initiator, --ip, --host, " +
 			"--platform, --os-type, --mountpoint")
 	}
-	at, err := attachments.Update(ctx, client, id, attachments.UpdateOpts{Connector: f.connector()}).Extract()
+	at, err := volumeapi.UpdateAttachment(ctx, client, id, attachments.UpdateOpts{Connector: f.connector()})
 	if err != nil {
-		return fmt.Errorf("updating volume attachment %q: %w", id, err)
+		return relabel(err, "updating volume attachment %q", id)
 	}
 	fields, values := attachmentShowFields(at)
 	return o.WriteSingle(w, fields, values)
@@ -441,8 +441,8 @@ func runAttachmentComplete(ctx context.Context, client *gophercloud.ServiceClien
 	if err := requireVolumeMicroversion(client, completeMicroversion, "volume attachment complete"); err != nil {
 		return err
 	}
-	if err := attachments.Complete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("completing volume attachment %q: %w", id, err)
+	if err := volumeapi.CompleteAttachment(ctx, client, id); err != nil {
+		return relabel(err, "completing volume attachment %q", id)
 	}
 	_, err := fmt.Fprintf(w, "Completed volume attachment: %s\n", id)
 	return err
