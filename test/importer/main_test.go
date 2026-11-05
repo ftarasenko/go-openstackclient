@@ -1,5 +1,5 @@
 // Package importer_test builds a Session from FromProvider against an
-// httptest cloud and lists images and networks through pkg/, with nothing but
+// httptest cloud and lists images, networks and flavors through pkg/, with nothing but
 // the module's public import paths.
 package importer_test
 
@@ -11,10 +11,12 @@ import (
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
@@ -41,6 +43,11 @@ func cloud(t *testing.T) *httptest.Server {
 			nets = nets[:1]
 		}
 		answer(w, map[string]any{"networks": nets})
+	})
+	mux.HandleFunc("GET /compute/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"flavors": []map[string]any{
+			{"id": "1", "name": "m1.small", "os-flavor-access:is_public": true},
+		}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -78,5 +85,16 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	id, err := resolve.NetworkID(ctx, networkClient, "private")
 	if err != nil || id != nets[0].ID {
 		t.Fatalf("NetworkID = %q, %v", id, err)
+	}
+
+	computeClient, err := s.Compute()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fls, err := compute.ListFlavors(ctx, computeClient, flavors.ListOpts{}); err != nil || len(fls) != 1 {
+		t.Fatalf("ListFlavors = %v, %v", fls, err)
+	}
+	if fl, err := compute.FindFlavor(ctx, computeClient, "m1.small"); err != nil || fl.ID != "1" {
+		t.Fatalf("FindFlavor = %v, %v", fl, err)
 	}
 }

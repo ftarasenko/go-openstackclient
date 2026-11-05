@@ -16,6 +16,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // Flag names and semantics below follow upstream python-openstackclient
@@ -160,13 +161,9 @@ func runKeypairList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		userIDs = []string{""}
 	}
 	for _, userID := range userIDs {
-		pages, err := keypairs.List(client, keypairs.ListOpts{UserID: userID}).AllPages(ctx)
+		all, err := computeapi.ListKeypairs(ctx, client, keypairs.ListOpts{UserID: userID})
 		if err != nil {
-			return fmt.Errorf("listing keypairs: %w", err)
-		}
-		all, err := keypairs.ExtractKeyPairs(pages)
-		if err != nil {
-			return fmt.Errorf("parsing keypair list: %w", err)
+			return err
 		}
 		for _, k := range all {
 			rows = append(rows, row{userID: userID, pair: k})
@@ -247,9 +244,9 @@ func newKeypairShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runKeypairShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, userID string, publicKeyOnly bool, w io.Writer,
 ) error {
-	k, err := keypairs.Get(ctx, client, name, keypairs.GetOpts{UserID: userID}).Extract()
+	k, err := computeapi.GetKeypair(ctx, client, name, keypairs.GetOpts{UserID: userID})
 	if err != nil {
-		return fmt.Errorf("showing keypair %q: %w", name, err)
+		return err
 	}
 	if publicKeyOnly {
 		if _, err := fmt.Fprintln(w, k.PublicKey); err != nil {
@@ -312,9 +309,9 @@ func runKeypairCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		opts.PublicKey = string(data)
 	}
 
-	k, err := keypairs.Create(ctx, client, opts).Extract()
+	k, err := computeapi.CreateKeypair(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating keypair %q: %w", name, err)
+		return err
 	}
 
 	// When nova generates the key, the private key is only returned once. Emit
@@ -357,9 +354,6 @@ func newKeypairDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 
 func runKeypairDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string, _ io.Writer) error {
 	return batchdelete.Each(names, func(name string) error {
-		if err := keypairs.Delete(ctx, client, name, keypairs.DeleteOpts{}).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting keypair %q: %w", name, err)
-		}
-		return nil
+		return computeapi.DeleteKeypair(ctx, client, name, keypairs.DeleteOpts{})
 	})
 }
