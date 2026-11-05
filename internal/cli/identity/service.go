@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -12,6 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack service ...`). UNVERIFIED against
@@ -50,13 +50,9 @@ func newServiceListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
+	all, err := identityapi.ListServices(ctx, client, services.ListOpts{})
 	if err != nil {
-		return fmt.Errorf("listing services: %w", err)
-	}
-	all, err := services.ExtractServices(pages)
-	if err != nil {
-		return fmt.Errorf("parsing service list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Type", "Enabled", "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, s := range all {
@@ -89,9 +85,9 @@ func runServiceShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	s, err := services.Get(ctx, client, id).Extract()
+	s, err := identityapi.GetService(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing service %q: %w", nameOrID, err)
+		return relabel(err, "showing service %q", nameOrID)
 	}
 	return o.WriteSingle(w,
 		[]string{"ID", "Name", "Type", "Enabled", "Description"},
@@ -171,14 +167,14 @@ func runServiceCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err := o.CheckColumns(serviceCreateColumns...); err != nil {
 		return err
 	}
-	s, err := services.Create(ctx, client, services.CreateOpts{
+	s, err := identityapi.CreateService(ctx, client, services.CreateOpts{
 		Type:        typ,
 		Name:        f.name,
 		Description: f.description,
 		Enabled:     f.enabled(),
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating service of type %q: %w", typ, err)
+		return relabel(err, "creating service of type %q", typ)
 	}
 	return o.WriteSingle(w,
 		serviceCreateColumns,
@@ -210,8 +206,8 @@ func runServiceDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 		if err != nil {
 			return err
 		}
-		if err := services.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting service %q: %w", ref, err)
+		if err := identityapi.DeleteService(ctx, client, id); err != nil {
+			return relabel(err, "deleting service %q", ref)
 		}
 		return nil
 	})
@@ -256,8 +252,8 @@ func runServiceSet(ctx context.Context, client *gophercloud.ServiceClient, ref s
 	if descSet {
 		opts.Description = &f.description
 	}
-	if _, err := services.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating service %q: %w", ref, err)
+	if _, err := identityapi.UpdateService(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating service %q", ref)
 	}
 	return nil
 }

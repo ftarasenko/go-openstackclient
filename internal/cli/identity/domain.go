@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack domain ...`). The KeyStack command
@@ -53,13 +53,9 @@ func newDomainListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runDomainList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	pages, err := domains.List(client, domains.ListOpts{Name: name}).AllPages(ctx)
+	all, err := identityapi.ListDomains(ctx, client, domains.ListOpts{Name: name})
 	if err != nil {
-		return fmt.Errorf("listing domains: %w", err)
-	}
-	all, err := domains.ExtractDomains(pages)
-	if err != nil {
-		return fmt.Errorf("parsing domain list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Enabled", "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, d := range all {
@@ -92,9 +88,9 @@ func runDomainShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	d, err := domains.Get(ctx, client, id).Extract()
+	d, err := identityapi.GetDomain(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing domain %q: %w", nameOrID, err)
+		return relabel(err, "showing domain %q", nameOrID)
 	}
 	return o.WriteSingle(w,
 		[]string{"ID", "Name", "Enabled", "Description"},
@@ -151,9 +147,9 @@ func runDomainCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		Description: f.description,
 		Enabled:     enabledFromFlags(f.enableSet, f.disableSet, f.enable),
 	}
-	d, err := domains.Create(ctx, client, opts).Extract()
+	d, err := identityapi.CreateDomain(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating domain %q: %w", name, err)
+		return relabel(err, "creating domain %q", name)
 	}
 	return o.WriteSingle(w,
 		domainCreateColumns,
@@ -184,8 +180,8 @@ func runDomainDelete(ctx context.Context, client *gophercloud.ServiceClient, nam
 	if err != nil {
 		return err
 	}
-	if err := domains.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting domain %q: %w", nameOrID, err)
+	if err := identityapi.DeleteDomain(ctx, client, id); err != nil {
+		return relabel(err, "deleting domain %q", nameOrID)
 	}
 	return nil
 }
@@ -233,8 +229,8 @@ func runDomainSet(ctx context.Context, client *gophercloud.ServiceClient, nameOr
 	if descSet {
 		opts.Description = &f.description
 	}
-	if _, err := domains.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating domain %q: %w", nameOrID, err)
+	if _, err := identityapi.UpdateDomain(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating domain %q", nameOrID)
 	}
 	return nil
 }

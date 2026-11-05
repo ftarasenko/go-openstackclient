@@ -11,6 +11,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
+
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // The keystone API keys grants, assignments and endpoint creation on IDs, but
@@ -21,51 +23,31 @@ import (
 
 func resolveDomainID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
 	return resolveByName("domain", "", nameOrID, func() ([]domains.Domain, error) {
-		pages, err := domains.List(client, domains.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return domains.ExtractDomains(pages)
+		return identityapi.ListDomains(ctx, client, domains.ListOpts{Name: nameOrID})
 	}, func(d domains.Domain) string { return d.ID })
 }
 
 func resolveProjectID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
 	return resolveByName("project", " (try --domain)", nameOrID, func() ([]projects.Project, error) {
-		pages, err := projects.List(client, projects.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return projects.ExtractProjects(pages)
+		return identityapi.ListProjects(ctx, client, projects.ListOpts{Name: nameOrID, DomainID: domainID})
 	}, func(p projects.Project) string { return p.ID })
 }
 
 func resolveUserID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
 	return resolveByName("user", " (try --domain)", nameOrID, func() ([]users.User, error) {
-		pages, err := users.List(client, users.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return users.ExtractUsers(pages)
+		return identityapi.ListUsers(ctx, client, users.ListOpts{Name: nameOrID, DomainID: domainID})
 	}, func(u users.User) string { return u.ID })
 }
 
 func resolveRoleID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
 	return resolveByName("role", "", nameOrID, func() ([]roles.Role, error) {
-		pages, err := roles.List(client, roles.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return roles.ExtractRoles(pages)
+		return identityapi.ListRoles(ctx, client, roles.ListOpts{Name: nameOrID, DomainID: domainID})
 	}, func(r roles.Role) string { return r.ID })
 }
 
 func resolveGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID, domainID string) (string, error) {
 	return resolveByName("group", "", nameOrID, func() ([]groups.Group, error) {
-		pages, err := groups.List(client, groups.ListOpts{Name: nameOrID, DomainID: domainID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return groups.ExtractGroups(pages)
+		return identityapi.ListGroups(ctx, client, groups.ListOpts{Name: nameOrID, DomainID: domainID})
 	}, func(g groups.Group) string { return g.ID })
 }
 
@@ -77,13 +59,9 @@ func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, na
 	if nameOrID == "" {
 		return "", nil
 	}
-	pages, err := services.List(client, services.ListOpts{}).AllPages(ctx)
+	all, err := identityapi.ListServices(ctx, client, services.ListOpts{})
 	if err != nil {
-		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
-	}
-	all, err := services.ExtractServices(pages)
-	if err != nil {
-		return "", fmt.Errorf("resolving service %q: %w", nameOrID, err)
+		return "", relabel(err, "resolving service %q", nameOrID)
 	}
 	var matches []string
 	for _, s := range all {
@@ -113,7 +91,7 @@ func resolveByName[T any](kind, hint, nameOrID string,
 	}
 	all, err := list()
 	if err != nil {
-		return "", fmt.Errorf("resolving %s %q: %w", kind, nameOrID, err)
+		return "", relabel(err, "resolving %s %q", kind, nameOrID)
 	}
 	switch len(all) {
 	case 0:

@@ -6,12 +6,12 @@ import (
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack user ...`). The KeyStack command
@@ -59,13 +59,9 @@ func runUserList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	pages, err := users.List(client, users.ListOpts{DomainID: domainID}).AllPages(ctx)
+	all, err := identityapi.ListUsers(ctx, client, users.ListOpts{DomainID: domainID})
 	if err != nil {
-		return fmt.Errorf("listing users: %w", err)
-	}
-	all, err := users.ExtractUsers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing user list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", colDomainID, "Enabled"}, Rows: make([][]any, 0, len(all))}
 	for _, u := range all {
@@ -105,9 +101,9 @@ func runUserShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	u, err := users.Get(ctx, client, id).Extract()
+	u, err := identityapi.GetUser(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing user %q: %w", nameOrID, err)
+		return relabel(err, "showing user %q", nameOrID)
 	}
 	return o.WriteSingle(w,
 		[]string{"ID", "Name", colDomainID, "Enabled", "Description", "Default Project ID"},
@@ -212,9 +208,9 @@ func runUserCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Description:      f.description,
 		Enabled:          enabledFromFlags(f.enableSet, f.disableSet, f.enable),
 	}
-	u, err := users.Create(ctx, client, opts).Extract()
+	u, err := identityapi.CreateUser(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating user %q: %w", name, err)
+		return relabel(err, "creating user %q", name)
 	}
 	return o.WriteSingle(w,
 		userCreateColumns,
@@ -252,8 +248,8 @@ func runUserDelete(ctx context.Context, client *gophercloud.ServiceClient, nameO
 	if err != nil {
 		return err
 	}
-	if err := users.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting user %q: %w", nameOrID, err)
+	if err := identityapi.DeleteUser(ctx, client, id); err != nil {
+		return relabel(err, "deleting user %q", nameOrID)
 	}
 	return nil
 }
@@ -323,8 +319,8 @@ func runUserSet(ctx context.Context, client *gophercloud.ServiceClient, nameOrID
 	if descSet {
 		opts.Description = &f.description
 	}
-	if _, err := users.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating user %q: %w", nameOrID, err)
+	if _, err := identityapi.UpdateUser(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating user %q", nameOrID)
 	}
 	return nil
 }
@@ -370,9 +366,9 @@ func newUserPasswordCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // issued for. Keystone's password-change endpoint is addressed by user ID and
 // the ID is not carried on the client, so it has to come from the token.
 func authenticatedUserID(ctx context.Context, client *gophercloud.ServiceClient, token string) (string, error) {
-	u, err := tokens.Get(ctx, client, token).ExtractUser()
+	u, err := identityapi.TokenUser(ctx, client, token)
 	if err != nil {
-		return "", fmt.Errorf("introspecting the current token: %w", err)
+		return "", relabel(err, "introspecting the current token")
 	}
 	return u.ID, nil
 }
@@ -387,8 +383,8 @@ func runUserPasswordSet(ctx context.Context, client *gophercloud.ServiceClient, 
 			"use \"user set <user> --password\" to change another user's password")
 	}
 	opts := users.ChangePasswordOpts{OriginalPassword: original, Password: password}
-	if err := users.ChangePassword(ctx, client, userID, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("changing password: %w", err)
+	if err := identityapi.ChangeUserPassword(ctx, client, userID, opts); err != nil {
+		return relabel(err, "changing password")
 	}
 	return nil
 }

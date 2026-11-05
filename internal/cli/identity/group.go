@@ -7,12 +7,12 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/groups"
-	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack group ...`). UNVERIFIED against
@@ -95,13 +95,9 @@ func groupsOfUser(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return nil, err
 	}
-	pages, err := users.ListGroups(client, userID).AllPages(ctx)
+	all, err := identityapi.ListUserGroups(ctx, client, userID)
 	if err != nil {
-		return nil, fmt.Errorf("listing groups of user %q: %w", f.user, err)
-	}
-	all, err := groups.ExtractGroups(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing group list: %w", err)
+		return nil, relabel(err, "listing groups of user %q", f.user)
 	}
 	if domainID == "" {
 		return all, nil
@@ -119,13 +115,9 @@ func groupsOfUser(ctx context.Context, client *gophercloud.ServiceClient,
 func groupsInDomain(ctx context.Context, client *gophercloud.ServiceClient,
 	domainID string,
 ) ([]groups.Group, error) {
-	pages, err := groups.List(client, groups.ListOpts{DomainID: domainID}).AllPages(ctx)
+	all, err := identityapi.ListGroups(ctx, client, groups.ListOpts{DomainID: domainID})
 	if err != nil {
-		return nil, fmt.Errorf("listing groups: %w", err)
-	}
-	all, err := groups.ExtractGroups(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing group list: %w", err)
+		return nil, err
 	}
 	return all, nil
 }
@@ -186,9 +178,9 @@ func runGroupShow(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	g, err := groups.Get(ctx, client, id).Extract()
+	g, err := identityapi.GetGroup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing group %q: %w", nameOrID, err)
+		return relabel(err, "showing group %q", nameOrID)
 	}
 	fields, values := groupFields(g)
 	return o.WriteSingle(w, fields, values)
@@ -234,13 +226,13 @@ func runGroupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	g, err := groups.Create(ctx, client, groups.CreateOpts{
+	g, err := identityapi.CreateGroup(ctx, client, groups.CreateOpts{
 		Name:        name,
 		Description: f.description,
 		DomainID:    domainID,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating group %q: %w", name, err)
+		return relabel(err, "creating group %q", name)
 	}
 	fields, values := groupFields(g)
 	return o.WriteSingle(w, fields, values)
@@ -280,8 +272,8 @@ func runGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs
 		if rerr != nil {
 			return rerr
 		}
-		if derr := groups.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting group %q: %w", ref, derr)
+		if derr := identityapi.DeleteGroup(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting group %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Deleted group %s\n", ref); werr != nil {
 			return werr
@@ -343,9 +335,9 @@ func runGroupSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		desc := f.description
 		opts.Description = &desc
 	}
-	g, err := groups.Update(ctx, client, id, opts).Extract()
+	g, err := identityapi.UpdateGroup(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating group %q: %w", nameOrID, err)
+		return relabel(err, "updating group %q", nameOrID)
 	}
 	fields, values := groupFields(g)
 	return o.WriteSingle(w, fields, values)
@@ -388,20 +380,16 @@ var membershipAdd = membershipVerb{
 	short:   "Add a user to a group",
 	past:    "Added",
 	prep:    "to",
-	rollsUp: "adding user %q to group %q: %w",
-	apply: func(ctx context.Context, client *gophercloud.ServiceClient, groupID, userID string) error {
-		return users.AddToGroup(ctx, client, groupID, userID).ExtractErr()
-	},
+	rollsUp: "adding user %q to group %q",
+	apply:   identityapi.AddUserToGroup,
 }
 
 var membershipRemove = membershipVerb{
 	short:   "Remove a user from a group",
 	past:    "Removed",
 	prep:    "from",
-	rollsUp: "removing user %q from group %q: %w",
-	apply: func(ctx context.Context, client *gophercloud.ServiceClient, groupID, userID string) error {
-		return users.RemoveFromGroup(ctx, client, groupID, userID).ExtractErr()
-	},
+	rollsUp: "removing user %q from group %q",
+	apply:   identityapi.RemoveUserFromGroup,
 }
 
 func newGroupMembershipCommand(a *auth.Options, o *output.Options, v membershipVerb) *cobra.Command {
@@ -449,7 +437,7 @@ func runGroupMembership(ctx context.Context, client *gophercloud.ServiceClient, 
 			return uerr
 		}
 		if aerr := v.apply(ctx, client, groupID, userID); aerr != nil {
-			return fmt.Errorf(v.rollsUp, userRef, groupRef, aerr)
+			return relabel(aerr, v.rollsUp, userRef, groupRef)
 		}
 		if _, werr := fmt.Fprintf(w, "%s user %s %s group %s\n", v.past, userRef, v.prep, groupRef); werr != nil {
 			return werr
@@ -505,9 +493,9 @@ func runGroupContains(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	ok, err := users.IsMemberOfGroup(ctx, client, groupID, userID).Extract()
+	ok, err := identityapi.IsUserInGroup(ctx, client, groupID, userID)
 	if err != nil {
-		return fmt.Errorf("checking whether user %q is in group %q: %w", userRef, groupRef, err)
+		return relabel(err, "checking whether user %q is in group %q", userRef, groupRef)
 	}
 	if !ok {
 		return fmt.Errorf("user %q is not in group %q", userRef, groupRef)

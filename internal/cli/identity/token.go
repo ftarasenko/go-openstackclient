@@ -2,15 +2,14 @@ package identity
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // token issue introspects the token minted during authentication. There is no
@@ -47,11 +46,11 @@ func newTokenIssueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTokenIssue(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, token string, w io.Writer) error {
-	res := tokens.Get(ctx, client, token)
-	tok, err := res.ExtractToken()
+	info, err := identityapi.IntrospectToken(ctx, client, token)
 	if err != nil {
-		return fmt.Errorf("introspecting token: %w", err)
+		return err
 	}
+	tok := info.Token
 	// ID from ExtractToken is read from the X-Subject-Token response header, which
 	// introspection does not echo; fall back to the token we submitted.
 	id := tok.ID
@@ -60,11 +59,11 @@ func runTokenIssue(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 
 	var projectID, userID string
-	if p, err := res.ExtractProject(); err == nil && p != nil {
-		projectID = p.ID
+	if info.Project != nil {
+		projectID = info.Project.ID
 	}
-	if u, err := res.ExtractUser(); err == nil && u != nil {
-		userID = u.ID
+	if info.User != nil {
+		userID = info.User.ID
 	}
 
 	return o.WriteSingle(w,
@@ -97,10 +96,5 @@ func newTokenRevokeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // X-Subject-Token header rather than the URL, which gophercloud's Revoke
 // handles — the token being revoked is not the one authenticating the call.
 func runTokenRevoke(ctx context.Context, client *gophercloud.ServiceClient, token string) error {
-	// RevokeResult embeds commonResult, which carries no ExtractErr, so the
-	// error is read off the Result directly.
-	if res := tokens.Revoke(ctx, client, token); res.Err != nil {
-		return fmt.Errorf("revoking token: %w", res.Err)
-	}
-	return nil
+	return identityapi.RevokeToken(ctx, client, token)
 }

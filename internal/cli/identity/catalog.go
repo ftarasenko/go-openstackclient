@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/catalog"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack catalog ...`). UNVERIFIED against
@@ -48,13 +48,9 @@ func newCatalogListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runCatalogList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := catalog.List(client).AllPages(ctx)
+	all, err := identityapi.ListCatalog(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing catalog: %w", err)
-	}
-	all, err := catalog.ExtractServiceCatalog(pages)
-	if err != nil {
-		return fmt.Errorf("parsing catalog: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"Name", "Type", "Endpoints"}, Rows: make([][]any, 0, len(all))}
 	for _, e := range all {
@@ -86,13 +82,9 @@ func newCatalogShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runCatalogShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	pages, err := catalog.List(client).AllPages(ctx)
+	all, err := identityapi.ListCatalog(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing catalog: %w", err)
-	}
-	all, err := catalog.ExtractServiceCatalog(pages)
-	if err != nil {
-		return fmt.Errorf("parsing catalog: %w", err)
+		return err
 	}
 	// Name first, then type: a deployment may name a service after another
 	// service's type, and upstream resolves the name in that case.
