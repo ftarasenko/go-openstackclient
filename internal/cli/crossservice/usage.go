@@ -2,19 +2,20 @@ package crossservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/usage"
-	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // `usage list` and `usage show` read nova's os-simple-tenant-usage, which
@@ -111,17 +112,13 @@ func runUsageList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	// response carries only the totals and the Servers column below counts an
 	// empty slice, reporting 0 for every project no matter how many servers ran.
 	// Upstream OSC passes detailed=True for the same reason.
-	pages, err := usage.AllTenants(client, usage.AllTenantsOpts{
+	all, err := computeapi.ListUsage(ctx, client, usage.AllTenantsOpts{
 		Start:    &start,
 		End:      &end,
 		Detailed: true,
-	}).AllPages(ctx)
+	})
 	if err != nil {
-		return fmt.Errorf("listing compute usage: %w", err)
-	}
-	all, err := usage.ExtractAllTenants(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the compute usage list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"Project ID", "Servers", "RAM MB-Hours", "CPU Hours", "Disk GB-Hours"},
@@ -181,10 +178,11 @@ func resolveUsageProject(ctx context.Context, client *auth.Client, ref string) (
 	if ref != "" {
 		return resolve.ProjectID(ctx, identity, ref)
 	}
-	project, err := tokens.Get(ctx, identity, client.Provider.Token()).ExtractProject()
+	info, err := identityapi.IntrospectToken(ctx, identity, client.Provider.Token())
 	if err != nil {
-		return "", fmt.Errorf("introspecting the current token to find the scoped project: %w", err)
+		return "", fmt.Errorf("introspecting the current token to find the scoped project: %w", errors.Unwrap(err))
 	}
+	project := info.Project
 	if project == nil || project.ID == "" {
 		return "", fmt.Errorf("no --project given and the token is not scoped to a project")
 	}
@@ -198,34 +196,9 @@ func runUsageShow(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	// EachPage, not AllPages: the single-tenant body is one object rather than a
-	// list, and gophercloud's AllPages merges pages by their top-level array —
-	// so it hands ExtractSingleTenant a body with no `tenant_usage` key and the
-	// extract returns (nil, nil). gophercloud's own tests use EachPage for
-	// exactly this call.
-	//
-	// From microversion 2.40 nova paginates server_usages, so the server count
-	// is accumulated across pages while the totals (which cover the whole
-	// window) are taken from the first.
-	var u *usage.TenantUsage
-	servers := 0
-	err = usage.SingleTenant(client, projectID, usage.SingleTenantOpts{Start: &start, End: &end}).
-		EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
-			got, perr := usage.ExtractSingleTenant(page)
-			if perr != nil {
-				return false, perr
-			}
-			if got == nil {
-				return true, nil
-			}
-			if u == nil {
-				u = got
-			}
-			servers += len(got.ServerUsages)
-			return true, nil
-		})
+	u, err := computeapi.GetProjectUsage(ctx, client, projectID, usage.SingleTenantOpts{Start: &start, End: &end})
 	if err != nil {
-		return fmt.Errorf("getting compute usage for project %s: %w", projectID, err)
+		return err
 	}
 	if u == nil {
 		return fmt.Errorf("nova reported no usage for project %s between %s and %s",
@@ -233,6 +206,6 @@ func runUsageShow(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	return o.WriteSingle(w,
 		[]string{"project_id", "servers", "ram_mb_hours", "cpu_hours", "disk_gb_hours", "start", "stop"},
-		[]any{u.TenantID, servers, u.TotalMemoryMBUsage, u.TotalVCPUsUsage, u.TotalLocalGBUsage,
+		[]any{u.TenantID, len(u.ServerUsages), u.TotalMemoryMBUsage, u.TotalVCPUsUsage, u.TotalLocalGBUsage,
 			u.Start.Format(time.RFC3339), u.Stop.Format(time.RFC3339)})
 }

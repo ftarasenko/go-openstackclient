@@ -5,16 +5,17 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net/http"
 	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
-	volumeaz "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/availabilityzones"
 	computeaz "github.com/gophercloud/gophercloud/v2/openstack/compute/v2/availabilityzones"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // `availability zone list` merges three separate endpoints — nova's
@@ -133,19 +134,9 @@ func writeAvailabilityZones(o *output.Options, zones []availabilityZone, long bo
 }
 
 func computeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient, long bool) ([]availabilityZone, error) {
-	// Like upstream, ask for the detail listing — the one that shows nova's
-	// internal zone and the hosts --long breaks out — and fall back to the
-	// plain one when policy keeps it from this user.
-	pages, err := computeaz.ListDetail(sc).AllPages(ctx)
-	if gophercloud.ResponseCodeIs(err, http.StatusForbidden) {
-		pages, err = computeaz.List(sc).AllPages(ctx)
-	}
+	list, err := computeapi.ListAvailabilityZones(ctx, sc)
 	if err != nil {
-		return nil, fmt.Errorf("listing compute availability zones: %w", err)
-	}
-	list, err := computeaz.ExtractAvailabilityZones(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing the compute availability zone list: %w", err)
+		return nil, err
 	}
 	out := make([]availabilityZone, 0, len(list))
 	for _, z := range list {
@@ -179,13 +170,9 @@ func serviceStatus(s computeaz.ServiceState) string {
 }
 
 func volumeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient) ([]availabilityZone, error) {
-	pages, err := volumeaz.List(sc).AllPages(ctx)
+	list, err := volumeapi.ListAvailabilityZones(ctx, sc)
 	if err != nil {
-		return nil, fmt.Errorf("listing volume availability zones: %w", err)
-	}
-	list, err := volumeaz.ExtractAvailabilityZones(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing the volume availability zone list: %w", err)
+		return nil, err
 	}
 	out := make([]availabilityZone, 0, len(list))
 	for _, z := range list {
@@ -199,29 +186,15 @@ func volumeAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient)
 }
 
 // networkAvailabilityZones reads neutron's availability_zone extension.
-// gophercloud v2.13.0 has no package for it, so this is a raw GET — a flat
-// list with no pagination, which is why it needs no page walker. Replace with
-// the typed call if one lands upstream.
-//
 // Neutron's zones carry a `resource` of their own ("network" or "router"),
 // unlike nova's and cinder's, so it is reported rather than hardcoded.
 func networkAvailabilityZones(ctx context.Context, sc *gophercloud.ServiceClient) ([]availabilityZone, error) {
-	var doc struct {
-		AvailabilityZones []struct {
-			Name     string `json:"name"`
-			Resource string `json:"resource"`
-			State    string `json:"state"`
-		} `json:"availability_zones"`
-	}
-	resp, err := sc.Get(ctx, sc.ServiceURL("availability_zones"), &doc, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
+	list, err := networkapi.ListAvailabilityZones(ctx, sc)
 	if err != nil {
-		return nil, fmt.Errorf("listing network availability zones: %w", err)
+		return nil, err
 	}
-	out := make([]availabilityZone, 0, len(doc.AvailabilityZones))
-	for _, z := range doc.AvailabilityZones {
+	out := make([]availabilityZone, 0, len(list))
+	for _, z := range list {
 		resource := z.Resource
 		if resource == "" {
 			resource = "network"

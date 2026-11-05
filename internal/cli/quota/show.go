@@ -2,11 +2,9 @@ package quota
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
-	"sort"
-	"strings"
+	"maps"
+	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
 	volumequotas "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/quotasets"
@@ -15,8 +13,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/extract"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 type quotaShowFlags struct {
@@ -103,67 +103,25 @@ func runQuotaShow(ctx context.Context, s *session, o *output.Options, project st
 }
 
 func getComputeQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*computequotas.QuotaSet, error) {
-	if !useDefault {
-		qs, err := extract.One(computequotas.Get(ctx, client, project).Extract())
-		if err != nil {
-			return nil, fmt.Errorf("showing compute quotas for project %q: %w", project, err)
-		}
-		return qs, nil
+	if useDefault {
+		return computeapi.GetDefaultQuotaSet(ctx, client, project)
 	}
-	// gophercloud has no GetDefaults for compute quotasets, so the
-	// os-quota-sets/{project}/defaults endpoint is fetched raw. Isolated here per
-	// the AGENTS.md raw-fallback rule; delete once gophercloud grows the call.
-	var body struct {
-		QuotaSet computequotas.QuotaSet `json:"quota_set"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("os-quota-sets", project, "defaults"), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return nil, fmt.Errorf("showing default compute quotas for project %q: %w", project, err)
-	}
-	return &body.QuotaSet, nil
+	return computeapi.GetQuotaSet(ctx, client, project)
 }
 
 // getVolumeQuota reads a project's cinder quota set: the typed quotas, and the
 // per-volume-type ones cinder adds for every volume type
-// (gigabytes_<type>, volumes_<type>, snapshots_<type>), which QuotaSet does
-// not model.
+// (gigabytes_<type>, volumes_<type>, snapshots_<type>).
 func getVolumeQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*volumequotas.QuotaSet, []typedQuota, error) {
-	get := volumequotas.Get
-	what := "volume quotas"
+	get := volumeapi.GetQuotaSet
 	if useDefault {
-		get = volumequotas.GetDefaults
-		what = "default volume quotas"
+		get = volumeapi.GetDefaultQuotaSet
 	}
-	qs, perType, err := extractVolumeQuota(get(ctx, client, project))
-	if err != nil {
-		return nil, nil, fmt.Errorf("showing %s for project %q: %w", what, project, err)
-	}
-	return qs, perType, nil
-}
-
-// volumeQuotaResult is what quotasets.Get, GetDefaults and Update return.
-type volumeQuotaResult interface {
-	Extract() (*volumequotas.QuotaSet, error)
-	ExtractInto(to any) error
-}
-
-// extractVolumeQuota decodes a cinder quota set twice: into QuotaSet, and raw
-// for the per-volume-type quotas QuotaSet has no fields for.
-func extractVolumeQuota(res volumeQuotaResult) (*volumequotas.QuotaSet, []typedQuota, error) {
-	qs, err := extract.One(res.Extract())
+	qs, err := get(ctx, client, project)
 	if err != nil {
 		return nil, nil, err
 	}
-	var raw struct {
-		QuotaSet map[string]json.RawMessage `json:"quota_set"`
-	}
-	if err := res.ExtractInto(&raw); err != nil {
-		return nil, nil, err
-	}
-	return qs, perVolumeTypeQuotas(raw.QuotaSet), nil
+	return &qs.QuotaSet, typedQuotas(qs.PerVolumeType), nil
 }
 
 // typedQuota is one of cinder's per-volume-type quotas.
@@ -172,60 +130,22 @@ type typedQuota struct {
 	value int
 }
 
-// perVolumeTypePrefixes are the resources cinder keeps a quota for per volume
-// type, as <resource>_<type name> (cinder/quota.py VolumeTypeQuotaEngine).
-var perVolumeTypePrefixes = []string{"gigabytes_", "snapshots_", "volumes_"}
-
-// perVolumeTypeQuotas picks the per-volume-type quotas out of a raw quota set,
-// sorted by key so the listing is stable. Upstream's quota show prints every
-// key of the quota set, these included; a value that is not an integer is not
-// a quota and is skipped.
-func perVolumeTypeQuotas(set map[string]json.RawMessage) []typedQuota {
-	var out []typedQuota
-	for k, v := range set {
-		if !hasAnyPrefix(k, perVolumeTypePrefixes) {
-			continue
-		}
-		var n int
-		if err := json.Unmarshal(v, &n); err != nil {
-			continue
-		}
-		out = append(out, typedQuota{key: k, value: n})
+// typedQuotas sorts the per-volume-type quotas by key so the listing is
+// stable. Upstream's quota show prints every key of the quota set, these
+// included.
+func typedQuotas(m map[string]int) []typedQuota {
+	out := make([]typedQuota, 0, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		out = append(out, typedQuota{key: k, value: m[k]})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
 	return out
 }
 
-func hasAnyPrefix(s string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(s, p) && len(s) > len(p) {
-			return true
-		}
-	}
-	return false
-}
-
 func getNetworkQuota(ctx context.Context, client *gophercloud.ServiceClient, project string, useDefault bool) (*networkquotas.Quota, error) {
-	if !useDefault {
-		q, err := extract.One(networkquotas.Get(ctx, client, project).Extract())
-		if err != nil {
-			return nil, fmt.Errorf("showing network quotas for project %q: %w", project, err)
-		}
-		return q, nil
+	if useDefault {
+		return networkapi.GetDefaultQuota(ctx, client, project)
 	}
-	// gophercloud has no call for neutron's quotas/{project}/default either, so
-	// it is fetched raw, like the compute defaults above.
-	var body struct {
-		Quota networkquotas.Quota `json:"quota"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("quotas", project, "default"), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return nil, fmt.Errorf("showing default network quotas for project %q: %w", project, err)
-	}
-	return &body.Quota, nil
+	return networkapi.GetQuota(ctx, client, project)
 }
 
 // computeQuotaFields omits injected_files, injected_file_content_bytes and
