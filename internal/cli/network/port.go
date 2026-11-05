@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -12,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/spf13/cobra"
 
@@ -82,14 +82,15 @@ func newPortCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// getPort reads a port with the extension attributes, replacing
-// ports.Get(...).Extract(), which would drop them.
+// getPort reads a port with the extension attributes. Its error is
+// gophercloud's, without pkg's prefix, for callers that name the port their
+// own way.
 func getPort(ctx context.Context, client *gophercloud.ServiceClient, id string) (*portExt, error) {
-	var p portExt
-	if err := ports.Get(ctx, client, id).ExtractInto(&p); err != nil {
-		return nil, err
+	p, err := networkapi.GetPort(ctx, client, id)
+	if err != nil {
+		return nil, errors.Unwrap(err)
 	}
-	return &p, nil
+	return p, nil
 }
 
 // formatFixedIPs renders a port's fixed IPs the way upstream OSC does — one
@@ -313,88 +314,23 @@ func (opts portListOpts) ToPortListQuery() (string, error) {
 	return withQueryValues(q, err, extra)
 }
 
-// portExt is a Port decorated with the extension attributes gophercloud does
-// not model: trunk_details (`port list --long` renders its sub_ports as "Trunk
+// portExt is a port with the extension attributes gophercloud does not
+// model: trunk_details (`port list --long` renders its sub_ports as "Trunk
 // subports"), port_security_enabled, and the binding/QoS/DNS/DHCP attributes
-// `port show` displays. Every part is an anonymous embed so ExtractPortsInto
-// populates it — that extraction path decodes each embedded struct on its own,
-// so an attribute has to arrive via a flat extension struct (as with MTUExt on
-// networkExt) rather than a named pointer field.
-type portExt struct {
-	ports.Port
-	TrunkDetailsExt
-	PortSecurityExt
-	PortAttrsExt
-}
-
-// PortSecurityExt carries the port_security_enabled attribute, which
-// gophercloud's ports.Port does not model. `port set
-// --enable/--disable-port-security` writes it, and without this read side the
-// flag's effect would be unverifiable from koc. Exported and flat for the same
-// reason as TrunkDetailsExt.
-type PortSecurityExt struct {
-	PortSecurityEnabled *bool `json:"port_security_enabled"`
-}
-
-// PortAttrsExt carries the portbindings, QoS, DNS-integration, extra-DHCP-opt
-// and data-plane-status attributes (propagate_uplink_status is one ports.Port
-// already models).
-type PortAttrsExt struct {
-	BindingHostID      string           `json:"binding:host_id"`
-	BindingProfile     map[string]any   `json:"binding:profile"`
-	BindingVIFDetails  map[string]any   `json:"binding:vif_details"`
-	BindingVIFType     string           `json:"binding:vif_type"`
-	BindingVNICType    string           `json:"binding:vnic_type"`
-	DataPlaneStatus    string           `json:"data_plane_status"`
-	DNSAssignment      []map[string]any `json:"dns_assignment"`
-	DNSDomain          string           `json:"dns_domain"`
-	DNSName            string           `json:"dns_name"`
-	ExtraDHCPOpts      []map[string]any `json:"extra_dhcp_opts"`
-	QoSNetworkPolicyID string           `json:"qos_network_policy_id"`
-	QoSPolicyID        string           `json:"qos_policy_id"`
-	// post-Zed and driver-specific extensions; each is absent (zero) on a
-	// cloud that does not run its extension.
-	DeviceProfile       string         `json:"device_profile"`
-	HardwareOffloadType string         `json:"hardware_offload_type"`
-	Hints               map[string]any `json:"hints"`
-	IPAllocation        string         `json:"ip_allocation"`
-	NUMAAffinityPolicy  string         `json:"numa_affinity_policy"`
-	PVLANType           *string        `json:"pvlan_type"`
-	PVLANCommunity      *string        `json:"pvlan_community"`
-	ResourceRequest     map[string]any `json:"resource_request"`
-	Trusted             *bool          `json:"trusted"`
-}
-
-// TrunkDetailsExt carries the trunk_details attribute. It stays exported
-// because gophercloud's extraction reflects over the embedded field and cannot
-// address an unexported one.
-type TrunkDetailsExt struct {
-	TrunkDetails trunkDetails `json:"trunk_details"`
-}
-
-type trunkDetails struct {
-	TrunkID  string         `json:"trunk_id"`
-	SubPorts []trunkSubPort `json:"sub_ports"`
-}
+// `port show` displays.
+type portExt = networkapi.Port
 
 // trunkDetailsOrNil renders a port's trunk_details for show: the trunk and
 // its subports on a trunk's parent port, and null on any other port, where
 // neutron omits the attribute (upstream prints its None).
-func trunkDetailsOrNil(d trunkDetails) any {
+func trunkDetailsOrNil(d networkapi.TrunkDetails) any {
 	if d.TrunkID == "" {
 		return nil
 	}
 	if d.SubPorts == nil {
-		d.SubPorts = []trunkSubPort{}
+		d.SubPorts = []networkapi.TrunkSubPort{}
 	}
 	return d
-}
-
-type trunkSubPort struct {
-	PortID           string `json:"port_id"`
-	SegmentationID   int    `json:"segmentation_id"`
-	SegmentationType string `json:"segmentation_type"`
-	MACAddress       string `json:"mac_address"`
 }
 
 // resolvePortDeviceFilters settles the filters that select by attached device.
@@ -507,13 +443,9 @@ func runPortList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err := resolvePortAddressFilters(ctx, client, f, &opts); err != nil {
 		return err
 	}
-	pages, err := ports.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListPorts(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing ports: %w", err)
-	}
-	var all []portExt
-	if err := ports.ExtractPortsInto(pages, &all); err != nil {
-		return fmt.Errorf("parsing port list: %w", err)
+		return err
 	}
 	// A listing narrowed to one project is single-project whatever the flag says,
 	// so it keeps the upstream columns — this matters because --all-projects also
@@ -853,13 +785,11 @@ func requirePVLANNetwork(ctx context.Context, client *gophercloud.ServiceClient,
 	if !hasPVLANAttrs(attrs) {
 		return nil
 	}
-	var n struct {
-		PVLAN bool `json:"pvlan"`
+	n, err := networkapi.GetNetwork(ctx, client, networkID)
+	if err != nil {
+		return relabel(err, "reading network %s for the PVLAN check", networkID)
 	}
-	if err := networks.Get(ctx, client, networkID).ExtractInto(&n); err != nil {
-		return fmt.Errorf("reading network %s for the PVLAN check: %w", networkID, err)
-	}
-	if !n.PVLAN {
+	if n.PVLAN == nil || !*n.PVLAN {
 		return fmt.Errorf("PVLAN attributes cannot be set on a port whose network does not have PVLAN enabled")
 	}
 	return nil
@@ -1046,9 +976,9 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err := requirePVLANNetwork(ctx, client, attrs, opts.NetworkID); err != nil {
 		return err
 	}
-	var p portExt
-	if err := ports.Create(ctx, client, networkapi.WithPortCreateAttrs(opts, attrs)).ExtractInto(&p); err != nil {
-		return explainMissingExtension(ctx, client, fmt.Errorf("creating port: %w", err),
+	p, err := networkapi.CreatePort(ctx, client, networkapi.WithPortCreateAttrs(opts, attrs))
+	if err != nil {
+		return explainMissingExtension(ctx, client, err,
 			portExplainAttrs(attrs, portCreateTypedExtAttrs(opts)...))
 	}
 	// Tags are a sub-resource a create cannot carry on every deployment, so
@@ -1057,7 +987,7 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if p.Tags, err = applyTagsForSet(ctx, client, tagResourcePorts, p.ID, p.Tags, &f.tagWriteFlags); err != nil {
 		return err
 	}
-	fields, values := portShowFields(&p)
+	fields, values := portShowFields(p)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -1224,8 +1154,8 @@ func runPortDelete(ctx context.Context, client *gophercloud.ServiceClient, names
 		if err != nil {
 			return err
 		}
-		if err := ports.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting port %s: %w", nameOrID, err)
+		if err := networkapi.DeletePort(ctx, client, id); err != nil {
+			return relabel(err, "deleting port %s", nameOrID)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted port %s\n", nameOrID); err != nil {
 			return err
@@ -1254,9 +1184,8 @@ func updatePort(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	p := u.current
 	switch {
 	case u.changed:
-		p = &portExt{}
-		if err := ports.Update(ctx, client, id, networkapi.WithPortUpdateAttrs(u.opts, u.attrs)).ExtractInto(p); err != nil {
-			return explainMissingExtension(ctx, client, fmt.Errorf("updating port %s: %w", ref, err),
+		if p, err = networkapi.UpdatePort(ctx, client, id, networkapi.WithPortUpdateAttrs(u.opts, u.attrs)); err != nil {
+			return explainMissingExtension(ctx, client, relabel(err, "updating port %s", ref),
 				portExplainAttrs(u.attrs, portUpdateTypedExtAttrs(u.opts)...))
 		}
 	case p == nil:

@@ -45,41 +45,8 @@ const (
 	subnetAttrServiceTypes    = "service_types"
 )
 
-// SubnetLeakExt carries ovn-bgp's leak_routes, which subnets.Subnet does not
-// model. A pointer, so a cloud without the extension renders an empty cell
-// rather than "false". Exported for the same reason as MTUExt.
-type SubnetLeakExt struct {
-	LeakRoutes *bool `json:"leak_routes"`
-}
-
-// SubnetExternalExt carries the subnet-external-network extension's
-// read-only router:external (neutron-lib
-// api/definitions/subnet_external_network.py, loaded by ML2 from 2024.2): true
-// on a subnet of an external network. A pointer, so a cloud without the
-// extension leaves the field out rather than claiming "false". Exported for
-// the same reason as MTUExt.
-type SubnetExternalExt struct {
-	RouterExternal *bool `json:"router:external"`
-}
-
-// subnetExt is a Subnet decorated with the extension attributes koc renders.
-type subnetExt struct {
-	subnets.Subnet
-	SubnetLeakExt
-	SubnetExternalExt
-}
-
-// extractSubnet decodes a subnet GET/POST/PUT result into a subnetExt.
-func extractSubnet(r interface {
-	ExtractIntoStructPtr(to any, label string) error
-},
-) (*subnetExt, error) {
-	var s subnetExt
-	if err := r.ExtractIntoStructPtr(&s, "subnet"); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
+// subnetExt is a subnet with the extension attributes koc renders.
+type subnetExt = networkapi.Subnet
 
 // withExplainKeys returns attrs plus the named attributes the typed opts carry,
 // for explainMissingExtension, which only looks at which keys a body sent.
@@ -276,20 +243,16 @@ func runSubnetList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		}
 		opts.SubnetPoolID = poolID
 	}
-	pages, err := subnets.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListSubnets(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing subnets: %w", err)
-	}
-	all, err := subnets.ExtractSubnets(pages)
-	if err != nil {
-		return fmt.Errorf("parsing subnet list: %w", err)
+		return err
 	}
 	return o.WriteList(w, subnetListTable(all, f.long))
 }
 
 // subnetListTable renders upstream's columns. --long adds upstream's nine, then
 // koc's "Subnet Pool", kept at the end for scripts that already select it.
-func subnetListTable(all []subnets.Subnet, long bool) output.Table {
+func subnetListTable(all []subnetExt, long bool) output.Table {
 	cols := []string{"ID", "Name", "Network", "Subnet"}
 	if long {
 		cols = append(cols, "Project", "DHCP", "Name Servers", "Allocation Pools", "Host Routes",
@@ -353,9 +316,9 @@ func runSubnetShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	s, err := extractSubnet(subnets.Get(ctx, client, id))
+	s, err := networkapi.GetSubnet(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting subnet %s: %w", nameOrID, err)
+		return relabel(err, "getting subnet %s", nameOrID)
 	}
 	fields, values := subnetShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -459,10 +422,10 @@ func runSubnetCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	s, err := extractSubnet(subnets.Create(ctx, client, networkapi.WithSubnetCreateAttrs(opts, attrs)))
+	s, err := networkapi.CreateSubnet(ctx, client, networkapi.WithSubnetCreateAttrs(opts, attrs))
 	if err != nil {
 		explain := withExplainKeys(attrs, subnetTypedExtKeys(opts.DNSPublishFixedIP, len(opts.ServiceTypes) > 0)...)
-		return explainMissingExtension(ctx, client, fmt.Errorf("creating subnet: %w", err), explain)
+		return explainMissingExtension(ctx, client, err, explain)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if s.Tags, err = applyTagsForSet(ctx, client, tagResourceSubnets, s.ID, s.Tags, &f.tagWriteFlags); err != nil {
@@ -591,8 +554,8 @@ func runSubnetDelete(ctx context.Context, client *gophercloud.ServiceClient, nam
 		if err != nil {
 			return err
 		}
-		if err := subnets.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting subnet %s: %w", nameOrID, err)
+		if err := networkapi.DeleteSubnet(ctx, client, id); err != nil {
+			return relabel(err, "deleting subnet %s", nameOrID)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted subnet %s\n", nameOrID); err != nil {
 			return err
@@ -707,8 +670,8 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		base    *subnets.Subnet
 	)
 	if f.needsCurrent() {
-		if current, err = extractSubnet(subnets.Get(ctx, client, id)); err != nil {
-			return fmt.Errorf("reading subnet %s before set: %w", nameOrID, err)
+		if current, err = networkapi.GetSubnet(ctx, client, id); err != nil {
+			return relabel(err, "reading subnet %s before set", nameOrID)
 		}
 		base = &current.Subnet
 	}
@@ -728,17 +691,17 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 			revision := current.RevisionNumber
 			opts.RevisionNumber = &revision
 		}
-		if s, err = extractSubnet(subnets.Update(ctx, client, id, networkapi.WithSubnetUpdateAttrs(opts, attrs))); err != nil {
+		if s, err = networkapi.UpdateSubnet(ctx, client, id, networkapi.WithSubnetUpdateAttrs(opts, attrs)); err != nil {
 			explain := withExplainKeys(attrs, subnetTypedExtKeys(opts.DNSPublishFixedIP, opts.ServiceTypes != nil)...)
-			return explainMissingExtension(ctx, client, fmt.Errorf("updating subnet %s: %w", nameOrID, err), explain)
+			return explainMissingExtension(ctx, client, relabel(err, "updating subnet %s", nameOrID), explain)
 		}
 	case current != nil:
 		s = current
 	default:
 		// Tags are the only change: upstream skips the PUT, so read the subnet
 		// for its current tags instead.
-		if s, err = extractSubnet(subnets.Get(ctx, client, id)); err != nil {
-			return fmt.Errorf("getting subnet %s: %w", nameOrID, err)
+		if s, err = networkapi.GetSubnet(ctx, client, id); err != nil {
+			return relabel(err, "getting subnet %s", nameOrID)
 		}
 	}
 	if s.Tags, err = applyTagsForSet(ctx, client, tagResourceSubnets, id, s.Tags, &f.tagWriteFlags); err != nil {

@@ -50,9 +50,9 @@ func cloud(t *testing.T) *httptest.Server {
 		}})
 	})
 	mux.HandleFunc("GET /network/v2.0/networks", func(w http.ResponseWriter, r *http.Request) {
-		nets := []map[string]string{
-			{"id": "9b5c1c2e-3f4a-4b6c-8d7e-0f1a2b3c4d5e", "name": "private"},
-			{"id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "name": "public"},
+		nets := []map[string]any{
+			{"id": "9b5c1c2e-3f4a-4b6c-8d7e-0f1a2b3c4d5e", "name": "private", "mtu": 1450},
+			{"id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "name": "public", "router:external": true},
 		}
 		if name := r.URL.Query().Get("name"); name != "" {
 			nets = nets[:1]
@@ -183,6 +183,13 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /network/v2.0/security-groups/sg-1", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"security_group": sg})
+	})
+	mux.HandleFunc("GET /network/v2.0/routers/router-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"router": map[string]any{"id": "router-1", "name": "r1", "ha": true}})
+	})
+	mux.HandleFunc("GET /network/v2.0/ports", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"ports": []map[string]any{{"id": "port-1", "binding:vnic_type": "normal",
+			"fixed_ips": []map[string]any{{"subnet_id": "sub-1", "ip_address": "192.0.2.1"}}}}})
 	})
 	mux.HandleFunc("GET /network/v2.0/extensions", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"extensions": []map[string]any{{"name": "Trunk", "alias": "trunk"}}})
@@ -333,6 +340,18 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if exts, err := extension.List(ctx, networkClient); err != nil || len(exts) != 1 || exts[0].Alias != "trunk" {
 		t.Fatalf("extension.List = %+v, %v", exts, err)
+	}
+	if all, err := network.ListNetworks(ctx, networkClient, nil); err != nil || len(all) != 2 || all[0].MTU != 1450 || !all[1].External {
+		t.Fatalf("network.ListNetworks = %+v, %v", all, err)
+	}
+	if r, err := network.GetRouter(ctx, networkClient, "router-1"); err != nil || r.Name != "r1" || r.Attrs.HA == nil || !*r.Attrs.HA {
+		t.Fatalf("network.GetRouter = %+v, %v", r, err)
+	}
+	if ifaces, err := network.ListRouterInterfaces(ctx, networkClient, "router-1"); err != nil || len(ifaces) != 1 || ifaces[0].SubnetID != "sub-1" {
+		t.Fatalf("network.ListRouterInterfaces = %+v, %v", ifaces, err)
+	}
+	if ps, err := network.ListPorts(ctx, networkClient, nil); err != nil || len(ps) != 1 || ps[0].BindingVNICType != "normal" {
+		t.Fatalf("network.ListPorts = %+v, %v", ps, err)
 	}
 	netID, err := network.FindNetworkID(ctx, networkClient, "private")
 	if err != nil {

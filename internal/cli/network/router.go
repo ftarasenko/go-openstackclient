@@ -9,9 +9,7 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -97,26 +95,9 @@ func routerDetailFields(r *routers.Router, ext routerExtAttrs) ([]string, []any)
 var routerColumns = append(fieldNames(routerDetailFields(&routers.Router{}, routerExtAttrs{})),
 	"ha", "enable_default_route_bfd", "enable_default_route_ecmp", "evpn_vni", "enable_snat")
 
-// extractRouterDetail decodes a single-router response (get, create or
-// update) into the typed Router and its routerExtAttrs. As with the list, the
-// body is decoded twice because Router's UnmarshalJSON would swallow the rest.
-func extractRouterDetail(res gophercloud.Result) (*routers.Router, routerExtAttrs, error) {
-	var (
-		r   routers.Router
-		ext routerExtAttrs
-	)
-	if err := res.ExtractIntoStructPtr(&r, "router"); err != nil {
-		return nil, ext, err
-	}
-	if err := res.ExtractIntoStructPtr(&ext, "router"); err != nil {
-		return nil, ext, err
-	}
-	return &r, ext, nil
-}
-
 // writeRouterDetail renders one router through routerDetailFields.
-func writeRouterDetail(o *output.Options, w io.Writer, r *routers.Router, ext routerExtAttrs) error {
-	fields, values := routerDetailFields(r, ext)
+func writeRouterDetail(o *output.Options, w io.Writer, r *networkapi.Router) error {
+	fields, values := routerDetailFields(&r.Router, r.Attrs)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -197,51 +178,10 @@ const allProjectsNetworkList = "list across all projects (admin); an admin token
 // The post-Zed attributes ride along for router show: each is a pointer so a
 // cloud without its extension renders the field empty (or not at all) rather
 // than as a zero value.
-type routerExtAttrs struct {
-	Distributed       *bool     `json:"distributed"`
-	HA                *bool     `json:"ha"`
-	AvailabilityZones *[]string `json:"availability_zones"`
-	FlavorID          *string   `json:"flavor_id"`
+type routerExtAttrs = networkapi.RouterAttrs
 
-	EnableNDPProxy         *bool `json:"enable_ndp_proxy"`
-	EnableDefaultRouteBFD  *bool `json:"enable_default_route_bfd"`
-	EnableDefaultRouteECMP *bool `json:"enable_default_route_ecmp"`
-	EVPNVNI                *int  `json:"evpn_vni"`
-	// EnableSNAT is the router-enable-snat extension's read-only top-level
-	// copy of the gateway's SNAT switch (neutron-lib
-	// api/definitions/router_enable_snat.py, 2026.1).
-	EnableSNAT *bool `json:"enable_snat"`
-}
-
-// routerListRow pairs a router with its routerExtAttrs. The page is decoded
-// twice rather than into one struct embedding both, because the two would
-// share the `distributed` key and Router's own UnmarshalJSON would swallow the
-// rest.
-type routerListRow struct {
-	routers.Router
-	ext routerExtAttrs
-}
-
-// extractRouterRows decodes one routers body into rows. extract is the
-// page/result's slice extractor, called once per target.
-func extractRouterRows(extract func(v any) error) ([]routerListRow, error) {
-	var base []routers.Router
-	var ext []routerExtAttrs
-	if err := extract(&base); err != nil {
-		return nil, err
-	}
-	if err := extract(&ext); err != nil {
-		return nil, err
-	}
-	rows := make([]routerListRow, len(base))
-	for i := range base {
-		rows[i].Router = base[i]
-		if i < len(ext) {
-			rows[i].ext = ext[i]
-		}
-	}
-	return rows, nil
-}
+// routerListRow is a router with its routerExtAttrs.
+type routerListRow = networkapi.Router
 
 func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *routerListFlags, projectID string, w io.Writer,
@@ -255,10 +195,9 @@ func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if f.agent != "" {
 		// The agent's l3-routers subresource takes no query filters (upstream
 		// notes the same), so every filter is re-applied client-side.
-		res := agents.ListL3Routers(ctx, client, f.agent)
-		hosted, err := extractRouterRows(func(v any) error { return res.ExtractIntoSlicePtr(v, "routers") })
+		hosted, err := networkapi.ListL3AgentRouters(ctx, client, f.agent)
 		if err != nil {
-			return fmt.Errorf("listing routers hosted by agent %s: %w", f.agent, err)
+			return err
 		}
 		all := make([]routerListRow, 0, len(hosted))
 		for _, r := range hosted {
@@ -268,13 +207,9 @@ func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		}
 		return o.WriteList(w, routerListTable(all, f.long))
 	}
-	pages, err := routers.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListRouters(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing routers: %w", err)
-	}
-	all, err := extractRouterRows(func(v any) error { return routers.ExtractRoutersInto(pages, v) })
-	if err != nil {
-		return fmt.Errorf("parsing router list: %w", err)
+		return err
 	}
 	return o.WriteList(w, routerListTable(all, f.long))
 }
@@ -286,9 +221,9 @@ func runRouterList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 func routerListTable(all []routerListRow, long bool) output.Table {
 	var distributed, ha, azs bool
 	for _, r := range all {
-		distributed = distributed || r.ext.Distributed != nil
-		ha = ha || r.ext.HA != nil
-		azs = azs || r.ext.AvailabilityZones != nil
+		distributed = distributed || r.Attrs.Distributed != nil
+		ha = ha || r.Attrs.HA != nil
+		azs = azs || r.Attrs.AvailabilityZones != nil
 	}
 	cols := []string{"ID", "Name", "Status", "State", "Project"}
 	if distributed {
@@ -308,15 +243,15 @@ func routerListTable(all []routerListRow, long bool) output.Table {
 	for _, r := range all {
 		row := []any{r.ID, r.Name, r.Status, adminState(r.AdminStateUp), r.ProjectID}
 		if distributed {
-			row = append(row, derefOrNil(r.ext.Distributed))
+			row = append(row, derefOrNil(r.Attrs.Distributed))
 		}
 		if ha {
-			row = append(row, derefOrNil(r.ext.HA))
+			row = append(row, derefOrNil(r.Attrs.HA))
 		}
 		if long {
 			row = append(row, r.Routes, r.GatewayInfo)
 			if azs {
-				row = append(row, derefOrNil(r.ext.AvailabilityZones))
+				row = append(row, derefOrNil(r.Attrs.AvailabilityZones))
 			}
 			row = append(row, r.Tags)
 		}
@@ -390,52 +325,18 @@ func runRouterShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	r, ext, err := extractRouterDetail(routers.Get(ctx, client, id).Result)
+	r, err := networkapi.GetRouter(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting router %s: %w", nameOrID, err)
+		return relabel(err, "getting router %s", nameOrID)
 	}
-	interfaces, err := routerInterfaces(ctx, client, r.ID)
+	interfaces, err := networkapi.ListRouterInterfaces(ctx, client, r.ID)
 	if err != nil {
 		return err
 	}
-	fields, values := routerDetailFields(r, ext)
+	fields, values := routerDetailFields(&r.Router, r.Attrs)
 	fields = append(fields, "interfaces_info")
 	values = append(values, interfaces)
 	return o.WriteSingle(w, fields, values)
-}
-
-// routerInterface is one entry of router show's interfaces_info: a single fixed
-// IP of one of the router's internal ports. The field order matches upstream's
-// dict, so the rendered JSON is byte-identical to `openstack router show`.
-type routerInterface struct {
-	PortID    string `json:"port_id"`
-	IPAddress string `json:"ip_address"`
-	SubnetID  string `json:"subnet_id"`
-}
-
-// routerInterfaces derives interfaces_info the way upstream OSC's ShowRouter
-// does: neutron's router body carries no interface list, so the router's ports
-// are listed by device_id and every fixed IP of each non-gateway port becomes an
-// entry. It is one extra GET, which is what `router show` costs upstream too.
-func routerInterfaces(ctx context.Context, client *gophercloud.ServiceClient, routerID string) ([]routerInterface, error) {
-	pages, err := ports.List(client, ports.ListOpts{DeviceID: routerID}).AllPages(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("listing ports of router %s: %w", routerID, err)
-	}
-	all, err := ports.ExtractPorts(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing ports of router %s: %w", routerID, err)
-	}
-	out := make([]routerInterface, 0, len(all))
-	for _, p := range all {
-		if p.DeviceOwner == "network:router_gateway" {
-			continue
-		}
-		for _, ip := range p.FixedIPs {
-			out = append(out, routerInterface{PortID: p.ID, IPAddress: ip.IPAddress, SubnetID: ip.SubnetID})
-		}
-	}
-	return out, nil
 }
 
 // Router flag names. They live here rather than in flagnames.go because only
@@ -700,15 +601,15 @@ func runRouterCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err := checkBFDECMPSupported(ctx, client, attrs); err != nil {
 		return err
 	}
-	r, ext, err := extractRouterDetail(routers.Create(ctx, client, networkapi.WithRouterCreateAttrs(opts, attrs)).Result)
+	r, err := networkapi.CreateRouter(ctx, client, networkapi.WithRouterCreateAttrs(opts, attrs))
 	if err != nil {
-		return explainMissingExtension(ctx, client, fmt.Errorf("creating router: %w", err), attrs)
+		return explainMissingExtension(ctx, client, err, attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if r.Tags, err = applyTagsForSet(ctx, client, tagResourceRouters, r.ID, r.Tags, &f.tagWriteFlags); err != nil {
 		return err
 	}
-	return writeRouterDetail(o, w, r, ext)
+	return writeRouterDetail(o, w, r)
 }
 
 // buildCreateGatewayInfo assembles the create's external_gateway_info from
@@ -819,8 +720,8 @@ func runRouterDelete(ctx context.Context, client *gophercloud.ServiceClient, nam
 		if err != nil {
 			return err
 		}
-		if err := routers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting router %s: %w", nameOrID, err)
+		if err := networkapi.DeleteRouter(ctx, client, id); err != nil {
+			return relabel(err, "deleting router %s", nameOrID)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted router %s\n", nameOrID); err != nil {
 			return err
@@ -984,16 +885,19 @@ type routerUpdate struct {
 func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string,
 	u routerUpdate, w io.Writer,
 ) error {
-	var res gophercloud.Result
+	var (
+		r   *networkapi.Router
+		err error
+	)
 	action := u.action
 	if u.changed {
-		res = routers.Update(ctx, client, id, networkapi.WithRouterUpdateAttrs(u.opts, u.attrs)).Result
+		r, err = networkapi.UpdateRouter(ctx, client, id, networkapi.WithRouterUpdateAttrs(u.opts, u.attrs))
 	} else {
-		res, action = routers.Get(ctx, client, id).Result, "getting"
+		r, err = networkapi.GetRouter(ctx, client, id)
+		action = "getting"
 	}
-	r, ext, err := extractRouterDetail(res)
 	if err != nil {
-		err = fmt.Errorf("%s router %s: %w", action, ref, err)
+		err = relabel(err, "%s router %s", action, ref)
 		if u.changed {
 			err = explainMissingExtension(ctx, client, err, u.attrs)
 		}
@@ -1002,7 +906,7 @@ func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if r.Tags, err = u.tags.run(ctx, client, tagResourceRouters, id, r.Tags); err != nil {
 		return err
 	}
-	return writeRouterDetail(o, w, r, ext)
+	return writeRouterDetail(o, w, r)
 }
 
 // buildGatewayInfo assembles external_gateway_info from --external-gateway,
@@ -1043,9 +947,9 @@ func buildGatewayInfo(ctx context.Context, client *gophercloud.ServiceClient,
 		return gatewayInfoBody(gwID, snat, fixed, qos, qosGiven), nil
 	}
 
-	current, err := routers.Get(ctx, client, id).Extract()
+	current, err := networkapi.GetRouter(ctx, client, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading router %s to preserve its external gateway: %w", nameOrID, err)
+		return nil, relabel(err, "reading router %s to preserve its external gateway", nameOrID)
 	}
 	cur := current.GatewayInfo
 	if cur.NetworkID == "" {
@@ -1109,9 +1013,9 @@ func buildRoutes(ctx context.Context, client *gophercloud.ServiceClient,
 		}
 		return &parsed, nil
 	}
-	current, err := routers.Get(ctx, client, id).Extract()
+	current, err := networkapi.GetRouter(ctx, client, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading router %s to append routes: %w", nameOrID, err)
+		return nil, relabel(err, "reading router %s to append routes", nameOrID)
 	}
 	combined := make([]routers.Route, 0, len(current.Routes)+len(parsed))
 	combined = append(combined, current.Routes...)
@@ -1250,9 +1154,9 @@ func buildRouterUnset(ctx context.Context, client *gophercloud.ServiceClient,
 		return opts, nil, err
 	}
 	if len(removed) > 0 || f.qosPolicy {
-		current, err := routers.Get(ctx, client, id).Extract()
+		current, err := networkapi.GetRouter(ctx, client, id)
 		if err != nil {
-			return opts, nil, fmt.Errorf("reading router %s: %w", nameOrID, err)
+			return opts, nil, relabel(err, "reading router %s", nameOrID)
 		}
 		if len(removed) > 0 {
 			kept, err := routesWithout(current.Routes, removed, nameOrID)
@@ -1387,9 +1291,9 @@ func runRouterAddSubnet(ctx context.Context, client *gophercloud.ServiceClient, 
 		extra = map[string]any{"advertise_host": true}
 	}
 	body := routerAddInterfaceExt{AddInterfaceOpts: routers.AddInterfaceOpts{SubnetID: subnetID}, extra: extra}
-	if _, err := routers.AddInterface(ctx, client, routerID, body).Extract(); err != nil {
+	if _, err := networkapi.AddRouterInterface(ctx, client, routerID, body); err != nil {
 		return explainMissingExtension(ctx, client,
-			fmt.Errorf("adding subnet %s to router %s: %w", subnetArg, routerArg, err), extra)
+			relabel(err, "adding subnet %s to router %s", subnetArg, routerArg), extra)
 	}
 	if _, err := fmt.Fprintf(w, "Added interface for subnet %s to router %s\n", subnetArg, routerArg); err != nil {
 		return err
@@ -1406,8 +1310,8 @@ func runRouterAddPort(ctx context.Context, client *gophercloud.ServiceClient, ro
 	if err != nil {
 		return err
 	}
-	if _, err := routers.AddInterface(ctx, client, routerID, routers.AddInterfaceOpts{PortID: portID}).Extract(); err != nil {
-		return fmt.Errorf("adding port %s to router %s: %w", portArg, routerArg, err)
+	if _, err := networkapi.AddRouterInterface(ctx, client, routerID, routers.AddInterfaceOpts{PortID: portID}); err != nil {
+		return relabel(err, "adding port %s to router %s", portArg, routerArg)
 	}
 	if _, err := fmt.Fprintf(w, "Added interface for port %s to router %s\n", portArg, routerArg); err != nil {
 		return err
@@ -1468,8 +1372,8 @@ func runRouterRemoveSubnet(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	if _, err := routers.RemoveInterface(ctx, client, routerID, routers.RemoveInterfaceOpts{SubnetID: subnetID}).Extract(); err != nil {
-		return fmt.Errorf("removing subnet %s from router %s: %w", subnetArg, routerArg, err)
+	if _, err := networkapi.RemoveRouterInterface(ctx, client, routerID, routers.RemoveInterfaceOpts{SubnetID: subnetID}); err != nil {
+		return relabel(err, "removing subnet %s from router %s", subnetArg, routerArg)
 	}
 	if _, err := fmt.Fprintf(w, "Removed interface for subnet %s from router %s\n", subnetArg, routerArg); err != nil {
 		return err
@@ -1486,8 +1390,8 @@ func runRouterRemovePort(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	if _, err := routers.RemoveInterface(ctx, client, routerID, routers.RemoveInterfaceOpts{PortID: portID}).Extract(); err != nil {
-		return fmt.Errorf("removing port %s from router %s: %w", portArg, routerArg, err)
+	if _, err := networkapi.RemoveRouterInterface(ctx, client, routerID, routers.RemoveInterfaceOpts{PortID: portID}); err != nil {
+		return relabel(err, "removing port %s from router %s", portArg, routerArg)
 	}
 	if _, err := fmt.Fprintf(w, "Removed interface for port %s from router %s\n", portArg, routerArg); err != nil {
 		return err

@@ -94,3 +94,35 @@ func ExampleCreateFloatingIP() {
 	// Output:
 	// 203.0.113.10 qos-1
 }
+
+// Show what upstream's router show calls interfaces_info: one entry per fixed
+// IP of each of the router's ports other than its gateway. neutron is asked
+// for GET /v2.0/ports?device_id=<router>.
+func ExampleListRouterInterfaces() {
+	neutronAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ports":[`+
+			`{"id":"gw","device_owner":"network:router_gateway","fixed_ips":[{"subnet_id":"public","ip_address":"198.51.100.2"}]},`+
+			`{"id":"port-1","device_owner":"network:router_interface","fixed_ips":[{"subnet_id":"private","ip_address":"192.0.2.1"}]}]}`)
+	}))
+	defer neutronAPI.Close()
+
+	pc := &gophercloud.ProviderClient{
+		EndpointLocator: func(gophercloud.EndpointOpts) (string, error) { return neutronAPI.URL + "/", nil },
+	}
+	nc, err := openstack.FromProvider(pc, gophercloud.EndpointOpts{}, openstack.Options{}).Network()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ifaces, err := network.ListRouterInterfaces(context.Background(), nc, "router-1")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, i := range ifaces {
+		fmt.Println(i.PortID, i.SubnetID, i.IPAddress)
+	}
+	// Output:
+	// port-1 private 192.0.2.1
+}

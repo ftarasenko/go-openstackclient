@@ -86,9 +86,9 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	current, err := extractSubnet(subnets.Get(ctx, client, id))
+	current, err := networkapi.GetSubnet(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("reading subnet %s before unset: %w", nameOrID, err)
+		return relabel(err, "reading subnet %s before unset", nameOrID)
 	}
 
 	s := current
@@ -111,9 +111,9 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 			return err
 		}
 		attrs = mergeAttrs(attrs, extra)
-		if s, err = extractSubnet(subnets.Update(ctx, client, id, networkapi.WithSubnetUpdateAttrs(opts, attrs))); err != nil {
+		if s, err = networkapi.UpdateSubnet(ctx, client, id, networkapi.WithSubnetUpdateAttrs(opts, attrs)); err != nil {
 			explain := withExplainKeys(attrs, subnetTypedExtKeys(nil, opts.ServiceTypes != nil)...)
-			return explainMissingExtension(ctx, client, fmt.Errorf("updating subnet %s: %w", nameOrID, err), explain)
+			return explainMissingExtension(ctx, client, relabel(err, "updating subnet %s", nameOrID), explain)
 		}
 	}
 	// Tags are a sub-resource; a tags-only unset sends no subnet PUT, as upstream.
