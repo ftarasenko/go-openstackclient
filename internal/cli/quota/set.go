@@ -2,6 +2,7 @@ package quota
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,8 +14,10 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/extract"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // quotaSetFlags is one flat flag surface across all three services, matching
@@ -231,9 +234,9 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			ServerGroups:       ptr(flagServerGroups, &f.serverGroups),
 			ServerGroupMembers: ptr(flagServerGroupMembers, &f.serverGroupMembers),
 		}
-		qs, err := extract.One(computequotas.Update(ctx, client, project, opts).Extract())
+		qs, err := computeapi.UpdateQuotaSet(ctx, client, project, opts)
 		if err != nil {
-			return fmt.Errorf("setting compute quotas for project %q: %w", project, err)
+			return err
 		}
 		cf, cv := computeQuotaFields(qs)
 		fields, values = append(fields, cf...), append(values, cv...)
@@ -255,11 +258,11 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			Groups:             ptr(flagVolumeGroups, &f.volumeGroups),
 			Force:              f.force,
 		}
-		qs, perType, err := extractVolumeQuota(volumequotas.Update(ctx, client, project, opts))
+		qs, err := volumeapi.UpdateQuotaSet(ctx, client, project, opts)
 		if err != nil {
-			return partialError(applied, "volume", project, err)
+			return partialError(applied, "volume", project, errors.Unwrap(err))
 		}
-		vf, vv := volumeQuotaFields(qs, perType)
+		vf, vv := volumeQuotaFields(&qs.QuotaSet, typedQuotas(qs.PerVolumeType))
 		fields, values = append(fields, vf...), append(values, vv...)
 		applied = append(applied, "volume")
 	}
@@ -281,9 +284,9 @@ func runQuotaSet(ctx context.Context, s *session, o *output.Options, project str
 			RBACPolicy:        ptr(flagRBACPolicies, &f.rbacPolicies),
 			Trunk:             ptr(flagTrunks, &f.trunks),
 		}
-		q, err := extract.One(networkquotas.Update(ctx, client, project, opts).Extract())
+		q, err := networkapi.UpdateQuota(ctx, client, project, opts)
 		if err != nil {
-			return partialError(applied, "network", project, err)
+			return partialError(applied, "network", project, errors.Unwrap(err))
 		}
 		nf, nv := networkQuotaFields(q)
 		fields, values = append(fields, nf...), append(values, nv...)
@@ -305,7 +308,7 @@ func checkQuotaSetColumns(o *output.Options, given serviceSelection) error {
 		vf, _ := volumeQuotaFields(&volumequotas.QuotaSet{}, nil)
 		cols = append(cols, vf...)
 		for _, c := range o.Columns {
-			if hasAnyPrefix(strings.ToLower(strings.TrimSpace(c)), perVolumeTypePrefixes) {
+			if volumeapi.IsPerVolumeTypeQuota(strings.ToLower(strings.TrimSpace(c))) {
 				cols = append(cols, c)
 			}
 		}

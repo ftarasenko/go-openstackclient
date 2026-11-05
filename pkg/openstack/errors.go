@@ -8,6 +8,10 @@ import "errors"
 // those with gophercloud.ResponseCodeIs(err, http.StatusNotFound).
 var ErrNotFound = errors.New("not found")
 
+// ErrNoObject is returned, wrapped, when a call succeeds but the reply holds
+// none of the object it should, such as a quota set answered with "{}".
+var ErrNoObject = errors.New("the server returned success but no object")
+
 // ServiceError is a failure to build a service client — almost always a
 // service missing from the catalog, or from the requested region. Service is
 // the catalog type koc asked for.

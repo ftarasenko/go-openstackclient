@@ -27,9 +27,12 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/ratelimit"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
@@ -156,6 +159,18 @@ func cloud(t *testing.T) *httptest.Server {
 			return
 		}
 		answer(w, map[string]any{"pools": []map[string]any{{"name": "node-1@lvm#pool", "capabilities": map[string]any{"total_capacity_gb": 100}}}})
+	})
+	mux.HandleFunc("GET /block-storage/os-quota-sets/prj-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"quota_set": map[string]any{"volumes": 10, "gigabytes_ssd": 50}})
+	})
+	mux.HandleFunc("GET /block-storage/limits", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"limits": map[string]any{"rate": []map[string]any{{"uri": "*", "limit": []map[string]any{{"verb": "POST", "value": 10}}}}}})
+	})
+	mux.HandleFunc("GET /network/v2.0/quotas/prj-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"quota": map[string]any{"network": 10}})
+	})
+	mux.HandleFunc("GET /network/v2.0/extensions", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"extensions": []map[string]any{{"name": "Trunk", "alias": "trunk"}}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -290,5 +305,18 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	pools, err := volume.ListStoragePools(ctx, volumeClient)
 	if err != nil || len(pools) != 1 || fmt.Sprint(pools[0].Capabilities["total_capacity_gb"]) != "100" {
 		t.Fatalf("ListStoragePools = %+v, %v", pools, err)
+	}
+	vq, err := volume.GetQuotaSet(ctx, volumeClient, "prj-1")
+	if err != nil || vq.Volumes != 10 || vq.PerVolumeType["gigabytes_ssd"] != 50 {
+		t.Fatalf("volume.GetQuotaSet = %+v, %v", vq, err)
+	}
+	if rl, err := ratelimit.List(ctx, volumeClient, ""); err != nil || len(rl) != 1 || rl[0].Verb != "POST" {
+		t.Fatalf("ratelimit.List = %+v, %v", rl, err)
+	}
+	if nq, err := network.GetQuota(ctx, networkClient, "prj-1"); err != nil || nq.Network != 10 {
+		t.Fatalf("network.GetQuota = %+v, %v", nq, err)
+	}
+	if exts, err := extension.List(ctx, networkClient); err != nil || len(exts) != 1 || exts[0].Alias != "trunk" {
+		t.Fatalf("extension.List = %+v, %v", exts, err)
 	}
 }

@@ -2,9 +2,9 @@ package crossservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	neturl "net/url"
 
 	"github.com/gophercloud/gophercloud/v2"
 	volumelimits "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/limits"
@@ -12,9 +12,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/extract"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/ratelimit"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // `limits show` merges nova's and cinder's absolute limits into one listing.
@@ -86,9 +88,9 @@ func showAbsoluteLimits(ctx context.Context, client *auth.Client, o *output.Opti
 	if err != nil {
 		return err
 	}
-	cl, err := extract.One(computelimits.Get(ctx, compute, computelimits.GetOpts{TenantID: projectID}).Extract())
+	cl, err := computeapi.GetLimits(ctx, compute, projectID)
 	if err != nil {
-		return fmt.Errorf("getting compute limits: %w", err)
+		return err
 	}
 	t.Rows = append(t.Rows, computeAbsoluteRows(cl.Absolute)...)
 
@@ -96,9 +98,9 @@ func showAbsoluteLimits(ctx context.Context, client *auth.Client, o *output.Opti
 	if err != nil {
 		return err
 	}
-	vl, err := extract.One(volumelimits.Get(ctx, volume).Extract())
+	vl, err := volumeapi.GetLimits(ctx, volume)
 	if err != nil {
-		return fmt.Errorf("getting volume limits: %w", err)
+		return err
 	}
 	t.Rows = append(t.Rows, volumeAbsoluteRows(vl.Absolute)...)
 	return o.WriteList(w, t)
@@ -141,8 +143,8 @@ func volumeAbsoluteRows(a volumelimits.Absolute) [][]any {
 }
 
 // showRateLimits reads the `rate` array both services return alongside the
-// absolute limits. gophercloud's Limits structs model only `absolute`, so this
-// is a raw GET on the same endpoint.
+// absolute limits. gophercloud's Limits structs model only `absolute`, so
+// ratelimit.List reads them raw from the same endpoint.
 //
 // Nova has not had rate limits for years — its view hardcodes `"rate": []`
 // (nova/api/openstack/compute/views/limits.py) — so in practice only cinder
@@ -169,41 +171,12 @@ func showRateLimits(ctx context.Context, client *auth.Client, o *output.Options,
 }
 
 func appendRateLimits(ctx context.Context, sc *gophercloud.ServiceClient, service, projectID string, t *output.Table) error {
-	var doc struct {
-		Limits struct {
-			Rate []struct {
-				URI   string `json:"uri"`
-				Regex string `json:"regex"`
-				Limit []struct {
-					Verb          string `json:"verb"`
-					Value         int    `json:"value"`
-					Remaining     int    `json:"remaining"`
-					Unit          string `json:"unit"`
-					NextAvailable string `json:"next-available"`
-				} `json:"limit"`
-			} `json:"rate"`
-		} `json:"limits"`
-	}
-	url := sc.ServiceURL("limits")
-	if projectID != "" {
-		// resolveLimitsProject falls back to the literal --project ref when it
-		// doesn't resolve to an ID (documented trade-off, README "Known
-		// limitations"), so projectID here is operator-supplied and unescaped
-		// string concatenation would send a malformed or silently different
-		// request for a ref containing a space, "&", or "#".
-		url += "?tenant_id=" + neturl.QueryEscape(projectID)
-	}
-	resp, err := sc.Get(ctx, url, &doc, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
+	limits, err := ratelimit.List(ctx, sc, projectID)
 	if err != nil {
-		return fmt.Errorf("getting %s rate limits: %w", service, err)
+		return fmt.Errorf("getting %s rate limits: %w", service, errors.Unwrap(err))
 	}
-	for _, r := range doc.Limits.Rate {
-		for _, l := range r.Limit {
-			t.Rows = append(t.Rows, []any{service, l.Verb, r.URI, r.Regex, l.Value, l.Remaining, l.Unit, l.NextAvailable})
-		}
+	for _, l := range limits {
+		t.Rows = append(t.Rows, []any{service, l.Verb, l.URI, l.Regex, l.Value, l.Remaining, l.Unit, l.NextAvailable})
 	}
 	return nil
 }

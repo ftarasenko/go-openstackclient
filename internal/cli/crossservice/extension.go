@@ -2,6 +2,7 @@ package crossservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	extensionapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
 )
 
 // `extension list` and `extension show` are upstream's openstack.common
@@ -23,19 +25,9 @@ import (
 // neutron's only, as upstream's is.
 //
 // gophercloud has no package for any of the three discovery endpoints, so
-// they are one raw GET each (extensionsGet).
+// package extension reads them raw.
 //
 // `koc network extension list/show` stay as the neutron-only spelling.
-
-// extension is the shape all three services share.
-type extension struct {
-	Name        string `json:"name"`
-	Alias       string `json:"alias"`
-	Description string `json:"description"`
-	Namespace   string `json:"namespace"`
-	Updated     string `json:"updated"`
-	Links       []any  `json:"links"`
-}
 
 // clientFunc lazily builds one service's client; an error means the
 // service is not available to this session (no catalog entry, --creds-from-ns).
@@ -92,7 +84,7 @@ func runExtensionList(ctx context.Context, svc extensionServices, o *output.Opti
 		cols = append(cols, "Namespace", "Updated At", "Links")
 	}
 	all := !f.compute && !f.identity && !f.network && !f.volume
-	var exts []extension
+	var exts []extensionapi.Extension
 	if f.identity {
 		warn(errw, "Extensions list not supported by Identity API")
 	}
@@ -135,27 +127,16 @@ func nilIfEmpty(s string) any {
 	return s
 }
 
-func listExtensions(ctx context.Context, client clientFunc) ([]extension, error) {
+func listExtensions(ctx context.Context, client clientFunc) ([]extensionapi.Extension, error) {
 	sc, err := client()
 	if err != nil {
 		return nil, err
 	}
-	var body struct {
-		Extensions []extension `json:"extensions"`
+	exts, err := extensionapi.List(ctx, sc)
+	if err != nil {
+		return nil, errors.Unwrap(err)
 	}
-	if err := extensionsGet(ctx, sc, sc.ServiceURL("extensions"), &body); err != nil {
-		return nil, err
-	}
-	return body.Extensions, nil
-}
-
-func extensionsGet(ctx context.Context, sc *gophercloud.ServiceClient, url string, out any) error {
-	resp, err := sc.Get(ctx, url, out, &gophercloud.RequestOpts{OkCodes: []int{http.StatusOK}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
+	return exts, nil
 }
 
 func newExtensionShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -189,22 +170,19 @@ func runExtensionShow(ctx context.Context, sc *gophercloud.ServiceClient, o *out
 		[]any{e.Alias, e.Description, e.Name, nilIfEmpty(e.Updated)})
 }
 
-func findNetworkExtension(ctx context.Context, sc *gophercloud.ServiceClient, ref string) (*extension, error) {
-	var one struct {
-		Extension extension `json:"extension"`
-	}
-	err := extensionsGet(ctx, sc, sc.ServiceURL("extensions", ref), &one)
+func findNetworkExtension(ctx context.Context, sc *gophercloud.ServiceClient, ref string) (*extensionapi.Extension, error) {
+	e, err := extensionapi.Get(ctx, sc, ref)
 	if err == nil {
-		return &one.Extension, nil
+		return e, nil
 	}
 	if !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
-		return nil, fmt.Errorf("showing extension %q: %w", ref, err)
+		return nil, err
 	}
 	all, lerr := listExtensions(ctx, func() (*gophercloud.ServiceClient, error) { return sc, nil })
 	if lerr != nil {
 		return nil, fmt.Errorf("showing extension %q: %w", ref, lerr)
 	}
-	var found []extension
+	var found []extensionapi.Extension
 	for _, e := range all {
 		if e.Name == ref {
 			found = append(found, e)
