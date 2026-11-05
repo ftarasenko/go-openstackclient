@@ -221,7 +221,7 @@ func hostServers(ctx context.Context, client *gophercloud.ServiceClient, host st
 	if pin {
 		// setMicroversionHeader rewrites the header from client.Microversion on
 		// every request, so the version is lowered on a shallow copy rather than
-		// through RequestOpts (same pattern as serverActionRaw).
+		// through RequestOpts (same pattern as floatingIPAction in pkg/openstack/compute).
 		pinned := *client
 		pinned.Microversion = "2.1"
 		listClient = &pinned

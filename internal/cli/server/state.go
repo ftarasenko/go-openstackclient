@@ -302,9 +302,9 @@ func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient
 	if name == "" {
 		// Upstream defaults the image name to the server's name; that needs the
 		// server, so it is only fetched when the flag was omitted.
-		s, err := servers.Get(ctx, client, id).Extract()
+		s, err := computeapi.GetServer(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("reading server %q: %w", ref, err)
+			return relabel(err, "reading server %q", ref)
 		}
 		name = s.Name
 	}

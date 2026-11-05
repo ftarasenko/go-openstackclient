@@ -586,8 +586,8 @@ separate entry.
 - **`setMicroversionHeader` overwrites `RequestOpts.MoreHeaders`** on every
   request. To pin a single raw call to a specific microversion, shallow-copy the
   service client and set `.Microversion` on the copy (see
-  `server/actions.go serverActionRaw`, pinned to nova 2.43 for floating-IP
-  actions removed at 2.44).
+  `pkg/openstack/compute` `floatingIPAction`, pinned to nova 2.43 for
+  floating-IP actions removed at 2.44).
 - **Env auth is built in-repo, not via `openstack.AuthOptionsFromEnv()`** —
   that helper only reads `OS_DOMAIN_NAME` and rejects the standard split
   `OS_USER_DOMAIN_NAME` / `OS_PROJECT_DOMAIN_NAME` openrc. `auth/provider.go`
@@ -606,7 +606,7 @@ separate entry.
   value over** (`readUserData` in `server/server.go`), which pins the
   pass-through branch and matches upstream OSC. `RebuildOpts` has no `UserData`
   field at all — it still models the personality files nova removed at 2.57 — so
-  rebuild splices the field in via `serverRebuildOptsExt`.
+  rebuild splices the field in via `compute.RebuildOpts` (`pkg/openstack/compute`).
 - **Provision-state / async transitions** (ironic): after deploy/manage/inspect,
   `--wait` polls `provision_state` keyed off `target_provision_state` clearing —
   see `baremetal/node_provision.go`.

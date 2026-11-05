@@ -12,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // resolveServerCreateRefs turns the human-friendly --image (glance) and
@@ -157,13 +158,9 @@ func resolveServerID(ctx context.Context, client *gophercloud.ServiceClient, ref
 	// exactly what nova's non-detail listing returns. The detail view would ship
 	// every attribute of every server whose name matches the regex — user_data
 	// included — to pick one UUID out of it.
-	pages, err := servers.ListSimple(client, servers.ListOpts{Name: ref, AllTenants: true}).AllPages(ctx)
+	all, err := computeapi.ListServerNames(ctx, client, servers.ListOpts{Name: ref, AllTenants: true}, 0)
 	if err != nil {
-		return "", fmt.Errorf("resolving server %q: %w", ref, err)
-	}
-	all, err := servers.ExtractServers(pages)
-	if err != nil {
-		return "", fmt.Errorf("resolving server %q: %w", ref, err)
+		return "", relabel(err, "resolving server %q", ref)
 	}
 	var matches []servers.Server
 	for _, s := range all {
@@ -188,13 +185,9 @@ func resolveServerID(ctx context.Context, client *gophercloud.ServiceClient, ref
 // ambiguous name (more than one match) is rejected rather than silently picking
 // the first — matching compute/flavor.go resolveFlavorID semantics.
 func resolveFlavorRef(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	pages, err := flavors.ListDetail(client, nil).AllPages(ctx)
+	all, err := computeapi.ListFlavors(ctx, client, flavors.ListOpts{})
 	if err != nil {
-		return "", fmt.Errorf("resolving flavor %q: %w", ref, err)
-	}
-	all, err := flavors.ExtractFlavors(pages)
-	if err != nil {
-		return "", fmt.Errorf("resolving flavor %q: %w", ref, err)
+		return "", relabel(err, "resolving flavor %q", ref)
 	}
 	var byName []string
 	for _, f := range all {
@@ -306,11 +299,7 @@ func serverFlavorNames(ctx context.Context, client *gophercloud.ServiceClient, l
 	// AllAccess so an admin listing another project's servers still sees their
 	// private flavors; nova silently narrows it to the public set for a
 	// non-admin token rather than rejecting the request.
-	pages, err := flavors.ListDetail(client, flavors.ListOpts{AccessType: flavors.AllAccess}).AllPages(ctx)
-	if err != nil {
-		return nil
-	}
-	all, err := flavors.ExtractFlavors(pages)
+	all, err := computeapi.ListFlavors(ctx, client, flavors.ListOpts{AccessType: flavors.AllAccess})
 	if err != nil {
 		return nil
 	}

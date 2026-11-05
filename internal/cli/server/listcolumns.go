@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -215,33 +214,6 @@ func microversionLess(a, b string) bool {
 		return aMaj < bMaj
 	}
 	return aMin < bMin
-}
-
-// extractServersWithRaw extracts a page as ExtractServers does and also keeps
-// each server's raw attributes, keyed by ID, for the raw columns.
-func extractServersWithRaw(raw map[string]map[string]any) func(pagination.Page) ([]servers.Server, error) {
-	return func(page pagination.Page) ([]servers.Server, error) {
-		list, err := servers.ExtractServers(page)
-		if err != nil {
-			return nil, err
-		}
-		var body struct {
-			Servers []map[string]any `json:"servers"`
-		}
-		sp, ok := page.(servers.ServerPage)
-		if !ok {
-			return nil, fmt.Errorf("unexpected page type %T", page)
-		}
-		if err := sp.ExtractInto(&body); err != nil {
-			return nil, err
-		}
-		for _, m := range body.Servers {
-			if id, ok := m["id"].(string); ok {
-				raw[id] = m
-			}
-		}
-		return list, nil
-	}
 }
 
 // listImageID is the listing's image ID, or upstream's marker for a server

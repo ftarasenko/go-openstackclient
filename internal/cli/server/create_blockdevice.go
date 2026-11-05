@@ -5,8 +5,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 )
 
 // Block-device mapping and the placement fields for "server create".
@@ -21,8 +19,8 @@ import (
 // device_name (which the legacy --block-device-mapping form names) and no
 // no_device, and its BootIndex field carries no `omitempty`, so every entry it
 // builds claims boot index 0 — which nova rejects as a second root device the
-// moment a data volume is added. serverCreateOptsExt splices the maps into the
-// request body.
+// moment a data volume is added. computeapi.ServerCreateOptsExt splices the maps
+// into the request body.
 
 // bdmSourceTypes and bdmDestinationTypes are nova's enums for one
 // block_device_mapping_v2 entry
@@ -214,37 +212,6 @@ func parseBlockDeviceMapping(s string) (map[string]any, error) {
 		bdm["delete_on_termination"] = del
 	}
 	return bdm, nil
-}
-
-// serverCreateOptsExt carries the create fields gophercloud's servers.CreateOpts
-// cannot express: nova's 2.74 `host` (the struct models only
-// hypervisor_hostname) and the block_device_mapping_v2 list, which is assembled
-// as maps for the reasons at the top of this file.
-type serverCreateOptsExt struct {
-	servers.CreateOptsBuilder
-	Host        string
-	BlockDevice []map[string]any
-}
-
-func (opts serverCreateOptsExt) ToServerCreateMap() (map[string]any, error) {
-	body, err := opts.CreateOptsBuilder.ToServerCreateMap()
-	if err != nil {
-		return nil, err
-	}
-	if opts.Host == "" && len(opts.BlockDevice) == 0 {
-		return body, nil
-	}
-	srv, ok := body["server"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf(`server create body carries no "server" object`)
-	}
-	if opts.Host != "" {
-		srv["host"] = opts.Host
-	}
-	if len(opts.BlockDevice) > 0 {
-		srv["block_device_mapping_v2"] = opts.BlockDevice
-	}
-	return body, nil
 }
 
 // bootsFromBlockDevice reports whether any mapping claims boot index 0, i.e.

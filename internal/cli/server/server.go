@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -31,7 +30,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/pwprompt"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // NewCommand builds just the "server" command group. It exists so the root
@@ -143,7 +142,7 @@ type serverListFlags struct {
 	// unrelated to the KeyStack created-* filters above: these select on when a
 	// server last changed, not when it was created. Nova includes deleted
 	// servers in that window unless deleted=false is sent — see
-	// serverListQuery.ExcludeDeleted.
+	// computeapi.ServerListOpts.ExcludeDeleted.
 	changesSince  string
 	changesBefore string
 
@@ -165,60 +164,6 @@ type serverListFlags struct {
 	// rawColumns are the optional columns read from fields gophercloud's
 	// Server does not model; set by runServerList.
 	rawColumns []string
-}
-
-// serverListQuery augments gophercloud's servers.ListOpts with the KeyStack
-// server-list filters, which have no typed fields. It satisfies ListOptsBuilder
-// by appending the extra params to the base query string.
-type serverListQuery struct {
-	servers.ListOpts
-	Deleted       bool
-	CreatedSince  string
-	CreatedBefore string
-	DeletedSince  string
-	DeletedBefore string
-	// ChangesBefore is nova's own filter, not a KeyStack one, but it has no
-	// typed field either (ListOpts carries only ChangesSince).
-	ChangesBefore string
-	// ExcludeDeleted sends deleted=false explicitly. Nova answers a
-	// changes-since / changes-before window with deleted servers included
-	// unless told otherwise, so without this a --changes-since listing is
-	// mostly tombstones: one measured window returned 117 DELETED rows against
-	// 15 live ones. Upstream OSC never sees that because it sends
-	// deleted=False on every list; koc sends it only for the changes-* window,
-	// so the default query stays byte-identical to vanilla nova.
-	ExcludeDeleted bool
-}
-
-func (q serverListQuery) ToServerListQuery() (string, error) {
-	base, err := q.ListOpts.ToServerListQuery()
-	if err != nil {
-		return "", err
-	}
-	u, err := url.Parse(base)
-	if err != nil {
-		return "", err
-	}
-	vals := u.Query()
-	switch {
-	case q.Deleted:
-		vals.Set("deleted", "true")
-	case q.ExcludeDeleted:
-		vals.Set("deleted", "false")
-	}
-	for key, val := range map[string]string{
-		"created-since":  q.CreatedSince,
-		"created-before": q.CreatedBefore,
-		"deleted-since":  q.DeletedSince,
-		"deleted-before": q.DeletedBefore,
-		"changes-before": q.ChangesBefore,
-	} {
-		if val != "" {
-			vals.Set(key, val)
-		}
-	}
-	u.RawQuery = vals.Encode()
-	return u.String(), nil
 }
 
 func newServerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -314,7 +259,7 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 ) error {
 	aliasServerListColumns(o, f.long)
 	f.rawColumns = o.SelectedColumns(serverListRawColumnNames()...)
-	opts := serverListQuery{
+	opts := computeapi.ServerListOpts{
 		ListOpts: servers.ListOpts{
 			Name:   f.name,
 			Status: f.status,
@@ -343,33 +288,35 @@ func runServerList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		// setMicroversionHeader rewrites the header from client.Microversion on
 		// every request, so the version is lowered on a shallow copy of the
 		// service client rather than through RequestOpts (same pattern as
-		// serverActionRaw).
+		// floatingIPAction in pkg/openstack/compute).
 		pinned := *client
 		pinned.Microversion = serverListMicroversion(f)
 		listClient = &pinned
 	}
 	// Nova treats limit only as a page size, so --limit is enforced as a hard
-	// result cap; Collect also stops paging once it is met.
-	pager := servers.List(listClient, opts)
+	// result cap; the listing also stops paging once it is met.
 	basic := serverListBasic(o, f)
-	if basic {
-		pager = servers.ListSimple(listClient, opts)
+	var (
+		all []servers.Server
+		raw map[string]map[string]any
+		err error
+	)
+	switch {
+	case basic:
+		all, err = computeapi.ListServerNames(ctx, listClient, opts, f.limit)
+	case len(f.rawColumns) > 0:
+		all, raw, err = computeapi.ListServersRaw(ctx, listClient, opts, f.limit)
+	default:
+		all, err = computeapi.ListServers(ctx, listClient, opts, f.limit)
 	}
-	raw := map[string]map[string]any{}
-	extract := servers.ExtractServers
-	if len(f.rawColumns) > 0 {
-		extract = extractServersWithRaw(raw)
-	}
-	all, err := paging.Collect(ctx, pager, f.limit, extract)
 	if err != nil {
 		if mv := rawColumnsMicroversion(f.rawColumns); mv != "" {
-			return fmt.Errorf("listing servers (-c %s needs nova %s): %w",
-				strings.Join(f.rawColumns, ", "), mv, err)
+			return relabel(err, "listing servers (-c %s needs nova %s)", strings.Join(f.rawColumns, ", "), mv)
 		}
 		if f.createdSince != "" || f.createdBefore != "" || f.deletedSince != "" || f.deletedBefore != "" {
-			return keystackExtErr(fmt.Errorf("listing servers: %w", err), "created/deleted server-list filters")
+			return keystackExtErr(err, "created/deleted server-list filters")
 		}
-		return fmt.Errorf("listing servers: %w", err)
+		return err
 	}
 	if basic {
 		return o.WriteList(w, serverBasicTable(all))
@@ -561,9 +508,9 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	server, err := getServerRaw(ctx, client, id)
+	server, err := computeapi.GetServerRaw(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing server %q: %w", ref, err)
+		return relabel(err, "showing server %q", ref)
 	}
 	if userData {
 		return writeServerUserData(server, w)
@@ -574,24 +521,6 @@ func runServerShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
 	fields, values := showServerFields(server, flatten)
 	return o.WriteSingle(w, fields, values)
-}
-
-// getServerRaw fetches every attribute nova returns, matching the breadth of
-// `openstack server show`. The typed servers.Server struct exposes only a
-// curated subset (and drops the OS-EXT-* admin attributes), so decode the raw
-// object instead.
-func getServerRaw(ctx context.Context, client *gophercloud.ServiceClient, id string) (map[string]any, error) {
-	var body struct {
-		Server map[string]any `json:"server"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("servers", id), &body, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if err != nil {
-		return nil, err
-	}
-	return body.Server, nil
 }
 
 // writeServerUserData decodes the server's base64 user_data and writes it raw.
@@ -849,7 +778,7 @@ func readUserData(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading --user-data %q: %w", path, err)
 	}
-	return base64.StdEncoding.EncodeToString(data), nil
+	return string(computeapi.EncodeUserData(data)), nil
 }
 
 // serverCreateUserData resolves --user-data to the base64 payload the request
@@ -943,19 +872,19 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	}
 
 	// key_name is not a field of servers.CreateOpts; it is injected by wrapping
-	// the base opts with keypairs.CreateOptsExt. serverCreateOptsExt then adds
+	// the base opts with keypairs.CreateOptsExt. ServerCreateOptsExt then adds
 	// what neither struct models — nova 2.74's `host` and the mapping list.
 	var createOpts servers.CreateOptsBuilder = opts
 	if f.keyName != "" {
 		createOpts = keypairs.CreateOptsExt{CreateOptsBuilder: opts, KeyName: f.keyName}
 	}
 	if f.host != "" || len(bdms) > 0 {
-		createOpts = serverCreateOptsExt{CreateOptsBuilder: createOpts, Host: f.host, BlockDevice: bdms}
+		createOpts = computeapi.ServerCreateOptsExt{CreateOptsBuilder: createOpts, Host: f.host, BlockDevice: bdms}
 	}
 
-	s, err := servers.Create(ctx, client, createOpts, hintOpts).Extract()
+	s, err := computeapi.CreateServer(ctx, client, createOpts, hintOpts)
 	if err != nil {
-		return fmt.Errorf("creating server %q: %w", name, err)
+		return relabel(err, "creating server %q", name)
 	}
 	// --wait blocks until nova finishes the build, so a script can boot and then
 	// use the guest in one step instead of polling `server show` itself. With
@@ -976,7 +905,9 @@ func runServerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 func writeCreatedServer(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	s *servers.Server, name string, images imageNamer, w io.Writer,
 ) error {
-	server, err := getServerRaw(ctx, client, s.ID)
+	// The raw object, not servers.Server: the typed struct drops the OS-EXT-*
+	// admin attributes `server show` prints.
+	server, err := computeapi.GetServerRaw(ctx, client, s.ID)
 	if err != nil {
 		server = map[string]any{"id": s.ID, "name": name}
 	}
@@ -1048,7 +979,7 @@ func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 			return err
 		}
 		if err := deleteServer(ctx, client, id, f.force); err != nil {
-			return fmt.Errorf("deleting server %q: %w", ref, err)
+			return relabel(err, "deleting server %q", ref)
 		}
 		if f.wait {
 			pending = append(pending, accepted{ref: ref, id: id})
@@ -1075,9 +1006,9 @@ func runServerDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 // reclaim_instance_interval soft delete.
 func deleteServer(ctx context.Context, client *gophercloud.ServiceClient, id string, force bool) error {
 	if force {
-		return servers.ForceDelete(ctx, client, id).ExtractErr()
+		return computeapi.ForceDeleteServer(ctx, client, id)
 	}
-	return servers.Delete(ctx, client, id).ExtractErr()
+	return computeapi.DeleteServer(ctx, client, id)
 }
 
 // serverSetFlags holds the mutable attributes accepted by "server set".
@@ -1146,57 +1077,36 @@ func newServerSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// serverUpdateOpts extends gophercloud's servers.UpdateOpts, which carries no
-// description field. The pointers distinguish "not set" from an empty string,
-// which nova reads as "clear this field".
-type serverUpdateOpts struct {
-	Name        string  `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Hostname    *string `json:"hostname,omitempty"`
-}
-
-func (opts serverUpdateOpts) ToServerUpdateMap() (map[string]any, error) {
-	return gophercloud.BuildRequestBody(opts, "server")
-}
-
 // serverSetAttributes issues the one PUT carrying every standard updatable
 // attribute, as OSC does.
 func serverSetAttributes(ctx context.Context, client *gophercloud.ServiceClient,
 	ref, id string, f *serverSetFlags,
 ) error {
-	opts := serverUpdateOpts{Name: f.name}
+	opts := computeapi.ServerUpdateOpts{Name: f.name}
 	if f.description != "" {
 		opts.Description = &f.description
 	}
 	if f.hostname != "" {
 		opts.Hostname = &f.hostname
 	}
-	if opts == (serverUpdateOpts{}) {
+	if opts == (computeapi.ServerUpdateOpts{}) {
 		return nil
 	}
-	if _, err := servers.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("updating server %q: %w", ref, err)
-	}
-	return nil
+	_, err := computeapi.UpdateServer(ctx, client, id, opts)
+	return relabel(err, "updating server %q", ref)
 }
 
-// serverSetAvailabilityZone issues the raw PUT the KeyStack per-instance
-// availability_zone extension expects: gophercloud's servers.UpdateOpts has no
-// such field. It stays a separate call from serverSetAttributes so its error can
-// be annotated without implicating a plain rename.
+// serverSetAvailabilityZone applies the KeyStack per-instance availability_zone
+// update. It stays a separate call from serverSetAttributes so its error can be
+// annotated without implicating a plain rename.
 func serverSetAvailabilityZone(ctx context.Context, client *gophercloud.ServiceClient,
 	ref, id, az string,
 ) error {
 	if az == "" {
 		return nil
 	}
-	body := map[string]any{"server": map[string]any{"availability_zone": az}}
-	resp, err := client.Put(ctx, client.ServiceURL("servers", id), body, nil, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return keystackExtErr(fmt.Errorf("updating availability zone on server %q: %w", ref, err), "per-instance availability_zone update")
+	if err := computeapi.SetServerAvailabilityZone(ctx, client, id, az); err != nil {
+		return keystackExtErr(relabel(err, "updating availability zone on server %q", ref), "per-instance availability_zone update")
 	}
 	return nil
 }
@@ -1212,10 +1122,8 @@ func serverSetMetadata(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	if _, err := servers.UpdateMetadata(ctx, client, id, servers.MetadataOpts(meta)).Extract(); err != nil {
-		return fmt.Errorf("updating metadata on server %q: %w", ref, err)
-	}
-	return nil
+	_, err = computeapi.UpdateServerMetadata(ctx, client, id, meta)
+	return relabel(err, "updating metadata on server %q", ref)
 }
 
 // serverSetPassword applies --password / --no-password.
@@ -1224,13 +1132,9 @@ func serverSetPassword(ctx context.Context, client *gophercloud.ServiceClient,
 ) error {
 	switch {
 	case f.password != "":
-		if err := servers.ChangeAdminPassword(ctx, client, id, f.password).ExtractErr(); err != nil {
-			return fmt.Errorf("changing admin password on server %q: %w", ref, err)
-		}
+		return relabel(computeapi.ChangeAdminPassword(ctx, client, id, f.password), "changing admin password on server %q", ref)
 	case f.noPassword:
-		if err := clearServerPassword(ctx, client, id); err != nil {
-			return fmt.Errorf("clearing admin password on server %q: %w", ref, err)
-		}
+		return relabel(computeapi.ClearServerPassword(ctx, client, id), "clearing admin password on server %q", ref)
 	}
 	return nil
 }
@@ -1256,16 +1160,16 @@ func runServerSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 		return err
 	}
 	if f.state != "" {
-		if err := servers.ResetState(ctx, client, id, servers.ServerState(f.state)).ExtractErr(); err != nil {
-			return fmt.Errorf("resetting state of server %q to %q: %w", ref, f.state, err)
+		if err := computeapi.ResetServerState(ctx, client, id, servers.ServerState(f.state)); err != nil {
+			return relabel(err, "resetting state of server %q to %q", ref, f.state)
 		}
 	}
 	if err := serverSetPassword(ctx, client, ref, id, f); err != nil {
 		return err
 	}
 	for _, tag := range f.tags {
-		if err := addServerTag(ctx, client, id, tag); err != nil {
-			return fmt.Errorf("adding tag %q to server %q: %w", tag, ref, err)
+		if err := computeapi.AddServerTag(ctx, client, id, tag); err != nil {
+			return relabel(err, "adding tag %q to server %q", tag, ref)
 		}
 	}
 	return nil
@@ -1297,32 +1201,6 @@ func validateServerSetFlags(client *gophercloud.ServiceClient, f *serverSetFlags
 		}
 	}
 	return nil
-}
-
-// addServerTag adds a single tag to a server (nova 2.26+). gophercloud v2 has no
-// typed server-tags API, so this is a raw PUT; nova answers 201 when the tag is
-// new and 204 when it was already present.
-func addServerTag(ctx context.Context, client *gophercloud.ServiceClient, id, tag string) error {
-	url := client.ServiceURL("servers", id, "tags", tag)
-	resp, err := client.Put(ctx, url, nil, nil, &gophercloud.RequestOpts{OkCodes: []int{201, 204}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
-}
-
-// clearServerPassword drops the admin password nova published to the metadata
-// service. This does not change the password inside the guest. gophercloud v2
-// exposes the GET but not the DELETE, so issue it raw.
-func clearServerPassword(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-	url := client.ServiceURL("servers", id, "os-server-password")
-	resp, err := client.Delete(ctx, url, &gophercloud.RequestOpts{OkCodes: []int{202, 204}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
 }
 
 // promptNewPassword reads a new admin password twice without echo, mirroring
@@ -1387,46 +1265,26 @@ func runServerUnset(ctx context.Context, client *gophercloud.ServiceClient, ref 
 		// replaces the whole collection, so this cannot race a key added between
 		// the read and the deletes the way "list then delete each" can. (Upstream's
 		// SDK does read-then-delete-each — same outcome, more round trips.)
-		if _, err := servers.ResetMetadata(ctx, client, id, servers.MetadataOpts{}).Extract(); err != nil {
-			return fmt.Errorf("removing all metadata from server %q: %w", ref, err)
+		if _, err := computeapi.ReplaceServerMetadata(ctx, client, id, map[string]string{}); err != nil {
+			return relabel(err, "removing all metadata from server %q", ref)
 		}
 	}
 	keys := append([]string(nil), f.properties...)
 	sort.Strings(keys)
 	for _, k := range keys {
-		if err := servers.DeleteMetadatum(ctx, client, id, k).ExtractErr(); err != nil {
-			return fmt.Errorf("removing metadata %q from server %q: %w", k, ref, err)
+		if err := computeapi.DeleteServerMetadatum(ctx, client, id, k); err != nil {
+			return relabel(err, "removing metadata %q from server %q", k, ref)
 		}
 	}
 	for _, tag := range f.tags {
-		if err := deleteServerTag(ctx, client, id, tag); err != nil {
-			return fmt.Errorf("removing tag %q from server %q: %w", tag, ref, err)
+		if err := computeapi.DeleteServerTag(ctx, client, id, tag); err != nil {
+			return relabel(err, "removing tag %q from server %q", tag, ref)
 		}
 	}
 	if f.allTags {
-		if err := deleteServerTags(ctx, client, id); err != nil {
-			return fmt.Errorf("removing all tags from server %q: %w", ref, err)
+		if err := computeapi.DeleteServerTags(ctx, client, id); err != nil {
+			return relabel(err, "removing all tags from server %q", ref)
 		}
 	}
 	return nil
-}
-
-// deleteServerTag removes one tag from a server (nova 2.26+). Like addServerTag
-// this is a raw call: gophercloud v2 has no typed server-tags API.
-func deleteServerTag(ctx context.Context, client *gophercloud.ServiceClient, id, tag string) error {
-	return serverTagsDelete(ctx, client, client.ServiceURL("servers", id, "tags", tag))
-}
-
-// deleteServerTags removes every tag from a server (nova 2.26+).
-func deleteServerTags(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-	return serverTagsDelete(ctx, client, client.ServiceURL("servers", id, "tags"))
-}
-
-func serverTagsDelete(ctx context.Context, client *gophercloud.ServiceClient, url string) error {
-	resp, err := client.Delete(ctx, url, &gophercloud.RequestOpts{OkCodes: []int{204}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
 }
