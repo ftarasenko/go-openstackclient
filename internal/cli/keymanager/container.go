@@ -14,6 +14,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	kmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
 )
 
 func newContainerCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -95,23 +96,8 @@ func containerShow(c *containers.Container) ([]string, []any) {
 	return append(fields, "Consumers"), append(values, containerConsumers(c))
 }
 
-// containerListOpts adds barbican's type filter, which gophercloud's
-// containers.ListOpts lacks.
-type containerListOpts struct {
-	Limit  int    `q:"limit"`
-	Offset int    `q:"offset"`
-	Name   string `q:"name"`
-	Type   string `q:"type"`
-}
-
-// ToContainerListQuery implements containers.ListOptsBuilder.
-func (opts containerListOpts) ToContainerListQuery() (string, error) {
-	q, err := gophercloud.BuildQueryString(opts)
-	if err != nil {
-		return "", err
-	}
-	return q.String(), nil
-}
+// containerListOpts is the container listing's filters.
+type containerListOpts = kmapi.ContainerListOpts
 
 func newContainerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	f := &containerListOpts{}
@@ -140,18 +126,11 @@ func newContainerListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runContainerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, opts containerListOpts, w io.Writer) error {
-	page, err := firstPage(ctx, containers.List(client, opts))
+	all, err := kmapi.ListContainers(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing containers: %w", err)
+		return err
 	}
 	t := output.Table{Columns: containerColumns}
-	if page == nil {
-		return o.WriteList(w, t)
-	}
-	all, err := containers.ExtractContainers(page)
-	if err != nil {
-		return fmt.Errorf("parsing container list: %w", err)
-	}
 	for i := range all {
 		t.Rows = append(t.Rows, containerListRow(&all[i]))
 	}
@@ -178,7 +157,7 @@ func newContainerGetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runContainerGet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	id, err := refUUID(ref, "Container")
+	id, err := kmapi.RefUUID(ref, "Container")
 	if err != nil {
 		return err
 	}
@@ -186,9 +165,9 @@ func runContainerGet(ctx context.Context, client *gophercloud.ServiceClient, o *
 }
 
 func showContainer(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	c, err := containers.Get(ctx, client, id).Extract()
+	c, err := kmapi.GetContainer(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting container %s: %w", id, err)
+		return err
 	}
 	fields, values := containerShow(c)
 	return o.WriteSingle(w, fields, values)
@@ -258,13 +237,9 @@ func (f *containerCreateFlags) createOpts() (containers.CreateOpts, error) {
 }
 
 func runContainerCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, opts containers.CreateOpts, w io.Writer) error {
-	created, err := containers.Create(ctx, client, opts).Extract()
+	id, err := kmapi.CreateContainer(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating container: %w", err)
-	}
-	id, err := refUUID(created.ContainerRef, "Container")
-	if err != nil {
-		return fmt.Errorf("creating container: barbican answered container_ref %q: %w", created.ContainerRef, err)
+		return err
 	}
 	return showContainer(ctx, client, o, id, w)
 }
@@ -286,12 +261,9 @@ func newContainerDeleteCommand(a *auth.Options) *cobra.Command {
 }
 
 func runContainerDelete(ctx context.Context, client *gophercloud.ServiceClient, ref string) error {
-	id, err := refUUID(ref, "Container")
+	id, err := kmapi.RefUUID(ref, "Container")
 	if err != nil {
 		return err
 	}
-	if err := containers.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting container %s: %w", id, err)
-	}
-	return nil
+	return kmapi.DeleteContainer(ctx, client, id)
 }

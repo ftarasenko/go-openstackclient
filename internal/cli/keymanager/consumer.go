@@ -2,34 +2,16 @@ package keymanager
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	kmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
 )
-
-// Secret consumers are a raw fallback: gophercloud v2.15.0's keymanager has
-// consumers for containers only, not for secrets. They are barbican's
-// microversion 1.1 API, which every release from Zed carries; the client's
-// pinned microversion already sends it.
-//
-//	POST|DELETE /v1/secrets/{id}/consumers   {"service", "resource_type", "resource_id"}
-//	GET         /v1/secrets/{id}/consumers?limit=&offset=
-
-// secretConsumer is one entry of GET /v1/secrets/{id}/consumers.
-type secretConsumer struct {
-	Service      string `json:"service"`
-	ResourceType string `json:"resource_type"`
-	ResourceID   string `json:"resource_id"`
-	Created      string `json:"created"`
-}
 
 func newConsumerCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -77,29 +59,15 @@ func newConsumerWriteCommand(a *auth.Options, use, short, method string) *cobra.
 }
 
 func runConsumerWrite(ctx context.Context, client *gophercloud.ServiceClient, method, ref string, f *consumerFlags) error {
-	id, err := refUUID(ref, "Secret")
+	id, err := kmapi.RefUUID(ref, "Secret")
 	if err != nil {
 		return err
 	}
-	body := map[string]string{"service": f.service, "resource_type": f.resourceType, "resource_id": f.resourceID}
-	u := client.ServiceURL("secrets", id, "consumers")
-	var resp *http.Response
+	consumer := kmapi.SecretConsumer{Service: f.service, ResourceType: f.resourceType, ResourceID: f.resourceID}
 	if method == http.MethodPost {
-		resp, err = client.Post(ctx, u, body, nil, &gophercloud.RequestOpts{OkCodes: []int{http.StatusOK, http.StatusCreated}})
-	} else {
-		resp, err = client.Delete(ctx, u, &gophercloud.RequestOpts{JSONBody: body, OkCodes: []int{http.StatusOK, http.StatusNoContent}})
+		return kmapi.AddSecretConsumer(ctx, client, id, consumer)
 	}
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		verb := "registering consumer of"
-		if method == http.MethodDelete {
-			verb = "removing consumer from"
-		}
-		return fmt.Errorf("%s secret %s: %w", verb, id, err)
-	}
-	return nil
+	return kmapi.RemoveSecretConsumer(ctx, client, id, consumer)
 }
 
 func newConsumerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -127,23 +95,16 @@ func newConsumerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runConsumerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, limit, offset int, w io.Writer) error {
-	id, err := refUUID(ref, "Secret")
+	id, err := kmapi.RefUUID(ref, "Secret")
 	if err != nil {
 		return err
 	}
-	q := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	var body struct {
-		Consumers []secretConsumer `json:"consumers"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("secrets", id, "consumers")+"?"+q.Encode(), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("listing consumers of secret %s: %w", id, err)
+	consumers, err := kmapi.ListSecretConsumers(ctx, client, id, limit, offset)
+	if err != nil {
+		return err
 	}
 	t := output.Table{Columns: []string{"Service", "Resource type", "Resource id", "Created"}}
-	for _, c := range body.Consumers {
+	for _, c := range consumers {
 		t.Rows = append(t.Rows, []any{c.Service, c.ResourceType, c.ResourceID, c.Created})
 	}
 	return o.WriteList(w, t)

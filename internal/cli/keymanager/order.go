@@ -2,7 +2,6 @@ package keymanager
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	kmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
 )
 
 func newOrderCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -84,18 +84,11 @@ func newOrderListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runOrderList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, opts orders.ListOpts, w io.Writer) error {
-	page, err := firstPage(ctx, orders.List(client, opts))
+	all, err := kmapi.ListOrders(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing orders: %w", err)
+		return err
 	}
 	t := output.Table{Columns: orderColumns}
-	if page == nil {
-		return o.WriteList(w, t)
-	}
-	all, err := orders.ExtractOrders(page)
-	if err != nil {
-		return fmt.Errorf("parsing order list: %w", err)
-	}
 	for i := range all {
 		t.Rows = append(t.Rows, orderRow(&all[i]))
 	}
@@ -122,7 +115,7 @@ func newOrderGetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runOrderGet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	id, err := refUUID(ref, "Order")
+	id, err := kmapi.RefUUID(ref, "Order")
 	if err != nil {
 		return err
 	}
@@ -130,9 +123,9 @@ func runOrderGet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 }
 
 func showOrder(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	r, err := orders.Get(ctx, client, id).Extract()
+	r, err := kmapi.GetOrder(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting order %s: %w", id, err)
+		return err
 	}
 	return o.WriteSingle(w, orderColumns, orderRow(r))
 }
@@ -198,13 +191,9 @@ func (f *orderCreateFlags) createOpts(typ string) (orders.CreateOpts, error) {
 }
 
 func runOrderCreate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, opts orders.CreateOpts, w io.Writer) error {
-	created, err := orders.Create(ctx, client, opts).Extract()
+	id, err := kmapi.CreateOrder(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating order: %w", err)
-	}
-	id, err := refUUID(created.OrderRef, "Order")
-	if err != nil {
-		return fmt.Errorf("creating order: barbican answered order_ref %q: %w", created.OrderRef, err)
+		return err
 	}
 	return showOrder(ctx, client, o, id, w)
 }
@@ -226,12 +215,9 @@ func newOrderDeleteCommand(a *auth.Options) *cobra.Command {
 }
 
 func runOrderDelete(ctx context.Context, client *gophercloud.ServiceClient, ref string) error {
-	id, err := refUUID(ref, "Order")
+	id, err := kmapi.RefUUID(ref, "Order")
 	if err != nil {
 		return err
 	}
-	if err := orders.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting order %s: %w", id, err)
-	}
-	return nil
+	return kmapi.DeleteOrder(ctx, client, id)
 }

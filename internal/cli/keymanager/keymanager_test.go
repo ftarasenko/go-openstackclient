@@ -80,25 +80,6 @@ const secretBody = `{
   "consumers": []
 }`
 
-func TestRefUUID(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{secretHref, secretID},
-		{secretHref + "/", secretID},
-		{secretID, secretID},
-		{strings.ToUpper(strings.ReplaceAll(secretID, "-", "")), secretID},
-	} {
-		got, err := refUUID(tc.in, "Secret")
-		if err != nil || got != tc.want {
-			t.Errorf("refUUID(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
-		}
-	}
-	for _, bad := range []string{"", "db-password", "https://cloud.example.com/v1/secrets/"} {
-		if _, err := refUUID(bad, "Secret"); err == nil || err.Error() != "Secret incorrectly specified" {
-			t.Errorf("refUUID(%q) error = %v, want %q", bad, err, "Secret incorrectly specified")
-		}
-	}
-}
-
 func TestRunSecretList(t *testing.T) {
 	fs := th.SetupHTTP()
 	defer fs.Teardown()

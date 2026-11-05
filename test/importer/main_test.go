@@ -1,6 +1,7 @@
 // Package importer_test builds a Session from FromProvider against an
 // httptest cloud and lists images, networks, flavors, projects, role
-// assignments, volumes, load balancers, zones, placement and baremetal
+// assignments, volumes, load balancers, zones, placement, baremetal and
+// barbican
 // through pkg/,
 // with nothing but the module's public import paths.
 package importer_test
@@ -25,6 +26,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
+	"github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/secrets"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
@@ -34,6 +36,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
@@ -279,6 +282,15 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /baremetal-introspection/introspection/node-1", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"uuid": "node-1", "finished": true, "state": "finished"})
+	})
+	mux.HandleFunc("GET /key-manager/v1/secrets", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "10" || r.Header.Get("OpenStack-API-Version") != "key-manager 1.1" {
+			t.Errorf("secret list %q, version %q", r.URL.RawQuery, r.Header.Get("OpenStack-API-Version"))
+		}
+		answer(w, map[string]any{"secrets": []map[string]any{{"name": "db"}}, "total": 1})
+	})
+	mux.HandleFunc("GET /key-manager/v1/secrets/11111111-2222-3333-4444-555555555555", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"consumers": []map[string]any{{"service": "image"}}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -540,5 +552,20 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if st, err := baremetal.GetIntrospectionStatus(ctx, inspector, "node-1"); err != nil || st.State != "finished" {
 		t.Fatalf("baremetal.GetIntrospectionStatus = %+v, %v", st, err)
+	}
+
+	barbican, err := s.KeyManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list, err := keymanager.ListSecrets(ctx, barbican, secrets.ListOpts{Limit: 10}); err != nil || len(list) != 1 || list[0].Name != "db" {
+		t.Fatalf("keymanager.ListSecrets = %+v, %v", list, err)
+	}
+	secretUUID, err := keymanager.RefUUID("https://kms.example.com/v1/secrets/11111111-2222-3333-4444-555555555555", "Secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keymanager.DeleteSecret(ctx, barbican, secretUUID, false); !errors.Is(err, keymanager.ErrSecretHasConsumers) {
+		t.Fatalf("keymanager.DeleteSecret = %v, want ErrSecretHasConsumers", err)
 	}
 }
