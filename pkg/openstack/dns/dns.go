@@ -89,8 +89,13 @@ func findID[T any](ctx context.Context, kind, ref string,
 	}
 }
 
-// parsed closes a response and maps its status to an error.
-func parsed(resp *http.Response, err error) error {
+// Each raw helper closes the body itself: the close has to be visible in the
+// function that made the request for the leak analysis (bodyclose) to see it.
+
+func getJSON(ctx context.Context, c *gophercloud.ServiceClient, url string, out any) error {
+	resp, err := c.Get(ctx, url, out, &gophercloud.RequestOpts{
+		OkCodes: []int{http.StatusOK},
+	})
 	if resp != nil {
 		defer func() { _ = resp.Body.Close() }()
 	}
@@ -98,25 +103,26 @@ func parsed(resp *http.Response, err error) error {
 	return err
 }
 
-func getJSON(ctx context.Context, c *gophercloud.ServiceClient, url string, out any) error {
-	resp, err := c.Get(ctx, url, out, &gophercloud.RequestOpts{
-		OkCodes: []int{http.StatusOK},
-	})
-	return parsed(resp, err)
-}
-
 func postJSON(ctx context.Context, c *gophercloud.ServiceClient, url string, body, out any) error {
 	resp, err := c.Post(ctx, url, body, out, &gophercloud.RequestOpts{
 		OkCodes: []int{http.StatusOK, http.StatusCreated, http.StatusAccepted},
 	})
-	return parsed(resp, err)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
 
 func postNoContent(ctx context.Context, c *gophercloud.ServiceClient, url string, body any) error {
 	resp, err := c.Post(ctx, url, body, nil, &gophercloud.RequestOpts{
 		OkCodes: []int{http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent},
 	})
-	return parsed(resp, err)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
 
 func postRaw(ctx context.Context, c *gophercloud.ServiceClient, url, contentType string, body io.Reader, out any) error {
@@ -124,7 +130,11 @@ func postRaw(ctx context.Context, c *gophercloud.ServiceClient, url, contentType
 		MoreHeaders: map[string]string{"Content-Type": contentType},
 		OkCodes:     []int{http.StatusOK, http.StatusCreated, http.StatusAccepted},
 	})
-	return parsed(resp, err)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
 
 // patchJSON sends a JSON PATCH. A nil value in body is sent as null, which
@@ -136,7 +146,11 @@ func patchJSON(ctx context.Context, c *gophercloud.ServiceClient, url string, bo
 		MoreHeaders:  map[string]string{"Content-Type": "application/json"},
 		OkCodes:      []int{http.StatusOK, http.StatusAccepted},
 	})
-	return parsed(resp, err)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
 
 func del(ctx context.Context, c *gophercloud.ServiceClient, url string, okCodes ...int) error {
@@ -144,7 +158,11 @@ func del(ctx context.Context, c *gophercloud.ServiceClient, url string, okCodes 
 		okCodes = []int{http.StatusOK, http.StatusAccepted, http.StatusNoContent}
 	}
 	resp, err := c.Delete(ctx, url, &gophercloud.RequestOpts{OkCodes: okCodes})
-	return parsed(resp, err)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	_, _, err = gophercloud.ParseResponse(resp, err)
+	return err
 }
 
 func getText(ctx context.Context, c *gophercloud.ServiceClient, url, accept string) (string, error) {
