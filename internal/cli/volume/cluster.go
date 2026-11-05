@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
-	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // "koc block storage cluster list|set|show" — cinder's clustered-services view,
@@ -20,44 +19,9 @@ import (
 // the same backend under one cluster name, and it is the cluster, not the
 // individual service, that is enabled or disabled.
 //
-// gophercloud has no blockstorage/v3/clusters package, so these are raw
-// ServiceClient calls (an AGENTS.md-sanctioned fallback) decoding into the DTO
-// below. The URLs and bodies follow cinder's own API: GET /clusters and
-// /clusters/detail, GET /clusters/<name>?binary=…, and PUT /clusters/enable |
-// /clusters/disable with a {"name", "binary", "disabled_reason"} body — the
-// same routes python-cinderclient's ClusterManager and openstacksdk's
-// block_storage.v3.cluster resource drive.
-//
 // Flag names follow upstream OSC; the KeyStack reference (docs.keystack.ru)
 // returned HTTP 403 at implementation time, so the surface is UNVERIFIED
 // against KeyStack and falls back to upstream OSC.
-
-// clusterMicroversion gates the whole /clusters resource: cinder added
-// clustered services in 3.7, and below it the endpoint does not exist. Zed caps
-// cinder at 3.70, so every supported cloud has it.
-const clusterMicroversion = "3.7"
-
-// cluster is one entry of cinder's /clusters response. The fields after Status
-// are returned only by the detail listing and by show/enable/disable.
-//
-// Timestamps stay strings: these are raw decodes, so cinder's own bytes are
-// passed through rather than round-tripped via time.Time, as everywhere else in
-// koc that decodes an API without a typed package.
-type cluster struct {
-	Name              string `json:"name"`
-	Binary            string `json:"binary"`
-	State             string `json:"state"`
-	Status            string `json:"status"`
-	DisabledReason    string `json:"disabled_reason"`
-	NumHosts          int    `json:"num_hosts"`
-	NumDownHosts      int    `json:"num_down_hosts"`
-	LastHeartbeat     string `json:"last_heartbeat"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
-	ReplicationStatus string `json:"replication_status"`
-	Frozen            bool   `json:"frozen"`
-	ActiveBackendID   string `json:"active_backend_id"`
-}
 
 // newBlockStorageCommand builds the "block storage …" group. Upstream models
 // this as a three-word noun ("block storage cluster"), so it is nested parent
@@ -165,55 +129,25 @@ func ptr[T any](v T) *T { return &v }
 func runClusterList(ctx context.Context, client *gophercloud.ServiceClient,
 	o *output.Options, f *clusterListFlags, w io.Writer,
 ) error {
-	if err := requireVolumeMicroversion(client, clusterMicroversion, "block storage cluster list"); err != nil {
+	if err := requireVolumeMicroversion(client, volumeapi.ClusterMicroversion, "block storage cluster list"); err != nil {
 		return err
 	}
-	q := url.Values{}
-	if f.name != "" {
-		q.Set("name", f.name)
-	}
-	if f.binary != "" {
-		q.Set("binary", f.binary)
-	}
-	if f.isUp != nil {
-		q.Set("is_up", strconv.FormatBool(*f.isUp))
-	}
-	if f.isDisabled != nil {
-		q.Set("disabled", strconv.FormatBool(*f.isDisabled))
-	}
-	if f.numHosts != nil {
-		q.Set("num_hosts", strconv.Itoa(*f.numHosts))
-	}
-	if f.numDownHosts != nil {
-		q.Set("num_down_hosts", strconv.Itoa(*f.numDownHosts))
-	}
-
 	// The summary listing carries only the four base columns; everything --long
 	// renders comes from /clusters/detail, so the flag picks the endpoint as
 	// well as the column set.
-	u := client.ServiceURL("clusters")
-	if f.long {
-		u = client.ServiceURL("clusters", "detail")
-	}
-	if encoded := q.Encode(); encoded != "" {
-		u += "?" + encoded
-	}
-	var resp struct {
-		Clusters []cluster `json:"clusters"`
-	}
-	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
-	}
+	clusters, err := volumeapi.ListClusters(ctx, client, volumeapi.ClusterListOpts{
+		Name: f.name, Binary: f.binary, IsUp: f.isUp, Disabled: f.isDisabled,
+		NumHosts: f.numHosts, NumDownHosts: f.numDownHosts, Detail: f.long,
+	})
 	if err != nil {
-		return fmt.Errorf("listing block storage clusters: %w", err)
+		return err
 	}
-	return o.WriteList(w, clusterListTable(resp.Clusters, f.long))
+	return o.WriteList(w, clusterListTable(clusters, f.long))
 }
 
 // clusterListTable renders the cluster listing, column-for-column with
 // upstream's.
-func clusterListTable(clusters []cluster, long bool) output.Table {
+func clusterListTable(clusters []volumeapi.Cluster, long bool) output.Table {
 	cols := []string{"Name", "Binary", "State", "Status"}
 	if long {
 		cols = append(cols, "Num Hosts", "Num Down Hosts", "Last Heartbeat", "Disabled Reason", "Created At", "Updated At")
@@ -258,27 +192,17 @@ func newClusterShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runClusterShow(ctx context.Context, client *gophercloud.ServiceClient,
 	o *output.Options, name, binary string, w io.Writer,
 ) error {
-	if err := requireVolumeMicroversion(client, clusterMicroversion, "block storage cluster show"); err != nil {
+	if err := requireVolumeMicroversion(client, volumeapi.ClusterMicroversion, "block storage cluster show"); err != nil {
 		return err
 	}
-	u := client.ServiceURL("clusters", name)
 	// Upstream OSC declares --binary on this verb and then drops it before the
 	// request, so the flag silently does nothing there; cinder does accept it as
 	// a query parameter, so koc sends it.
-	if binary != "" {
-		u += "?" + url.Values{"binary": {binary}}.Encode()
-	}
-	var resp struct {
-		Cluster cluster `json:"cluster"`
-	}
-	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
-	}
+	c, err := volumeapi.GetCluster(ctx, client, name, binary)
 	if err != nil {
-		return fmt.Errorf("showing block storage cluster %q: %w", name, err)
+		return err
 	}
-	return writeCluster(o, resp.Cluster, w)
+	return writeCluster(o, *c, w)
 }
 
 type clusterSetFlags struct {
@@ -333,34 +257,22 @@ func runClusterSet(ctx context.Context, client *gophercloud.ServiceClient,
 	if err := o.CheckColumns(clusterColumns...); err != nil {
 		return err
 	}
-	if err := requireVolumeMicroversion(client, clusterMicroversion, "block storage cluster set"); err != nil {
+	if err := requireVolumeMicroversion(client, volumeapi.ClusterMicroversion, "block storage cluster set"); err != nil {
 		return err
 	}
-	action, verb := "enable", "enabling"
-	body := map[string]any{"name": name}
-	if f.binary != "" {
-		body["binary"] = f.binary
-	}
+	var c *volumeapi.Cluster
+	var err error
 	if f.disable {
-		action, verb = "disable", "disabling"
-		if f.disableReason != "" {
-			body["disabled_reason"] = f.disableReason
-		}
-	}
-	var resp struct {
-		Cluster cluster `json:"cluster"`
-	}
-	r, err := client.Put(ctx, client.ServiceURL("clusters", action), body, &resp,
-		&gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
+		c, err = volumeapi.DisableCluster(ctx, client, name, f.binary, f.disableReason)
+	} else {
+		c, err = volumeapi.EnableCluster(ctx, client, name, f.binary)
 	}
 	if err != nil {
-		return fmt.Errorf("%s block storage cluster %q: %w", verb, name, err)
+		return err
 	}
 	// Both verbs answer with the updated cluster, and upstream renders it; so
 	// does koc, which makes the new status the command's own confirmation.
-	return writeCluster(o, resp.Cluster, w)
+	return writeCluster(o, *c, w)
 }
 
 // clusterColumns is upstream's detailed cluster format.
@@ -374,7 +286,7 @@ var clusterColumns = []string{
 // order are upstream's detailed cluster format, including its own inconsistency:
 // the listing's --long calls these counts "Num Hosts"/"Num Down Hosts" while the
 // single-cluster view calls them "Hosts"/"Down Hosts".
-func writeCluster(o *output.Options, c cluster, w io.Writer) error {
+func writeCluster(o *output.Options, c volumeapi.Cluster, w io.Writer) error {
 	values := []any{
 		c.Name, c.Binary, c.State, c.Status, c.DisabledReason,
 		c.NumHosts, c.NumDownHosts, c.LastHeartbeat, c.CreatedAt, c.UpdatedAt,

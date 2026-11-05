@@ -14,6 +14,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // "koc volume backend pool list" and "koc volume backend capability show" —
@@ -85,35 +86,20 @@ func newBackendPoolListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	return cmd
 }
 
-// storagePool is one entry of GET /scheduler-stats/get_pools?detail=True.
-type storagePool struct {
-	Name         string         `json:"name"`
-	Capabilities map[string]any `json:"capabilities"`
-}
-
 func runBackendPoolList(ctx context.Context, client *gophercloud.ServiceClient,
 	o *output.Options, long bool, w io.Writer,
 ) error {
-	var resp struct {
-		Pools []storagePool `json:"pools"`
-	}
-	// detail=True is what makes cinder return the capabilities object; without it
-	// the response is a list of bare names.
-	u := client.ServiceURL("scheduler-stats", "get_pools") + "?detail=True"
-	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
-	}
+	pools, err := volumeapi.ListStoragePools(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing storage pools: %w", err)
+		return err
 	}
-	return o.WriteList(w, poolTable(resp.Pools, long))
+	return o.WriteList(w, poolTable(pools, long))
 }
 
 // poolTable renders the pool listing. The capability keys are unioned across
 // pools rather than read off the first one: cinder returns whatever each driver
 // reported, so two backends in the same cloud do not agree on the key set.
-func poolTable(pools []storagePool, long bool) output.Table {
+func poolTable(pools []volumeapi.StoragePool, long bool) output.Table {
 	keys := slices.Clone(poolCoreCapabilities)
 	if long {
 		keys = append(keys, extraCapabilityKeys(pools)...)
@@ -137,7 +123,7 @@ func poolTable(pools []storagePool, long bool) output.Table {
 
 // extraCapabilityKeys is every capability key any pool reported that the core
 // set does not already cover, ASCII-sorted so the column order is stable.
-func extraCapabilityKeys(pools []storagePool) []string {
+func extraCapabilityKeys(pools []volumeapi.StoragePool) []string {
 	seen := map[string]bool{}
 	for _, p := range pools {
 		for k := range p.Capabilities {
@@ -228,14 +214,9 @@ func newBackendCapabilityShowCommand(a *auth.Options, o *output.Options) *cobra.
 func runBackendCapabilityShow(ctx context.Context, client *gophercloud.ServiceClient,
 	o *output.Options, host string, w io.Writer,
 ) error {
-	var resp map[string]any
-	r, err := client.Get(ctx, client.ServiceURL("capabilities", host), &resp,
-		&gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
-	}
+	resp, err := volumeapi.GetBackendCapabilities(ctx, client, host)
 	if err != nil {
-		return fmt.Errorf("showing capabilities of backend %q: %w", host, err)
+		return relabel(err, "showing capabilities of backend %q", host)
 	}
 	// json/yaml keep the raw structured values so they can be parsed; the text
 	// views get one line per field, as everywhere else in koc.

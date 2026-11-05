@@ -148,11 +148,8 @@ func resolveBackupID(ctx context.Context, client *gophercloud.ServiceClient, ref
 		},
 		// The summary listing: a name match needs no more than ID and name.
 		func() ([]backups.Backup, error) {
-			pages, err := backups.List(client, backups.ListOpts{Name: ref}).AllPages(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return backups.ExtractBackups(pages)
+			all, err := volumeapi.ListBackupSummaries(ctx, client, backups.ListOpts{Name: ref}, 0)
+			return all, inner(err)
 		},
 		func(b backups.Backup) string { return b.Name },
 		func(b backups.Backup) string { return b.ID },

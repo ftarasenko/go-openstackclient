@@ -7,6 +7,7 @@ package importer_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -146,6 +147,16 @@ func cloud(t *testing.T) *httptest.Server {
 		}
 		answer(w, map[string]any{"backup": map[string]any{"id": "bak-1", "name": body.Backup.Name}})
 	})
+	mux.HandleFunc("GET /block-storage/os-services", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"services": []map[string]any{{"binary": "cinder-volume", "host": "node-1@lvm", "backend_state": "up"}}})
+	})
+	mux.HandleFunc("GET /block-storage/scheduler-stats/get_pools", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("detail") != "True" {
+			http.Error(w, "want detail=True", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"pools": []map[string]any{{"name": "node-1@lvm#pool", "capabilities": map[string]any{"total_capacity_gb": 100}}}})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -271,5 +282,13 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	name := "nightly"
 	if b, err := volume.UpdateBackup(ctx, volumeClient, "bak-1", backups.UpdateOpts{Name: &name}); err != nil || b.Name != name {
 		t.Fatalf("UpdateBackup = %+v, %v", b, err)
+	}
+	volSvcs, err := volume.ListServices(ctx, volumeClient, nil)
+	if err != nil || len(volSvcs) != 1 || volSvcs[0].Binary != "cinder-volume" || volSvcs[0].BackendState != "up" {
+		t.Fatalf("ListServices = %+v, %v", volSvcs, err)
+	}
+	pools, err := volume.ListStoragePools(ctx, volumeClient)
+	if err != nil || len(pools) != 1 || fmt.Sprint(pools[0].Capabilities["total_capacity_gb"]) != "100" {
+		t.Fatalf("ListStoragePools = %+v, %v", pools, err)
 	}
 }
