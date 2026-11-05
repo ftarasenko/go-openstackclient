@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -9,11 +10,12 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // newComputeCommand builds the "compute" parent group, home of
@@ -86,21 +88,12 @@ func runComputeServiceList(ctx context.Context, client *gophercloud.ServiceClien
 	if f.status != "" && f.status != "enabled" && f.status != "disabled" {
 		return fmt.Errorf("--status must be enabled or disabled, got %q", f.status)
 	}
-	opts := services.ListOpts{Host: f.host, Binary: f.service}
-	pages, err := services.List(client, opts).AllPages(ctx)
+	// KeyStack's os-services extension adds admin_state and error_details,
+	// which gophercloud's Service type drops; ListServices returns them aligned
+	// by index.
+	all, ext, err := computeapi.ListServices(ctx, client, services.ListOpts{Host: f.host, Binary: f.service})
 	if err != nil {
-		return fmt.Errorf("listing compute services: %w", err)
-	}
-	all, err := services.ExtractServices(pages)
-	if err != nil {
-		return fmt.Errorf("parsing compute service list: %w", err)
-	}
-	// KeyStack's os-services extension (KCP-1886/7988) adds admin_state and
-	// error_details, which gophercloud's Service type drops; pull them raw and
-	// align by index (same "services" array, same order).
-	ext, err := extractServiceExt(pages)
-	if err != nil {
-		return fmt.Errorf("parsing compute service list: %w", err)
+		return err
 	}
 	// The two slices are aligned by index, so --status has to filter them together.
 	if f.status != "" {
@@ -122,22 +115,7 @@ func runComputeServiceList(ctx context.Context, client *gophercloud.ServiceClien
 
 // serviceExt carries the KeyStack os-services extension fields that gophercloud's
 // Service type omits.
-type serviceExt struct {
-	AdminState   string `json:"admin_state"`
-	ErrorDetails string `json:"error_details"`
-}
-
-func extractServiceExt(page pagination.Page) ([]serviceExt, error) {
-	var s struct {
-		Services []serviceExt `json:"services"`
-	}
-	sp, ok := page.(services.ServicePage)
-	if !ok {
-		return nil, fmt.Errorf("extractServiceExt: unexpected page type %T", page)
-	}
-	err := sp.ExtractInto(&s)
-	return s.Services, err
-}
+type serviceExt = computeapi.ServiceAdminState
 
 // serviceListTable renders the compute-service listing.
 //
@@ -193,16 +171,6 @@ func serviceListTable(list []services.Service, ext []serviceExt, long bool) outp
 		t.Rows = append(t.Rows, row)
 	}
 	return t
-}
-
-// serviceUpdateBody is a raw services.UpdateOptsBuilder. gophercloud's
-// services.UpdateOpts tags forced_down with omitempty, so it cannot express
-// forced_down=false (needed by "--up"); building the map directly avoids that
-// gap while still going through the typed services.Update call.
-type serviceUpdateBody map[string]any
-
-func (b serviceUpdateBody) ToServiceUpdateMap() (map[string]any, error) {
-	return map[string]any(b), nil
 }
 
 // serviceSetFlags holds the mutations accepted by "compute service set".
@@ -290,18 +258,14 @@ func runComputeServiceSet(ctx context.Context, client *gophercloud.ServiceClient
 	// update carrying admin_state (+ optional error_details/status/reason),
 	// mutually exclusive with the standard enable/disable/up/down mutations.
 	if f.adminState != "" {
-		body := serviceUpdateBody{"admin_state": f.adminState}
-		if f.errorDetails != "" {
-			body["error_details"] = f.errorDetails
+		opts := computeapi.ServiceUpdateOpts{
+			AdminState:     f.adminState,
+			ErrorDetails:   f.errorDetails,
+			Status:         services.ServiceStatus(f.status),
+			DisabledReason: f.reason,
 		}
-		if f.status != "" {
-			body["status"] = f.status
-		}
-		if f.reason != "" {
-			body["disabled_reason"] = f.reason
-		}
-		if _, err := services.Update(ctx, client, id, body).Extract(); err != nil {
-			return keystackExtErr(fmt.Errorf("setting admin state on compute service %s/%s: %w", host, binary, err), "os-services admin_state")
+		if _, err := computeapi.UpdateService(ctx, client, id, opts); err != nil {
+			return keystackExtErr(relabel(err, "setting admin state on compute service %s/%s", host, binary), "os-services admin_state")
 		}
 		if _, err := fmt.Fprintf(w, "Set admin state %s on compute service %s on host %s\n", f.adminState, binary, host); err != nil {
 			return err
@@ -309,28 +273,23 @@ func runComputeServiceSet(ctx context.Context, client *gophercloud.ServiceClient
 		return nil
 	}
 
-	body := serviceUpdateBody{}
+	opts := computeapi.ServiceUpdateOpts{DisabledReason: f.disableReason}
 	if f.enable {
-		body["status"] = string(services.ServiceEnabled)
+		opts.Status = services.ServiceEnabled
 	}
 	if f.disable {
-		body["status"] = string(services.ServiceDisabled)
+		opts.Status = services.ServiceDisabled
 	}
-	if f.disableReason != "" {
-		body["disabled_reason"] = f.disableReason
+	if f.up || f.down {
+		down := f.down
+		opts.ForcedDown = &down
 	}
-	if f.up {
-		body["forced_down"] = false
-	}
-	if f.down {
-		body["forced_down"] = true
-	}
-	if len(body) == 0 {
+	if body, _ := opts.ToServiceUpdateMap(); len(body) == 0 {
 		return fmt.Errorf("nothing to do: pass --enable/--disable and/or --up/--down")
 	}
 
-	if _, err := services.Update(ctx, client, id, body).Extract(); err != nil {
-		return fmt.Errorf("updating compute service %s/%s: %w", host, binary, err)
+	if _, err := computeapi.UpdateService(ctx, client, id, opts); err != nil {
+		return relabel(err, "updating compute service %s/%s", host, binary)
 	}
 	if _, err := fmt.Fprintf(w, "Updated compute service %s on host %s\n", binary, host); err != nil {
 		return err
@@ -363,8 +322,8 @@ func runComputeServiceDelete(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
-	if err := services.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting compute service %s/%s: %w", host, binary, err)
+	if err := computeapi.DeleteService(ctx, client, id); err != nil {
+		return relabel(err, "deleting compute service %s/%s", host, binary)
 	}
 	if _, err := fmt.Fprintf(w, "Deleted compute service %s on host %s\n", binary, host); err != nil {
 		return err
@@ -376,18 +335,9 @@ func runComputeServiceDelete(ctx context.Context, client *gophercloud.ServiceCli
 // nova's update endpoint keys on the service ID (a UUID since microversion
 // 2.53), so operators' host+binary arguments must be resolved first.
 func resolveServiceID(ctx context.Context, client *gophercloud.ServiceClient, host, binary string) (string, error) {
-	pages, err := services.List(client, services.ListOpts{Host: host, Binary: binary}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolving compute service %s/%s: %w", host, binary, err)
+	id, err := computeapi.FindServiceID(ctx, client, host, binary)
+	if notFound := (*osresolve.NotFoundError)(nil); errors.As(err, &notFound) {
+		return "", fmt.Errorf("no compute service %q found on host %q", binary, host)
 	}
-	all, err := services.ExtractServices(pages)
-	if err != nil {
-		return "", fmt.Errorf("resolving compute service %s/%s: %w", host, binary, err)
-	}
-	for _, s := range all {
-		if s.Host == host && s.Binary == binary {
-			return s.ID, nil
-		}
-	}
-	return "", fmt.Errorf("no compute service %q found on host %q", binary, host)
+	return id, err
 }

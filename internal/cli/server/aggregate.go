@@ -2,10 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -15,6 +15,8 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // newAggregateCommand builds the "aggregate" command group, mirroring the
@@ -46,43 +48,19 @@ func newAggregateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 // resolveAggregateID accepts either a numeric aggregate ID or an aggregate name
-// and returns the numeric ID the nova API keys on. A value that parses as an
-// integer is used verbatim; otherwise the aggregate list is consulted and the
-// name matched (erroring on zero or multiple matches).
+// and returns the numeric ID the nova API keys on (computeapi.FindAggregateID),
+// in this command's wording for no match and several.
 func resolveAggregateID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (int, error) {
-	if id, err := strconv.Atoi(ref); err == nil {
-		return id, nil
-	}
-	all, err := listAggregates(ctx, client)
-	if err != nil {
-		return 0, err
-	}
-	var matches []int
-	for _, agg := range all {
-		if agg.Name == ref {
-			matches = append(matches, agg.ID)
-		}
-	}
-	switch len(matches) {
-	case 0:
+	id, err := computeapi.FindAggregateID(ctx, client, ref)
+	var notFound *osresolve.NotFoundError
+	var ambiguous *osresolve.AmbiguousError
+	switch {
+	case errors.As(err, &notFound):
 		return 0, fmt.Errorf("no aggregate found with name %q", ref)
-	case 1:
-		return matches[0], nil
-	default:
+	case errors.As(err, &ambiguous):
 		return 0, fmt.Errorf("more than one aggregate named %q; specify the ID", ref)
 	}
-}
-
-func listAggregates(ctx context.Context, client *gophercloud.ServiceClient) ([]aggregates.Aggregate, error) {
-	pages, err := aggregates.List(client).AllPages(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("listing aggregates: %w", err)
-	}
-	all, err := aggregates.ExtractAggregates(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing aggregate list: %w", err)
-	}
-	return all, nil
+	return id, err
 }
 
 func newAggregateListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -108,7 +86,7 @@ func newAggregateListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runAggregateList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	all, err := listAggregates(ctx, client)
+	all, err := computeapi.ListAggregates(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -153,9 +131,9 @@ func runAggregateShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	agg, err := aggregates.Get(ctx, client, id).Extract()
+	agg, err := computeapi.GetAggregate(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing aggregate %q: %w", ref, err)
+		return relabel(err, "showing aggregate %q", ref)
 	}
 	fields, values := aggregateShowFields(agg)
 	return o.WriteSingle(w, fields, values)
@@ -231,9 +209,9 @@ func runAggregateCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	agg, err := aggregates.Create(ctx, client, aggregates.CreateOpts{Name: name, AvailabilityZone: f.zone}).Extract()
+	agg, err := computeapi.CreateAggregate(ctx, client, aggregates.CreateOpts{Name: name, AvailabilityZone: f.zone})
 	if err != nil {
-		return fmt.Errorf("creating aggregate %q: %w", name, err)
+		return err
 	}
 	// Metadata (properties) is not part of the create body; apply it as a
 	// follow-up set_metadata action, then re-fetch so the shown table reflects it.
@@ -242,12 +220,12 @@ func runAggregateCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 		for k, v := range meta {
 			body[k] = v
 		}
-		if _, err := aggregates.SetMetadata(ctx, client, agg.ID, aggregates.SetMetadataOpts{Metadata: body}).Extract(); err != nil {
-			return fmt.Errorf("aggregate %q was created (id %d) but setting its properties failed: %w", name, agg.ID, err)
+		if _, err := computeapi.SetAggregateMetadata(ctx, client, agg.ID, body); err != nil {
+			return relabel(err, "aggregate %q was created (id %d) but setting its properties failed", name, agg.ID)
 		}
-		agg, err = aggregates.Get(ctx, client, agg.ID).Extract()
+		agg, err = computeapi.GetAggregate(ctx, client, agg.ID)
 		if err != nil {
-			return fmt.Errorf("showing aggregate %q: %w", name, err)
+			return relabel(err, "showing aggregate %q", name)
 		}
 	}
 	fields, values := aggregateShowFields(agg)
@@ -280,8 +258,8 @@ func runAggregateDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 		if err != nil {
 			return err
 		}
-		if err := aggregates.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting aggregate %q: %w", ref, err)
+		if err := computeapi.DeleteAggregate(ctx, client, id); err != nil {
+			return relabel(err, "deleting aggregate %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted aggregate %s\n", ref); err != nil {
 			return err
@@ -329,8 +307,8 @@ func runAggregateSet(ctx context.Context, client *gophercloud.ServiceClient, ref
 	// name / availability_zone are attributes updated via PUT; --property is a
 	// separate set_metadata action.
 	if f.name != "" || f.zone != "" {
-		if _, err := aggregates.Update(ctx, client, id, aggregates.UpdateOpts{Name: f.name, AvailabilityZone: f.zone}).Extract(); err != nil {
-			return fmt.Errorf("updating aggregate %q: %w", ref, err)
+		if _, err := computeapi.UpdateAggregate(ctx, client, id, aggregates.UpdateOpts{Name: f.name, AvailabilityZone: f.zone}); err != nil {
+			return relabel(err, "updating aggregate %q", ref)
 		}
 	}
 	if len(f.properties) > 0 {
@@ -342,8 +320,8 @@ func runAggregateSet(ctx context.Context, client *gophercloud.ServiceClient, ref
 		for k, v := range meta {
 			body[k] = v
 		}
-		if _, err := aggregates.SetMetadata(ctx, client, id, aggregates.SetMetadataOpts{Metadata: body}).Extract(); err != nil {
-			return fmt.Errorf("setting properties on aggregate %q: %w", ref, err)
+		if _, err := computeapi.SetAggregateMetadata(ctx, client, id, body); err != nil {
+			return relabel(err, "setting properties on aggregate %q", ref)
 		}
 	}
 	return nil
@@ -386,8 +364,8 @@ func runAggregateUnset(ctx context.Context, client *gophercloud.ServiceClient, r
 	for _, k := range keys {
 		body[k] = nil
 	}
-	if _, err := aggregates.SetMetadata(ctx, client, id, aggregates.SetMetadataOpts{Metadata: body}).Extract(); err != nil {
-		return fmt.Errorf("removing properties from aggregate %q: %w", ref, err)
+	if _, err := computeapi.SetAggregateMetadata(ctx, client, id, body); err != nil {
+		return relabel(err, "removing properties from aggregate %q", ref)
 	}
 	return nil
 }
@@ -420,9 +398,9 @@ func runAggregateAddHost(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	agg, err := aggregates.AddHost(ctx, client, id, aggregates.AddHostOpts{Host: host}).Extract()
+	agg, err := computeapi.AddAggregateHost(ctx, client, id, host)
 	if err != nil {
-		return fmt.Errorf("adding host %q to aggregate %q: %w", host, ref, err)
+		return relabel(err, "adding host %q to aggregate %q", host, ref)
 	}
 	fields, values := aggregateShowFields(agg)
 	return o.WriteSingle(w, fields, values)
@@ -456,9 +434,9 @@ func runAggregateRemoveHost(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	agg, err := aggregates.RemoveHost(ctx, client, id, aggregates.RemoveHostOpts{Host: host}).Extract()
+	agg, err := computeapi.RemoveAggregateHost(ctx, client, id, host)
 	if err != nil {
-		return fmt.Errorf("removing host %q from aggregate %q: %w", host, ref, err)
+		return relabel(err, "removing host %q from aggregate %q", host, ref)
 	}
 	fields, values := aggregateShowFields(agg)
 	return o.WriteSingle(w, fields, values)
