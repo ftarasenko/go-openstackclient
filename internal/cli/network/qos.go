@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"slices"
 	"sort"
 	"strconv"
@@ -12,8 +11,6 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/qos/policies"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/qos/ruletypes"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -109,13 +106,9 @@ func runQoSPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o 
 		f := false
 		opts.Shared = &f
 	}
-	pages, err := policies.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListQoSPolicies(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing network QoS policies: %w", err)
-	}
-	all, err := policies.ExtractPolicies(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the network QoS policy list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Name", "Shared", "Default", "Project"},
@@ -152,9 +145,9 @@ func runQoSPolicyShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	p, err := policies.Get(ctx, client, id).Extract()
+	p, err := networkapi.GetQoSPolicy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing network QoS policy %s: %w", ref, err)
+		return relabel(err, "showing network QoS policy %s", ref)
 	}
 	fields, values := qosPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -239,9 +232,9 @@ func runQoSPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	p, err := policies.Create(ctx, client, networkapi.WithQoSPolicyCreateAttrs(opts, attrs)).Extract()
+	p, err := networkapi.CreateQoSPolicy(ctx, client, networkapi.WithQoSPolicyCreateAttrs(opts, attrs))
 	if err != nil {
-		return fmt.Errorf("creating network QoS policy %q: %w", name, err)
+		return relabel(err, "creating network QoS policy %q", name)
 	}
 	fields, values := qosPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -322,9 +315,9 @@ func runQoSPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	p, err := policies.Update(ctx, client, id, networkapi.WithQoSPolicyUpdateAttrs(opts, extra)).Extract()
+	p, err := networkapi.UpdateQoSPolicy(ctx, client, id, networkapi.WithQoSPolicyUpdateAttrs(opts, extra))
 	if err != nil {
-		return fmt.Errorf("updating network QoS policy %s: %w", ref, err)
+		return relabel(err, "updating network QoS policy %s", ref)
 	}
 	fields, values := qosPolicyShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -354,47 +347,32 @@ func runQoSPolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 		if err != nil {
 			return err
 		}
-		if err := policies.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network QoS policy %s: %w", ref, err)
+		if err := networkapi.DeleteQoSPolicy(ctx, client, id); err != nil {
+			return relabel(err, "deleting network QoS policy %s", ref)
 		}
 		return nil
 	})
 }
 
 func resolveQoSPolicyID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "QoS policy", nameOrID, func(c *gophercloud.ServiceClient) ([]policies.Policy, error) {
-		pages, err := policies.List(c, policies.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return policies.ExtractPolicies(pages)
-	}, func(p policies.Policy) string { return p.ID })
+	return cliLookup(networkapi.FindQoSPolicyID(ctx, client, nameOrID))
 }
 
 // --- network qos rule --------------------------------------------------------
 
-// qosRuleKind maps the OSC --type spelling onto neutron's three URL/JSON names
-// for a QoS rule.
-//
-// The rule verbs use raw ServiceClient calls rather than
-// networking/v2/extensions/qos/rules: every rule type has the same
-// {"<body>": {…}} envelope over /qos/policies/{id}/<collection>, and the typed
-// package models only three of the four types (it has no minimum_packet_rate,
-// added in neutron 2023.1), so one uniform path covers strictly more clouds
-// than a four-way switch would. Replace with the typed package if it ever
-// grows the missing type.
+// qosRuleKind maps the OSC --type spelling onto the rule type neutron
+// reports, which names the rule's endpoint (pkg/openstack/network's
+// …QoSRule calls).
 type qosRuleKind struct {
-	cliType    string // --type value, e.g. "bandwidth-limit"
-	apiType    string // the "type" field neutron reports, e.g. "bandwidth_limit"
-	collection string // URL segment, e.g. "bandwidth_limit_rules"
-	body       string // JSON envelope key, e.g. "bandwidth_limit_rule"
+	cliType string // --type value, e.g. "bandwidth-limit"
+	apiType string // the "type" field neutron reports, e.g. "bandwidth_limit"
 }
 
 var qosRuleKinds = []qosRuleKind{
-	{"bandwidth-limit", "bandwidth_limit", "bandwidth_limit_rules", "bandwidth_limit_rule"},
-	{"dscp-marking", "dscp_marking", "dscp_marking_rules", "dscp_marking_rule"},
-	{"minimum-bandwidth", "minimum_bandwidth", "minimum_bandwidth_rules", "minimum_bandwidth_rule"},
-	{"minimum-packet-rate", "minimum_packet_rate", "minimum_packet_rate_rules", "minimum_packet_rate_rule"},
+	{"bandwidth-limit", "bandwidth_limit"},
+	{"dscp-marking", "dscp_marking"},
+	{"minimum-bandwidth", "minimum_bandwidth"},
+	{"minimum-packet-rate", "minimum_packet_rate"},
 }
 
 func qosRuleKindByCLIType(t string) (qosRuleKind, error) {
@@ -461,9 +439,9 @@ func runQoSRuleList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	p, err := policies.Get(ctx, client, id).Extract()
+	p, err := networkapi.GetQoSPolicy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing the rules of network QoS policy %s: %w", ref, err)
+		return relabel(err, "listing the rules of network QoS policy %s", ref)
 	}
 	t := output.Table{Columns: qosRuleListColumns, Rows: make([][]any, 0, len(p.Rules))}
 	for _, rule := range p.Rules {
@@ -506,21 +484,11 @@ func qosRuleCell(v any) any {
 // qosRuleTypeOf finds an existing rule's type by looking it up in its policy,
 // which is what show/set/delete need to pick the right endpoint.
 func qosRuleTypeOf(ctx context.Context, client *gophercloud.ServiceClient, policyID, ruleID string) (qosRuleKind, error) {
-	p, err := policies.Get(ctx, client, policyID).Extract()
+	t, err := networkapi.FindQoSRuleType(ctx, client, policyID, ruleID)
 	if err != nil {
-		return qosRuleKind{}, fmt.Errorf("looking up QoS rule %s: %w", ruleID, err)
+		return qosRuleKind{}, err
 	}
-	for _, rule := range p.Rules {
-		if fmt.Sprint(rule["id"]) == ruleID {
-			return qosRuleKindByAPIType(fmt.Sprint(rule["type"]))
-		}
-	}
-	return qosRuleKind{}, fmt.Errorf("QoS policy %s has no rule %s", policyID, ruleID)
-}
-
-func qosRuleURL(client *gophercloud.ServiceClient, k qosRuleKind, policyID string, ruleID ...string) string {
-	parts := append([]string{"qos", "policies", policyID, k.collection}, ruleID...)
-	return client.ServiceURL(parts...)
+	return qosRuleKindByAPIType(t)
 }
 
 // writeQoSRule renders whatever neutron returned, so new fields in newer
@@ -536,38 +504,6 @@ func writeQoSRule(o *output.Options, w io.Writer, rule map[string]any) error {
 		values = append(values, rule[k])
 	}
 	return o.WriteSingle(w, keys, values)
-}
-
-// qosRuleCall issues one raw QoS-rule request and unwraps the
-// {"<rule>": {…}} envelope every rule endpoint uses. It is the single place
-// the response body is closed, keeping the four verbs free of the boilerplate.
-func qosRuleCall(ctx context.Context, client *gophercloud.ServiceClient, method, url string,
-	k qosRuleKind, attrs map[string]any,
-) (map[string]any, error) {
-	var doc map[string]map[string]any
-	var resp *http.Response
-	var err error
-	switch method {
-	case http.MethodGet:
-		resp, err = client.Get(ctx, url, &doc, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	case http.MethodPost:
-		resp, err = client.Post(ctx, url, map[string]any{k.body: attrs}, &doc,
-			&gophercloud.RequestOpts{OkCodes: []int{201}})
-	case http.MethodPut:
-		resp, err = client.Put(ctx, url, map[string]any{k.body: attrs}, &doc,
-			&gophercloud.RequestOpts{OkCodes: []int{200}})
-	case http.MethodDelete:
-		resp, err = client.Delete(ctx, url, &gophercloud.RequestOpts{OkCodes: []int{204}})
-	default:
-		return nil, fmt.Errorf("unsupported QoS rule request method %q", method)
-	}
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if err != nil {
-		return nil, err
-	}
-	return doc[k.body], nil
 }
 
 func newQoSRuleShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -595,9 +531,9 @@ func runQoSRuleShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	rule, err := qosRuleCall(ctx, client, http.MethodGet, qosRuleURL(client, k, policyID, ruleID), k, nil)
+	rule, err := networkapi.GetQoSRule(ctx, client, policyID, k.apiType, ruleID)
 	if err != nil {
-		return fmt.Errorf("showing QoS rule %s: %w", ruleID, err)
+		return relabel(err, "showing QoS rule %s", ruleID)
 	}
 	return writeQoSRule(o, w, rule)
 }
@@ -855,9 +791,9 @@ func runQoSRuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	rule, err := qosRuleCall(ctx, client, http.MethodPost, qosRuleURL(client, k, policyID), k, attrs)
+	rule, err := networkapi.CreateQoSRule(ctx, client, policyID, k.apiType, attrs)
 	if err != nil {
-		return fmt.Errorf("creating a %s rule on QoS policy %s: %w", k.cliType, ref, err)
+		return relabel(err, "creating a %s rule on QoS policy %s", k.cliType, ref)
 	}
 	return writeQoSRule(o, w, rule)
 }
@@ -904,9 +840,9 @@ func runQoSRuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if len(attrs) == 0 {
 		return fmt.Errorf("nothing to set on QoS rule %s: give at least one property flag", ruleID)
 	}
-	rule, err := qosRuleCall(ctx, client, http.MethodPut, qosRuleURL(client, k, policyID, ruleID), k, attrs)
+	rule, err := networkapi.UpdateQoSRule(ctx, client, policyID, k.apiType, ruleID, attrs)
 	if err != nil {
-		return fmt.Errorf("updating QoS rule %s: %w", ruleID, err)
+		return err
 	}
 	return writeQoSRule(o, w, rule)
 }
@@ -935,11 +871,7 @@ func runQoSRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 		if err != nil {
 			return err
 		}
-		if _, err := qosRuleCall(ctx, client, http.MethodDelete,
-			qosRuleURL(client, k, policyID, ruleID), k, nil); err != nil {
-			return fmt.Errorf("deleting QoS rule %s: %w", ruleID, err)
-		}
-		return nil
+		return networkapi.DeleteQoSRule(ctx, client, policyID, k.apiType, ruleID)
 	})
 }
 
@@ -976,34 +908,13 @@ func newQoSRuleTypeListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	return cmd
 }
 
-// ruleTypesQuery is the rule-type listing gophercloud does not model: its
-// ListRuleTypes takes no options at all, while neutron accepts all_supported and
-// all_rules — the difference between "what this cloud can enforce" and "what the
-// code knows about". The pager is rebuilt around the same page type rather than
-// dropping to a raw Get, so ExtractRuleTypes keeps decoding the body.
-func ruleTypesQuery(client *gophercloud.ServiceClient, allSupported, allRules bool) pagination.Pager {
-	url := client.ServiceURL("qos", "rule-types")
-	switch {
-	case allSupported:
-		url += "?all_supported=true"
-	case allRules:
-		url += "?all_rules=true"
-	}
-	return pagination.NewPager(client, url, func(r pagination.PageResult) pagination.Page {
-		return ruletypes.ListRuleTypesPage{SinglePageBase: pagination.SinglePageBase(r)}
-	})
-}
-
 func runQoSRuleTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	allSupported, allRules bool, w io.Writer,
 ) error {
-	pages, err := ruleTypesQuery(client, allSupported, allRules).AllPages(ctx)
+	all, err := networkapi.ListQoSRuleTypes(ctx, client,
+		networkapi.QoSRuleTypeListOpts{AllSupported: allSupported, AllRules: allRules})
 	if err != nil {
-		return fmt.Errorf("listing QoS rule types: %w", err)
-	}
-	all, err := ruletypes.ExtractRuleTypes(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the QoS rule type list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"Type"}, Rows: make([][]any, 0, len(all))}
 	for _, rt := range all {
@@ -1038,9 +949,9 @@ func runQoSRuleTypeShow(ctx context.Context, client *gophercloud.ServiceClient, 
 	if k, err := qosRuleKindByCLIType(name); err == nil {
 		name = k.apiType
 	}
-	rt, err := ruletypes.GetRuleType(ctx, client, name).Extract()
+	rt, err := networkapi.GetQoSRuleType(ctx, client, name)
 	if err != nil {
-		return fmt.Errorf("showing QoS rule type %s: %w", name, err)
+		return err
 	}
 	drivers := make([]string, 0, len(rt.Drivers))
 	for _, d := range rt.Drivers {

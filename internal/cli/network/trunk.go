@@ -47,13 +47,7 @@ func newTrunkCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func resolveTrunkID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "network trunk", nameOrID, func(c *gophercloud.ServiceClient) ([]trunks.Trunk, error) {
-		pages, err := trunks.List(c, trunks.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return trunks.ExtractTrunks(pages)
-	}, func(t trunks.Trunk) string { return t.ID })
+	return cliLookup(networkapi.FindTrunkID(ctx, client, nameOrID))
 }
 
 func trunkFields(t *trunks.Trunk) ([]string, []any) {
@@ -149,13 +143,9 @@ func runTrunkList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		}
 		opts.PortID = portID
 	}
-	pages, err := trunks.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListTrunks(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing network trunks: %w", err)
-	}
-	all, err := trunks.ExtractTrunks(pages)
-	if err != nil {
-		return fmt.Errorf("parsing network trunk list: %w", err)
+		return err
 	}
 
 	// --long is upstream's Status/State/Created At/Updated At, then koc's own
@@ -202,9 +192,9 @@ func runTrunkShow(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	tr, err := trunks.Get(ctx, client, id).Extract()
+	tr, err := networkapi.GetTrunk(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing network trunk %q: %w", ref, err)
+		return relabel(err, "showing network trunk %q", ref)
 	}
 	fields, values := trunkFields(tr)
 	return o.WriteSingle(w, fields, values)
@@ -293,33 +283,16 @@ func runTrunkCreate(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if len(subports) > 0 {
 		extra = map[string]any{"sub_ports": subports}
 	}
-	tr, err := trunks.Create(ctx, client, networkapi.WithTrunkCreateAttrs(opts, extra)).Extract()
+	tr, err := networkapi.CreateTrunk(ctx, client, networkapi.WithTrunkCreateAttrs(opts, extra))
 	if err != nil {
-		return fmt.Errorf("creating network trunk %q: %w", name, err)
+		return relabel(err, "creating network trunk %q", name)
 	}
 	fields, values := trunkFields(tr)
 	return o.WriteSingle(w, fields, values)
 }
 
-// trunkSubport is one sub-port in a request body. gophercloud's
-// trunks.Subport tags all three fields required and never omits them, so it
-// cannot express what upstream allows: only the port is required, and the
-// segmentation details may be left to neutron (segmentation-type=inherit takes
-// no ID; with neither given the server applies its own rules). Zero values are
-// omitted — neutron has no segmentation ID 0.
-type trunkSubport struct {
-	PortID           string `json:"port_id"`
-	SegmentationType string `json:"segmentation_type,omitempty"`
-	SegmentationID   int    `json:"segmentation_id,omitempty"`
-}
-
-// trunkAddSubportsOpts satisfies trunks.AddSubportsOptsBuilder with
-// trunkSubport entries.
-type trunkAddSubportsOpts []trunkSubport
-
-func (s trunkAddSubportsOpts) ToTrunkAddSubportsMap() (map[string]any, error) {
-	return map[string]any{"sub_ports": []trunkSubport(s)}, nil
-}
+// trunkSubport is one sub-port in a request body; only the port is required.
+type trunkSubport = networkapi.TrunkSubportSpec
 
 // parseSubports parses the repeatable --subport specs and resolves each port.
 // Every spec is parsed before any port is looked up, so a malformed one fails
@@ -465,13 +438,13 @@ func runTrunkSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	}
 	var tr *trunks.Trunk
 	if f.attrsGiven() {
-		if tr, err = trunks.Update(ctx, client, id, trunkUpdateOpts(f)).Extract(); err != nil {
-			return fmt.Errorf("updating network trunk %q: %w", ref, err)
+		if tr, err = networkapi.UpdateTrunk(ctx, client, id, trunkUpdateOpts(f)); err != nil {
+			return relabel(err, "updating network trunk %q", ref)
 		}
 	}
 	if len(subports) > 0 {
-		if tr, err = trunks.AddSubports(ctx, client, id, trunkAddSubportsOpts(subports)).Extract(); err != nil {
-			return fmt.Errorf("adding sub-ports to trunk %q: %w", ref, err)
+		if tr, err = networkapi.AddTrunkSubports(ctx, client, id, networkapi.AddTrunkSubportsOpts(subports)); err != nil {
+			return relabel(err, "adding sub-ports to trunk %q", ref)
 		}
 	}
 	if tr == nil {
@@ -551,8 +524,8 @@ func runTrunkDelete(ctx context.Context, client *gophercloud.ServiceClient, refs
 		if err != nil {
 			return err
 		}
-		if err := trunks.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network trunk %q: %w", ref, err)
+		if err := networkapi.DeleteTrunk(ctx, client, id); err != nil {
+			return relabel(err, "deleting network trunk %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted network trunk %s\n", ref); err != nil {
 			return err
@@ -633,9 +606,9 @@ func runTrunkSubportList(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	subports, err := trunks.GetSubports(ctx, client, id).Extract()
+	subports, err := networkapi.ListTrunkSubports(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing sub-ports of trunk %q: %w", ref, err)
+		return relabel(err, "listing sub-ports of trunk %q", ref)
 	}
 	t := output.Table{
 		Columns: []string{"Port", "Segmentation Type", "Segmentation ID"},
@@ -726,9 +699,9 @@ func runTrunkSubportAddPort(ctx context.Context, client *gophercloud.ServiceClie
 func addTrunkSubports(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref, id string, subports []trunkSubport, w io.Writer,
 ) error {
-	tr, err := trunks.AddSubports(ctx, client, id, trunkAddSubportsOpts(subports)).Extract()
+	tr, err := networkapi.AddTrunkSubports(ctx, client, id, networkapi.AddTrunkSubportsOpts(subports))
 	if err != nil {
-		return fmt.Errorf("adding sub-ports to trunk %q: %w", ref, err)
+		return relabel(err, "adding sub-ports to trunk %q", ref)
 	}
 	fields, values := trunkFields(tr)
 	return o.WriteSingle(w, fields, values)
@@ -804,9 +777,9 @@ func runTrunkSubportRemove(ctx context.Context, client *gophercloud.ServiceClien
 		}
 		remove = append(remove, trunks.RemoveSubport{PortID: portID})
 	}
-	tr, err := trunks.RemoveSubports(ctx, client, id, trunks.RemoveSubportsOpts{Subports: remove}).Extract()
+	tr, err := networkapi.RemoveTrunkSubports(ctx, client, id, trunks.RemoveSubportsOpts{Subports: remove})
 	if err != nil {
-		return fmt.Errorf("removing sub-ports from trunk %q: %w", ref, err)
+		return relabel(err, "removing sub-ports from trunk %q", ref)
 	}
 	fields, values := trunkFields(tr)
 	return o.WriteSingle(w, fields, values)

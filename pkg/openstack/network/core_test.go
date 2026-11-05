@@ -90,15 +90,22 @@ func TestFindIDs(t *testing.T) {
 		{"address scope", "/address-scopes", "name", network.FindAddressScopeID},
 		{"address group", "/address-groups", "name", network.FindAddressGroupID},
 		{"floating IP", "/floatingips", "floating_ip_address", network.FindFloatingIPID},
+		{"QoS policy", "/qos/policies", "name", network.FindQoSPolicyID},
+		{"subnet pool", "/subnetpools", "name", network.FindSubnetPoolID},
+		{"network trunk", "/trunks", "name", network.FindTrunkID},
+		{"network segment", "/segments", "name", network.FindSegmentID},
 	}
 	for _, f := range finds {
 		t.Run(f.kind, func(t *testing.T) {
-			// gophercloud's collection keys: floatingips, security_groups, …
-			key := strings.ReplaceAll(strings.TrimPrefix(f.path, "/"), "-", "_")
+			// gophercloud's collection keys: floatingips, security_groups, policies, …
+			key := strings.ReplaceAll(f.path[strings.LastIndex(f.path, "/")+1:], "-", "_")
+			// subnetpools.SubnetPool's UnmarshalJSON needs the prefix lengths.
+			prefixes := `,"default_prefixlen":8,"min_prefixlen":8,"max_prefixlen":32`
+			item := func(id string) string { return `{"id":"` + id + `"` + prefixes + `}` }
 			seen, sc := fakeNeutron(t, map[string]reply{
-				"GET " + f.path + "?" + f.filter + "=one":  {Body: `{"` + key + `":[{"id":"id-1"}]}`},
+				"GET " + f.path + "?" + f.filter + "=one":  {Body: `{"` + key + `":[` + item("id-1") + `]}`},
 				"GET " + f.path + "?" + f.filter + "=none": {Body: `{"` + key + `":[]}`},
-				"GET " + f.path + "?" + f.filter + "=two":  {Body: `{"` + key + `":[{"id":"a"},{"id":"b"}]}`},
+				"GET " + f.path + "?" + f.filter + "=two":  {Body: `{"` + key + `":[` + item("a") + `,` + item("b") + `]}`},
 			})
 			ctx := context.Background()
 			if id, err := f.find(ctx, sc, netID); id != netID || err != nil || len(*seen) != 0 {
