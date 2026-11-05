@@ -1,7 +1,7 @@
 // Package importer_test builds a Session from FromProvider against an
 // httptest cloud and lists images, networks, flavors, projects, role
-// assignments and volumes through pkg/, with nothing but the module's public
-// import paths.
+// assignments, volumes, load balancers, zones and placement through pkg/,
+// with nothing but the module's public import paths.
 package importer_test
 
 import (
@@ -34,6 +34,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/ratelimit"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
@@ -241,6 +242,26 @@ func cloud(t *testing.T) *httptest.Server {
 			return
 		}
 		answer(w, map[string]any{"recordsets": []map[string]any{{"id": "rs-1", "name": "www.example.com.", "type": "A", "ttl": nil}}, "links": map[string]any{}})
+	})
+	mux.HandleFunc("GET /placement/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"versions": []map[string]any{{"id": "v1.0", "max_version": "1.39"}}})
+	})
+	mux.HandleFunc("GET /placement/resource_providers/rp-1/aggregates", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"aggregates": []string{}, "resource_provider_generation": 4})
+	})
+	mux.HandleFunc("PUT /placement/resource_providers/rp-1/aggregates", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Generation int      `json:"resource_provider_generation"`
+			Aggregates []string `json:"aggregates"`
+		}
+		if r.Header.Get("OpenStack-API-Version") != "placement 1.39" || json.NewDecoder(r.Body).Decode(&body) != nil || body.Generation != 4 {
+			http.Error(w, `{}`, http.StatusConflict)
+			return
+		}
+		answer(w, map[string]any{"aggregates": body.Aggregates, "resource_provider_generation": 5})
+	})
+	mux.HandleFunc("GET /placement/usages", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"usages": map[string]any{"INSTANCE": map[string]int{"VCPU": 2, "consumer_count": 1}}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -469,5 +490,16 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if rs, err := dns.ListRecordSets(ctx, dnsClient, zoneID, nil, 0); err != nil || len(rs) != 1 || rs[0].NullableTTL != nil {
 		t.Fatalf("dns.ListRecordSets = %+v, %v", rs, err)
+	}
+
+	placementClient, err := s.Placement()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, err := placement.SetProviderAggregates(ctx, placementClient, "rp-1", []string{"agg-1"}); err != nil || a.ResourceProviderGeneration == nil || *a.ResourceProviderGeneration != 5 {
+		t.Fatalf("placement.SetProviderAggregates = %+v, %v", a, err)
+	}
+	if u, err := placement.GetProjectUsage(ctx, placementClient, "prj-1", ""); err != nil || u["VCPU"] != 2 || len(u) != 1 {
+		t.Fatalf("placement.GetProjectUsage = %v, %v", u, err)
 	}
 }

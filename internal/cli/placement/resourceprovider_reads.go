@@ -2,16 +2,15 @@ package placement
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"sort"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceproviders"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	placementapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // This file adds the read side of a resource provider's three subresources —
@@ -60,9 +59,9 @@ func newProviderInventoryListCommand(a *auth.Options, o *output.Options) *cobra.
 // class. The API returns an object keyed by class, so rows are sorted by class
 // name to keep the output stable between invocations.
 func runProviderInventoryList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	res, err := resourceproviders.GetInventories(ctx, client, id).Extract()
+	res, err := placementapi.GetInventories(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing inventories for resource provider %s: %w", id, err)
+		return err
 	}
 	classes := make([]string, 0, len(res.Inventories))
 	for class := range res.Inventories {
@@ -106,9 +105,9 @@ func newProviderInventoryShowCommand(a *auth.Options, o *output.Options) *cobra.
 }
 
 func runProviderInventoryShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id, class string, w io.Writer) error {
-	res, err := resourceproviders.GetInventory(ctx, client, id, class).Extract()
+	res, err := placementapi.GetInventory(ctx, client, id, class)
 	if err != nil {
-		return fmt.Errorf("getting %s inventory for resource provider %s: %w", class, id, err)
+		return err
 	}
 	return o.WriteSingle(w,
 		[]string{"total", "reserved", "min_unit", "max_unit", "step_size", "allocation_ratio", "resource_provider_generation"},
@@ -148,9 +147,9 @@ func newProviderUsageShowCommand(a *auth.Options, o *output.Options) *cobra.Comm
 // osc-placement, which prints a resource_class/usage table rather than a single
 // wide record.
 func runProviderUsageShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	res, err := resourceproviders.GetUsages(ctx, client, id).Extract()
+	res, err := placementapi.GetProviderUsages(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting usages for resource provider %s: %w", id, err)
+		return err
 	}
 	classes := make([]string, 0, len(res.Usages))
 	for class := range res.Usages {
@@ -196,9 +195,9 @@ func newProviderAggregateListCommand(a *auth.Options, o *output.Options) *cobra.
 }
 
 func runProviderAggregateList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	res, err := resourceproviders.GetAggregates(ctx, client, id).Extract()
+	res, err := placementapi.GetProviderAggregates(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing aggregates for resource provider %s: %w", id, err)
+		return err
 	}
 	t := output.Table{Columns: []string{"uuid"}, Rows: make([][]any, 0, len(res.Aggregates))}
 	for _, uuid := range res.Aggregates {

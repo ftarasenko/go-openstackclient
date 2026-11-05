@@ -2,7 +2,6 @@ package placement
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	placementapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // traitListFlags holds the filters accepted by "trait list".
@@ -53,13 +53,9 @@ func runTraitList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if associatedSet {
 		opts.Associated = &f.associated
 	}
-	pages, err := traits.List(client, opts).AllPages(ctx)
+	all, err := placementapi.ListTraits(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing traits: %w", err)
-	}
-	all, err := traits.ExtractTraits(pages)
-	if err != nil {
-		return fmt.Errorf("parsing trait list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"name"}, Rows: make([][]any, 0, len(all))}
 	for _, name := range all {

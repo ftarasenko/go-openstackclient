@@ -11,7 +11,8 @@ ports, routers, floating IPs and security groups, and all of its long tail:
 QoS, address scopes and groups, subnet pools, trunks, IP availability, RBAC,
 segments, port forwarding, extra routes, agents and their scheduling, service
 providers, extensions, BGP dynamic routing, tap mirrors, BGP VPNs, FWaaS and
-VPNaaS, all of octavia's load balancers, and all of designate.
+VPNaaS, all of octavia's load balancers, all of designate, and all of
+placement.
 The remaining services move one `refactor(<service>)` series at a time,
 following the checklist below.
 
@@ -40,6 +41,7 @@ release pipeline do not change.
 | `pkg/openstack/ratelimit` | `List`, `Limit` (nova and cinder answer the `rate` half of `/limits` alike) | 24 |
 | `pkg/openstack/loadbalancer` | `FindLoadBalancerID`, `ListLoadBalancers`, `GetLoadBalancer`, `CreateLoadBalancer`, `UpdateLoadBalancer`, `DeleteLoadBalancer`, `FailoverLoadBalancer`, `GetLoadBalancerStats`, `GetLoadBalancerStatuses`; `WaitForLoadBalancerActive`, `WaitForLoadBalancerDeleted`, `ProvisioningActive`, `ProvisioningError`, `ProvisioningDeleted`; `FindListenerID`, `ListListeners`, `GetListener`, `CreateListener`, `UpdateListener`, `DeleteListener`; `FindPoolID`, `ListPools`, `GetPool`, `CreatePool`, `UpdatePool`, `DeletePool`, `FindMemberID`, `ListMembers`, `GetMember`, `CreateMember`, `UpdateMember`, `DeleteMember`; `FindHealthMonitorID`, `ListHealthMonitors`, `GetHealthMonitor`, `CreateHealthMonitor`, `UpdateHealthMonitor`, `DeleteHealthMonitor`; `FindL7PolicyID`, `ListL7Policies`, `GetL7Policy`, `CreateL7Policy`, `UpdateL7Policy`, `DeleteL7Policy`, `ListL7Rules`, `GetL7Rule`, `CreateL7Rule`, `UpdateL7Rule`, `DeleteL7Rule`; `FindFlavorID`, `ListFlavors`, `GetFlavor`, `CreateFlavor`, `UpdateFlavor`, `SetFlavorEnabled`, `DeleteFlavor`, `FindFlavorProfileID`, `ListFlavorProfiles`, `GetFlavorProfile`, `CreateFlavorProfile`, `UpdateFlavorProfile`, `DeleteFlavorProfile`; `ListAmphorae`, `GetAmphora`, `FailoverAmphora`, `ConfigureAmphora`, `DeleteAmphora`, `GetAmphoraStats`, `AmphoraListenerStats`; `ListProviders`, `ListProviderCapabilities`, `ProviderCapability`; `ListQuotas`, `ProjectQuota`, `GetQuota`, `UpdateQuota`, `UnsetQuotas`, `ResetQuota`, `GetDefaultQuota` | 307 |
 | `pkg/openstack/dns` | `Scope`, `WithScope`; `FindZone`, `FindZoneID`, `ListZones`, `GetZone`, `CreateZone`, `UpdateZone`, `ZoneUpdateMap`, `DeleteZone`, `ZoneDetail`, `ZoneTask`, `ListZoneNameservers`, `ShareZone`, `ListZoneShares`, `GetZoneShare`, `UnshareZone`; `FindRecordSets`, `FindRecordSetID`, `ListRecordSets`, `GetRecordSet`, `CreateRecordSet`, `UpdateRecordSet`, `DeleteRecordSet`, `RecordSet`, `ExtractRecordSets`; `CreateTransferRequest`, `ListTransferRequests`, `GetTransferRequest`, `UpdateTransferRequest`, `DeleteTransferRequest`, `AcceptTransferRequest`, `ListTransferAccepts`, `GetTransferAccept`; `GetQuota`, `UpdateQuota`, `ResetQuota`; `FindTSIGKeyID`, `ListTSIGKeys`, `GetTSIGKey`, `CreateTSIGKey`, `UpdateTSIGKey`, `DeleteTSIGKey`; `CreateZoneExport`, `ListZoneExports`, `ZoneExportListOpts`, `GetZoneExport`, `GetZoneExportFile`, `DeleteZoneExport`, `ZoneExport`, `CreateZoneImport`, `ListZoneImports`, `ZoneImportListOpts`, `GetZoneImport`, `DeleteZoneImport`, `ZoneImport`; `GetLimits`; `FindPoolID`, `ListPools`, `GetPool`, `Pool`, `PoolNS`; `ListPTRRecords`, `GetPTRRecord`, `SetPTRRecord`, `UnsetPTRRecord`, `PTRRecord`; `ListServiceStatuses`, `ServiceStatusListOpts`, `GetServiceStatus`, `ServiceStatus`; `FindBlacklistID`, `ListBlacklists`, `GetBlacklist`, `CreateBlacklist`, `UpdateBlacklist`, `DeleteBlacklist`, `Blacklist`; `FindTLDID`, `ListTLDs`, `GetTLD`, `CreateTLD`, `UpdateTLD`, `DeleteTLD`, `TLD` | 412 |
+| `pkg/openstack/placement` | `ListResourceProviders`, `GetResourceProvider`, `CreateResourceProvider`, `UpdateResourceProvider`, `DeleteResourceProvider`, `GetProviderAllocations`, `GetProviderUsages`; `GetProviderTraits`, `SetProviderTraits`, `DeleteProviderTraits`, `GetProviderAggregates`, `SetProviderAggregates`; `GetInventories`, `GetInventory`, `SetInventory`, `SetInventories`, `InventoryFields`, `DeleteInventory`, `DeleteInventories`; `GetAllocations`, `UpdateAllocations`, `DeleteAllocations`, `RemoveAllocations`, `ListAllocationCandidates`, `RequiresConsumerType`, `ConsumerTypeMicroversion`; `ListResourceClasses`, `GetResourceClass`, `CreateResourceClass`, `EnsureResourceClass`, `DeleteResourceClass`; `ListTraits`, `GetTrait`, `CreateTrait`, `DeleteTrait`; `GetProjectUsage` | 175 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -315,6 +317,19 @@ pools, PTR records, service statuses, blacklists and TLDs, all paged by
 following `links.next`. `ZoneDetail` and `RecordSet` add what gophercloud's
 types drop: the zone's `shared` flag and a recordset's null TTL.
 
+Placement moved in one MR. Everything is addressed by UUID or name, so it has
+no resolvers. The generation protocol moved with it: `SetInventory`,
+`SetInventories`, `SetProviderTraits` and `SetProviderAggregates` read the
+provider's current generation and write with it, so a caller never handles
+one, and a concurrent change still fails with placement's 409. The aggregate
+write's body depends on the microversion, so on a client left at `latest` it
+first reads the version document and writes on a copy pinned to that number.
+`RemoveAllocations` is the CLI's partial unset (placement has none): read,
+write back what is left, or delete when nothing is. `GetProjectUsage` folds
+both `/usages` shapes (per class before 1.38, per consumer type from it) into
+one total per class. Flag parsing (`--resource`, `--allocation`, inventory
+`KEY=VALUE`) stays in the CLI.
+
 **Shapes worth copying.** `image.CreateImageWithData` (a multi-step flow with
 its cleanup, behind one call, with the single steps public too);
 `image.ImportOpts` and `image.TaskListOpts` (gophercloud's opts plus the field
@@ -388,7 +403,7 @@ seams, 2k lines) took about a third of one.
 | 7 | `loadbalancer` | 5 367 / 3 008 | 62 | 28 | 1 | M, 2 sessions; **done** | `wait.go` provisioning poll. |
 | 8 | `dns` | 4 945 / 3 924 | 60 | 18 | — | M, 1½ sessions; **done** | Lenient resolvers move to strict on the public side. |
 | 9 | `identity` | 3 784 / 3 116 | 57 | 21 | — | M, 1½ sessions; **done** | Lenient resolvers; application credentials, roles. |
-| 10 | `placement` | 2 076 / 2 094 | 31 | 13 | — | S–M, 1 session | Microversion-gated calls. |
+| 10 | `placement` | 2 076 / 2 094 | 31 | 13 | — | S–M, 1 session; **done** | Microversion-gated calls. |
 | 11 | `baremetal` (+ inspector) | 8 148 / 5 532 | 99 | 20 | 2 | L, 3 sessions | `explainMicroversion` → an exported `MicroversionError` (service, feature, required, cloud max) so importers can `errors.As`; provision-state `--wait`; both inspection dialects; `--creds-from-ns`'s standalone basic-auth ironic stays CLI-side (an importer brings its own ProviderClient). |
 
 Total: about 20 sessions, network and servers being half of it.
