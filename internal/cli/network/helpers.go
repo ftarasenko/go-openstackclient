@@ -2,21 +2,19 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/addressscopes"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/addressgroups"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // boolPtr returns a pointer to b, for the *bool option fields used across
@@ -83,48 +81,25 @@ func mutuallyExclusive(flags interface{ Changed(string) bool }, a, b string) err
 	return nil
 }
 
-// resolveNetworkID resolves a network name or ID to an ID under the shared
-// policy in resolveByName: a UUID passes through with no request, otherwise a
-// name-filtered list must match exactly once. The sibling resolvers
-// (subnet/router/port/security group/...) all go through resolveByName.
+// resolveNetworkID and its siblings resolve a name or ID to an ID through
+// pkg/openstack/network's strict lookups: a UUID passes through with no
+// request, otherwise a name-filtered list must match exactly once. The CLI
+// keeps its own ambiguity wording (cliLookup); everything else in the error
+// is the lookup's.
 func resolveNetworkID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "network", nameOrID, func(c *gophercloud.ServiceClient) ([]networks.Network, error) {
-		pages, err := networks.List(c, networks.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return networks.ExtractNetworks(pages)
-	}, func(n networks.Network) string { return n.ID })
+	return cliLookup(networkapi.FindNetworkID(ctx, client, nameOrID))
 }
 
 func resolveSubnetID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "subnet", nameOrID, func(c *gophercloud.ServiceClient) ([]subnets.Subnet, error) {
-		pages, err := subnets.List(c, subnets.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return subnets.ExtractSubnets(pages)
-	}, func(s subnets.Subnet) string { return s.ID })
+	return cliLookup(networkapi.FindSubnetID(ctx, client, nameOrID))
 }
 
 func resolveRouterID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "router", nameOrID, func(c *gophercloud.ServiceClient) ([]routers.Router, error) {
-		pages, err := routers.List(c, routers.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return routers.ExtractRouters(pages)
-	}, func(r routers.Router) string { return r.ID })
+	return cliLookup(networkapi.FindRouterID(ctx, client, nameOrID))
 }
 
 func resolvePortID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "port", nameOrID, func(c *gophercloud.ServiceClient) ([]ports.Port, error) {
-		pages, err := ports.List(c, ports.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return ports.ExtractPorts(pages)
-	}, func(p ports.Port) string { return p.ID })
+	return cliLookup(networkapi.FindPortID(ctx, client, nameOrID))
 }
 
 // resolveAddressScopeID and resolveAddressGroupID resolve a name or ID to an ID.
@@ -132,33 +107,30 @@ func resolvePortID(ctx context.Context, client *gophercloud.ServiceClient, nameO
 // straight into the URL and neutron answered 404 for a resource that plainly
 // existed in `list`.
 func resolveAddressScopeID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "address scope", nameOrID, func(c *gophercloud.ServiceClient) ([]addressscopes.AddressScope, error) {
-		pages, err := addressscopes.List(c, addressscopes.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return addressscopes.ExtractAddressScopes(pages)
-	}, func(s addressscopes.AddressScope) string { return s.ID })
+	return cliLookup(networkapi.FindAddressScopeID(ctx, client, nameOrID))
 }
 
 func resolveAddressGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "address group", nameOrID, func(c *gophercloud.ServiceClient) ([]addressgroups.AddressGroup, error) {
-		pages, err := addressgroups.List(c, addressgroups.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return addressgroups.ExtractGroups(pages)
-	}, func(g addressgroups.AddressGroup) string { return g.ID })
+	return cliLookup(networkapi.FindAddressGroupID(ctx, client, nameOrID))
 }
 
 func resolveSecGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, nounSecurityGroup, nameOrID, func(c *gophercloud.ServiceClient) ([]groups.SecGroup, error) {
-		pages, err := groups.List(c, groups.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return groups.ExtractGroups(pages)
-	}, func(g groups.SecGroup) string { return g.ID })
+	return cliLookup(networkapi.FindSecurityGroupID(ctx, client, nameOrID))
+}
+
+// relabel re-wraps a pkg/openstack/network error, which names neutron's ID,
+// with the CLI's text naming the operator's reference.
+func relabel(err error, format string, args ...any) error {
+	return fmt.Errorf(format+": %w", append(args, errors.Unwrap(err))...)
+}
+
+// cliLookup words an ambiguous match as the CLI always has (pickID).
+func cliLookup(id string, err error) (string, error) {
+	var amb *osresolve.AmbiguousError
+	if errors.As(err, &amb) {
+		return pickID(amb.Ref, amb.Count, nil, amb.Kind)
+	}
+	return id, err
 }
 
 // resolveByName backs every neutron name→ID resolver. A UUID is returned as-is

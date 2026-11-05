@@ -9,6 +9,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Flag and attribute names used only by the network noun's verbs. They are
@@ -233,7 +234,7 @@ func updateNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	)
 	if req.changed {
 		n = &networkExt{}
-		if err := networks.Update(ctx, client, id, withNetworkUpdateAttrs(req.opts, req.attrs)).ExtractInto(n); err != nil {
+		if err := networks.Update(ctx, client, id, networkapi.WithNetworkUpdateAttrs(req.opts, req.attrs)).ExtractInto(n); err != nil {
 			return explainMissingExtension(ctx, client, fmt.Errorf("updating network %s: %w", ref, err), req.attrs)
 		}
 	} else if n, err = getNetwork(ctx, client, id); err != nil {

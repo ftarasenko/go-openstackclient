@@ -2,14 +2,14 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/attributestags"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -150,12 +150,7 @@ func replaceTags(ctx context.Context, client *gophercloud.ServiceClient, resourc
 	if slices.Equal(normaliseTags(current), next) {
 		return current, nil
 	}
-	got, err := attributestags.ReplaceAll(ctx, client, resourceType, id,
-		attributestags.ReplaceAllOpts{Tags: next}).Extract()
-	if err != nil {
-		return nil, fmt.Errorf("setting tags on %s %s: %w", resourceType, id, err)
-	}
-	return got, nil
+	return networkapi.ReplaceTags(ctx, client, resourceType, id, next)
 }
 
 // tagApplier is applyTagsForSet or applyTagsForUnset.

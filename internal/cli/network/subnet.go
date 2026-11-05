@@ -16,6 +16,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Flag names the subnet verbs look up as well as declare. They carry a subnet
@@ -458,7 +459,7 @@ func runSubnetCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	s, err := extractSubnet(subnets.Create(ctx, client, withSubnetCreateAttrs(opts, attrs)))
+	s, err := extractSubnet(subnets.Create(ctx, client, networkapi.WithSubnetCreateAttrs(opts, attrs)))
 	if err != nil {
 		explain := withExplainKeys(attrs, subnetTypedExtKeys(opts.DNSPublishFixedIP, len(opts.ServiceTypes) > 0)...)
 		return explainMissingExtension(ctx, client, fmt.Errorf("creating subnet: %w", err), explain)
@@ -727,7 +728,7 @@ func runSubnetSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 			revision := current.RevisionNumber
 			opts.RevisionNumber = &revision
 		}
-		if s, err = extractSubnet(subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs))); err != nil {
+		if s, err = extractSubnet(subnets.Update(ctx, client, id, networkapi.WithSubnetUpdateAttrs(opts, attrs))); err != nil {
 			explain := withExplainKeys(attrs, subnetTypedExtKeys(opts.DNSPublishFixedIP, opts.ServiceTypes != nil)...)
 			return explainMissingExtension(ctx, client, fmt.Errorf("updating subnet %s: %w", nameOrID, err), explain)
 		}

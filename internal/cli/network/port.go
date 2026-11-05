@@ -21,6 +21,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Flag names only the port verbs use. They carry a port prefix so they cannot
@@ -1046,7 +1047,7 @@ func runPortCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return err
 	}
 	var p portExt
-	if err := ports.Create(ctx, client, withPortCreateAttrs(opts, attrs)).ExtractInto(&p); err != nil {
+	if err := ports.Create(ctx, client, networkapi.WithPortCreateAttrs(opts, attrs)).ExtractInto(&p); err != nil {
 		return explainMissingExtension(ctx, client, fmt.Errorf("creating port: %w", err),
 			portExplainAttrs(attrs, portCreateTypedExtAttrs(opts)...))
 	}
@@ -1254,7 +1255,7 @@ func updatePort(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	switch {
 	case u.changed:
 		p = &portExt{}
-		if err := ports.Update(ctx, client, id, withPortUpdateAttrs(u.opts, u.attrs)).ExtractInto(p); err != nil {
+		if err := ports.Update(ctx, client, id, networkapi.WithPortUpdateAttrs(u.opts, u.attrs)).ExtractInto(p); err != nil {
 			return explainMissingExtension(ctx, client, fmt.Errorf("updating port %s: %w", ref, err),
 				portExplainAttrs(u.attrs, portUpdateTypedExtAttrs(u.opts)...))
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -292,7 +293,7 @@ func runTrunkCreate(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if len(subports) > 0 {
 		extra = map[string]any{"sub_ports": subports}
 	}
-	tr, err := trunks.Create(ctx, client, withTrunkCreateAttrs(opts, extra)).Extract()
+	tr, err := trunks.Create(ctx, client, networkapi.WithTrunkCreateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating network trunk %q: %w", name, err)
 	}

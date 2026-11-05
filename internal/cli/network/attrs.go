@@ -2,7 +2,6 @@ package network
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -138,35 +137,6 @@ func parseExtraPropertyDict(value string) (map[string]string, error) {
 	return out, nil
 }
 
-// bodyExt layers extra top-level attributes onto a gophercloud request body.
-// gophercloud's typed opts model only part of what neutron accepts (extension
-// attributes such as qos_policy_id, dns_domain or port_security_enabled), so
-// every write verb composes its opts with this rather than growing one
-// hand-written wrapper per missing key. build is the wrapped builder's own
-// To<Resource><Verb>Map method and key the body's envelope ("network",
-// "port", …). Extra attributes win over the typed ones, as upstream's
-// attrs.update(extra_properties) does.
-type bodyExt struct {
-	build func() (map[string]any, error)
-	key   string
-	extra map[string]any
-}
-
-func (b bodyExt) body() (map[string]any, error) {
-	base, err := b.build()
-	if err != nil || len(b.extra) == 0 {
-		return base, err
-	}
-	inner, ok := base[b.key].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected %s request body shape: %T", b.key, base[b.key])
-	}
-	for k, v := range b.extra {
-		inner[k] = v
-	}
-	return base, nil
-}
-
 // mergeAttrs copies src into dst, allocating dst when needed, and returns it.
 // It lets a verb collect flag-derived attributes and --extra-property ones into
 // one map, the latter last so they win.
@@ -181,28 +151,4 @@ func mergeAttrs(dst, src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
-}
-
-// revisionOf returns the RevisionNumber field of a gophercloud opts struct, or
-// nil when it has none. Every update adapter re-declares that field with the
-// same `h:"If-Match"` tag, because gophercloud.BuildHeaders reads headers off
-// the top-level fields of the builder handed to Update — the adapter, not the
-// opts inside it — so without this a wrapped update would silently drop
-// neutron's revision guard.
-func revisionOf(b any) *int {
-	v := reflect.ValueOf(b)
-	if v.Kind() == reflect.Pointer {
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return nil
-	}
-	f := v.FieldByName("RevisionNumber")
-	if !f.IsValid() {
-		return nil
-	}
-	if r, ok := f.Interface().(*int); ok {
-		return r
-	}
-	return nil
 }

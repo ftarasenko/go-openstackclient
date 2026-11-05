@@ -15,6 +15,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Flag names local to "security group rule". They live here rather than in
@@ -138,13 +139,9 @@ func runSecurityGroupRuleList(ctx context.Context, client *gophercloud.ServiceCl
 		}
 		opts.EtherType = string(et)
 	}
-	pages, err := rules.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListSecurityGroupRules(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing security group rules: %w", err)
-	}
-	all, err := rules.ExtractRules(pages)
-	if err != nil {
-		return fmt.Errorf("parsing security group rule list: %w", err)
+		return err
 	}
 	return o.WriteList(w, secGroupRuleListTable(all, group == ""))
 }
@@ -242,9 +239,9 @@ func newSecurityGroupRuleShowCommand(a *auth.Options, o *output.Options) *cobra.
 }
 
 func runSecurityGroupRuleShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	r, err := rules.Get(ctx, client, id).Extract()
+	r, err := networkapi.GetSecurityGroupRule(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting security group rule %s: %w", id, err)
+		return err
 	}
 	// Upstream fills an absent remote prefix with its ethertype's match-all.
 	r.RemoteIPPrefix = remoteIPPrefixOrDefault(r)
@@ -355,9 +352,9 @@ func runSecurityGroupRuleCreate(ctx context.Context, client *gophercloud.Service
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	r, err := rules.Create(ctx, client, withSecGroupRuleCreateAttrs(opts, attrs)).Extract()
+	r, err := networkapi.CreateSecurityGroupRule(ctx, client, networkapi.WithSecurityGroupRuleCreateAttrs(opts, attrs))
 	if err != nil {
-		return fmt.Errorf("creating security group rule: %w", err)
+		return err
 	}
 	fields, values := secGroupRuleShowFields(r)
 	return o.WriteSingle(w, fields, values)
@@ -498,8 +495,8 @@ func newSecurityGroupRuleDeleteCommand(a *auth.Options, o *output.Options) *cobr
 
 func runSecurityGroupRuleDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := rules.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting security group rule %s: %w", id, err)
+		if err := networkapi.DeleteSecurityGroupRule(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted security group rule %s\n", id); err != nil {
 			return err

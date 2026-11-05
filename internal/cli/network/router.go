@@ -19,6 +19,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 func newRouterCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -699,7 +700,7 @@ func runRouterCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err := checkBFDECMPSupported(ctx, client, attrs); err != nil {
 		return err
 	}
-	r, ext, err := extractRouterDetail(routers.Create(ctx, client, withRouterCreateAttrs(opts, attrs)).Result)
+	r, ext, err := extractRouterDetail(routers.Create(ctx, client, networkapi.WithRouterCreateAttrs(opts, attrs)).Result)
 	if err != nil {
 		return explainMissingExtension(ctx, client, fmt.Errorf("creating router: %w", err), attrs)
 	}
@@ -986,7 +987,7 @@ func updateRouter(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	var res gophercloud.Result
 	action := u.action
 	if u.changed {
-		res = routers.Update(ctx, client, id, withRouterUpdateAttrs(u.opts, u.attrs)).Result
+		res = routers.Update(ctx, client, id, networkapi.WithRouterUpdateAttrs(u.opts, u.attrs)).Result
 	} else {
 		res, action = routers.Get(ctx, client, id).Result, "getting"
 	}
