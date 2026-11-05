@@ -3,7 +3,6 @@ package keymanager
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	kmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
 )
 
 // Flag names used by more than one command in this package, or looked up as
@@ -86,18 +86,11 @@ func runSecretList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Limit: f.limit, Offset: f.offset, Name: f.name, Alg: f.algorithm,
 		Mode: f.mode, Bits: f.bitLength, SecretType: secrets.SecretType(f.secretType),
 	}
-	page, err := firstPage(ctx, secrets.List(client, opts))
+	all, err := kmapi.ListSecrets(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing secrets: %w", err)
+		return err
 	}
 	t := output.Table{Columns: secretColumns}
-	if page == nil {
-		return o.WriteList(w, t)
-	}
-	all, err := secrets.ExtractSecrets(page)
-	if err != nil {
-		return fmt.Errorf("parsing secret list: %w", err)
-	}
 	for i := range all {
 		t.Rows = append(t.Rows, secretRow(&all[i]))
 	}
@@ -145,16 +138,16 @@ func newSecretGetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runSecretGet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, f *secretGetFlags, w io.Writer) error {
-	id, err := refUUID(ref, "Secret")
+	id, err := kmapi.RefUUID(ref, "Secret")
 	if err != nil {
 		return err
 	}
 	if !f.decrypt && !f.payload && f.file == "" {
 		return showSecret(ctx, client, o, id, w)
 	}
-	payload, err := secrets.GetPayload(ctx, client, id, secrets.GetPayloadOpts{PayloadContentType: f.payloadContentType}).Extract()
+	payload, err := kmapi.GetSecretPayload(ctx, client, id, f.payloadContentType)
 	if err != nil {
-		return fmt.Errorf("getting payload of secret %s: %w", id, err)
+		return err
 	}
 	if f.file != "" {
 		return writeNewFile(f.file, payload)
@@ -180,9 +173,9 @@ func writeNewFile(path string, data []byte) error {
 }
 
 func showSecret(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	s, err := secrets.Get(ctx, client, id).Extract()
+	s, err := kmapi.GetSecret(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting secret %s: %w", id, err)
+		return err
 	}
 	return o.WriteSingle(w, secretColumns, secretRow(s))
 }
@@ -281,13 +274,9 @@ func (f *secretStoreFlags) createOpts() (secrets.CreateOpts, error) {
 }
 
 func runSecretStore(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, opts secrets.CreateOpts, w io.Writer) error {
-	created, err := secrets.Create(ctx, client, opts).Extract()
+	id, err := kmapi.CreateSecret(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("storing secret: %w", err)
-	}
-	id, err := refUUID(created.SecretRef, "Secret")
-	if err != nil {
-		return fmt.Errorf("storing secret: barbican answered secret_ref %q: %w", created.SecretRef, err)
+		return err
 	}
 	return showSecret(ctx, client, o, id, w)
 }
@@ -311,15 +300,11 @@ func newSecretUpdateCommand(a *auth.Options) *cobra.Command {
 // runSecretUpdate PUTs the payload as text/plain, as barbicanclient does for
 // the str the CLI passes it.
 func runSecretUpdate(ctx context.Context, client *gophercloud.ServiceClient, ref, payload string) error {
-	id, err := refUUID(ref, "Secret")
+	id, err := kmapi.RefUUID(ref, "Secret")
 	if err != nil {
 		return err
 	}
-	opts := secrets.UpdateOpts{ContentType: "text/plain", Payload: payload}
-	if err := secrets.Update(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("updating secret %s: %w", id, err)
-	}
-	return nil
+	return kmapi.SetSecretPayload(ctx, client, id, payload)
 }
 
 // errSecretHasConsumers is upstream's SecretHasConsumers message.
@@ -345,25 +330,16 @@ func newSecretDeleteCommand(a *auth.Options) *cobra.Command {
 	return cmd
 }
 
-// runSecretDelete follows barbicanclient below microversion 1.2: it reads the
-// secret's consumers and refuses, client-side, unless --force is given. At
-// 1.1 barbican itself deletes a secret with consumers without asking.
+// runSecretDelete refuses, client-side, a secret with consumers unless
+// --force is given (kmapi.DeleteSecret).
 func runSecretDelete(ctx context.Context, client *gophercloud.ServiceClient, ref string, force bool) error {
-	id, err := refUUID(ref, "Secret")
+	id, err := kmapi.RefUUID(ref, "Secret")
 	if err != nil {
 		return err
 	}
-	var s struct {
-		Consumers []json.RawMessage `json:"consumers"`
-	}
-	if err := secrets.Get(ctx, client, id).ExtractInto(&s); err != nil {
-		return fmt.Errorf("getting secret %s: %w", id, err)
-	}
-	if len(s.Consumers) > 0 && !force {
+	err = kmapi.DeleteSecret(ctx, client, id, force)
+	if errors.Is(err, kmapi.ErrSecretHasConsumers) {
 		return errSecretHasConsumers
 	}
-	if err := secrets.Delete(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting secret %s: %w", id, err)
-	}
-	return nil
+	return err
 }

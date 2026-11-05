@@ -2,11 +2,9 @@ package keymanager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/acls"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	kmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
 )
 
 func newACLCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -47,53 +46,24 @@ type aclEntity struct {
 	container bool
 }
 
+// parseACLRef reads the href of a secret or container (kmapi.ParseACLRef).
 func parseACLRef(ref string) (aclEntity, error) {
-	e := aclEntity{ref: strings.TrimRight(ref, "/")}
-	elems := strings.Split(e.ref, "/")
-	kind := "Secret"
-	switch {
-	case slices.Contains(elems, "secrets"):
-	case slices.Contains(elems, "containers"):
-		e.container, kind = true, "Container"
-	default:
-		return e, errors.New("secret or container URI is not specified: give the full href, not a bare UUID")
-	}
-	id, err := refUUID(e.ref, kind)
-	e.id = id
-	return e, err
+	t, err := kmapi.ParseACLRef(ref)
+	return aclEntity{ref: t.Ref, id: t.ID, container: t.Container}, err
+}
+
+func (e aclEntity) target() kmapi.ACLTarget {
+	return kmapi.ACLTarget{Ref: e.ref, ID: e.id, Container: e.container}
 }
 
 func (e aclEntity) get(ctx context.Context, client *gophercloud.ServiceClient) (acls.ACL, error) {
-	var r acls.ACLResult
-	if e.container {
-		r = acls.GetContainerACL(ctx, client, e.id)
-	} else {
-		r = acls.GetSecretACL(ctx, client, e.id)
-	}
-	acl, err := r.Extract()
-	if err != nil {
-		return nil, fmt.Errorf("getting ACL of %s: %w", e.ref, err)
-	}
-	if acl == nil {
-		return acls.ACL{}, nil
-	}
-	return *acl, nil
+	return kmapi.GetACL(ctx, client, e.target())
 }
 
 func (e aclEntity) set(ctx context.Context, client *gophercloud.ServiceClient, opts acls.SetOpts) error {
-	var err error
-	if e.container {
-		_, err = acls.SetContainerACL(ctx, client, e.id, opts).Extract()
-	} else {
-		_, err = acls.SetSecretACL(ctx, client, e.id, opts).Extract()
-	}
-	if err != nil {
-		return fmt.Errorf("setting ACL of %s: %w", e.ref, err)
-	}
-	return nil
+	return kmapi.SetACL(ctx, client, e.target(), opts)
 }
 
-// render prints the ACL one row per operation type, with upstream's columns.
 func (e aclEntity) render(o *output.Options, acl acls.ACL, w io.Writer) error {
 	refColumn := "Secret ACL Ref"
 	if e.container {
@@ -166,70 +136,25 @@ type aclVerb struct {
 	readsServer bool
 }
 
-// aclSubmit replaces the ACL with exactly the flags' operation type, as
-// SubmitACL does: users absent means an empty list, project access absent
-// means barbican's default.
-func aclSubmit(_ acls.ACL, f *aclFlags) acls.SetOpts {
-	users := append([]string{}, f.users...)
-	return acls.SetOpts{{Type: f.operationType, Users: &users, ProjectAccess: f.projectAccess}}
+// change is the flags as a kmapi.ACLChange.
+func (f *aclFlags) change() kmapi.ACLChange {
+	return kmapi.ACLChange{OperationType: f.operationType, Users: f.users, ProjectAccess: f.projectAccess}
 }
 
-// serverOpts is the ACL on the server as SetOpts, ordered by operation type.
-func serverOpts(server acls.ACL) acls.SetOpts {
-	ops := make([]string, 0, len(server))
-	for op := range server {
-		ops = append(ops, op)
-	}
-	slices.Sort(ops)
-	opts := make(acls.SetOpts, 0, len(ops))
-	for _, op := range ops {
-		d := server[op]
-		users := append([]string{}, d.Users...)
-		pa := d.ProjectAccess
-		opts = append(opts, acls.SetOpt{Type: op, Users: &users, ProjectAccess: &pa})
-	}
-	return opts
-}
+// aclSubmit replaces the ACL with exactly the flags' operation type
+// (kmapi.SubmitACLOpts).
+func aclSubmit(_ acls.ACL, f *aclFlags) acls.SetOpts { return kmapi.SubmitACLOpts(f.change()) }
 
-// aclAddUsers adds the flags' users to the operation type's list (creating the
-// entry when the server has none), and overrides project access only when a
-// flag asked for it — AddACLUsers.
+// aclAddUsers adds the flags' users to the ACL on the server
+// (kmapi.AddACLUsersOpts).
 func aclAddUsers(server acls.ACL, f *aclFlags) acls.SetOpts {
-	opts := serverOpts(server)
-	for i := range opts {
-		if opts[i].Type != f.operationType {
-			continue
-		}
-		for _, u := range f.users {
-			if !slices.Contains(*opts[i].Users, u) {
-				*opts[i].Users = append(*opts[i].Users, u)
-			}
-		}
-		if f.projectAccess != nil {
-			opts[i].ProjectAccess = f.projectAccess
-		}
-		return opts
-	}
-	users := append([]string{}, f.users...)
-	return append(opts, acls.SetOpt{Type: f.operationType, Users: &users, ProjectAccess: f.projectAccess})
+	return kmapi.AddACLUsersOpts(server, f.change())
 }
 
-// aclRemoveUsers drops the flags' users from the operation type's list; users
-// not on it are ignored, and an operation type the server has no entry for is
-// left alone — RemoveACLUsers.
+// aclRemoveUsers drops the flags' users from the ACL on the server
+// (kmapi.RemoveACLUsersOpts).
 func aclRemoveUsers(server acls.ACL, f *aclFlags) acls.SetOpts {
-	opts := serverOpts(server)
-	for i := range opts {
-		if opts[i].Type != f.operationType {
-			continue
-		}
-		kept := slices.DeleteFunc(*opts[i].Users, func(u string) bool { return slices.Contains(f.users, u) })
-		opts[i].Users = &kept
-		if f.projectAccess != nil {
-			opts[i].ProjectAccess = f.projectAccess
-		}
-	}
-	return opts
+	return kmapi.RemoveACLUsersOpts(server, f.change())
 }
 
 func newACLWriteCommand(a *auth.Options, o *output.Options, use, short string, verb aclVerb) *cobra.Command {
@@ -308,14 +233,5 @@ func newACLDeleteCommand(a *auth.Options) *cobra.Command {
 }
 
 func runACLDelete(ctx context.Context, client *gophercloud.ServiceClient, e aclEntity) error {
-	var err error
-	if e.container {
-		err = acls.DeleteContainerACL(ctx, client, e.id).ExtractErr()
-	} else {
-		err = acls.DeleteSecretACL(ctx, client, e.id).ExtractErr()
-	}
-	if err != nil {
-		return fmt.Errorf("deleting ACL of %s: %w", e.ref, err)
-	}
-	return nil
+	return kmapi.DeleteACL(ctx, client, e.target())
 }

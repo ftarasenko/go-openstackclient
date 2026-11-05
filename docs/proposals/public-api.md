@@ -12,7 +12,7 @@ QoS, address scopes and groups, subnet pools, trunks, IP availability, RBAC,
 segments, port forwarding, extra routes, agents and their scheduling, service
 providers, extensions, BGP dynamic routing, tap mirrors, BGP VPNs, FWaaS and
 VPNaaS, all of octavia's load balancers, all of designate, all of
-placement, and all of ironic with its inspector.
+placement, all of ironic with its inspector, and all of barbican.
 The remaining services move one `refactor(<service>)` series at a time,
 following the checklist below.
 
@@ -43,6 +43,7 @@ release pipeline do not change.
 | `pkg/openstack/dns` | `Scope`, `WithScope`; `FindZone`, `FindZoneID`, `ListZones`, `GetZone`, `CreateZone`, `UpdateZone`, `ZoneUpdateMap`, `DeleteZone`, `ZoneDetail`, `ZoneTask`, `ListZoneNameservers`, `ShareZone`, `ListZoneShares`, `GetZoneShare`, `UnshareZone`; `FindRecordSets`, `FindRecordSetID`, `ListRecordSets`, `GetRecordSet`, `CreateRecordSet`, `UpdateRecordSet`, `DeleteRecordSet`, `RecordSet`, `ExtractRecordSets`; `CreateTransferRequest`, `ListTransferRequests`, `GetTransferRequest`, `UpdateTransferRequest`, `DeleteTransferRequest`, `AcceptTransferRequest`, `ListTransferAccepts`, `GetTransferAccept`; `GetQuota`, `UpdateQuota`, `ResetQuota`; `FindTSIGKeyID`, `ListTSIGKeys`, `GetTSIGKey`, `CreateTSIGKey`, `UpdateTSIGKey`, `DeleteTSIGKey`; `CreateZoneExport`, `ListZoneExports`, `ZoneExportListOpts`, `GetZoneExport`, `GetZoneExportFile`, `DeleteZoneExport`, `ZoneExport`, `CreateZoneImport`, `ListZoneImports`, `ZoneImportListOpts`, `GetZoneImport`, `DeleteZoneImport`, `ZoneImport`; `GetLimits`; `FindPoolID`, `ListPools`, `GetPool`, `Pool`, `PoolNS`; `ListPTRRecords`, `GetPTRRecord`, `SetPTRRecord`, `UnsetPTRRecord`, `PTRRecord`; `ListServiceStatuses`, `ServiceStatusListOpts`, `GetServiceStatus`, `ServiceStatus`; `FindBlacklistID`, `ListBlacklists`, `GetBlacklist`, `CreateBlacklist`, `UpdateBlacklist`, `DeleteBlacklist`, `Blacklist`; `FindTLDID`, `ListTLDs`, `GetTLD`, `CreateTLD`, `UpdateTLD`, `DeleteTLD`, `TLD` | 412 |
 | `pkg/openstack/placement` | `ListResourceProviders`, `GetResourceProvider`, `CreateResourceProvider`, `UpdateResourceProvider`, `DeleteResourceProvider`, `GetProviderAllocations`, `GetProviderUsages`; `GetProviderTraits`, `SetProviderTraits`, `DeleteProviderTraits`, `GetProviderAggregates`, `SetProviderAggregates`; `GetInventories`, `GetInventory`, `SetInventory`, `SetInventories`, `InventoryFields`, `DeleteInventory`, `DeleteInventories`; `GetAllocations`, `UpdateAllocations`, `DeleteAllocations`, `RemoveAllocations`, `ListAllocationCandidates`, `RequiresConsumerType`, `ConsumerTypeMicroversion`; `ListResourceClasses`, `GetResourceClass`, `CreateResourceClass`, `EnsureResourceClass`, `DeleteResourceClass`; `ListTraits`, `GetTrait`, `CreateTrait`, `DeleteTrait`; `GetProjectUsage` | 175 |
 | `pkg/openstack/baremetal` | `ListNodes`, `NodeListOpts`, `GetNode`, `NodeUUID`, `CreateNode`, `UpdateNode`, `DeleteNode`, `ValidateNode`, `SetMaintenance`, `UnsetMaintenance`, `SetPowerState`, `InjectNMI`, `SetBootDevice`, `GetBootDevice`, `SetNodeSecureBoot`, `GetNodeConsole`, `SetNodeConsole`, `ListNodeTraits`, `AddNodeTrait`, `RemoveNodeTrait`, `RemoveNodeTraits`, `ListVIFs`, `AttachVIF`, `DetachVIF`, `AttachVirtualMedia`, `DetachVirtualMedia`, `VirtualMediaOpts`, `ListBIOSSettings`, `GetBIOSSetting`, `ListFirmware`, `GetNodeInventory`, `GetNodeInventoryRaw`, `ListNodeChildren`, `ListNodeHistory`, `GetNodeHistoryEvent`, `ListPassthruMethods`, `PassthruMethod`, `CallPassthru`, `ListShards`; `SetProvisionState`, `ProvisionStateOpts`, `WaitForProvisionState`, `WaitForProvisionSettled`, `IsProvisionFailure`; `ListPorts`, `PortListOpts`, `GetPort`, `CreatePort`, `PortCreateOpts`, `UpdatePort`, `DeletePort`, `ListPortGroups`, `GetPortGroup`, `CreatePortGroup`, `UpdatePortGroup`, `DeletePortGroup`, `ListPortGroupPorts`, `PortGroupMembers`, `FindPortGroupByAddress`; `ListDeployTemplates`, `GetDeployTemplate`, `CreateDeployTemplate`, `UpdateDeployTemplate`, `DeleteDeployTemplate`, `ListRunbooks`, `GetRunbook`, `CreateRunbook`, `UpdateRunbook`, `DeleteRunbook`, `ListRunbookTraits`, `AddRunbookTrait`, `RemoveRunbookTrait`, `RemoveRunbookTraits`, `ListInspectionRules`, `GetInspectionRule`, `CreateInspectionRule`, `UpdateInspectionRule`, `DeleteInspectionRule`, `ListVolumeConnectors`, `GetVolumeConnector`, `CreateVolumeConnector`, `UpdateVolumeConnector`, `DeleteVolumeConnector`, `ListVolumeTargets`, `GetVolumeTarget`, `CreateVolumeTarget`, `UpdateVolumeTarget`, `DeleteVolumeTarget`, `Patch`, `PatchOp`; `ListAllocations`, `AllocationListOpts`, `Allocation`, `GetAllocation`, `CreateAllocation`, `AllocationCreateOpts`, `UpdateAllocation`, `DeleteAllocation`, `WaitForAllocation`; `ListConductors`, `GetConductor`, `ListDrivers`, `GetDriver`, `GetDriverProperties`, `GetDriverRAIDProperties`; `StartIntrospection`, `GetIntrospectionStatus`, `ListIntrospections`, `AbortIntrospection`, `GetIntrospectionData`, `GetIntrospectionDataRaw`; `MicroversionError`, `Feature`, `ExplainMicroversion`, `CompareMicroversions`, `MaxVersionHeader` and the `Feature…` constants | 580 |
+| `pkg/openstack/keymanager` | `ListSecrets`, `GetSecret`, `GetSecretPayload`, `CreateSecret`, `SetSecretPayload`, `DeleteSecret`, `ErrSecretHasConsumers`; `AddSecretConsumer`, `RemoveSecretConsumer`, `ListSecretConsumers`, `SecretConsumer`; `ListContainers`, `ContainerListOpts`, `GetContainer`, `CreateContainer`, `DeleteContainer`; `ListOrders`, `GetOrder`, `CreateOrder`, `DeleteOrder`; `GetACL`, `SetACL`, `DeleteACL`, `AddACLUsers`, `RemoveACLUsers`, `ACLChange`, `SubmitACLOpts`, `AddACLUsersOpts`, `RemoveACLUsersOpts`; `RefUUID`, `ParseACLRef`, `ACLTarget` | 164 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -344,6 +345,18 @@ flag words. The provision and allocation waits take a context deadline and an
 interval. `--creds-from-ns` (the standalone basic-auth ironic) stays in the
 CLI: an importer brings its own ProviderClient.
 
+Barbican moved in one MR. It has no name lookup (names are not unique), so
+functions take the UUID, and `RefUUID` derives it from an href the way
+barbicanclient does; `ParseACLRef` also tells a secret's href from a
+container's. The list functions return the single limit/offset window
+upstream's verbs ask for. `DeleteSecret` keeps barbicanclient's client-side
+refusal of a secret with consumers, as the sentinel `ErrSecretHasConsumers`
+(the CLI adds the `--force` hint). The ACL user verbs are a read and a write:
+`AddACLUsersOpts`/`RemoveACLUsersOpts` compute the write from the ACL read, so
+a caller can also apply them to an ACL it already holds. `--expiration`
+parsing, the payload encoding of `secret store` and the operation-type check
+stay in the CLI.
+
 **Shapes worth copying.** `image.CreateImageWithData` (a multi-step flow with
 its cleanup, behind one call, with the single steps public too);
 `image.ImportOpts` and `image.TaskListOpts` (gophercloud's opts plus the field
@@ -419,6 +432,7 @@ seams, 2k lines) took about a third of one.
 | 9 | `identity` | 3 784 / 3 116 | 57 | 21 | — | M, 1½ sessions; **done** | Lenient resolvers; application credentials, roles. |
 | 10 | `placement` | 2 076 / 2 094 | 31 | 13 | — | S–M, 1 session; **done** | Microversion-gated calls. |
 | 11 | `baremetal` (+ inspector) | 8 148 / 5 532 | 99 | 20 | 2 | L, 3 sessions; **done** | `explainMicroversion` → an exported `MicroversionError` (service, feature, required, cloud max) so importers can `errors.As`; provision-state `--wait`; both inspection dialects; `--creds-from-ns`'s standalone basic-auth ironic stays CLI-side (an importer brings its own ProviderClient). |
+| 12 | `keymanager` (barbican: secrets, consumers, containers, orders, ACLs) | 1 499 / 823 | 18 | 3 | — | S, ½ session; **done** | Added after the plan: the service landed later. Secret consumers are raw (gophercloud models container consumers only). |
 
 Total: about 20 sessions, network and servers being half of it.
 
