@@ -12,7 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // newSnapshotCommand builds "volume snapshot ...".
@@ -95,9 +95,9 @@ func runSnapshotList(ctx context.Context, client *gophercloud.ServiceClient, o *
 		Marker:     f.marker,
 	}
 	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, snapshots.List(client, opts), f.limit, snapshots.ExtractSnapshots)
+	all, err := volumeapi.ListSnapshots(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing snapshots: %w", err)
+		return err
 	}
 	var names map[string]string
 	if f.long {
@@ -149,9 +149,9 @@ func runSnapshotShow(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	s, err := snapshots.Get(ctx, client, id).Extract()
+	s, err := volumeapi.GetSnapshot(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting snapshot %q: %w", ref, err)
+		return relabel(err, "getting snapshot %q", ref)
 	}
 	fields, values := snapshotShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -206,9 +206,9 @@ func runSnapshotCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 		Description: f.description,
 		Force:       f.force,
 	}
-	s, err := snapshots.Create(ctx, client, opts).Extract()
+	s, err := volumeapi.CreateSnapshot(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating snapshot: %w", err)
+		return err
 	}
 	fields, values := snapshotShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -239,8 +239,8 @@ func runSnapshotDelete(ctx context.Context, client *gophercloud.ServiceClient, r
 		if err != nil {
 			return err
 		}
-		if err := snapshots.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting snapshot %q: %w", ref, err)
+		if err := volumeapi.DeleteSnapshot(ctx, client, id); err != nil {
+			return relabel(err, "deleting snapshot %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted snapshot: %s\n", ref); err != nil {
 			return err

@@ -123,17 +123,14 @@ func resolveVolumeID(ctx context.Context, client *gophercloud.ServiceClient, ref
 func resolveSnapshotID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
 	return resolveByNameOrGet("snapshot", ref,
 		func() (string, bool) {
-			if s, err := snapshots.Get(ctx, client, ref).Extract(); err == nil {
+			if s, err := volumeapi.GetSnapshot(ctx, client, ref); err == nil {
 				return s.ID, true
 			}
 			return "", false
 		},
 		func() ([]snapshots.Snapshot, error) {
-			pages, err := snapshots.List(client, snapshots.ListOpts{Name: ref}).AllPages(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return snapshots.ExtractSnapshots(pages)
+			all, err := volumeapi.ListSnapshots(ctx, client, snapshots.ListOpts{Name: ref}, 0)
+			return all, inner(err)
 		},
 		func(s snapshots.Snapshot) string { return s.Name },
 		func(s snapshots.Snapshot) string { return s.ID },
@@ -144,11 +141,12 @@ func resolveSnapshotID(ctx context.Context, client *gophercloud.ServiceClient, r
 func resolveBackupID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
 	return resolveByNameOrGet("backup", ref,
 		func() (string, bool) {
-			if b, err := backups.Get(ctx, client, ref).Extract(); err == nil {
+			if b, err := volumeapi.GetBackup(ctx, client, ref); err == nil {
 				return b.ID, true
 			}
 			return "", false
 		},
+		// The summary listing: a name match needs no more than ID and name.
 		func() ([]backups.Backup, error) {
 			pages, err := backups.List(client, backups.ListOpts{Name: ref}).AllPages(ctx)
 			if err != nil {
@@ -165,17 +163,14 @@ func resolveBackupID(ctx context.Context, client *gophercloud.ServiceClient, ref
 func resolveVolumeTypeID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
 	return resolveByNameOrGet("volume type", ref,
 		func() (string, bool) {
-			if t, err := volumetypes.Get(ctx, client, ref).Extract(); err == nil {
+			if t, err := volumeapi.GetVolumeType(ctx, client, ref); err == nil {
 				return t.ID, true
 			}
 			return "", false
 		},
 		func() ([]volumetypes.VolumeType, error) {
-			pages, err := volumetypes.List(client, volumetypes.ListOpts{Name: ref}).AllPages(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return volumetypes.ExtractVolumeTypes(pages)
+			all, err := volumeapi.ListVolumeTypes(ctx, client, volumetypes.ListOpts{Name: ref})
+			return all, inner(err)
 		},
 		func(t volumetypes.VolumeType) string { return t.Name },
 		func(t volumetypes.VolumeType) string { return t.ID },

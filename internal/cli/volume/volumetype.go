@@ -12,6 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // newTypeCommand builds "volume type ...".
@@ -66,13 +67,9 @@ func newTypeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // ListVolumeType); Description is in the default listing already, where
 // upstream shows it only under --long, so --long's columns are upstream's.
 func runTypeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	pages, err := volumetypes.List(client, volumetypes.ListOpts{}).AllPages(ctx)
+	all, err := volumeapi.ListVolumeTypes(ctx, client, volumetypes.ListOpts{})
 	if err != nil {
-		return fmt.Errorf("listing volume types: %w", err)
-	}
-	all, err := volumetypes.ExtractVolumeTypes(pages)
-	if err != nil {
-		return fmt.Errorf("parsing volume type list: %w", err)
+		return err
 	}
 	cols := []string{"ID", "Name", "Is Public", "Description"}
 	if long {
@@ -113,9 +110,9 @@ func runTypeShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	vt, err := volumetypes.Get(ctx, client, id).Extract()
+	vt, err := volumeapi.GetVolumeType(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting volume type %q: %w", ref, err)
+		return relabel(err, "getting volume type %q", ref)
 	}
 	fields, values := typeShowFields(vt)
 	return o.WriteSingle(w, fields, values)
@@ -176,9 +173,9 @@ func runTypeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		isPublic := !f.private
 		opts.IsPublic = &isPublic
 	}
-	vt, err := volumetypes.Create(ctx, client, opts).Extract()
+	vt, err := volumeapi.CreateVolumeType(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating volume type: %w", err)
+		return err
 	}
 	fields, values := typeShowFields(vt)
 	return o.WriteSingle(w, fields, values)
@@ -209,8 +206,8 @@ func runTypeDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 		if err != nil {
 			return err
 		}
-		if err := volumetypes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume type %q: %w", ref, err)
+		if err := volumeapi.DeleteVolumeType(ctx, client, id); err != nil {
+			return relabel(err, "deleting volume type %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted volume type: %s\n", ref); err != nil {
 			return err
@@ -265,8 +262,8 @@ func runTypeSet(ctx context.Context, client *gophercloud.ServiceClient, ref stri
 	// extra-specs call then fails, the type is findable under its new name, which
 	// is the order that leaves the least confusing partial state.
 	if f.name != "" {
-		if _, err := volumetypes.Update(ctx, client, id, volumetypes.UpdateOpts{Name: &f.name}).Extract(); err != nil {
-			return fmt.Errorf("renaming volume type %q: %w", ref, err)
+		if _, err := volumeapi.UpdateVolumeType(ctx, client, id, volumetypes.UpdateOpts{Name: &f.name}); err != nil {
+			return relabel(err, "renaming volume type %q", ref)
 		}
 	}
 	if len(specs) == 0 {
@@ -274,8 +271,8 @@ func runTypeSet(ctx context.Context, client *gophercloud.ServiceClient, ref stri
 	}
 	// CreateExtraSpecs POSTs {"extra_specs":{...}} to /types/{id}/extra_specs,
 	// which cinder treats as create-or-update for the given keys.
-	if _, err := volumetypes.CreateExtraSpecs(ctx, client, id, volumetypes.ExtraSpecsOpts(specs)).Extract(); err != nil {
-		return fmt.Errorf("setting extra-specs on volume type %q: %w", ref, err)
+	if _, err := volumeapi.SetVolumeTypeExtraSpecs(ctx, client, id, specs); err != nil {
+		return relabel(err, "setting extra-specs on volume type %q", ref)
 	}
 	return nil
 }
@@ -317,8 +314,8 @@ func runTypeUnset(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	// Cinder deletes one extra-spec per request (DELETE
 	// /types/{id}/extra_specs/{key}), so issue one call per key.
 	return batchdelete.Each(f.property, func(key string) error {
-		if err := volumetypes.DeleteExtraSpec(ctx, client, id, key).ExtractErr(); err != nil {
-			return fmt.Errorf("removing extra-spec %q from volume type %q: %w", key, ref, err)
+		if err := volumeapi.DeleteVolumeTypeExtraSpec(ctx, client, id, key); err != nil {
+			return relabel(err, "removing extra-spec %q from volume type %q", key, ref)
 		}
 		return nil
 	})
