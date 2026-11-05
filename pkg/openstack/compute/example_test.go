@@ -98,8 +98,11 @@ func ExampleCreateKeypair() {
 // binary. gophercloud's own UpdateOpts cannot send forced_down=false.
 func ExampleUpdateService() {
 	novaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		fmt.Println(strings.Join(strings.Fields(r.Method+" "+r.URL.Path+" "+r.URL.RawQuery+" "+string(body)), " "))
+		fmt.Println(strings.TrimSpace(r.Method + " " + r.URL.Path + " " + r.URL.RawQuery))
+		if r.Method == http.MethodPut {
+			body, _ := io.ReadAll(r.Body)
+			fmt.Println("flat body:", string(body) == `{"forced_down":false,"status":"enabled"}`)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			_, _ = io.WriteString(w, `{"services":[{"id":"7f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f","binary":"nova-compute","host":"cmp-01"}]}`)
@@ -129,6 +132,7 @@ func ExampleUpdateService() {
 	fmt.Println(s.Status, s.ForcedDown)
 	// Output:
 	// GET /os-services binary=nova-compute&host=cmp-01
-	// PUT /os-services/7f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f {"forced_down":false,"status":"enabled"}
+	// PUT /os-services/7f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f
+	// flat body: true
 	// enabled false
 }
