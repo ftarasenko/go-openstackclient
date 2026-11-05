@@ -1,4 +1,4 @@
-package placement
+package placement_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // --- parseMicroversion -------------------------------------------------------
@@ -31,7 +33,7 @@ func TestParseMicroversion(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotMajor, gotMinor := parseMicroversion(tc.in)
+			gotMajor, gotMinor := placement.ParseMicroversion(tc.in)
 			if gotMajor != tc.wantMajor || gotMinor != tc.wantMinor {
 				t.Errorf("parseMicroversion(%q) = (%d, %d), want (%d, %d)",
 					tc.in, gotMajor, gotMinor, tc.wantMajor, tc.wantMinor)
@@ -63,7 +65,7 @@ func TestCompareMicroversions(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := compareMicroversions(tc.a, tc.b)
+			got := placement.CompareMicroversions(tc.a, tc.b)
 			if got != tc.want {
 				t.Errorf("compareMicroversions(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
 			}
@@ -90,7 +92,7 @@ func TestIsNumericMicroversion(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isNumericMicroversion(tc.in); got != tc.want {
+			if got := placement.IsNumericMicroversion(tc.in); got != tc.want {
 				t.Errorf("isNumericMicroversion(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
@@ -111,7 +113,7 @@ func TestPlacementMaxVersion_ParsesTheVersionDocument(t *testing.T) {
 	})
 
 	client := placementClient(fakeServer, "latest")
-	got := placementMaxVersion(context.Background(), client)
+	got := placement.PlacementMaxVersion(context.Background(), client)
 	if got != "1.39" {
 		t.Errorf("placementMaxVersion() = %q, want %q", got, "1.39")
 	}
@@ -126,7 +128,7 @@ func TestPlacementMaxVersion_EmptyOnNon2xx(t *testing.T) {
 	})
 
 	client := placementClient(fakeServer, "latest")
-	if got := placementMaxVersion(context.Background(), client); got != "" {
+	if got := placement.PlacementMaxVersion(context.Background(), client); got != "" {
 		t.Errorf("placementMaxVersion() on a failed lookup = %q, want empty", got)
 	}
 }
@@ -142,7 +144,7 @@ func TestPlacementMaxVersion_EmptyWhenNoVersionsListed(t *testing.T) {
 	})
 
 	client := placementClient(fakeServer, "latest")
-	if got := placementMaxVersion(context.Background(), client); got != "" {
+	if got := placement.PlacementMaxVersion(context.Background(), client); got != "" {
 		t.Errorf("placementMaxVersion() with an empty versions list = %q, want empty", got)
 	}
 }
@@ -160,7 +162,7 @@ func TestConcreteClient_NumericMicroversionIsReturnedUntouchedWithNoRequest(t *t
 	})
 
 	client := placementClient(fakeServer, "1.20")
-	got := concreteClient(context.Background(), client)
+	got := placement.ConcreteClient(context.Background(), client)
 	if got != client {
 		t.Errorf("concreteClient returned a different client for an already-numeric microversion")
 	}
@@ -180,7 +182,7 @@ func TestConcreteClient_SymbolicMicroversionIsResolvedOnACopy(t *testing.T) {
 	})
 
 	client := placementClient(fakeServer, "latest")
-	got := concreteClient(context.Background(), client)
+	got := placement.ConcreteClient(context.Background(), client)
 	if got.Microversion != "1.39" {
 		t.Errorf("concreteClient().Microversion = %q, want %q", got.Microversion, "1.39")
 	}
@@ -206,7 +208,7 @@ func TestConcreteClient_FailedLookupReturnsTheClientUnchanged(t *testing.T) {
 	})
 
 	client := placementClient(fakeServer, "latest")
-	got := concreteClient(context.Background(), client)
+	got := placement.ConcreteClient(context.Background(), client)
 	// A version-document hiccup must not replace the caller's client (and the
 	// real error the caller's next request is about to hit) with a worse one.
 	if got != client {

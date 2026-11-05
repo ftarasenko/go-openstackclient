@@ -12,6 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	placementapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // providerListFlags holds the filters accepted by "resource provider list".
@@ -59,13 +60,9 @@ func runProviderList(ctx context.Context, client *gophercloud.ServiceClient, o *
 		UUID:      f.uuid,
 		Resources: f.resourceClass,
 	}
-	pages, err := resourceproviders.List(client, opts).AllPages(ctx)
+	all, err := placementapi.ListResourceProviders(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing resource providers: %w", err)
-	}
-	all, err := resourceproviders.ExtractResourceProviders(pages)
-	if err != nil {
-		return fmt.Errorf("parsing resource provider list: %w", err)
+		return err
 	}
 	return o.WriteList(w, providerListTable(all))
 }
@@ -107,17 +104,17 @@ func newProviderShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runProviderShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, f *providerShowFlags, w io.Writer) error {
-	p, err := resourceproviders.Get(ctx, client, id).Extract()
+	p, err := placementapi.GetResourceProvider(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting resource provider %s: %w", id, err)
+		return err
 	}
 	fields := []string{"uuid", "name", "generation", "root_provider_uuid", "parent_provider_uuid"}
 	values := []any{p.UUID, p.Name, p.Generation, p.RootProviderUUID, p.ParentProviderUUID}
 
 	if f.allocations {
-		alloc, err := resourceproviders.GetAllocations(ctx, client, id).Extract()
+		alloc, err := placementapi.GetProviderAllocations(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("getting allocations for resource provider %s: %w", id, err)
+			return err
 		}
 		fields = append(fields, "allocations")
 		values = append(values, alloc.Allocations)
@@ -147,8 +144,8 @@ func newProviderDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command
 
 func runProviderDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := resourceproviders.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting resource provider %s: %w", id, err)
+		if err := placementapi.DeleteResourceProvider(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted resource provider %s\n", id); err != nil {
 			return err
@@ -178,9 +175,9 @@ func newProviderTraitListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runProviderTraitList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	res, err := resourceproviders.GetTraits(ctx, client, id).Extract()
+	res, err := placementapi.GetProviderTraits(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing traits for resource provider %s: %w", id, err)
+		return err
 	}
 	t := output.Table{Columns: []string{"name"}, Rows: make([][]any, 0, len(res.Traits))}
 	for _, name := range res.Traits {

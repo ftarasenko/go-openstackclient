@@ -2,16 +2,15 @@ package placement
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceclasses"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	placementapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // "resource class" — placement's inventory categories (VCPU, MEMORY_MB and any
@@ -53,13 +52,9 @@ func newResourceClassListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runResourceClassList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := resourceclasses.List(client).AllPages(ctx)
+	all, err := placementapi.ListResourceClasses(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing resource classes: %w", err)
-	}
-	all, err := resourceclasses.ExtractResourceClasses(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the resource class list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"Name"}, Rows: make([][]any, 0, len(all))}
 	for _, rc := range all {
@@ -88,9 +83,9 @@ func newResourceClassShowCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runResourceClassShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	rc, err := resourceclasses.Get(ctx, client, name).Extract()
+	rc, err := placementapi.GetResourceClass(ctx, client, name)
 	if err != nil {
-		return fmt.Errorf("showing resource class %s: %w", name, err)
+		return err
 	}
 	return o.WriteSingle(w, []string{"name"}, []any{rc.Name})
 }
@@ -118,10 +113,7 @@ func newResourceClassCreateCommand(a *auth.Options, o *output.Options) *cobra.Co
 // body and a Location header, so there is nothing to render — success is the
 // absence of an error, matching osc-placement.
 func runResourceClassCreate(ctx context.Context, client *gophercloud.ServiceClient, name string) error {
-	if err := resourceclasses.Create(ctx, client, resourceclasses.CreateOpts{Name: name}).ExtractErr(); err != nil {
-		return fmt.Errorf("creating resource class %s: %w", name, err)
-	}
-	return nil
+	return placementapi.CreateResourceClass(ctx, client, name)
 }
 
 func newResourceClassSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -153,8 +145,8 @@ func runResourceClassSet(ctx context.Context, client *gophercloud.ServiceClient,
 	if err := o.CheckColumns(resourceClassColumns...); err != nil {
 		return err
 	}
-	if err := resourceclasses.Update(ctx, client, name).ExtractErr(); err != nil {
-		return fmt.Errorf("setting resource class %s: %w", name, err)
+	if err := placementapi.EnsureResourceClass(ctx, client, name); err != nil {
+		return err
 	}
 	// Placement answers the PUT with 200 and no useful body, so the name is
 	// echoed back rather than read from the response.
@@ -182,9 +174,6 @@ func newResourceClassDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 
 func runResourceClassDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string) error {
 	return batchdelete.Each(names, func(name string) error {
-		if err := resourceclasses.Delete(ctx, client, name).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting resource class %s: %w", name, err)
-		}
-		return nil
+		return placementapi.DeleteResourceClass(ctx, client, name)
 	})
 }

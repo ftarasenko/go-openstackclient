@@ -2,7 +2,6 @@ package placement
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -12,13 +11,12 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/allocationcandidates"
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/allocations"
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceproviders"
-	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/traits"
-	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/usages"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	placementapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // The placement write surface: resource-provider create/set, inventory and
@@ -61,13 +59,13 @@ func runProviderCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err := o.CheckColumns(providerColumns...); err != nil {
 		return err
 	}
-	rp, err := resourceproviders.Create(ctx, client, resourceproviders.CreateOpts{
+	rp, err := placementapi.CreateResourceProvider(ctx, client, resourceproviders.CreateOpts{
 		Name:               name,
 		UUID:               uuid,
 		ParentProviderUUID: parent,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating resource provider %q: %w", name, err)
+		return err
 	}
 	return writeProvider(o, w, rp)
 }
@@ -127,9 +125,9 @@ func runProviderSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if f.parentSet {
 		opts.ParentProviderUUID = &f.parent
 	}
-	rp, err := resourceproviders.Update(ctx, client, id, opts).Extract()
+	rp, err := placementapi.UpdateResourceProvider(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating resource provider %s: %w", id, err)
+		return err
 	}
 	return writeProvider(o, w, rp)
 }
@@ -145,26 +143,11 @@ func writeProvider(o *output.Options, w io.Writer, rp *resourceproviders.Resourc
 
 // --- inventory writes -------------------------------------------------------
 
-// inventoryBody is the set of inventory fields the operator actually named.
-//
-// It is a map rather than resourceproviders.Inventory because that struct tags
-// none of its fields omitempty, so gophercloud's BuildRequestBody serialises the
-// whole set — and an unmentioned integer serialises as 0. Placement's schema
-// puts a `minimum: 1` on step_size, min_unit and max_unit, so a request built
-// from the struct is rejected outright:
-//
-//	JSON does not validate: 0 is less than the minimum of 1
-//
-// which made both inventory verbs unusable unless the operator spelled out every
-// field. Sending only what was asked for lets placement apply its own defaults,
-// which is what upstream osc-placement does.
-type inventoryBody map[string]any
-
 // parseInventory parses the key=value pairs shared by the inventory verbs.
 // Placement's inventory object is a fixed set of integers plus a float ratio,
 // so an unknown key is a typo worth catching before the round trip.
-func parseInventory(pairs []string) (inventoryBody, error) {
-	inv := inventoryBody{}
+func parseInventory(pairs []string) (placementapi.InventoryFields, error) {
+	inv := placementapi.InventoryFields{}
 	for _, p := range pairs {
 		k, v, ok := strings.Cut(p, "=")
 		if !ok {
@@ -190,39 +173,6 @@ func parseInventory(pairs []string) (inventoryBody, error) {
 		}
 	}
 	return inv, nil
-}
-
-// updateInventoryOpts builds the body for one resource class. It satisfies
-// resourceproviders.UpdateInventoryOptsBuilder so the vendored request function
-// can still be used; only the body construction is koc's.
-type updateInventoryOpts struct {
-	generation int
-	fields     inventoryBody
-}
-
-func (o updateInventoryOpts) ToResourceProviderUpdateInventoryMap() (map[string]any, error) {
-	b := map[string]any{"resource_provider_generation": o.generation}
-	for k, v := range o.fields {
-		b[k] = v
-	}
-	return b, nil
-}
-
-// updateInventoriesOpts builds the whole-provider body, same reasoning.
-type updateInventoriesOpts struct {
-	generation  int
-	inventories map[string]inventoryBody
-}
-
-func (o updateInventoriesOpts) ToResourceProviderUpdateInventoriesMap() (map[string]any, error) {
-	inv := make(map[string]any, len(o.inventories))
-	for class, fields := range o.inventories {
-		inv[class] = map[string]any(fields)
-	}
-	return map[string]any{
-		"resource_provider_generation": o.generation,
-		"inventories":                  inv,
-	}, nil
 }
 
 // inventoryFieldNames are the inventory fields placement defines, in the order
@@ -292,17 +242,9 @@ func runProviderInventoryClassSet(ctx context.Context, client *gophercloud.Servi
 	if len(inv) == 0 {
 		return fmt.Errorf("nothing to set on %s inventory: give --total (or another inventory field)", class)
 	}
-	// Placement requires the provider's current generation on this write and
-	// rejects a stale one with 409. Reading it here is what makes two writes in a
-	// row work without the caller re-reading in between.
-	current, err := resourceproviders.GetInventories(ctx, client, id).Extract()
+	got, err := placementapi.SetInventory(ctx, client, id, class, inv)
 	if err != nil {
-		return fmt.Errorf("reading resource provider %s before writing its inventory: %w", id, err)
-	}
-	got, err := resourceproviders.UpdateInventory(ctx, client, id, class,
-		updateInventoryOpts{generation: current.ResourceProviderGeneration, fields: inv}).Extract()
-	if err != nil {
-		return fmt.Errorf("setting %s inventory on resource provider %s: %w", class, id, err)
+		return err
 	}
 	return o.WriteSingle(w,
 		inventoryClassColumns,
@@ -334,8 +276,7 @@ func newProviderInventorySetCommand(a *auth.Options, o *output.Options) *cobra.C
 
 // runProviderInventorySet replaces every inventory record on the provider, so
 // a class left out of --resource is removed. That is placement's PUT semantics
-// and upstream's too; the generation is read first because placement rejects
-// the write without a current one.
+// and upstream's too.
 func runProviderInventorySet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, resources []string, w io.Writer,
 ) error {
@@ -358,7 +299,7 @@ func runProviderInventorySet(ctx context.Context, client *gophercloud.ServiceCli
 		}
 		byClass[class] = append(byClass[class], field)
 	}
-	inventories := map[string]inventoryBody{}
+	inventories := map[string]placementapi.InventoryFields{}
 	for class, fields := range byClass {
 		inv, err := parseInventory(fields)
 		if err != nil {
@@ -367,16 +308,9 @@ func runProviderInventorySet(ctx context.Context, client *gophercloud.ServiceCli
 		inventories[class] = inv
 	}
 
-	current, err := resourceproviders.GetInventories(ctx, client, id).Extract()
+	got, err := placementapi.SetInventories(ctx, client, id, inventories)
 	if err != nil {
-		return fmt.Errorf("reading resource provider %s before writing its inventory: %w", id, err)
-	}
-	got, err := resourceproviders.UpdateInventories(ctx, client, id, updateInventoriesOpts{
-		generation:  current.ResourceProviderGeneration,
-		inventories: inventories,
-	}).Extract()
-	if err != nil {
-		return fmt.Errorf("setting the inventory of resource provider %s: %w", id, err)
+		return err
 	}
 	return writeInventories(o, w, got.Inventories)
 }
@@ -406,15 +340,9 @@ func newProviderInventoryDeleteCommand(a *auth.Options, o *output.Options) *cobr
 
 func runProviderInventoryDelete(ctx context.Context, client *gophercloud.ServiceClient, id, class string) error {
 	if class != "" {
-		if err := resourceproviders.DeleteInventory(ctx, client, id, class).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting %s inventory from resource provider %s: %w", class, id, err)
-		}
-		return nil
+		return placementapi.DeleteInventory(ctx, client, id, class)
 	}
-	if err := resourceproviders.DeleteInventories(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting the inventory of resource provider %s: %w", id, err)
-	}
-	return nil
+	return placementapi.DeleteInventories(ctx, client, id)
 }
 
 // inventoryColumns are the columns of a provider's inventory listing.
@@ -455,24 +383,17 @@ func newProviderTraitSetCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	return cmd
 }
 
-// runProviderTraitSet replaces the whole trait list — placement's PUT has no
-// merge mode — and reads the generation first, which the write requires.
+// runProviderTraitSet replaces the whole trait list; placement's PUT has no
+// merge mode.
 func runProviderTraitSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, traitNames []string, w io.Writer,
 ) error {
 	if err := o.CheckColumns(traitColumns...); err != nil {
 		return err
 	}
-	current, err := resourceproviders.GetTraits(ctx, client, id).Extract()
+	got, err := placementapi.SetProviderTraits(ctx, client, id, traitNames)
 	if err != nil {
-		return fmt.Errorf("reading resource provider %s before writing its traits: %w", id, err)
-	}
-	got, err := resourceproviders.UpdateTraits(ctx, client, id, resourceproviders.UpdateTraitsOpts{
-		ResourceProviderGeneration: current.ResourceProviderGeneration,
-		Traits:                     traitNames,
-	}).Extract()
-	if err != nil {
-		return fmt.Errorf("setting the traits of resource provider %s: %w", id, err)
+		return err
 	}
 	t := output.Table{Columns: traitColumns, Rows: make([][]any, 0, len(got.Traits))}
 	for _, name := range got.Traits {
@@ -501,10 +422,7 @@ func newProviderTraitDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func runProviderTraitDelete(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-	if err := resourceproviders.DeleteTraits(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting the traits of resource provider %s: %w", id, err)
-	}
-	return nil
+	return placementapi.DeleteProviderTraits(ctx, client, id)
 }
 
 // --- aggregate set ----------------------------------------------------------
@@ -538,22 +456,9 @@ func runProviderAggregateSet(ctx context.Context, client *gophercloud.ServiceCli
 	if err := o.CheckColumns(aggregateColumns...); err != nil {
 		return err
 	}
-	current, err := resourceproviders.GetAggregates(ctx, client, id).Extract()
+	got, err := placementapi.SetProviderAggregates(ctx, client, id, aggregates)
 	if err != nil {
-		return fmt.Errorf("reading resource provider %s before writing its aggregates: %w", id, err)
-	}
-	// UpdateAggregates parses client.Microversion to choose the body shape, so it
-	// needs a number rather than koc's negotiated "latest".
-	client = concreteClient(ctx, client)
-	// The generation is required from placement 1.19; sending the one just read
-	// is what makes the write safe against a concurrent change.
-	generation := current.ResourceProviderGeneration
-	got, err := resourceproviders.UpdateAggregates(ctx, client, id, resourceproviders.UpdateAggregatesOpts{
-		ResourceProviderGeneration: generation,
-		Aggregates:                 aggregates,
-	}).Extract()
-	if err != nil {
-		return fmt.Errorf("setting the aggregates of resource provider %s: %w", id, err)
+		return err
 	}
 	t := output.Table{Columns: aggregateColumns, Rows: make([][]any, 0, len(got.Aggregates))}
 	for _, agg := range got.Aggregates {
@@ -589,9 +494,9 @@ var allocationColumns = []string{"Resource Provider", colResourceClass, "Used"}
 func runProviderAllocationShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	consumer string, w io.Writer,
 ) error {
-	got, err := allocations.Get(ctx, client, consumer).Extract()
+	got, err := placementapi.GetAllocations(ctx, client, consumer)
 	if err != nil {
-		return fmt.Errorf("showing the allocations of consumer %s: %w", consumer, err)
+		return err
 	}
 	t := output.Table{Columns: allocationColumns}
 	for providerID, alloc := range got.Allocations {
@@ -639,21 +544,6 @@ func newProviderAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.
 	return cmd
 }
 
-// consumerTypeMicroversion is where placement made consumer_type a required
-// property of the allocations PUT body. Zed's placement already tops out at
-// 1.39, so every cloud koc supports is at or above it.
-const consumerTypeMicroversion = "1.38"
-
-// requiresConsumerType reports whether the negotiated microversion makes
-// consumer_type mandatory. koc's default is "latest", which on any supported
-// cloud resolves above 1.38; only an operator who pinned lower gets a false.
-func requiresConsumerType(microversion string) bool {
-	if !isNumericMicroversion(microversion) {
-		return true // "latest" (or unset) — assume the newest behaviour
-	}
-	return compareMicroversions(microversion, consumerTypeMicroversion) >= 0
-}
-
 // runProviderAllocationSet replaces the consumer's allocations wholesale, which
 // is what placement's PUT does — there is no incremental form.
 func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
@@ -665,9 +555,9 @@ func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceCl
 	// Placement 1.38 made consumer_type required, and it is not a value koc can
 	// invent on the operator's behalf — it describes what the consumer *is*. Say
 	// so here rather than letting placement answer with a schema dump.
-	if f.consumerType == "" && requiresConsumerType(client.Microversion) {
+	if f.consumerType == "" && placementapi.RequiresConsumerType(client.Microversion) {
 		return fmt.Errorf("placement %s and later require a consumer type: pass --consumer-type "+
-			"(e.g. INSTANCE or MIGRATION)", consumerTypeMicroversion)
+			"(e.g. INSTANCE or MIGRATION)", placementapi.ConsumerTypeMicroversion)
 	}
 	byProvider := map[string]allocations.ProviderAllocationsOpts{}
 	for _, spec := range f.specs {
@@ -690,8 +580,8 @@ func runProviderAllocationSet(ctx context.Context, client *gophercloud.ServiceCl
 		UserID:       f.userID,
 		ConsumerType: f.consumerType,
 	}
-	if err := allocations.Update(ctx, client, consumer, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("setting the allocations of consumer %s: %w", consumer, err)
+	if err := placementapi.UpdateAllocations(ctx, client, consumer, opts); err != nil {
+		return err
 	}
 	return runProviderAllocationShow(ctx, client, o, consumer, w)
 }
@@ -753,77 +643,19 @@ func newProviderAllocationUnsetCommand(a *auth.Options, o *output.Options) *cobr
 	return cmd
 }
 
-// runProviderAllocationUnset removes the named allocations by reading the
-// current set, filtering it, and writing back the remainder — placement has no
-// partial-delete endpoint. With neither flag it clears everything, matching
-// upstream.
+// runProviderAllocationUnset removes the named allocations and shows what is
+// left. With neither flag it clears everything, matching upstream.
 func runProviderAllocationUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	consumer string, providers, classes []string, w io.Writer,
 ) error {
 	if err := o.CheckColumns(allocationColumns...); err != nil {
 		return err
 	}
-	if len(providers) == 0 && len(classes) == 0 {
-		if err := allocations.Delete(ctx, client, consumer).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting the allocations of consumer %s: %w", consumer, err)
-		}
-		return nil
-	}
-	current, err := allocations.Get(ctx, client, consumer).Extract()
-	if err != nil {
-		return fmt.Errorf("reading the allocations of consumer %s: %w", consumer, err)
-	}
-	kept := keepAllocations(current.Allocations, providers, classes)
-	if len(kept) == 0 {
-		// Placement rejects a PUT with an empty allocations object; clearing the
-		// last one is a DELETE.
-		if err := allocations.Delete(ctx, client, consumer).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting the allocations of consumer %s: %w", consumer, err)
-		}
-		return nil
-	}
-	if err := allocations.Update(ctx, client, consumer, allocations.UpdateOpts{Allocations: kept}).ExtractErr(); err != nil {
-		return fmt.Errorf("updating the allocations of consumer %s: %w", consumer, err)
+	remaining, err := placementapi.RemoveAllocations(ctx, client, consumer, providers, classes)
+	if err != nil || !remaining {
+		return err
 	}
 	return runProviderAllocationShow(ctx, client, o, consumer, w)
-}
-
-// keepAllocations computes the allocations that survive an unset: every
-// provider the operator did not name, minus every resource class they did.
-//
-// Placement has no partial-delete endpoint — an update replaces the consumer's
-// whole allocation set — so the survivors are derived client-side from what was
-// just read. A provider left with no classes is dropped entirely rather than
-// written back as an empty resources object, which placement rejects.
-func keepAllocations(current map[string]allocations.ProviderAllocations,
-	providers, classes []string,
-) map[string]allocations.ProviderAllocationsOpts {
-	kept := map[string]allocations.ProviderAllocationsOpts{}
-	for providerID, alloc := range current {
-		if contains(providers, providerID) {
-			continue
-		}
-		resources := map[string]int{}
-		for class, used := range alloc.Resources {
-			if contains(classes, class) {
-				continue
-			}
-			resources[class] = used
-		}
-		if len(resources) > 0 {
-			kept[providerID] = allocations.ProviderAllocationsOpts{Resources: resources}
-		}
-	}
-	return kept
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // --- allocation candidate list ----------------------------------------------
@@ -910,13 +742,9 @@ func runAllocationCandidateList(ctx context.Context, client *gophercloud.Service
 		MemberOf:  f.memberOf,
 		Limit:     f.limit,
 	}
-	pages, err := allocationcandidates.List(client, opts).AllPages(ctx)
+	candidates, err := placementapi.ListAllocationCandidates(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing allocation candidates: %w", err)
-	}
-	candidates, err := allocationcandidates.ExtractAllocationCandidates(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the allocation candidate list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"Resource Provider", colResourceClass, "Capacity", "Used"}}
 	for providerID, summary := range candidates.ProviderSummaries {
@@ -958,15 +786,9 @@ func newResourceUsageCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runResourceUsageShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	projectID, userID string, w io.Writer,
 ) error {
-	var raw struct {
-		Usages map[string]json.RawMessage `json:"usages"`
-	}
-	if err := usages.Get(ctx, client, usages.GetOpts{ProjectID: projectID, UserID: userID}).ExtractInto(&raw); err != nil {
-		return fmt.Errorf("showing resource usage for project %s: %w", projectID, err)
-	}
-	perClass, err := usageByClass(raw.Usages)
+	perClass, err := placementapi.GetProjectUsage(ctx, client, projectID, userID)
 	if err != nil {
-		return fmt.Errorf("showing resource usage for project %s: %w", projectID, err)
+		return err
 	}
 	t := output.Table{Columns: []string{colResourceClass, "Usage"}}
 	for class, used := range perClass {
@@ -974,33 +796,6 @@ func runResourceUsageShow(ctx context.Context, client *gophercloud.ServiceClient
 	}
 	sortRowsByFirstColumn(t.Rows)
 	return o.WriteList(w, t)
-}
-
-// usageByClass folds /usages into one total per resource class, the view
-// upstream prints. Before placement 1.38 each value is a class's usage; from
-// 1.38 the classes sit one level down, under each consumer type (INSTANCE,
-// MIGRATION, unknown) beside a consumer_count, so the totals are summed across
-// the types. koc negotiates the latest microversion, so it meets the grouped
-// shape on every supported cloud; upstream defaults to 1.0 and does not.
-func usageByClass(in map[string]json.RawMessage) (map[string]int, error) {
-	out := map[string]int{}
-	for key, v := range in {
-		var n int
-		if err := json.Unmarshal(v, &n); err == nil {
-			out[key] += n
-			continue
-		}
-		var byType map[string]int
-		if err := json.Unmarshal(v, &byType); err != nil {
-			return nil, fmt.Errorf("parsing usages for %q: %w", key, err)
-		}
-		for class, used := range byType {
-			if class != "consumer_count" {
-				out[class] += used
-			}
-		}
-	}
-	return out, nil
 }
 
 // --- trait create / delete / show -------------------------------------------
@@ -1025,10 +820,7 @@ func newTraitCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runTraitCreate(ctx context.Context, client *gophercloud.ServiceClient, name string) error {
-	if err := traits.Create(ctx, client, name).ExtractErr(); err != nil {
-		return fmt.Errorf("creating trait %s: %w", name, err)
-	}
-	return nil
+	return placementapi.CreateTrait(ctx, client, name)
 }
 
 func newTraitDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -1052,10 +844,7 @@ func newTraitDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func runTraitDelete(ctx context.Context, client *gophercloud.ServiceClient, names []string) error {
 	return batchdelete.Each(names, func(name string) error {
-		if err := traits.Delete(ctx, client, name).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting trait %s: %w", name, err)
-		}
-		return nil
+		return placementapi.DeleteTrait(ctx, client, name)
 	})
 }
 
@@ -1082,8 +871,8 @@ func newTraitShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // it answers 204 when the trait exists and 404 when it does not — so the name
 // is echoed rather than any server-provided field.
 func runTraitShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	if err := traits.Get(ctx, client, name).ExtractErr(); err != nil {
-		return fmt.Errorf("showing trait %s: %w", name, err)
+	if err := placementapi.GetTrait(ctx, client, name); err != nil {
+		return err
 	}
 	return o.WriteSingle(w, []string{"name"}, []any{name})
 }

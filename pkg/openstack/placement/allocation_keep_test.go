@@ -1,10 +1,12 @@
-package placement
+package placement_test
 
 import (
 	"reflect"
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/allocations"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
 )
 
 // keepAllocations is the survivor computation behind "allocation unset".
@@ -85,7 +87,7 @@ func TestKeepAllocations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := keepAllocations(current, tt.providers, tt.classes)
+			got := placement.KeepAllocations(current, tt.providers, tt.classes)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("keepAllocations() = %+v, want %+v", got, tt.want)
 			}
@@ -94,14 +96,14 @@ func TestKeepAllocations(t *testing.T) {
 
 	// The read is the caller's, so the survivors must be a fresh map: mutating
 	// them must not corrupt what was read back from placement.
-	if got := keepAllocations(current, nil, []string{"VCPU"}); len(current[p1].Resources) != 2 {
+	if got := placement.KeepAllocations(current, nil, []string{"VCPU"}); len(current[p1].Resources) != 2 {
 		t.Errorf("keepAllocations() mutated its input: %+v (result %+v)", current, got)
 	}
 }
 
 // An empty allocation set is the "already cleared" case and must not panic.
 func TestKeepAllocations_Empty(t *testing.T) {
-	if got := keepAllocations(nil, []string{"x"}, []string{"VCPU"}); len(got) != 0 {
+	if got := placement.KeepAllocations(nil, []string{"x"}, []string{"VCPU"}); len(got) != 0 {
 		t.Errorf("keepAllocations(nil) = %+v, want empty", got)
 	}
 }

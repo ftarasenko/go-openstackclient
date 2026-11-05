@@ -8,21 +8,14 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 )
 
-// koc asks placement for "latest" by default (see auth/services.go), which the
-// service resolves per-request and which keeps every command on the newest
-// behaviour the endpoint offers. That is the right default for the wire, but it
-// is not a microversion *number*, and a little gophercloud code reads
-// client.Microversion and parses it rather than just sending it:
-// resourceproviders.UpdateAggregates switches the request body shape on it,
-// because placement stopped enveloping the aggregate list at 1.19.
-//
-// Given "latest" that parse fails, and the command dies with
-// `invalid microversion format: "latest"` before it ever reaches the network.
-// concreteClient converts the negotiated default into the number it stands for
-// so that code can work.
-//
-// The lookup is only performed when the microversion is not already numeric, so
-// an operator who pinned --os-placement-api-version pays nothing.
+// A placement client usually asks for "latest" (openstack.Session's default),
+// which the service resolves per request. That is not a microversion number,
+// and a little gophercloud code parses client.Microversion rather than just
+// sending it: resourceproviders.UpdateAggregates switches the body shape on it,
+// because placement stopped enveloping the aggregate list at 1.19. Given
+// "latest" that parse fails with `invalid microversion format: "latest"`
+// before any request. concreteClient converts it to the number it stands for;
+// a client already pinned to a number pays nothing.
 
 // concreteClient returns a client whose Microversion is a "major.minor" number.
 //
@@ -31,7 +24,7 @@ import (
 // and applied to a shallow copy — a copy because the ProviderClient is shared,
 // and setMicroversionHeader rewrites the header from client.Microversion on
 // every request, so mutating the caller's client would leak into later calls
-// (the same reason server/actions.go copies before pinning nova 2.43).
+// (the same reason compute's floating-IP actions copy before pinning nova 2.43).
 //
 // A failed lookup returns the client unchanged rather than an error: the caller
 // is about to make a real request that will report a real failure, and a
@@ -120,4 +113,19 @@ func isNumericMicroversion(s string) bool {
 		}
 	}
 	return seenDot
+}
+
+// ConsumerTypeMicroversion is where placement made consumer_type a required
+// property of an allocations PUT. Zed's placement tops out at 1.39, so every
+// cloud koc supports is at or above it.
+const ConsumerTypeMicroversion = "1.38"
+
+// RequiresConsumerType reports whether a client at microversion must send a
+// consumer type with allocations. A symbolic microversion ("latest") or none
+// is assumed to be the newest behaviour.
+func RequiresConsumerType(microversion string) bool {
+	if !isNumericMicroversion(microversion) {
+		return true
+	}
+	return compareMicroversions(microversion, ConsumerTypeMicroversion) >= 0
 }
