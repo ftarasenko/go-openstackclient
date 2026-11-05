@@ -8,13 +8,11 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/extraroutes"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/portforwarding"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/networkipavailabilities"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/rbacpolicies"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/segments"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -82,17 +80,9 @@ func runIPAvailabilityList(ctx context.Context, client *gophercloud.ServiceClien
 	if ipVersion == 0 {
 		opts.IPVersion = ""
 	}
-	pages, err := networkipavailabilities.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListIPAvailabilities(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing IP availability: %w", err)
-	}
-	all, err := networkipavailabilities.ExtractNetworkIPAvailabilities(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the IP availability list: %w", err)
-	}
-	details, err := ipAvailabilityDetails(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the IP availability list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{
@@ -102,12 +92,12 @@ func runIPAvailabilityList(ctx context.Context, client *gophercloud.ServiceClien
 		},
 		Rows: make([][]any, 0, len(all)),
 	}
-	for i, av := range all {
+	for _, av := range all {
 		row := []any{av.NetworkID, av.NetworkName, av.TotalIPs, av.UsedIPs}
 		for _, field := range ipAvailabilityDetailFields {
 			var v any = ""
-			if i < len(details) && details[i] != nil {
-				if d, ok := details[i][field]; ok {
+			if av.Details != nil {
+				if d, ok := av.Details[field]; ok {
 					v = d
 				}
 			}
@@ -125,28 +115,6 @@ func runIPAvailabilityList(ctx context.Context, client *gophercloud.ServiceClien
 var ipAvailabilityDetailFields = []string{
 	"total_ips_in_subnet", "total_ips_in_allocation_pool",
 	"used_ips_in_subnet", "used_ips_in_allocation_pool",
-}
-
-// ipAvailabilityDetails reads ip_availability_details off each listed network,
-// index-aligned with ExtractNetworkIPAvailabilities. It is decoded separately
-// because NetworkIPAvailability has its own UnmarshalJSON (for total_ips as a
-// big integer), which an embedding struct would inherit and so lose the field.
-func ipAvailabilityDetails(pages pagination.Page) ([]map[string]any, error) {
-	var rows []struct {
-		Details map[string]any `json:"ip_availability_details"`
-	}
-	page, ok := pages.(networkipavailabilities.NetworkIPAvailabilityPage)
-	if !ok {
-		return nil, fmt.Errorf("unexpected page type %T", pages)
-	}
-	if err := page.ExtractIntoSlicePtr(&rows, "network_ip_availabilities"); err != nil {
-		return nil, err
-	}
-	out := make([]map[string]any, len(rows))
-	for i, r := range rows {
-		out[i] = r.Details
-	}
-	return out, nil
 }
 
 func newIPAvailabilityShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -176,9 +144,9 @@ func runIPAvailabilityShow(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	av, err := networkipavailabilities.Get(ctx, client, id).Extract()
+	av, err := networkapi.GetIPAvailability(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing IP availability for network %s: %w", ref, err)
+		return relabel(err, "showing IP availability for network %s", ref)
 	}
 	t := output.Table{
 		Columns: []string{"Subnet ID", "Subnet Name", "CIDR", "IP Version", "Total IPs", "Used IPs"},
@@ -263,13 +231,9 @@ func runRBACList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		ObjectType:   f.objectType,
 		TargetTenant: f.targetProject,
 	}
-	pages, err := rbacpolicies.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListRBACPolicies(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing network RBAC policies: %w", err)
-	}
-	all, err := rbacpolicies.ExtractRBACPolicies(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the network RBAC policy list: %w", err)
+		return err
 	}
 	cols := []string{"ID", "Object Type", "Object ID"}
 	if f.long {
@@ -305,9 +269,9 @@ func newRBACShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRBACShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	p, err := rbacpolicies.Get(ctx, client, id).Extract()
+	p, err := networkapi.GetRBACPolicy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing network RBAC policy %s: %w", id, err)
+		return err
 	}
 	return writeRBAC(o, w, p)
 }
@@ -453,9 +417,9 @@ func runRBACCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	p, err := rbacpolicies.Create(ctx, client, networkapi.WithRBACPolicyCreateAttrs(opts, attrs)).Extract()
+	p, err := networkapi.CreateRBACPolicy(ctx, client, networkapi.WithRBACPolicyCreateAttrs(opts, attrs))
 	if err != nil {
-		return fmt.Errorf("creating a network RBAC policy for %s: %w", objectID, err)
+		return relabel(err, "creating a network RBAC policy for %s", objectID)
 	}
 	return writeRBAC(o, w, p)
 }
@@ -518,11 +482,11 @@ func runRBACSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if f.targetProject != "" {
 		opts = networkapi.WithRBACPolicyUpdateAttrs(rbacpolicies.UpdateOpts{TargetTenant: f.targetProject}, extra)
 	} else {
-		opts = networkapi.WithRBACPolicyUpdateAttrs(rbacEmptyUpdate{}, extra)
+		opts = networkapi.WithRBACPolicyUpdateAttrs(networkapi.RBACPolicyEmptyUpdate{}, extra)
 	}
-	p, err := rbacpolicies.Update(ctx, client, id, opts).Extract()
+	p, err := networkapi.UpdateRBACPolicy(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating network RBAC policy %s: %w", id, err)
+		return err
 	}
 	return writeRBAC(o, w, p)
 }
@@ -547,10 +511,7 @@ func newRBACDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func runRBACDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := rbacpolicies.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network RBAC policy %s: %w", id, err)
-		}
-		return nil
+		return networkapi.DeleteRBACPolicy(ctx, client, id)
 	})
 }
 
@@ -612,13 +573,9 @@ func runSegmentList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		}
 		opts.NetworkID = id
 	}
-	pages, err := segments.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListSegments(ctx, client, opts)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("listing network segments: %w", err), extSegment)
-	}
-	all, err := segments.ExtractSegments(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the network segment list: %w", err)
+		return explainMissingService(ctx, client, err, extSegment)
 	}
 	cols := []string{"ID", "Name", "Network", "Network Type", "Segment"}
 	if f.long {
@@ -654,9 +611,9 @@ func newSegmentShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runSegmentShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	seg, err := segments.Get(ctx, client, id).Extract()
+	seg, err := networkapi.GetSegment(ctx, client, id)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("showing network segment %s: %w", id, err), extSegment)
+		return explainMissingService(ctx, client, err, extSegment)
 	}
 	return writeSegment(o, w, seg)
 }
@@ -719,16 +676,16 @@ func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	seg, err := segments.Create(ctx, client, networkapi.WithSegmentCreateAttrs(segments.CreateOpts{
+	seg, err := networkapi.CreateSegment(ctx, client, networkapi.WithSegmentCreateAttrs(segments.CreateOpts{
 		Name:            name,
 		Description:     f.description,
 		NetworkID:       networkID,
 		NetworkType:     f.networkType,
 		PhysicalNetwork: f.physicalNetwork,
 		SegmentationID:  f.segmentationID,
-	}, extra)).Extract()
+	}, extra))
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("creating network segment %q: %w", name, err), extSegment)
+		return explainMissingService(ctx, client, relabel(err, "creating network segment %q", name), extSegment)
 	}
 	return writeSegment(o, w, seg)
 }
@@ -793,9 +750,9 @@ func runSegmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	seg, err := segments.Update(ctx, client, id, networkapi.WithSegmentUpdateAttrs(opts, extra)).Extract()
+	seg, err := networkapi.UpdateSegment(ctx, client, id, networkapi.WithSegmentUpdateAttrs(opts, extra))
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("updating network segment %s: %w", id, err), extSegment)
+		return explainMissingService(ctx, client, err, extSegment)
 	}
 	return writeSegment(o, w, seg)
 }
@@ -820,10 +777,7 @@ func newSegmentDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 
 func runSegmentDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := segments.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return explainMissingService(ctx, client, fmt.Errorf("deleting network segment %s: %w", id, err), extSegment)
-		}
-		return nil
+		return explainMissingService(ctx, client, networkapi.DeleteSegment(ctx, client, id), extSegment)
 	})
 }
 
@@ -905,13 +859,10 @@ func runPortForwardingList(ctx context.Context, client *gophercloud.ServiceClien
 		}
 		opts.ExternalPort = strconv.Itoa(n)
 	}
-	pages, err := portforwarding.List(client, opts, fipID).AllPages(ctx)
+	all, err := networkapi.ListPortForwardings(ctx, client, fipID, opts)
 	if err != nil {
-		return fmt.Errorf("listing port forwardings of floating IP %s: %w", fipRef, err)
-	}
-	all, err := portforwarding.ExtractPortForwardings(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the port forwarding list: %w", err)
+		// A malformed page fails in AllPages already, so this is the listing.
+		return relabel(err, "listing port forwardings of floating IP %s", fipRef)
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Internal Port ID", "Internal IP Address", "Internal Port", "Internal Port Range",
@@ -950,9 +901,9 @@ func runPortForwardingShow(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	pf, err := portforwarding.Get(ctx, client, fipID, id).Extract()
+	pf, err := networkapi.GetPortForwarding(ctx, client, fipID, id)
 	if err != nil {
-		return fmt.Errorf("showing port forwarding %s: %w", id, err)
+		return err
 	}
 	return writePortForwarding(o, w, pf)
 }
@@ -1157,7 +1108,7 @@ func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceCli
 	}
 	// Neutron treats the single port and the port range as mutually exclusive,
 	// so both are omitempty and only the pair the operator gave is sent.
-	pf, err := portforwarding.Create(ctx, client, fipID, networkapi.WithPortForwardingCreateAttrs(portforwarding.CreateOpts{
+	pf, err := networkapi.CreatePortForwarding(ctx, client, fipID, networkapi.WithPortForwardingCreateAttrs(portforwarding.CreateOpts{
 		Protocol:          f.protocol,
 		InternalPortID:    portID,
 		InternalIPAddress: f.internalIP,
@@ -1166,9 +1117,9 @@ func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceCli
 		InternalPortRange: f.internalPortRange,
 		ExternalPortRange: f.externalPortRange,
 		Description:       f.description,
-	}, extra)).Extract()
+	}, extra))
 	if err != nil {
-		return fmt.Errorf("creating a port forwarding on floating IP %s: %w", fipRef, err)
+		return relabel(err, "creating a port forwarding on floating IP %s", fipRef)
 	}
 	return writePortForwarding(o, w, pf)
 }
@@ -1231,9 +1182,9 @@ func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	pf, err := portforwarding.Update(ctx, client, fipID, id, networkapi.WithPortForwardingUpdateAttrs(opts, extra)).Extract()
+	pf, err := networkapi.UpdatePortForwarding(ctx, client, fipID, id, networkapi.WithPortForwardingUpdateAttrs(opts, extra))
 	if err != nil {
-		return fmt.Errorf("updating port forwarding %s: %w", id, err)
+		return err
 	}
 	return writePortForwarding(o, w, pf)
 }
@@ -1262,10 +1213,7 @@ func runPortForwardingDelete(ctx context.Context, client *gophercloud.ServiceCli
 		return err
 	}
 	return batchdelete.Each(ids, func(id string) error {
-		if err := portforwarding.Delete(ctx, client, fipID, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting port forwarding %s: %w", id, err)
-		}
-		return nil
+		return networkapi.DeletePortForwarding(ctx, client, fipID, id)
 	})
 }
 
@@ -1335,15 +1283,14 @@ func runRouterRoute(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	opts := extraroutes.Opts{Routes: &parsed}
 	var r *routers.Router
 	if add {
-		r, err = extraroutes.Add(ctx, client, routerID, opts).Extract()
+		r, err = networkapi.AddRouterRoutes(ctx, client, routerID, parsed)
 	} else {
-		r, err = extraroutes.Remove(ctx, client, routerID, opts).Extract()
+		r, err = networkapi.RemoveRouterRoutes(ctx, client, routerID, parsed)
 	}
 	if err != nil {
-		return fmt.Errorf("updating the routes of router %s: %w", routerRef, err)
+		return relabel(err, "updating the routes of router %s", routerRef)
 	}
 	fields, values := routerShowFields(r)
 	return o.WriteSingle(w, fields, values)
@@ -1390,11 +1337,3 @@ var portForwardingColumns = []string{
 
 // routerRouteColumns is what router add/remove route renders.
 var routerRouteColumns = fieldNames(routerShowFields(&routers.Router{}))
-
-// rbacEmptyUpdate is an RBAC policy update with no typed field, for a set that
-// sends only --extra-property attributes.
-type rbacEmptyUpdate struct{}
-
-func (rbacEmptyUpdate) ToRBACPolicyUpdateMap() (map[string]any, error) {
-	return map[string]any{"rbac_policy": map[string]any{}}, nil
-}

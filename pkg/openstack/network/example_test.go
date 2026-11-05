@@ -126,3 +126,53 @@ func ExampleListRouterInterfaces() {
 	// Output:
 	// port-1 private 192.0.2.1
 }
+
+// Add a minimum_packet_rate rule, a type gophercloud's qos/rules package does
+// not model, to a QoS policy found by name, then read the type back off the
+// policy as the per-rule calls need it. The lookup is
+// GET /v2.0/qos/policies?name=gold, and the create is
+// POST /v2.0/qos/policies/qos-1/minimum_packet_rate_rules.
+func ExampleCreateQoSRule() {
+	neutronAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"minimum_packet_rate_rule":{"id":"rule-1","min_kpps":1000,"direction":"egress"}}`)
+		case r.URL.Path == "/v2.0/qos/policies":
+			_, _ = io.WriteString(w, `{"policies":[{"id":"qos-1","name":"gold"}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"policy":{"id":"qos-1","rules":[{"id":"rule-1","type":"minimum_packet_rate"}]}}`)
+		}
+	}))
+	defer neutronAPI.Close()
+
+	pc := &gophercloud.ProviderClient{
+		EndpointLocator: func(gophercloud.EndpointOpts) (string, error) { return neutronAPI.URL + "/", nil },
+	}
+	nc, err := openstack.FromProvider(pc, gophercloud.EndpointOpts{}, openstack.Options{}).Network()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ctx := context.Background()
+	policyID, err := network.FindQoSPolicyID(ctx, nc, "gold")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	rule, err := network.CreateQoSRule(ctx, nc, policyID, "minimum_packet_rate",
+		map[string]any{"min_kpps": 1000, "direction": "egress"})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ruleType, err := network.FindQoSRuleType(ctx, nc, policyID, fmt.Sprint(rule["id"]))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(rule["id"], ruleType, rule["min_kpps"], rule["direction"])
+	// Output:
+	// rule-1 minimum_packet_rate 1000 egress
+}

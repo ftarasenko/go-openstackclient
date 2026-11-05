@@ -194,6 +194,18 @@ func cloud(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /network/v2.0/extensions", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"extensions": []map[string]any{{"name": "Trunk", "alias": "trunk"}}})
 	})
+	mux.HandleFunc("GET /network/v2.0/subnetpools/sp-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"subnetpool": map[string]any{"id": "sp-1", "default_quota": nil,
+			"default_prefixlen": 26, "min_prefixlen": 8, "max_prefixlen": 32}})
+	})
+	mux.HandleFunc("GET /network/v2.0/qos/policies/qos-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"policy": map[string]any{"id": "qos-1",
+			"rules": []map[string]any{{"id": "qr-1", "type": "minimum_packet_rate"}}}})
+	})
+	mux.HandleFunc("GET /network/v2.0/network-ip-availabilities", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"network_ip_availabilities": []map[string]any{{"network_id": "net-1", "total_ips": 253, "used_ips": 3,
+			"ip_availability_details": map[string]any{"used": 3}}}})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -369,5 +381,14 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 		t.Fatalf("network.GetSecurityGroup = %+v, %v", g, err)
 	} else if _, ok := g.RawRules[0]["normalized_cidr"]; !ok {
 		t.Fatalf("network.GetSecurityGroup dropped a rule key: %v", g.RawRules[0])
+	}
+	if p, err := network.GetSubnetPool(ctx, networkClient, "sp-1"); err != nil || p.Attrs.DefaultQuota != nil || p.DefaultPrefixLen != 26 {
+		t.Fatalf("network.GetSubnetPool = %+v, %v", p, err)
+	}
+	if typ, err := network.FindQoSRuleType(ctx, networkClient, "qos-1", "qr-1"); err != nil || typ != "minimum_packet_rate" {
+		t.Fatalf("network.FindQoSRuleType = %q, %v", typ, err)
+	}
+	if av, err := network.ListIPAvailabilities(ctx, networkClient, nil); err != nil || len(av) != 1 || av[0].Details["used"] != float64(3) {
+		t.Fatalf("network.ListIPAvailabilities = %+v, %v", av, err)
 	}
 }

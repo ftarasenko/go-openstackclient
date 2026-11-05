@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/segments"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 	"github.com/spf13/cobra"
 
@@ -123,16 +122,9 @@ func subnetShowFields(s *subnetExt) ([]string, []any) {
 var subnetColumns = append(fieldNames(subnetShowFields(&subnetExt{})), "router:external")
 
 // resolveSubnetSegmentID resolves a network segment name or ID for
-// --network-segment under the shared name-or-ID policy (helpers.go
-// resolveByName).
+// --network-segment.
 func resolveSubnetSegmentID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "network segment", nameOrID, func(c *gophercloud.ServiceClient) ([]segments.Segment, error) {
-		pages, err := segments.List(c, segments.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return segments.ExtractSegments(pages)
-	}, func(s segments.Segment) string { return s.ID })
+	return cliLookup(networkapi.FindSegmentID(ctx, client, nameOrID))
 }
 
 // subnetListFlags holds the filters accepted by "subnet list".

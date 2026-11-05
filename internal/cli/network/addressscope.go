@@ -106,13 +106,9 @@ func runAddressScopeList(ctx context.Context, client *gophercloud.ServiceClient,
 		no := false
 		opts.Shared = &no
 	}
-	pages, err := addressscopes.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListAddressScopes(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing address scopes: %w", err)
-	}
-	all, err := addressscopes.ExtractAddressScopes(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the address scope list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "IP Version", "Shared", "Project"}, Rows: make([][]any, 0, len(all))}
 	for _, sc := range all {
@@ -145,9 +141,9 @@ func runAddressScopeShow(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	sc, err := addressscopes.Get(ctx, client, id).Extract()
+	sc, err := networkapi.GetAddressScope(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing address scope %s: %w", id, err)
+		return err
 	}
 	return writeAddressScope(o, w, sc)
 }
@@ -218,14 +214,14 @@ func runAddressScopeCreate(ctx context.Context, client *gophercloud.ServiceClien
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	sc, err := addressscopes.Create(ctx, client, networkapi.WithAddressScopeCreateAttrs(addressscopes.CreateOpts{
+	sc, err := networkapi.CreateAddressScope(ctx, client, networkapi.WithAddressScopeCreateAttrs(addressscopes.CreateOpts{
 		Name:      name,
 		IPVersion: f.ipVersion,
 		Shared:    f.share,
 		ProjectID: f.projectID,
-	}, attrs)).Extract()
+	}, attrs))
 	if err != nil {
-		return fmt.Errorf("creating address scope %q: %w", name, err)
+		return relabel(err, "creating address scope %q", name)
 	}
 	return writeAddressScope(o, w, sc)
 }
@@ -297,9 +293,9 @@ func runAddressScopeSet(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	sc, err2 := addressscopes.Update(ctx, client, id, networkapi.WithAddressScopeUpdateAttrs(opts, extra)).Extract()
-	if err2 != nil {
-		return fmt.Errorf("updating address scope %s: %w", id, err2)
+	sc, err := networkapi.UpdateAddressScope(ctx, client, id, networkapi.WithAddressScopeUpdateAttrs(opts, extra))
+	if err != nil {
+		return err
 	}
 	return writeAddressScope(o, w, sc)
 }
@@ -329,8 +325,8 @@ func runAddressScopeDelete(ctx context.Context, client *gophercloud.ServiceClien
 		if err != nil {
 			return err
 		}
-		if err := addressscopes.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting address scope %s: %w", ref, err)
+		if err := networkapi.DeleteAddressScope(ctx, client, id); err != nil {
+			return relabel(err, "deleting address scope %s", ref)
 		}
 		return nil
 	})
@@ -370,13 +366,9 @@ func newAddressGroupListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 func runAddressGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name, project string, w io.Writer,
 ) error {
-	pages, err := addressgroups.List(client, addressgroups.ListOpts{Name: name, ProjectID: project}).AllPages(ctx)
+	all, err := networkapi.ListAddressGroups(ctx, client, addressgroups.ListOpts{Name: name, ProjectID: project})
 	if err != nil {
-		return fmt.Errorf("listing address groups: %w", err)
-	}
-	all, err := addressgroups.ExtractGroups(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the address group list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Description", "Project", "Addresses"}, Rows: make([][]any, 0, len(all))}
 	for _, g := range all {
@@ -409,9 +401,9 @@ func runAddressGroupShow(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	g, err := addressgroups.Get(ctx, client, id).Extract()
+	g, err := networkapi.GetAddressGroup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing address group %s: %w", id, err)
+		return err
 	}
 	return writeAddressGroup(o, w, g)
 }
@@ -479,14 +471,14 @@ func runAddressGroupCreate(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	g, err := addressgroups.Create(ctx, client, networkapi.WithAddressGroupCreateAttrs(addressgroups.CreateOpts{
+	g, err := networkapi.CreateAddressGroup(ctx, client, networkapi.WithAddressGroupCreateAttrs(addressgroups.CreateOpts{
 		Name:        name,
 		Description: f.description,
 		ProjectID:   f.projectID,
 		Addresses:   addresses,
-	}, extra)).Extract()
+	}, extra))
 	if err != nil {
-		return fmt.Errorf("creating address group %q: %w", name, err)
+		return relabel(err, "creating address group %q", name)
 	}
 	return writeAddressGroup(o, w, g)
 }
@@ -578,8 +570,8 @@ func runAddressGroupDelete(ctx context.Context, client *gophercloud.ServiceClien
 		if err != nil {
 			return err
 		}
-		if err := addressgroups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting address group %s: %w", ref, err)
+		if err := networkapi.DeleteAddressGroup(ctx, client, id); err != nil {
+			return relabel(err, "deleting address group %s", ref)
 		}
 		return nil
 	})
@@ -608,14 +600,13 @@ func runAddressGroupSet(ctx context.Context, client *gophercloud.ServiceClient, 
 		if f.descSet {
 			opts.Description = &f.description
 		}
-		if _, err := addressgroups.Update(ctx, client, id, networkapi.WithAddressGroupUpdateAttrs(opts, extra)).Extract(); err != nil {
-			return fmt.Errorf("updating address group %s: %w", id, err)
+		if _, err := networkapi.UpdateAddressGroup(ctx, client, id, networkapi.WithAddressGroupUpdateAttrs(opts, extra)); err != nil {
+			return err
 		}
 	}
 	if len(f.addresses) > 0 {
-		if _, err := addressgroups.AddAddresses(ctx, client, id,
-			addressgroups.UpdateAddressesOpts{Addresses: f.addresses}).Extract(); err != nil {
-			return fmt.Errorf("adding addresses to address group %s: %w", id, err)
+		if _, err := networkapi.AddAddressGroupAddresses(ctx, client, id, f.addresses); err != nil {
+			return err
 		}
 	}
 	return runAddressGroupShow(ctx, client, o, id, w)
@@ -628,9 +619,8 @@ func runAddressGroupRemoveAddresses(ctx context.Context, client *gophercloud.Ser
 	if err != nil {
 		return err
 	}
-	if _, err := addressgroups.RemoveAddresses(ctx, client, id,
-		addressgroups.UpdateAddressesOpts{Addresses: addresses}).Extract(); err != nil {
-		return fmt.Errorf("removing addresses from address group %s: %w", id, err)
+	if _, err := networkapi.RemoveAddressGroupAddresses(ctx, client, id, addresses); err != nil {
+		return err
 	}
 	return runAddressGroupShow(ctx, client, o, id, w)
 }

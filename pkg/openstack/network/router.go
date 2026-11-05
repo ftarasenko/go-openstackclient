@@ -6,6 +6,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/extraroutes"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 )
@@ -186,4 +187,17 @@ func ListRouterInterfaces(ctx context.Context, c *gophercloud.ServiceClient, rou
 		}
 	}
 	return out, nil
+}
+
+// AddRouterRoutes adds static routes to a router, leaving its other routes
+// in place, and returns the router as the extraroutes call does.
+func AddRouterRoutes(ctx context.Context, c *gophercloud.ServiceClient, routerID string, routes []routers.Route) (*routers.Router, error) {
+	r, err := extraroutes.Add(ctx, c, routerID, extraroutes.Opts{Routes: &routes}).Extract()
+	return r, wrap(err, "updating the routes of router %s", routerID)
+}
+
+// RemoveRouterRoutes removes static routes from a router.
+func RemoveRouterRoutes(ctx context.Context, c *gophercloud.ServiceClient, routerID string, routes []routers.Route) (*routers.Router, error) {
+	r, err := extraroutes.Remove(ctx, c, routerID, extraroutes.Opts{Routes: &routes}).Extract()
+	return r, wrap(err, "updating the routes of router %s", routerID)
 }

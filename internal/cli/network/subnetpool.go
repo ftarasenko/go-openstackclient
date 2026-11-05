@@ -51,38 +51,11 @@ func newSubnetPoolCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // resolveSubnetPoolID resolves a subnet pool name or ID to an ID, following the
 // shared neutron name-or-ID policy (see helpers.go pickID).
 func resolveSubnetPoolID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, nounSubnetPool, nameOrID, func(c *gophercloud.ServiceClient) ([]subnetpools.SubnetPool, error) {
-		pages, err := subnetpools.List(c, subnetpools.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return subnetpools.ExtractSubnetPools(pages)
-	}, func(p subnetpools.SubnetPool) string { return p.ID })
+	return cliLookup(networkapi.FindSubnetPoolID(ctx, client, nameOrID))
 }
 
-// subnetPoolExt is a SubnetPool plus default_quota as neutron sent it: the
-// attribute is null until an operator sets one, and gophercloud's int would
-// render that as 0, a quota of nothing.
-type subnetPoolExt struct {
-	subnetpools.SubnetPool
-	defaultQuota *int
-}
-
-// extractSubnetPool decodes a get, create or update result into subnetPoolExt.
-func extractSubnetPool(r interface{ ExtractIntoStructPtr(any, string) error }) (*subnetPoolExt, error) {
-	var p subnetPoolExt
-	if err := r.ExtractIntoStructPtr(&p.SubnetPool, "subnetpool"); err != nil {
-		return nil, err
-	}
-	var raw struct {
-		DefaultQuota *int `json:"default_quota"`
-	}
-	if err := r.ExtractIntoStructPtr(&raw, "subnetpool"); err != nil {
-		return nil, err
-	}
-	p.defaultQuota = raw.DefaultQuota
-	return &p, nil
-}
+// subnetPoolExt carries default_quota as neutron sent it (null until set).
+type subnetPoolExt = networkapi.SubnetPool
 
 func subnetPoolFields(p *subnetPoolExt) ([]string, []any) {
 	fields := []string{
@@ -92,7 +65,7 @@ func subnetPoolFields(p *subnetPoolExt) ([]string, []any) {
 	}
 	values := []any{
 		p.ID, p.Name, p.ProjectID, p.Prefixes, p.DefaultPrefixLen, p.MinPrefixLen,
-		p.MaxPrefixLen, derefOrNil(p.defaultQuota), p.AddressScopeID, p.IPversion, p.Shared,
+		p.MaxPrefixLen, derefOrNil(p.Attrs.DefaultQuota), p.AddressScopeID, p.IPversion, p.Shared,
 		p.IsDefault, p.Description, p.Tags, p.RevisionNumber, p.CreatedAt, p.UpdatedAt,
 	}
 	return fields, values
@@ -186,13 +159,9 @@ func runSubnetPoolList(ctx context.Context, client *gophercloud.ServiceClient, o
 		}
 		opts.AddressScopeID = scopeID
 	}
-	pages, err := subnetpools.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListSubnetPools(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing subnet pools: %w", err)
-	}
-	all, err := subnetpools.ExtractSubnetPools(pages)
-	if err != nil {
-		return fmt.Errorf("parsing subnet pool list: %w", err)
+		return err
 	}
 
 	// Upstream's columns; --long ends with koc's "Project", kept for scripts
@@ -238,9 +207,9 @@ func runSubnetPoolShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	p, err := extractSubnetPool(subnetpools.Get(ctx, client, id))
+	p, err := networkapi.GetSubnetPool(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing subnet pool %q: %w", ref, err)
+		return relabel(err, "showing subnet pool %q", ref)
 	}
 	fields, values := subnetPoolFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -390,9 +359,9 @@ func runSubnetPoolCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	p, err := extractSubnetPool(subnetpools.Create(ctx, client, networkapi.WithSubnetPoolCreateAttrs(opts, extra)))
+	p, err := networkapi.CreateSubnetPool(ctx, client, networkapi.WithSubnetPoolCreateAttrs(opts, extra))
 	if err != nil {
-		return fmt.Errorf("creating subnet pool %q: %w", name, err)
+		return relabel(err, "creating subnet pool %q", name)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if p.Tags, err = applyTagsForSet(ctx, client, tagResourceSubnetPools, p.ID, p.Tags, &f.tagWriteFlags); err != nil {
@@ -469,20 +438,20 @@ func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 		opts.AddressScopeID = &scopeID
 	}
 	if changed.Changed(flagPoolPrefix) {
-		current, err := subnetpools.Get(ctx, client, id).Extract()
+		current, err := networkapi.GetSubnetPool(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("reading subnet pool %q before set: %w", ref, err)
+			return relabel(err, "reading subnet pool %q before set", ref)
 		}
 		opts.Prefixes = append(slices.Clone(f.prefixes), current.Prefixes...)
 	}
 	var p *subnetPoolExt
 	if touched {
-		if p, err = extractSubnetPool(subnetpools.Update(ctx, client, id, networkapi.WithSubnetPoolUpdateAttrs(opts, attrs))); err != nil {
-			return fmt.Errorf("updating subnet pool %q: %w", ref, err)
+		if p, err = networkapi.UpdateSubnetPool(ctx, client, id, networkapi.WithSubnetPoolUpdateAttrs(opts, attrs)); err != nil {
+			return relabel(err, "updating subnet pool %q", ref)
 		}
-	} else if p, err = extractSubnetPool(subnetpools.Get(ctx, client, id)); err != nil {
+	} else if p, err = networkapi.GetSubnetPool(ctx, client, id); err != nil {
 		// Tags are the only change: read the pool for its current tags instead.
-		return fmt.Errorf("getting subnet pool %q: %w", ref, err)
+		return relabel(err, "getting subnet pool %q", ref)
 	}
 	if p.Tags, err = applyTagsForSet(ctx, client, tagResourceSubnetPools, id, p.Tags, &f.tagWriteFlags); err != nil {
 		return err
@@ -567,9 +536,9 @@ func runSubnetPoolUnset(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	p, err := extractSubnetPool(subnetpools.Get(ctx, client, id))
+	p, err := networkapi.GetSubnetPool(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting subnet pool %q: %w", ref, err)
+		return relabel(err, "getting subnet pool %q", ref)
 	}
 	// Tags are a sub-resource: the pool itself is never written.
 	if p.Tags, err = applyTagsForUnset(ctx, client, tagResourceSubnetPools, id, p.Tags, f); err != nil {
@@ -606,8 +575,8 @@ func runSubnetPoolDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if err != nil {
 			return err
 		}
-		if err := subnetpools.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting subnet pool %q: %w", ref, err)
+		if err := networkapi.DeleteSubnetPool(ctx, client, id); err != nil {
+			return relabel(err, "deleting subnet pool %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted subnet pool %s\n", ref); err != nil {
 			return err
