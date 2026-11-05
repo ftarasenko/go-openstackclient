@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "router add gateway" / "router remove gateway" set and clear a router's
@@ -66,11 +67,11 @@ func runRouterAddGateway(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	gateway := routers.GatewayInfo{NetworkID: networkID, ExternalFixedIPs: external}
-	r, ext, err := extractRouterDetail(routers.Update(ctx, client, routerID, routers.UpdateOpts{GatewayInfo: &gateway}).Result)
+	r, err := networkapi.UpdateRouter(ctx, client, routerID, routers.UpdateOpts{GatewayInfo: &gateway})
 	if err != nil {
-		return fmt.Errorf("setting the external gateway of router %s: %w", routerArg, err)
+		return relabel(err, "setting the external gateway of router %s", routerArg)
 	}
-	return writeRouterDetail(o, w, r, ext)
+	return writeRouterDetail(o, w, r)
 }
 
 // newRouterRemoveGatewayCommand builds "router remove gateway <router> [<network>]".
@@ -129,11 +130,11 @@ func runRouterRemoveGateway(ctx context.Context, client *gophercloud.ServiceClie
 			return err
 		}
 	}
-	r, ext, err := extractRouterDetail(routers.Update(ctx, client, routerID, clearGatewayOpts{}).Result)
+	r, err := networkapi.UpdateRouter(ctx, client, routerID, networkapi.ClearGatewayOpts{})
 	if err != nil {
-		return fmt.Errorf("clearing the external gateway of router %s: %w", routerArg, err)
+		return relabel(err, "clearing the external gateway of router %s", routerArg)
 	}
-	return writeRouterDetail(o, w, r, ext)
+	return writeRouterDetail(o, w, r)
 }
 
 // checkGatewayMatches reads the router and errors unless its gateway is on
@@ -143,9 +144,9 @@ func runRouterRemoveGateway(ctx context.Context, client *gophercloud.ServiceClie
 func checkGatewayMatches(ctx context.Context, client *gophercloud.ServiceClient,
 	routerArg, routerID, networkArg string, fixedIPs []string,
 ) error {
-	current, err := routers.Get(ctx, client, routerID).Extract()
+	current, err := networkapi.GetRouter(ctx, client, routerID)
 	if err != nil {
-		return fmt.Errorf("reading router %s: %w", routerArg, err)
+		return relabel(err, "reading router %s", routerArg)
 	}
 	gw := current.GatewayInfo
 	if gw.NetworkID == "" {
@@ -192,14 +193,6 @@ func resolveGatewayFixedIPSpec(ctx context.Context, client *gophercloud.ServiceC
 		return out, fmt.Errorf("--%s %q requires subnet= or ip-address=", flagFixedIP, spec)
 	}
 	return out, nil
-}
-
-// clearGatewayOpts implements routers.UpdateOptsBuilder to emit exactly
-// {"router": {"external_gateway_info": {}}}.
-type clearGatewayOpts struct{}
-
-func (clearGatewayOpts) ToRouterUpdateMap() (map[string]any, error) {
-	return map[string]any{"router": map[string]any{"external_gateway_info": map[string]any{}}}, nil
 }
 
 // parseExternalFixedIPs parses repeated "subnet=<name|id>[,ip-address=<ip>]"

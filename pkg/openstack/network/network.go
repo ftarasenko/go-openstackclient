@@ -1,5 +1,8 @@
-// Package network is koc's neutron (network v2) layer: quotas and
-// availability zones so far.
+// Package network is koc's neutron (network v2) layer: networks, subnets,
+// ports, routers, floating IPs, security groups and their rules, tags,
+// quotas and availability zones, the strict Find…ID lookups, and the
+// With…Attrs adapters that add attributes gophercloud does not model to a
+// request body.
 //
 // Every function takes the network client openstack.Session.Network returns
 // and speaks gophercloud's types. Where gophercloud has no call, the function

@@ -45,34 +45,6 @@ const (
 	netAttrQinQ = "qinq"
 )
 
-// NetExtAttrs carries the network extension attributes gophercloud's
-// networks.Network does not model: qos_policy_id (qos), dns_domain
-// (dns-integration), is_default (auto-allocated-topology),
-// port_security_enabled (port-security), vlan_transparent, pvlan, qinq,
-// l2_adjacency, availability_zones and the address-scope pair. The booleans are pointers so
-// a cloud without the extension renders an empty cell rather than "false".
-// Exported and flat for the same reason as MTUExt.
-type NetExtAttrs struct {
-	QoSPolicyID         string `json:"qos_policy_id"`
-	DNSDomain           string `json:"dns_domain"`
-	IsDefault           *bool  `json:"is_default"`
-	PortSecurityEnabled *bool  `json:"port_security_enabled"`
-	VLANTransparent     *bool  `json:"vlan_transparent"`
-	PVLAN               *bool  `json:"pvlan"`
-	QinQ                *bool  `json:"qinq"`
-	// VLANQinQ is the key openstacksdk reads is_vlan_qinq from. Neutron does
-	// not define it, so it is absent from every response and the field null,
-	// as upstream prints it; neutron's own attribute is QinQ.
-	VLANQinQ *bool `json:"vlan_qinq"`
-	// L2Adjacency is the l2_adjacency extension's read-only flag (loaded with
-	// the segments plugin): false once a network has segments that are not
-	// mutually reachable at layer 2.
-	L2Adjacency       *bool    `json:"l2_adjacency"`
-	AvailabilityZones []string `json:"availability_zones"`
-	IPv4AddressScope  string   `json:"ipv4_address_scope"`
-	IPv6AddressScope  string   `json:"ipv6_address_scope"`
-}
-
 // pairBool turns an upstream store_true pair (cobra keeps the two exclusive)
 // into an optional value: true for on, false for off, nil when neither was given.
 func pairBool(on, off bool) *bool {
@@ -213,15 +185,6 @@ func checkPVLANPortSecurity(attrs map[string]any) error {
 	return nil
 }
 
-// getNetwork fetches one network with every extension attribute koc renders.
-func getNetwork(ctx context.Context, client *gophercloud.ServiceClient, id string) (*networkExt, error) {
-	var n networkExt
-	if err := networks.Get(ctx, client, id).ExtractInto(&n); err != nil {
-		return nil, err
-	}
-	return &n, nil
-}
-
 // updateNetwork is the shared tail of set and unset: PUT the attributes when
 // any were given (upstream skips the update when only tags change, and so
 // does this), then apply the tag change, then render the network.
@@ -233,12 +196,11 @@ func updateNetwork(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		err error
 	)
 	if req.changed {
-		n = &networkExt{}
-		if err := networks.Update(ctx, client, id, networkapi.WithNetworkUpdateAttrs(req.opts, req.attrs)).ExtractInto(n); err != nil {
-			return explainMissingExtension(ctx, client, fmt.Errorf("updating network %s: %w", ref, err), req.attrs)
+		if n, err = networkapi.UpdateNetwork(ctx, client, id, networkapi.WithNetworkUpdateAttrs(req.opts, req.attrs)); err != nil {
+			return explainMissingExtension(ctx, client, relabel(err, "updating network %s", ref), req.attrs)
 		}
-	} else if n, err = getNetwork(ctx, client, id); err != nil {
-		return fmt.Errorf("getting network %s: %w", ref, err)
+	} else if n, err = networkapi.GetNetwork(ctx, client, id); err != nil {
+		return relabel(err, "getting network %s", ref)
 	}
 	if n.Tags, err = req.tags.run(ctx, client, tagResourceNetworks, id, n.Tags); err != nil {
 		return err

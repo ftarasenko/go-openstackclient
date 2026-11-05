@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/external"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/mtu"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/provider"
@@ -38,26 +37,9 @@ func newNetworkCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// MTUExt carries the mtu extension attribute, absent from the base
-// networks.Network struct. It is an exported embedded struct so gophercloud's
-// reflection-based extractIntoPtr (which calls .Interface() on every embedded
-// struct field) can decode it; a bare or unexported field would be either
-// shadowed by the promoted Network.UnmarshalJSON or rejected by reflect.
-type MTUExt struct {
-	MTU int `json:"mtu"`
-}
-
-// networkExt is a Network decorated with the mtu, external-net, provider and
-// the remaining extension attributes (NetExtAttrs). Each is an anonymous
-// embed so ExtractInto populates them all — the standard gophercloud "network
-// with extensions" pattern.
-type networkExt struct {
-	networks.Network
-	external.NetworkExternalExt
-	provider.NetworkProviderExt
-	MTUExt
-	NetExtAttrs
-}
+// networkExt is a network with the mtu, external-net, provider and the
+// remaining extension attributes.
+type networkExt = networkapi.Network
 
 // networkShowFields renders the attributes upstream's "network show" prints,
 // under the same keys. is_vlan_transparent is the SDK's name for
@@ -285,13 +267,9 @@ func runNetworkList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		opts = networkListQueryExt{ListOptsBuilder: opts, extra: url.Values{netAttrPVLAN: {strconv.FormatBool(*pv)}}}
 		filterAttrs = map[string]any{netAttrPVLAN: *pv}
 	}
-	pages, err := networks.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListNetworks(ctx, client, opts)
 	if err != nil {
-		return explainMissingExtension(ctx, client, fmt.Errorf("listing networks: %w", err), filterAttrs)
-	}
-	var all []networkExt
-	if err := networks.ExtractNetworksInto(pages, &all); err != nil {
-		return fmt.Errorf("parsing network list: %w", err)
+		return explainMissingExtension(ctx, client, err, filterAttrs)
 	}
 	t := networkListTable(all, f.long)
 	addProviderColumns(&t, all, networkProviderColumns(o, f.provider, t.Columns))
@@ -368,9 +346,9 @@ func providerValue(p *provider.NetworkProviderExt, col string) any {
 // hosts (GET /agents/{id}/dhcp-networks). Upstream ignores every other filter
 // and --long on this path and prints the short columns; so does koc.
 func runNetworkListByAgent(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, agentID string, w io.Writer) error {
-	var all []networkExt
-	if err := agents.ListDHCPNetworks(ctx, client, agentID).ExtractIntoSlicePtr(&all, "networks"); err != nil {
-		return fmt.Errorf("listing networks hosted by DHCP agent %s: %w", agentID, err)
+	all, err := networkapi.ListDHCPAgentNetworks(ctx, client, agentID)
+	if err != nil {
+		return err
 	}
 	return o.WriteList(w, networkListTable(all, false))
 }
@@ -437,11 +415,11 @@ func runNetworkShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	var n networkExt
-	if err := networks.Get(ctx, client, id).ExtractInto(&n); err != nil {
-		return fmt.Errorf("getting network %s: %w", nameOrID, err)
+	n, err := networkapi.GetNetwork(ctx, client, id)
+	if err != nil {
+		return relabel(err, "getting network %s", nameOrID)
 	}
-	fields, values := networkShowFields(&n)
+	fields, values := networkShowFields(n)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -619,15 +597,15 @@ func runNetworkCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		return err
 	}
 
-	var n networkExt
-	if err := networks.Create(ctx, client, networkapi.WithNetworkCreateAttrs(builder, attrs)).ExtractInto(&n); err != nil {
-		return explainMissingExtension(ctx, client, fmt.Errorf("creating network: %w", err), attrs)
+	n, err := networkapi.CreateNetwork(ctx, client, networkapi.WithNetworkCreateAttrs(builder, attrs))
+	if err != nil {
+		return explainMissingExtension(ctx, client, err, attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if n.Tags, err = applyTagsForSet(ctx, client, tagResourceNetworks, n.ID, n.Tags, &f.tagWriteFlags); err != nil {
 		return err
 	}
-	fields, values := networkShowFields(&n)
+	fields, values := networkShowFields(n)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -657,8 +635,8 @@ func runNetworkDelete(ctx context.Context, client *gophercloud.ServiceClient, na
 		if err != nil {
 			return err
 		}
-		if err := networks.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network %s: %w", nameOrID, err)
+		if err := networkapi.DeleteNetwork(ctx, client, id); err != nil {
+			return relabel(err, "deleting network %s", nameOrID)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted network %s\n", nameOrID); err != nil {
 			return err
