@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
@@ -51,4 +52,45 @@ func ExampleGetQuota() {
 	// GET /v2.0/quotas/demo
 	// GET /v2.0/quotas/demo/default
 	// networks 10 of a default 100, ports 50 of 500
+}
+
+// Allocate a floating IP on an external network found by name, with an
+// extension attribute gophercloud's CreateOpts does not model. The lookup is
+// GET /v2.0/networks?name=public, and the create sends
+// {"floatingip":{"floating_network_id":"net-1","qos_policy_id":"qos-1"}}.
+func ExampleCreateFloatingIP() {
+	neutronAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"networks":[{"id":"net-1","name":"public"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"floatingip":{"id":"fip-1","floating_ip_address":"203.0.113.10","qos_policy_id":"qos-1"}}`)
+	}))
+	defer neutronAPI.Close()
+
+	pc := &gophercloud.ProviderClient{
+		EndpointLocator: func(gophercloud.EndpointOpts) (string, error) { return neutronAPI.URL + "/", nil },
+	}
+	nc, err := openstack.FromProvider(pc, gophercloud.EndpointOpts{}, openstack.Options{}).Network()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ctx := context.Background()
+	netID, err := network.FindNetworkID(ctx, nc, "public")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fip, err := network.CreateFloatingIP(ctx, nc, network.WithFloatingIPCreateAttrs(
+		floatingips.CreateOpts{FloatingNetworkID: netID}, map[string]any{"qos_policy_id": "qos-1"}))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(fip.FloatingIP.FloatingIP, fip.QoSPolicyID)
+	// Output:
+	// 203.0.113.10 qos-1
 }

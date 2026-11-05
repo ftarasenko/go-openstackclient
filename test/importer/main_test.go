@@ -169,6 +169,21 @@ func cloud(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /network/v2.0/quotas/prj-1", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"quota": map[string]any{"network": 10}})
 	})
+	mux.HandleFunc("GET /network/v2.0/floatingips", func(w http.ResponseWriter, r *http.Request) {
+		fips := []map[string]any{}
+		if r.URL.Query().Get("floating_network_id") == "9b5c1c2e-3f4a-4b6c-8d7e-0f1a2b3c4d5e" {
+			fips = append(fips, map[string]any{"id": "fip-1", "floating_ip_address": "198.51.100.20", "qos_policy_id": "qos-1"})
+		}
+		answer(w, map[string]any{"floatingips": fips})
+	})
+	sg := map[string]any{"id": "sg-1", "name": "default", "shared": false,
+		"security_group_rules": []map[string]any{{"id": "rule-1", "direction": "egress", "normalized_cidr": nil}}}
+	mux.HandleFunc("GET /network/v2.0/security-groups", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"security_groups": []map[string]any{sg}})
+	})
+	mux.HandleFunc("GET /network/v2.0/security-groups/sg-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"security_group": sg})
+	})
 	mux.HandleFunc("GET /network/v2.0/extensions", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"extensions": []map[string]any{{"name": "Trunk", "alias": "trunk"}}})
 	})
@@ -318,5 +333,22 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if exts, err := extension.List(ctx, networkClient); err != nil || len(exts) != 1 || exts[0].Alias != "trunk" {
 		t.Fatalf("extension.List = %+v, %v", exts, err)
+	}
+	netID, err := network.FindNetworkID(ctx, networkClient, "private")
+	if err != nil {
+		t.Fatalf("network.FindNetworkID: %v", err)
+	}
+	fips, err := network.ListFloatingIPs(ctx, networkClient, network.FloatingIPListOpts{NetworkIDs: []string{netID}})
+	if err != nil || len(fips) != 1 || fips[0].QoSPolicyID != "qos-1" {
+		t.Fatalf("network.ListFloatingIPs = %+v, %v", fips, err)
+	}
+	sgs, err := network.ListSecurityGroups(ctx, networkClient, network.SecurityGroupListOpts{})
+	if err != nil || len(sgs) != 1 || len(sgs[0].Rules) != 1 || sgs[0].Shared == nil {
+		t.Fatalf("network.ListSecurityGroups = %+v, %v", sgs, err)
+	}
+	if g, err := network.GetSecurityGroup(ctx, networkClient, "sg-1"); err != nil || len(g.RawRules) != 1 {
+		t.Fatalf("network.GetSecurityGroup = %+v, %v", g, err)
+	} else if _, ok := g.RawRules[0]["normalized_cidr"]; !ok {
+		t.Fatalf("network.GetSecurityGroup dropped a rule key: %v", g.RawRules[0])
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
@@ -12,8 +11,8 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -39,22 +38,9 @@ func newFloatingIPCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// floatingIPExt is a FloatingIP plus the extension attributes gophercloud's
-// struct does not model: qos_policy_id (qos-fip) and dns_name/dns_domain
-// (dns-integration). The attributes arrive through an exported flat embed so
-// ExtractInto decodes them alongside FloatingIP's own UnmarshalJSON (see
-// portExt).
-type floatingIPExt struct {
-	floatingips.FloatingIP
-	FloatingIPAttrsExt
-}
-
-// FloatingIPAttrsExt carries the floating-IP extension attributes.
-type FloatingIPAttrsExt struct {
-	QoSPolicyID string `json:"qos_policy_id"`
-	DNSName     string `json:"dns_name"`
-	DNSDomain   string `json:"dns_domain"`
-}
+// floatingIPExt is pkg/openstack/network's floating IP: gophercloud's plus
+// the qos and DNS attributes.
+type floatingIPExt = networkapi.FloatingIP
 
 func floatingIPShowFields(f *floatingIPExt) ([]string, []any) {
 	fields := []string{
@@ -74,31 +60,10 @@ func floatingIPShowFields(f *floatingIPExt) ([]string, []any) {
 
 var floatingIPColumns = fieldNames(floatingIPShowFields(&floatingIPExt{}))
 
-func getFloatingIP(ctx context.Context, client *gophercloud.ServiceClient, id string) (*floatingIPExt, error) {
-	var f floatingIPExt
-	if err := floatingips.Get(ctx, client, id).ExtractInto(&f); err != nil {
-		return nil, err
-	}
-	return &f, nil
-}
-
-// resolveFloatingIPID resolves a floating IP address or ID to an ID. A UUID
-// passes through with no request; anything else is looked up by
-// floating_ip_address (upstream's find_ip) and must match exactly once — no
-// match is an error rather than the literal being sent as an ID.
+// resolveFloatingIPID resolves a floating IP address or ID to an ID (upstream's
+// find_ip): no match is an error rather than the literal being sent as an ID.
 func resolveFloatingIPID(ctx context.Context, client *gophercloud.ServiceClient, addrOrID string) (string, error) {
-	if resolve.IsUUID(addrOrID) {
-		return addrOrID, nil
-	}
-	pages, err := floatingips.List(client, floatingips.ListOpts{FloatingIP: addrOrID}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up floating IP %q: %w", addrOrID, err)
-	}
-	all, err := floatingips.ExtractFloatingIPs(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing floating IP lookup for %q: %w", addrOrID, err)
-	}
-	return pickID(addrOrID, len(all), func(i int) string { return all[i].ID }, nounFloatingIP)
+	return cliLookup(networkapi.FindFloatingIPID(ctx, client, addrOrID))
 }
 
 // floatingIPListFlags mirrors upstream ListFloatingIP
@@ -156,50 +121,34 @@ func newFloatingIPListCommand(a *auth.Options, o *output.Options) *cobra.Command
 	return cmd
 }
 
-// floatingIPListOpts adds the repeated filters ListOpts cannot carry.
-type floatingIPListOpts struct {
-	floatingips.ListOpts
-	extra url.Values
-}
-
-func (opts floatingIPListOpts) ToFloatingIPListQuery() (string, error) {
-	q, err := opts.ListOpts.ToFloatingIPListQuery()
-	return withQueryValues(q, err, opts.extra)
-}
-
 func runFloatingIPList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *floatingIPListFlags, projectID string, w io.Writer) error {
-	opts := floatingIPListOpts{
+	opts := networkapi.FloatingIPListOpts{
 		ListOpts: floatingips.ListOpts{
 			FixedIP:    f.fixedIPAddress,
 			FloatingIP: f.floatingIPAddress,
 			Status:     f.status,
 			ProjectID:  projectID,
 		},
-		extra: url.Values{},
 	}
 	f.apply(&opts.Tags, &opts.TagsAny, &opts.NotTags, &opts.NotTagsAny)
 	for _, filter := range []struct {
-		key      string
+		ids      *[]string
 		refs     []string
 		resolver func(context.Context, *gophercloud.ServiceClient, string) (string, error)
 	}{
-		{"floating_network_id", f.networks, resolveNetworkID},
-		{"port_id", f.ports, resolvePortID},
-		{"router_id", f.routers, resolveRouterID},
+		{&opts.NetworkIDs, f.networks, resolveNetworkID},
+		{&opts.PortIDs, f.ports, resolvePortID},
+		{&opts.RouterIDs, f.routers, resolveRouterID},
 	} {
 		ids, err := resolveEach(ctx, client, filter.refs, filter.resolver)
 		if err != nil {
 			return err
 		}
-		opts.extra[filter.key] = ids
+		*filter.ids = ids
 	}
-	pages, err := floatingips.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListFloatingIPs(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing floating IPs: %w", err)
-	}
-	var all []floatingIPExt
-	if err := floatingips.ExtractFloatingIPsInto(pages, &all); err != nil {
-		return fmt.Errorf("parsing floating IP list: %w", err)
+		return err
 	}
 	return o.WriteList(w, floatingIPListTable(all, f.long))
 }
@@ -248,9 +197,9 @@ func runFloatingIPShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	f, err := getFloatingIP(ctx, client, id)
+	f, err := networkapi.GetFloatingIP(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting floating IP %s: %w", addrOrID, err)
+		return relabel(err, "getting floating IP %s", addrOrID)
 	}
 	fields, values := floatingIPShowFields(f)
 	return o.WriteSingle(w, fields, values)
@@ -359,15 +308,15 @@ func runFloatingIPCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	}
 	attrs = mergeAttrs(attrs, extra)
 
-	var fip floatingIPExt
-	if err := floatingips.Create(ctx, client, withFloatingIPCreateAttrs(opts, attrs)).ExtractInto(&fip); err != nil {
-		return explainMissingExtension(ctx, client, fmt.Errorf("creating floating IP: %w", err), attrs)
+	fip, err := networkapi.CreateFloatingIP(ctx, client, networkapi.WithFloatingIPCreateAttrs(opts, attrs))
+	if err != nil {
+		return explainMissingExtension(ctx, client, err, attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.
 	if fip.Tags, err = applyTagsForSet(ctx, client, tagResourceFloatingIPs, fip.ID, fip.Tags, &f.tagWriteFlags); err != nil {
 		return err
 	}
-	fields, values := floatingIPShowFields(&fip)
+	fields, values := floatingIPShowFields(fip)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -397,8 +346,8 @@ func runFloatingIPDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if err != nil {
 			return err
 		}
-		if err := floatingips.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting floating IP %s: %w", addrOrID, err)
+		if err := networkapi.DeleteFloatingIP(ctx, client, id); err != nil {
+			return relabel(err, "deleting floating IP %s", addrOrID)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted floating IP %s\n", addrOrID); err != nil {
 			return err
@@ -514,12 +463,11 @@ func updateFloatingIP(ctx context.Context, client *gophercloud.ServiceClient, o 
 		err error
 	)
 	if u.changed {
-		fip = &floatingIPExt{}
-		if err := floatingips.Update(ctx, client, id, withFloatingIPUpdateAttrs(u.opts, u.attrs)).ExtractInto(fip); err != nil {
-			return explainMissingExtension(ctx, client, fmt.Errorf("updating floating IP %s: %w", ref, err), u.attrs)
+		if fip, err = networkapi.UpdateFloatingIP(ctx, client, id, networkapi.WithFloatingIPUpdateAttrs(u.opts, u.attrs)); err != nil {
+			return explainMissingExtension(ctx, client, relabel(err, "updating floating IP %s", ref), u.attrs)
 		}
-	} else if fip, err = getFloatingIP(ctx, client, id); err != nil {
-		return fmt.Errorf("getting floating IP %s: %w", ref, err)
+	} else if fip, err = networkapi.GetFloatingIP(ctx, client, id); err != nil {
+		return relabel(err, "getting floating IP %s", ref)
 	}
 	if fip.Tags, err = u.tags.run(ctx, client, tagResourceFloatingIPs, id, fip.Tags); err != nil {
 		return err

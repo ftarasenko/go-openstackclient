@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "address scope" and "address group" — two neutron extensions that both start
@@ -217,7 +218,7 @@ func runAddressScopeCreate(ctx context.Context, client *gophercloud.ServiceClien
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	sc, err := addressscopes.Create(ctx, client, withAddressScopeCreateAttrs(addressscopes.CreateOpts{
+	sc, err := addressscopes.Create(ctx, client, networkapi.WithAddressScopeCreateAttrs(addressscopes.CreateOpts{
 		Name:      name,
 		IPVersion: f.ipVersion,
 		Shared:    f.share,
@@ -296,7 +297,7 @@ func runAddressScopeSet(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	sc, err2 := addressscopes.Update(ctx, client, id, withAddressScopeUpdateAttrs(opts, extra)).Extract()
+	sc, err2 := addressscopes.Update(ctx, client, id, networkapi.WithAddressScopeUpdateAttrs(opts, extra)).Extract()
 	if err2 != nil {
 		return fmt.Errorf("updating address scope %s: %w", id, err2)
 	}
@@ -478,7 +479,7 @@ func runAddressGroupCreate(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	g, err := addressgroups.Create(ctx, client, withAddressGroupCreateAttrs(addressgroups.CreateOpts{
+	g, err := addressgroups.Create(ctx, client, networkapi.WithAddressGroupCreateAttrs(addressgroups.CreateOpts{
 		Name:        name,
 		Description: f.description,
 		ProjectID:   f.projectID,
@@ -607,7 +608,7 @@ func runAddressGroupSet(ctx context.Context, client *gophercloud.ServiceClient, 
 		if f.descSet {
 			opts.Description = &f.description
 		}
-		if _, err := addressgroups.Update(ctx, client, id, withAddressGroupUpdateAttrs(opts, extra)).Extract(); err != nil {
+		if _, err := addressgroups.Update(ctx, client, id, networkapi.WithAddressGroupUpdateAttrs(opts, extra)).Extract(); err != nil {
 			return fmt.Errorf("updating address group %s: %w", id, err)
 		}
 	}

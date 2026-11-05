@@ -20,6 +20,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // newNetworkCommand builds "network ...".
@@ -619,7 +620,7 @@ func runNetworkCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	}
 
 	var n networkExt
-	if err := networks.Create(ctx, client, withNetworkCreateAttrs(builder, attrs)).ExtractInto(&n); err != nil {
+	if err := networks.Create(ctx, client, networkapi.WithNetworkCreateAttrs(builder, attrs)).ExtractInto(&n); err != nil {
 		return explainMissingExtension(ctx, client, fmt.Errorf("creating network: %w", err), attrs)
 	}
 	// Tags cannot ride on the create; upstream sets them afterwards too.

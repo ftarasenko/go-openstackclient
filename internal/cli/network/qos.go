@@ -19,6 +19,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "koc network qos policy|rule|rule type …", mirroring the upstream OSC
@@ -238,7 +239,7 @@ func runQoSPolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	p, err := policies.Create(ctx, client, withQosPolicyCreateAttrs(opts, attrs)).Extract()
+	p, err := policies.Create(ctx, client, networkapi.WithQoSPolicyCreateAttrs(opts, attrs)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating network QoS policy %q: %w", name, err)
 	}
@@ -321,7 +322,7 @@ func runQoSPolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	p, err := policies.Update(ctx, client, id, withQosPolicyUpdateAttrs(opts, extra)).Extract()
+	p, err := policies.Update(ctx, client, id, networkapi.WithQoSPolicyUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("updating network QoS policy %s: %w", ref, err)
 	}

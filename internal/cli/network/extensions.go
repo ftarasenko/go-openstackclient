@@ -20,6 +20,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Four more neutron extensions: IP availability, RBAC policies, network
@@ -452,7 +453,7 @@ func runRBACCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return err
 	}
 	attrs = mergeAttrs(attrs, extra)
-	p, err := rbacpolicies.Create(ctx, client, withRbacCreateAttrs(opts, attrs)).Extract()
+	p, err := rbacpolicies.Create(ctx, client, networkapi.WithRBACPolicyCreateAttrs(opts, attrs)).Extract()
 	if err != nil {
 		return fmt.Errorf("creating a network RBAC policy for %s: %w", objectID, err)
 	}
@@ -515,13 +516,9 @@ func runRBACSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	}
 	var opts rbacpolicies.UpdateOptsBuilder
 	if f.targetProject != "" {
-		opts = withRbacUpdateAttrs(rbacpolicies.UpdateOpts{TargetTenant: f.targetProject}, extra)
+		opts = networkapi.WithRBACPolicyUpdateAttrs(rbacpolicies.UpdateOpts{TargetTenant: f.targetProject}, extra)
 	} else {
-		opts = rbacUpdateExt{bodyExt: bodyExt{
-			build: func() (map[string]any, error) { return map[string]any{"rbac_policy": map[string]any{}}, nil },
-			key:   "rbac_policy",
-			extra: extra,
-		}}
+		opts = networkapi.WithRBACPolicyUpdateAttrs(rbacEmptyUpdate{}, extra)
 	}
 	p, err := rbacpolicies.Update(ctx, client, id, opts).Extract()
 	if err != nil {
@@ -722,7 +719,7 @@ func runSegmentCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	seg, err := segments.Create(ctx, client, withSegmentCreateAttrs(segments.CreateOpts{
+	seg, err := segments.Create(ctx, client, networkapi.WithSegmentCreateAttrs(segments.CreateOpts{
 		Name:            name,
 		Description:     f.description,
 		NetworkID:       networkID,
@@ -796,7 +793,7 @@ func runSegmentSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	seg, err := segments.Update(ctx, client, id, withSegmentUpdateAttrs(opts, extra)).Extract()
+	seg, err := segments.Update(ctx, client, id, networkapi.WithSegmentUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return explainMissingService(ctx, client, fmt.Errorf("updating network segment %s: %w", id, err), extSegment)
 	}
@@ -1160,7 +1157,7 @@ func runPortForwardingCreate(ctx context.Context, client *gophercloud.ServiceCli
 	}
 	// Neutron treats the single port and the port range as mutually exclusive,
 	// so both are omitempty and only the pair the operator gave is sent.
-	pf, err := portforwarding.Create(ctx, client, fipID, withPortForwardingCreateAttrs(portforwarding.CreateOpts{
+	pf, err := portforwarding.Create(ctx, client, fipID, networkapi.WithPortForwardingCreateAttrs(portforwarding.CreateOpts{
 		Protocol:          f.protocol,
 		InternalPortID:    portID,
 		InternalIPAddress: f.internalIP,
@@ -1234,7 +1231,7 @@ func runPortForwardingSet(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	pf, err := portforwarding.Update(ctx, client, fipID, id, withPortForwardingUpdateAttrs(opts, extra)).Extract()
+	pf, err := portforwarding.Update(ctx, client, fipID, id, networkapi.WithPortForwardingUpdateAttrs(opts, extra)).Extract()
 	if err != nil {
 		return fmt.Errorf("updating port forwarding %s: %w", id, err)
 	}
@@ -1393,3 +1390,11 @@ var portForwardingColumns = []string{
 
 // routerRouteColumns is what router add/remove route renders.
 var routerRouteColumns = fieldNames(routerShowFields(&routers.Router{}))
+
+// rbacEmptyUpdate is an RBAC policy update with no typed field, for a set that
+// sends only --extra-property attributes.
+type rbacEmptyUpdate struct{}
+
+func (rbacEmptyUpdate) ToRBACPolicyUpdateMap() (map[string]any, error) {
+	return map[string]any{"rbac_policy": map[string]any{}}, nil
+}

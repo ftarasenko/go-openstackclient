@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // subnet unset removes individual entries from a subnet's list attributes, the
@@ -110,7 +111,7 @@ func runSubnetUnset(ctx context.Context, client *gophercloud.ServiceClient, o *o
 			return err
 		}
 		attrs = mergeAttrs(attrs, extra)
-		if s, err = extractSubnet(subnets.Update(ctx, client, id, withSubnetUpdateAttrs(opts, attrs))); err != nil {
+		if s, err = extractSubnet(subnets.Update(ctx, client, id, networkapi.WithSubnetUpdateAttrs(opts, attrs))); err != nil {
 			explain := withExplainKeys(attrs, subnetTypedExtKeys(nil, opts.ServiceTypes != nil)...)
 			return explainMissingExtension(ctx, client, fmt.Errorf("updating subnet %s: %w", nameOrID, err), explain)
 		}

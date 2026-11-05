@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -11,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 )
 
@@ -67,19 +65,6 @@ func TestParseExtraProperties_UnsetSendsNull(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, map[string]any{"a": nil, "b": nil}) {
 		t.Errorf("unset properties = %#v", got)
-	}
-}
-
-func TestBodyExt_ExtraAttributesWinOverTypedOnes(t *testing.T) {
-	desc := "typed"
-	b, err := withFloatingIPUpdateAttrs(floatingips.UpdateOpts{Description: &desc},
-		map[string]any{"description": "extra", "qos_policy_id": nil}).ToFloatingIPUpdateMap()
-	if err != nil {
-		t.Fatalf("ToFloatingIPUpdateMap: %v", err)
-	}
-	raw, _ := json.Marshal(b)
-	if string(raw) != `{"floatingip":{"description":"extra","qos_policy_id":null}}` {
-		t.Errorf("body = %s", raw)
 	}
 }
 
@@ -147,29 +132,6 @@ func TestReplaceTags_PutsOnlyOnChange(t *testing.T) {
 	}
 	if puts != 1 {
 		t.Errorf("tag PUTs = %d, want 1", puts)
-	}
-}
-
-// gophercloud reads the If-Match header off the top-level fields of the builder
-// handed to Update. Every update adapter re-declares RevisionNumber so a
-// wrapped update keeps neutron's revision guard.
-func TestUpdateAdapters_KeepTheIfMatchGuard(t *testing.T) {
-	fakeServer := th.SetupHTTP()
-	defer fakeServer.Teardown()
-	fakeServer.Mux.HandleFunc("/floatingips/fip-1", func(w http.ResponseWriter, r *http.Request) {
-		th.TestMethod(t, r, http.MethodPut)
-		th.TestHeader(t, r, "If-Match", "revision_number=7")
-		th.TestJSONRequest(t, r, `{"floatingip":{"qos_policy_id":null}}`)
-		writeJSON(t, w, http.StatusOK, `{"floatingip":{"id":"fip-1"}}`)
-	})
-	rev := 7
-	opts := floatingips.UpdateOpts{RevisionNumber: &rev}
-	b := withFloatingIPUpdateAttrs(opts, map[string]any{"qos_policy_id": nil})
-	if b.RevisionNumber == nil || *b.RevisionNumber != 7 {
-		t.Fatalf("adapter RevisionNumber = %v, want 7", b.RevisionNumber)
-	}
-	if err := floatingips.Update(context.Background(), networkClient(fakeServer), "fip-1", b).Err; err != nil {
-		t.Fatalf("Update: %v", err)
 	}
 }
 

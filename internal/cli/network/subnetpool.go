@@ -14,6 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -389,7 +390,7 @@ func runSubnetPoolCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	p, err := extractSubnetPool(subnetpools.Create(ctx, client, withSubnetPoolCreateAttrs(opts, extra)))
+	p, err := extractSubnetPool(subnetpools.Create(ctx, client, networkapi.WithSubnetPoolCreateAttrs(opts, extra)))
 	if err != nil {
 		return fmt.Errorf("creating subnet pool %q: %w", name, err)
 	}
@@ -476,7 +477,7 @@ func runSubnetPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 	}
 	var p *subnetPoolExt
 	if touched {
-		if p, err = extractSubnetPool(subnetpools.Update(ctx, client, id, withSubnetPoolUpdateAttrs(opts, attrs))); err != nil {
+		if p, err = extractSubnetPool(subnetpools.Update(ctx, client, id, networkapi.WithSubnetPoolUpdateAttrs(opts, attrs))); err != nil {
 			return fmt.Errorf("updating subnet pool %q: %w", ref, err)
 		}
 	} else if p, err = extractSubnetPool(subnetpools.Get(ctx, client, id)); err != nil {
