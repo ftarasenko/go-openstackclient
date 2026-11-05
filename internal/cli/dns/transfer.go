@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // newZoneTransferCommand builds "zone transfer ...", designate's two-step handover
@@ -124,12 +125,12 @@ func runZoneTransferRequestCreate(ctx context.Context, client *gophercloud.Servi
 	if err != nil {
 		return err
 	}
-	tr, err := request.Create(ctx, client, zoneID, request.CreateOpts{
+	tr, err := dnsapi.CreateTransferRequest(ctx, client, zoneID, request.CreateOpts{
 		TargetProjectID: targetProjectID,
 		Description:     description,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating transfer request for zone %q: %w", zoneRef, err)
+		return relabel(err, "creating transfer request for zone %q", zoneRef)
 	}
 	fields, values := transferRequestFields(tr)
 	return o.WriteSingle(w, fields, values)
@@ -162,13 +163,9 @@ func newZoneTransferRequestListCommand(a *auth.Options, o *output.Options) *cobr
 func runZoneTransferRequestList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	status string, w io.Writer,
 ) error {
-	pages, err := request.List(client, request.ListOpts{Status: status}).AllPages(ctx)
+	all, err := dnsapi.ListTransferRequests(ctx, client, request.ListOpts{Status: status})
 	if err != nil {
-		return fmt.Errorf("listing zone transfer requests: %w", err)
-	}
-	all, err := request.ExtractTransferRequests(pages)
-	if err != nil {
-		return fmt.Errorf("parsing zone transfer request list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Zone ID", "Zone Name", "Target Project ID", "Status", "Description"},
@@ -204,9 +201,9 @@ func newZoneTransferRequestShowCommand(a *auth.Options, o *output.Options) *cobr
 
 // Transfer requests have no name, so the reference is always the ID.
 func runZoneTransferRequestShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	tr, err := request.Get(ctx, client, id).Extract()
+	tr, err := dnsapi.GetTransferRequest(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing zone transfer request %s: %w", id, err)
+		return err
 	}
 	fields, values := transferRequestFields(tr)
 	return o.WriteSingle(w, fields, values)
@@ -258,12 +255,12 @@ func runZoneTransferRequestSet(ctx context.Context, client *gophercloud.ServiceC
 	if err := o.CheckColumns(transferRequestColumns...); err != nil {
 		return err
 	}
-	tr, err := request.Update(ctx, client, id, request.UpdateOpts{
+	tr, err := dnsapi.UpdateTransferRequest(ctx, client, id, request.UpdateOpts{
 		TargetProjectID: targetProjectID,
 		Description:     description,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("updating zone transfer request %s: %w", id, err)
+		return err
 	}
 	fields, values := transferRequestFields(tr)
 	return o.WriteSingle(w, fields, values)
@@ -293,8 +290,8 @@ func newZoneTransferRequestDeleteCommand(a *auth.Options, o *output.Options) *co
 
 func runZoneTransferRequestDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := request.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting zone transfer request %s: %w", id, err)
+		if err := dnsapi.DeleteTransferRequest(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted zone transfer request %s\n", id); err != nil {
 			return err
@@ -359,12 +356,9 @@ func runZoneTransferAcceptRequest(ctx context.Context, client *gophercloud.Servi
 	if err := o.CheckColumns(transferAcceptColumns...); err != nil {
 		return err
 	}
-	ac, err := accept.Create(ctx, client, accept.CreateOpts{
-		ZoneTransferRequestID: transferID,
-		Key:                   key,
-	}).Extract()
+	ac, err := dnsapi.AcceptTransferRequest(ctx, client, transferID, key)
 	if err != nil {
-		return fmt.Errorf("accepting zone transfer request %s: %w", transferID, err)
+		return err
 	}
 	fields, values := transferAcceptFields(ac)
 	return o.WriteSingle(w, fields, values)
@@ -397,13 +391,9 @@ func newZoneTransferAcceptListCommand(a *auth.Options, o *output.Options) *cobra
 func runZoneTransferAcceptList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	status string, w io.Writer,
 ) error {
-	pages, err := accept.List(client, accept.ListOpts{Status: status}).AllPages(ctx)
+	all, err := dnsapi.ListTransferAccepts(ctx, client, accept.ListOpts{Status: status})
 	if err != nil {
-		return fmt.Errorf("listing zone transfer accepts: %w", err)
-	}
-	all, err := accept.ExtractTransferAccepts(pages)
-	if err != nil {
-		return fmt.Errorf("parsing zone transfer accept list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Zone ID", "Project ID", "Zone Transfer Request ID", "Status"},
@@ -438,9 +428,9 @@ func newZoneTransferAcceptShowCommand(a *auth.Options, o *output.Options) *cobra
 }
 
 func runZoneTransferAcceptShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	ac, err := accept.Get(ctx, client, id).Extract()
+	ac, err := dnsapi.GetTransferAccept(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing zone transfer accept %s: %w", id, err)
+		return err
 	}
 	fields, values := transferAcceptFields(ac)
 	return o.WriteSingle(w, fields, values)

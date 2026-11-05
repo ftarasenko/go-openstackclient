@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -11,8 +10,8 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // Zone blacklists and TLDs: the two deployment-wide policy resources that decide
@@ -27,15 +26,7 @@ import (
 
 // --- zone blacklist --------------------------------------------------------
 
-type blacklist struct {
-	ID          string `json:"id"`
-	Pattern     string `json:"pattern"`
-	Description string `json:"description"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-}
-
-func blacklistFields(b *blacklist) ([]string, []any) {
+func blacklistFields(b *dnsapi.Blacklist) ([]string, []any) {
 	return []string{"id", "pattern", "description", "created_at", "updated_at"},
 		[]any{b.ID, b.Pattern, b.Description, dnsTimeString(b.CreatedAt), dnsTimeString(b.UpdatedAt)}
 }
@@ -53,29 +44,6 @@ func newZoneBlacklistCommand(a *auth.Options, o *output.Options) *cobra.Command 
 		newZoneBlacklistDeleteCommand(a, o),
 	)
 	return cmd
-}
-
-// listBlacklists reads every page of /v2/blacklists, optionally filtered.
-func listBlacklists(ctx context.Context, client *gophercloud.ServiceClient,
-	pattern string, limit int, headers map[string]string,
-) ([]blacklist, error) {
-	q, err := dnsQuery(struct {
-		Pattern string `q:"pattern"`
-	}{pattern})
-	if err != nil {
-		return nil, err
-	}
-	return dnsListAll(ctx, client, client.ServiceURL("blacklists")+q, headers, limit,
-		func(raw json.RawMessage) ([]blacklist, string, error) {
-			var page struct {
-				Blacklists []blacklist `json:"blacklists"`
-				Links      dnsLinks    `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing blacklist list: %w", err)
-			}
-			return page.Blacklists, page.Links.Next, nil
-		})
 }
 
 func newZoneBlacklistListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -108,9 +76,9 @@ func newZoneBlacklistListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runZoneBlacklistList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	pattern string, limit int, common *commonOptions, w io.Writer,
 ) error {
-	all, err := listBlacklists(ctx, client, pattern, limit, common.headers())
+	all, err := dnsapi.ListBlacklists(ctx, withCommonHeaders(client, common), pattern, limit)
 	if err != nil {
-		return fmt.Errorf("listing blacklists: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Pattern", "Description"},
@@ -127,23 +95,11 @@ func runZoneBlacklistList(ctx context.Context, client *gophercloud.ServiceClient
 // in hand after reading a "zone name is blacklisted" error. Matching more than one
 // is an error rather than a silent pick.
 func resolveBlacklistID(ctx context.Context, client *gophercloud.ServiceClient,
-	ref string, headers map[string]string,
+	ref string, common *commonOptions,
 ) (string, error) {
-	if resolve.IsUUID(ref) {
-		return ref, nil
-	}
-	all, err := listBlacklists(ctx, client, ref, 0, headers)
-	if err != nil {
-		return "", fmt.Errorf("looking up blacklist %q: %w", ref, err)
-	}
-	switch len(all) {
-	case 0:
-		return ref, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("blacklist pattern %q is ambiguous: %d matches, use the ID", ref, len(all))
-	}
+	return lookup("blacklist pattern %q is ambiguous: %d matches, use the ID", ref, func() (string, error) {
+		return dnsapi.FindBlacklistID(ctx, withCommonHeaders(client, common), ref)
+	})
 }
 
 func newZoneBlacklistShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -171,16 +127,15 @@ func newZoneBlacklistShowCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func runZoneBlacklistShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
-	id, err := resolveBlacklistID(ctx, client, ref, headers)
+	id, err := resolveBlacklistID(ctx, client, ref, common)
 	if err != nil {
 		return err
 	}
-	var b blacklist
-	if err := dnsGetJSON(ctx, client, client.ServiceURL("blacklists", id), headers, &b); err != nil {
-		return fmt.Errorf("showing blacklist %q: %w", ref, err)
+	b, err := dnsapi.GetBlacklist(ctx, withCommonHeaders(client, common), id)
+	if err != nil {
+		return relabel(err, "showing blacklist %q", ref)
 	}
-	fields, values := blacklistFields(&b)
+	fields, values := blacklistFields(b)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -220,15 +175,11 @@ func runZoneBlacklistCreate(ctx context.Context, client *gophercloud.ServiceClie
 	if err := o.CheckColumns(blacklistColumns...); err != nil {
 		return err
 	}
-	body := map[string]any{"pattern": pattern}
-	if description != "" {
-		body["description"] = description
+	b, err := dnsapi.CreateBlacklist(ctx, withCommonHeaders(client, common), pattern, description)
+	if err != nil {
+		return err
 	}
-	var b blacklist
-	if err := dnsPostJSON(ctx, client, client.ServiceURL("blacklists"), body, &b, common.headers()); err != nil {
-		return fmt.Errorf("creating blacklist %q: %w", pattern, err)
-	}
-	fields, values := blacklistFields(&b)
+	fields, values := blacklistFields(b)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -279,8 +230,7 @@ func runZoneBlacklistSet(ctx context.Context, client *gophercloud.ServiceClient,
 	if err := o.CheckColumns(blacklistColumns...); err != nil {
 		return err
 	}
-	headers := f.common.headers()
-	id, err := resolveBlacklistID(ctx, client, ref, headers)
+	id, err := resolveBlacklistID(ctx, client, ref, f.common)
 	if err != nil {
 		return err
 	}
@@ -294,11 +244,11 @@ func runZoneBlacklistSet(ctx context.Context, client *gophercloud.ServiceClient,
 	case f.description != "":
 		body["description"] = f.description
 	}
-	var b blacklist
-	if err := dnsPatchJSON(ctx, client, client.ServiceURL("blacklists", id), body, &b, headers); err != nil {
-		return fmt.Errorf("updating blacklist %q: %w", ref, err)
+	b, err := dnsapi.UpdateBlacklist(ctx, withCommonHeaders(client, f.common), id, body)
+	if err != nil {
+		return relabel(err, "updating blacklist %q", ref)
 	}
-	fields, values := blacklistFields(&b)
+	fields, values := blacklistFields(b)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -327,14 +277,13 @@ func newZoneBlacklistDeleteCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runZoneBlacklistDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	refs []string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
 	return batchdelete.Each(refs, func(ref string) error {
-		id, err := resolveBlacklistID(ctx, client, ref, headers)
+		id, err := resolveBlacklistID(ctx, client, ref, common)
 		if err != nil {
 			return err
 		}
-		if err := dnsDelete(ctx, client, client.ServiceURL("blacklists", id), headers); err != nil {
-			return fmt.Errorf("deleting blacklist %q: %w", ref, err)
+		if err := dnsapi.DeleteBlacklist(ctx, withCommonHeaders(client, common), id); err != nil {
+			return relabel(err, "deleting blacklist %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted blacklist %s\n", ref); err != nil {
 			return err
@@ -345,15 +294,7 @@ func runZoneBlacklistDelete(ctx context.Context, client *gophercloud.ServiceClie
 
 // --- tld -------------------------------------------------------------------
 
-type tld struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-}
-
-func tldFields(t *tld) ([]string, []any) {
+func tldFields(t *dnsapi.TLD) ([]string, []any) {
 	return []string{"id", "name", "description", "created_at", "updated_at"},
 		[]any{t.ID, t.Name, t.Description, dnsTimeString(t.CreatedAt), dnsTimeString(t.UpdatedAt)}
 }
@@ -373,49 +314,15 @@ func newTLDCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-func listTLDs(ctx context.Context, client *gophercloud.ServiceClient,
-	name string, limit int, headers map[string]string,
-) ([]tld, error) {
-	q, err := dnsQuery(struct {
-		Name string `q:"name"`
-	}{name})
-	if err != nil {
-		return nil, err
-	}
-	return dnsListAll(ctx, client, client.ServiceURL("tlds")+q, headers, limit,
-		func(raw json.RawMessage) ([]tld, string, error) {
-			var page struct {
-				TLDs  []tld    `json:"tlds"`
-				Links dnsLinks `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing TLD list: %w", err)
-			}
-			return page.TLDs, page.Links.Next, nil
-		})
-}
-
 // resolveTLDID turns a TLD reference into an ID. Upstream resolves the name too
 // (designateclient's tlds controller calls resolve_by_name), so a name is the
 // normal way to address one.
 func resolveTLDID(ctx context.Context, client *gophercloud.ServiceClient,
-	ref string, headers map[string]string,
+	ref string, common *commonOptions,
 ) (string, error) {
-	if resolve.IsUUID(ref) {
-		return ref, nil
-	}
-	all, err := listTLDs(ctx, client, ref, 0, headers)
-	if err != nil {
-		return "", fmt.Errorf("looking up TLD %q: %w", ref, err)
-	}
-	switch len(all) {
-	case 0:
-		return ref, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("TLD name %q is ambiguous: %d matches, use the ID", ref, len(all))
-	}
+	return lookup("TLD name %q is ambiguous: %d matches, use the ID", ref, func() (string, error) {
+		return dnsapi.FindTLDID(ctx, withCommonHeaders(client, common), ref)
+	})
 }
 
 func newTLDListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -448,9 +355,9 @@ func newTLDListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTLDList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, limit int, common *commonOptions, w io.Writer,
 ) error {
-	all, err := listTLDs(ctx, client, name, limit, common.headers())
+	all, err := dnsapi.ListTLDs(ctx, withCommonHeaders(client, common), name, limit)
 	if err != nil {
-		return fmt.Errorf("listing TLDs: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Name", "Description"},
@@ -487,16 +394,15 @@ func newTLDShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTLDShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
-	id, err := resolveTLDID(ctx, client, ref, headers)
+	id, err := resolveTLDID(ctx, client, ref, common)
 	if err != nil {
 		return err
 	}
-	var item tld
-	if err := dnsGetJSON(ctx, client, client.ServiceURL("tlds", id), headers, &item); err != nil {
-		return fmt.Errorf("showing TLD %q: %w", ref, err)
+	item, err := dnsapi.GetTLD(ctx, withCommonHeaders(client, common), id)
+	if err != nil {
+		return relabel(err, "showing TLD %q", ref)
 	}
-	fields, values := tldFields(&item)
+	fields, values := tldFields(item)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -536,15 +442,11 @@ func runTLDCreate(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err := o.CheckColumns(tldColumns...); err != nil {
 		return err
 	}
-	body := map[string]any{"name": name}
-	if description != "" {
-		body["description"] = description
+	item, err := dnsapi.CreateTLD(ctx, withCommonHeaders(client, common), name, description)
+	if err != nil {
+		return err
 	}
-	var item tld
-	if err := dnsPostJSON(ctx, client, client.ServiceURL("tlds"), body, &item, common.headers()); err != nil {
-		return fmt.Errorf("creating TLD %q: %w", name, err)
-	}
-	fields, values := tldFields(&item)
+	fields, values := tldFields(item)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -592,8 +494,7 @@ func runTLDSet(ctx context.Context, client *gophercloud.ServiceClient, o *output
 	if err := o.CheckColumns(tldColumns...); err != nil {
 		return err
 	}
-	headers := f.common.headers()
-	id, err := resolveTLDID(ctx, client, ref, headers)
+	id, err := resolveTLDID(ctx, client, ref, f.common)
 	if err != nil {
 		return err
 	}
@@ -607,11 +508,11 @@ func runTLDSet(ctx context.Context, client *gophercloud.ServiceClient, o *output
 	case f.description != "":
 		body["description"] = f.description
 	}
-	var item tld
-	if err := dnsPatchJSON(ctx, client, client.ServiceURL("tlds", id), body, &item, headers); err != nil {
-		return fmt.Errorf("updating TLD %q: %w", ref, err)
+	item, err := dnsapi.UpdateTLD(ctx, withCommonHeaders(client, f.common), id, body)
+	if err != nil {
+		return relabel(err, "updating TLD %q", ref)
 	}
-	fields, values := tldFields(&item)
+	fields, values := tldFields(item)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -640,14 +541,13 @@ func newTLDDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runTLDDelete(ctx context.Context, client *gophercloud.ServiceClient,
 	refs []string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
 	return batchdelete.Each(refs, func(ref string) error {
-		id, err := resolveTLDID(ctx, client, ref, headers)
+		id, err := resolveTLDID(ctx, client, ref, common)
 		if err != nil {
 			return err
 		}
-		if err := dnsDelete(ctx, client, client.ServiceURL("tlds", id), headers); err != nil {
-			return fmt.Errorf("deleting TLD %q: %w", ref, err)
+		if err := dnsapi.DeleteTLD(ctx, withCommonHeaders(client, common), id); err != nil {
+			return relabel(err, "deleting TLD %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted TLD %s\n", ref); err != nil {
 			return err

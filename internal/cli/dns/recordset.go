@@ -9,13 +9,12 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/recordsets"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // newRecordSetCommand builds "dns recordset ..." (exposed as the top-level
@@ -34,57 +33,6 @@ func newRecordSetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// recordSetExt is a RecordSet plus its ttl as designate sent it: null means
-// the recordset inherits the zone's TTL, and gophercloud's int would render
-// that as 0, a TTL that forbids caching.
-type recordSetExt struct {
-	recordsets.RecordSet
-	ttl *int
-}
-
-type recordSetTTL struct {
-	TTL *int `json:"ttl"`
-}
-
-// extractRecordSet decodes a get, create or update result (designate sends the
-// recordset without an envelope).
-func extractRecordSet(r interface{ ExtractIntoStructPtr(any, string) error }) (*recordSetExt, error) {
-	var rs recordSetExt
-	if err := r.ExtractIntoStructPtr(&rs.RecordSet, ""); err != nil {
-		return nil, err
-	}
-	var raw recordSetTTL
-	if err := r.ExtractIntoStructPtr(&raw, ""); err != nil {
-		return nil, err
-	}
-	rs.ttl = raw.TTL
-	return &rs, nil
-}
-
-// extractRecordSets is recordsets.ExtractRecordSets with nullable TTLs.
-func extractRecordSets(page pagination.Page) ([]recordSetExt, error) {
-	typed, err := recordsets.ExtractRecordSets(page)
-	if err != nil {
-		return nil, err
-	}
-	rp, ok := page.(recordsets.RecordSetPage)
-	if !ok {
-		return nil, fmt.Errorf("unexpected recordset page type %T", page)
-	}
-	var raw []recordSetTTL
-	if err := rp.ExtractIntoSlicePtr(&raw, "recordsets"); err != nil {
-		return nil, err
-	}
-	out := make([]recordSetExt, len(typed))
-	for i := range typed {
-		out[i].RecordSet = typed[i]
-		if i < len(raw) {
-			out[i].ttl = raw[i].TTL
-		}
-	}
-	return out, nil
-}
-
 // ttlOrNil renders an inherited (null) TTL as null.
 func ttlOrNil(ttl *int) any {
 	if ttl == nil {
@@ -95,14 +43,14 @@ func ttlOrNil(ttl *int) any {
 
 // recordSetShowFields is the curated Field/Value view for a single recordset,
 // matching `openstack recordset show`.
-func recordSetShowFields(rs *recordSetExt) ([]string, []any) {
+func recordSetShowFields(rs *dnsapi.RecordSet) ([]string, []any) {
 	fields := []string{
 		"id", "name", "type", "records", "ttl", "status", "action",
 		"description", "zone_id", "zone_name", "project_id", "version",
 		"created_at", "updated_at",
 	}
 	values := []any{
-		rs.ID, rs.Name, rs.Type, rs.Records, ttlOrNil(rs.ttl), rs.Status, rs.Action,
+		rs.ID, rs.Name, rs.Type, rs.Records, ttlOrNil(rs.NullableTTL), rs.Status, rs.Action,
 		rs.Description, rs.ZoneID, rs.ZoneName, rs.ProjectID, rs.Version,
 		dnsTime(rs.CreatedAt), dnsTime(rs.UpdatedAt),
 	}
@@ -200,9 +148,9 @@ func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o 
 		Marker: f.marker,
 	}
 	// Limit is only the page size to designate; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, recordsets.ListByZone(client, zoneID, opts), f.limit, extractRecordSets)
+	all, err := dnsapi.ListRecordSets(ctx, client, zoneID, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing recordsets in zone %s: %w", zoneRef, err)
+		return relabel(err, "listing recordsets in zone %s", zoneRef)
 	}
 	return o.WriteList(w, recordSetListTable(all, allProjects))
 }
@@ -210,14 +158,14 @@ func runRecordSetList(ctx context.Context, client *gophercloud.ServiceClient, o 
 // recordSetListTable renders the list, gaining a Project ID column for a
 // cross-project listing so rows owned by different projects stay distinguishable
 // (upstream inserts the same column — designateclient/v2/cli/recordsets.py).
-func recordSetListTable(list []recordSetExt, allProjects bool) output.Table {
+func recordSetListTable(list []dnsapi.RecordSet, allProjects bool) output.Table {
 	cols := []string{"ID", "Name", "Type", "Records", "TTL", "Status", "Action"}
 	if allProjects {
 		cols = slices.Insert(cols, 1, "Project ID")
 	}
 	t := output.Table{Columns: cols, Rows: make([][]any, 0, len(list))}
 	for _, rs := range list {
-		row := []any{rs.ID, rs.Name, rs.Type, rs.Records, ttlOrNil(rs.ttl), rs.Status, rs.Action}
+		row := []any{rs.ID, rs.Name, rs.Type, rs.Records, ttlOrNil(rs.NullableTTL), rs.Status, rs.Action}
 		if allProjects {
 			row = slices.Insert(row, 1, any(rs.ProjectID))
 		}
@@ -257,9 +205,9 @@ func runRecordSetShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	rs, err := extractRecordSet(recordsets.Get(ctx, client, zoneID, rsID))
+	rs, err := dnsapi.GetRecordSet(ctx, client, zoneID, rsID)
 	if err != nil {
-		return fmt.Errorf("getting recordset %s: %w", rsRef, err)
+		return relabel(err, "getting recordset %s", rsRef)
 	}
 	fields, values := recordSetShowFields(rs)
 	return o.WriteSingle(w, fields, values)
@@ -323,9 +271,9 @@ func runRecordSetCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 		TTL:         f.ttl,
 		Description: f.description,
 	}
-	rs, err := extractRecordSet(recordsets.Create(ctx, client, zoneID, opts))
+	rs, err := dnsapi.CreateRecordSet(ctx, client, zoneID, opts)
 	if err != nil {
-		return fmt.Errorf("creating recordset in zone %s: %w", zoneRef, err)
+		return relabel(err, "creating recordset in zone %s", zoneRef)
 	}
 	fields, values := recordSetShowFields(rs)
 	return o.WriteSingle(w, fields, values)
@@ -363,8 +311,8 @@ func runRecordSetDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 		if err != nil {
 			return err
 		}
-		if err := recordsets.Delete(ctx, client, zoneID, rsID).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting recordset %s: %w", ref, err)
+		if err := dnsapi.DeleteRecordSet(ctx, client, zoneID, rsID); err != nil {
+			return relabel(err, "deleting recordset %s", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted recordset %s\n", ref); err != nil {
 			return err
@@ -450,9 +398,9 @@ func runRecordSetSet(ctx context.Context, client *gophercloud.ServiceClient, o *
 		d := f.description
 		opts.Description = &d
 	}
-	rs, err := extractRecordSet(recordsets.Update(ctx, client, zoneID, rsID, opts))
+	rs, err := dnsapi.UpdateRecordSet(ctx, client, zoneID, rsID, opts)
 	if err != nil {
-		return fmt.Errorf("updating recordset %s: %w", rsRef, err)
+		return relabel(err, "updating recordset %s", rsRef)
 	}
 	fields, values := recordSetShowFields(rs)
 	return o.WriteSingle(w, fields, values)

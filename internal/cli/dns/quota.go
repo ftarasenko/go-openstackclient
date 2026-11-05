@@ -17,6 +17,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // NewDNSNounCommand builds the top-level "dns" command group — the nouns upstream
@@ -199,9 +200,9 @@ func newDNSQuotaListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runDNSQuotaList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	project string, common *commonOptions, w io.Writer,
 ) error {
-	q, err := quotas.Get(ctx, withCommonHeaders(client, common), project).Extract()
+	q, err := dnsapi.GetQuota(ctx, withCommonHeaders(client, common), project)
 	if err != nil {
-		return fmt.Errorf("showing DNS quotas for project %q: %w", project, err)
+		return err
 	}
 	fields, values := dnsQuotaFields(q)
 	return o.WriteSingle(w, fields, values)
@@ -292,9 +293,9 @@ func runDNSQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if !touched {
 		return fmt.Errorf("nothing to set: pass at least one quota flag")
 	}
-	q, err := quotas.Update(ctx, withCommonHeaders(client, f.common), project, opts).Extract()
+	q, err := dnsapi.UpdateQuota(ctx, withCommonHeaders(client, f.common), project, opts)
 	if err != nil {
-		return fmt.Errorf("setting DNS quotas for project %q: %w", project, err)
+		return err
 	}
 	fields, values := dnsQuotaFields(q)
 	return o.WriteSingle(w, fields, values)
@@ -334,15 +335,8 @@ func newDNSQuotaResetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runDNSQuotaReset(ctx context.Context, client *gophercloud.ServiceClient,
 	project string, common *commonOptions, w io.Writer,
 ) error {
-	resp, err := client.Delete(ctx, client.ServiceURL("quotas", project), &gophercloud.RequestOpts{
-		OkCodes:     []int{204},
-		MoreHeaders: common.headers(),
-	})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("resetting DNS quotas for project %q: %w", project, err)
+	if err := dnsapi.ResetQuota(ctx, withCommonHeaders(client, common), project); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Reset DNS quotas for project %s to the defaults\n", project); err != nil {
 		return err
@@ -389,25 +383,12 @@ func tsigKeyFields(k *tsigkeys.TSIGKey) ([]string, []any) {
 // resolveTSIGKeyID turns a TSIG key name or ID into an ID. Names are unique per
 // deployment, and designate's list takes an exact ?name= filter.
 func resolveTSIGKeyID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	if ref == "" || resolve.IsUUID(ref) {
+	if ref == "" {
 		return ref, nil
 	}
-	pages, err := tsigkeys.List(client, tsigkeys.ListOpts{Name: ref}).AllPages(ctx)
-	if err != nil {
-		return "", fmt.Errorf("looking up TSIG key %q: %w", ref, err)
-	}
-	all, err := tsigkeys.ExtractTSIGKeys(pages)
-	if err != nil {
-		return "", fmt.Errorf("looking up TSIG key %q: %w", ref, err)
-	}
-	switch len(all) {
-	case 0:
-		return ref, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("TSIG key name %q is ambiguous: %d matches, use the ID", ref, len(all))
-	}
+	return lookup("TSIG key name %q is ambiguous: %d matches, use the ID", ref, func() (string, error) {
+		return dnsapi.FindTSIGKeyID(ctx, client, ref)
+	})
 }
 
 type tsigKeyListFlags struct {
@@ -449,13 +430,9 @@ func runTSIGKeyList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	f *tsigKeyListFlags, w io.Writer,
 ) error {
 	opts := tsigkeys.ListOpts{Name: f.name, Algorithm: f.algorithm, Scope: f.scope, Limit: f.limit}
-	pages, err := tsigkeys.List(client, opts).AllPages(ctx)
+	all, err := dnsapi.ListTSIGKeys(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing TSIG keys: %w", err)
-	}
-	all, err := tsigkeys.ExtractTSIGKeys(pages)
-	if err != nil {
-		return fmt.Errorf("parsing TSIG key list: %w", err)
+		return err
 	}
 	// The secret is deliberately not a column: it is the shared authentication
 	// material, and listing keys should not spray it across a terminal or a log.
@@ -505,9 +482,9 @@ func runTSIGKeyShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	k, err := tsigkeys.Get(ctx, client, id).Extract()
+	k, err := dnsapi.GetTSIGKey(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing TSIG key %q: %w", ref, err)
+		return relabel(err, "showing TSIG key %q", ref)
 	}
 	fields, values := tsigKeyFields(k)
 	if showSecret {
@@ -577,15 +554,15 @@ func runTSIGKeyCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err := o.CheckColumns(tsigKeyColumns...); err != nil {
 		return err
 	}
-	k, err := tsigkeys.Create(ctx, client, tsigkeys.CreateOpts{
+	k, err := dnsapi.CreateTSIGKey(ctx, client, tsigkeys.CreateOpts{
 		Name:       name,
 		Algorithm:  f.algorithm,
 		Secret:     f.secret,
 		Scope:      f.scope,
 		ResourceID: f.resourceID,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating TSIG key %q: %w", name, err)
+		return err
 	}
 	fields, values := tsigKeyFields(k)
 	return o.WriteSingle(w, fields, values)
@@ -637,15 +614,15 @@ func runTSIGKeySet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	k, err := tsigkeys.Update(ctx, client, id, tsigkeys.UpdateOpts{
+	k, err := dnsapi.UpdateTSIGKey(ctx, client, id, tsigkeys.UpdateOpts{
 		Name:       f.name,
 		Algorithm:  f.algorithm,
 		Secret:     f.secret,
 		Scope:      f.scope,
 		ResourceID: f.resourceID,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("updating TSIG key %q: %w", ref, err)
+		return relabel(err, "updating TSIG key %q", ref)
 	}
 	fields, values := tsigKeyFields(k)
 	return o.WriteSingle(w, fields, values)
@@ -679,8 +656,8 @@ func runTSIGKeyDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 		if err != nil {
 			return err
 		}
-		if derr := tsigkeys.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting TSIG key %q: %w", ref, derr)
+		if derr := dnsapi.DeleteTSIGKey(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting TSIG key %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Deleted TSIG key %s\n", ref); werr != nil {
 			return werr

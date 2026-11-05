@@ -27,6 +27,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
@@ -230,6 +231,16 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /load-balancer/v2.0/quotas", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"quotas": []map[string]any{{"project_id": "prj-1", "load_balancer": 5}}, "quotas_links": []any{}})
+	})
+	mux.HandleFunc("GET /dns/v2/zones", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"zones": []map[string]any{{"id": "zone-1", "name": "example.com."}}, "links": map[string]any{}})
+	})
+	mux.HandleFunc("GET /dns/v2/zones/zone-1/recordsets", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Auth-Sudo-Project-ID") != "prj-2" {
+			http.Error(w, `{}`, http.StatusForbidden)
+			return
+		}
+		answer(w, map[string]any{"recordsets": []map[string]any{{"id": "rs-1", "name": "www.example.com.", "type": "A", "ttl": nil}}, "links": map[string]any{}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -445,5 +456,18 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if q, err := loadbalancer.ListQuotas(ctx, lbClient, ""); err != nil || len(q) != 1 || q[0].LoadBalancer == nil || *q[0].LoadBalancer != 5 {
 		t.Fatalf("loadbalancer.ListQuotas = %+v, %v", q, err)
+	}
+
+	dnsClient, err := s.DNS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dnsClient = dns.WithScope(dnsClient, dns.Scope{SudoProjectID: "prj-2"})
+	zoneID, err := dns.FindZoneID(ctx, dnsClient, "example.com")
+	if err != nil || zoneID != "zone-1" {
+		t.Fatalf("dns.FindZoneID = %q, %v", zoneID, err)
+	}
+	if rs, err := dns.ListRecordSets(ctx, dnsClient, zoneID, nil, 0); err != nil || len(rs) != 1 || rs[0].NullableTTL != nil {
+		t.Fatalf("dns.ListRecordSets = %+v, %v", rs, err)
 	}
 }

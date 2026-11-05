@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -12,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
 )
 
 // Designate's remaining read surface plus floating-IP PTR records. None has a
@@ -32,26 +31,13 @@ import (
 
 // --- dns pool --------------------------------------------------------------
 
-// pool is a designate pool: the set of nameservers a zone is served from.
-type pool struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	ProjectID   string            `json:"project_id"`
-	Attributes  map[string]string `json:"attributes"`
-	NS          []poolNS          `json:"ns_records"`
-	CreatedAt   string            `json:"created_at"`
-	UpdatedAt   string            `json:"updated_at"`
+func poolFields(p *dnsapi.Pool) ([]string, []any) {
+	return []string{"id", "name", "description", "project_id", "ns_records", "created_at", "updated_at"},
+		[]any{p.ID, p.Name, p.Description, p.ProjectID, nsRecords(p), dnsTimeString(p.CreatedAt), dnsTimeString(p.UpdatedAt)}
 }
 
-type poolNS struct {
-	Hostname string `json:"hostname"`
-	Priority int    `json:"priority"`
-}
-
-// nsRecords renders the pool's nameservers one per line, the shape designate's
-// own output uses for multi-valued fields.
-func (p *pool) nsRecords() string {
+// nsRecords renders a pool's nameservers as "priority:hostname" lines.
+func nsRecords(p *dnsapi.Pool) string {
 	if len(p.NS) == 0 {
 		return ""
 	}
@@ -60,11 +46,6 @@ func (p *pool) nsRecords() string {
 		lines = append(lines, fmt.Sprintf("%d:%s", ns.Priority, ns.Hostname))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func poolFields(p *pool) ([]string, []any) {
-	return []string{"id", "name", "description", "project_id", "ns_records", "created_at", "updated_at"},
-		[]any{p.ID, p.Name, p.Description, p.ProjectID, p.nsRecords(), dnsTimeString(p.CreatedAt), dnsTimeString(p.UpdatedAt)}
 }
 
 // newDNSPoolCommand builds "dns pool list|show".
@@ -85,28 +66,6 @@ func newDNSPoolCommand(a *auth.Options, o *output.Options) *cobra.Command {
 		newDNSPoolShowCommand(a, o),
 	)
 	return cmd
-}
-
-func listPools(ctx context.Context, client *gophercloud.ServiceClient,
-	name string, limit int, headers map[string]string,
-) ([]pool, error) {
-	q, err := dnsQuery(struct {
-		Name string `q:"name"`
-	}{name})
-	if err != nil {
-		return nil, err
-	}
-	return dnsListAll(ctx, client, client.ServiceURL("pools")+q, headers, limit,
-		func(raw json.RawMessage) ([]pool, string, error) {
-			var page struct {
-				Pools []pool   `json:"pools"`
-				Links dnsLinks `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing pool list: %w", err)
-			}
-			return page.Pools, page.Links.Next, nil
-		})
 }
 
 func newDNSPoolListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -139,9 +98,9 @@ func newDNSPoolListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runDNSPoolList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	name string, limit int, common *commonOptions, w io.Writer,
 ) error {
-	all, err := listPools(ctx, client, name, limit, common.headers())
+	all, err := dnsapi.ListPools(ctx, withCommonHeaders(client, common), name, limit)
 	if err != nil {
-		return fmt.Errorf("listing DNS pools: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Name", "Description", "NS Records"},
@@ -149,31 +108,17 @@ func runDNSPoolList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	}
 	for i := range all {
 		p := &all[i]
-		t.Rows = append(t.Rows, []any{p.ID, p.Name, p.Description, p.nsRecords()})
+		t.Rows = append(t.Rows, []any{p.ID, p.Name, p.Description, nsRecords(p)})
 	}
 	return o.WriteList(w, t)
 }
 
 // resolvePoolID accepts a pool name as well as an ID; the default pool's name
 // ("default") is what operators actually have in hand.
-func resolvePoolID(ctx context.Context, client *gophercloud.ServiceClient,
-	ref string, headers map[string]string,
-) (string, error) {
-	if resolve.IsUUID(ref) {
-		return ref, nil
-	}
-	all, err := listPools(ctx, client, ref, 0, headers)
-	if err != nil {
-		return "", fmt.Errorf("looking up DNS pool %q: %w", ref, err)
-	}
-	switch len(all) {
-	case 0:
-		return ref, nil
-	case 1:
-		return all[0].ID, nil
-	default:
-		return "", fmt.Errorf("DNS pool name %q is ambiguous: %d matches, use the ID", ref, len(all))
-	}
+func resolvePoolID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
+	return lookup("DNS pool name %q is ambiguous: %d matches, use the ID", ref, func() (string, error) {
+		return dnsapi.FindPoolID(ctx, client, ref)
+	})
 }
 
 func newDNSPoolShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -201,35 +146,22 @@ func newDNSPoolShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 func runDNSPoolShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	ref string, common *commonOptions, w io.Writer,
 ) error {
-	headers := common.headers()
-	id, err := resolvePoolID(ctx, client, ref, headers)
+	client = withCommonHeaders(client, common)
+	id, err := resolvePoolID(ctx, client, ref)
 	if err != nil {
 		return err
 	}
-	var p pool
-	if err := dnsGetJSON(ctx, client, client.ServiceURL("pools", id), headers, &p); err != nil {
-		return fmt.Errorf("showing DNS pool %q: %w", ref, err)
+	p, err := dnsapi.GetPool(ctx, client, id)
+	if err != nil {
+		return relabel(err, "showing DNS pool %q", ref)
 	}
-	fields, values := poolFields(&p)
+	fields, values := poolFields(p)
 	return o.WriteSingle(w, fields, values)
 }
 
 // --- ptr record ------------------------------------------------------------
 
-// ptrRecord is designate's reverse-DNS record for a neutron floating IP. Its ID is
-// "<region>:<floating-ip-id>", not a bare UUID — designate keys reverse records by
-// region because a floating IP is only unique within one.
-type ptrRecord struct {
-	ID          string `json:"id"`
-	PTRDName    string `json:"ptrdname"`
-	Description string `json:"description"`
-	Address     string `json:"address"`
-	TTL         *int   `json:"ttl"`
-	Status      string `json:"status"`
-	Action      string `json:"action"`
-}
-
-func ptrRecordFields(r *ptrRecord) ([]string, []any) {
+func ptrRecordFields(r *dnsapi.PTRRecord) ([]string, []any) {
 	ttl := any("")
 	if r.TTL != nil {
 		ttl = *r.TTL
@@ -286,20 +218,9 @@ func newPTRRecordListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runPTRRecordList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	limit int, common *commonOptions, w io.Writer,
 ) error {
-	all, err := dnsListAll(ctx, client, client.ServiceURL("reverse", "floatingips"),
-		common.headers(), limit,
-		func(raw json.RawMessage) ([]ptrRecord, string, error) {
-			var page struct {
-				FloatingIPs []ptrRecord `json:"floatingips"`
-				Links       dnsLinks    `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing PTR record list: %w", err)
-			}
-			return page.FloatingIPs, page.Links.Next, nil
-		})
+	all, err := dnsapi.ListPTRRecords(ctx, withCommonHeaders(client, common), limit)
 	if err != nil {
-		return fmt.Errorf("listing PTR records: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "PTRD Name", "Description", "TTL"},
@@ -354,12 +275,11 @@ func newPTRRecordShowCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runPTRRecordShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, common *commonOptions, w io.Writer,
 ) error {
-	var r ptrRecord
-	url := client.ServiceURL("reverse", "floatingips", id)
-	if err := dnsGetJSON(ctx, client, url, common.headers(), &r); err != nil {
-		return fmt.Errorf("showing PTR record for floating IP %s: %w", id, err)
+	r, err := dnsapi.GetPTRRecord(ctx, withCommonHeaders(client, common), id)
+	if err != nil {
+		return err
 	}
-	fields, values := ptrRecordFields(&r)
+	fields, values := ptrRecordFields(r)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -425,12 +345,11 @@ func runPTRRecordSet(ctx context.Context, client *gophercloud.ServiceClient, o *
 	case f.ttl != 0:
 		body["ttl"] = f.ttl
 	}
-	var r ptrRecord
-	url := client.ServiceURL("reverse", "floatingips", id)
-	if err := dnsPatchJSON(ctx, client, url, body, &r, f.common.headers()); err != nil {
-		return fmt.Errorf("setting PTR record for floating IP %s: %w", id, err)
+	r, err := dnsapi.SetPTRRecord(ctx, withCommonHeaders(client, f.common), id, body)
+	if err != nil {
+		return err
 	}
-	fields, values := ptrRecordFields(&r)
+	fields, values := ptrRecordFields(r)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -465,10 +384,8 @@ func newPTRRecordUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runPTRRecordUnset(ctx context.Context, client *gophercloud.ServiceClient,
 	id string, common *commonOptions, w io.Writer,
 ) error {
-	url := client.ServiceURL("reverse", "floatingips", id)
-	body := map[string]any{"ptrdname": nil}
-	if err := dnsPatchJSON(ctx, client, url, body, nil, common.headers()); err != nil {
-		return fmt.Errorf("unsetting PTR record for floating IP %s: %w", id, err)
+	if err := dnsapi.UnsetPTRRecord(ctx, withCommonHeaders(client, common), id); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Unset PTR record for floating IP %s\n", id); err != nil {
 		return err
@@ -477,24 +394,6 @@ func runPTRRecordUnset(ctx context.Context, client *gophercloud.ServiceClient,
 }
 
 // --- dns service -----------------------------------------------------------
-
-// serviceStatus is one designate service process's self-reported health.
-//
-// stats and capabilities are JSON *objects*, not arrays: designate emits
-// `"stats": {}, "capabilities": {}` (see designate's service_status schema).
-// Declaring them as []string made every `dns service list`/`show` fail against a
-// real designate with "cannot unmarshal object into Go struct field ... of type
-// []string". Upstream python-designateclient survives only because an empty
-// dict is falsy in its `"\n".join(x) if x else "-"`.
-type serviceStatus struct {
-	ID            string         `json:"id"`
-	Hostname      string         `json:"hostname"`
-	ServiceName   string         `json:"service_name"`
-	Status        string         `json:"status"`
-	Stats         map[string]any `json:"stats"`
-	Capabilities  map[string]any `json:"capabilities"`
-	HeartbeatedAt string         `json:"heartbeated_at"`
-}
 
 // mapOrDash renders designate's stats/capabilities objects: "-" when empty, and
 // otherwise one "key=value" per line, sorted by key so the output is stable.
@@ -514,7 +413,7 @@ func mapOrDash(values map[string]any) string {
 	return strings.Join(lines, "\n")
 }
 
-func serviceStatusFields(s *serviceStatus) ([]string, []any) {
+func serviceStatusFields(s *dnsapi.ServiceStatus) ([]string, []any) {
 	return []string{"id", "hostname", "service_name", "status", "stats", "capabilities", "heartbeated_at"},
 		[]any{s.ID, s.Hostname, s.ServiceName, s.Status,
 			mapOrDash(s.Stats), mapOrDash(s.Capabilities), dnsTimeString(s.HeartbeatedAt)}
@@ -576,28 +475,10 @@ func newDNSServiceListCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runDNSServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *dnsServiceListFlags, common *commonOptions, w io.Writer,
 ) error {
-	q, err := dnsQuery(struct {
-		Hostname    string `q:"hostname"`
-		ServiceName string `q:"service_name"`
-		Status      string `q:"status"`
-	}{f.hostname, f.serviceName, f.status})
+	all, err := dnsapi.ListServiceStatuses(ctx, withCommonHeaders(client, common),
+		dnsapi.ServiceStatusListOpts{Hostname: f.hostname, ServiceName: f.serviceName, Status: f.status}, f.limit)
 	if err != nil {
 		return err
-	}
-	all, err := dnsListAll(ctx, client, client.ServiceURL("service_statuses")+q,
-		common.headers(), f.limit,
-		func(raw json.RawMessage) ([]serviceStatus, string, error) {
-			var page struct {
-				Statuses []serviceStatus `json:"service_statuses"`
-				Links    dnsLinks        `json:"links"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return nil, "", fmt.Errorf("parsing service status list: %w", err)
-			}
-			return page.Statuses, page.Links.Next, nil
-		})
-	if err != nil {
-		return fmt.Errorf("listing DNS service statuses: %w", err)
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Hostname", "Service Name", "Status", "Stats", "Capabilities"},
@@ -636,11 +517,10 @@ func newDNSServiceShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runDNSServiceShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, common *commonOptions, w io.Writer,
 ) error {
-	var s serviceStatus
-	url := client.ServiceURL("service_statuses", id)
-	if err := dnsGetJSON(ctx, client, url, common.headers(), &s); err != nil {
-		return fmt.Errorf("showing DNS service status %s: %w", id, err)
+	s, err := dnsapi.GetServiceStatus(ctx, withCommonHeaders(client, common), id)
+	if err != nil {
+		return err
 	}
-	fields, values := serviceStatusFields(&s)
+	fields, values := serviceStatusFields(s)
 	return o.WriteSingle(w, fields, values)
 }

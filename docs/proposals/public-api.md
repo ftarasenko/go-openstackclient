@@ -11,7 +11,7 @@ ports, routers, floating IPs and security groups, and all of its long tail:
 QoS, address scopes and groups, subnet pools, trunks, IP availability, RBAC,
 segments, port forwarding, extra routes, agents and their scheduling, service
 providers, extensions, BGP dynamic routing, tap mirrors, BGP VPNs, FWaaS and
-VPNaaS, and all of octavia's load balancers.
+VPNaaS, all of octavia's load balancers, and all of designate.
 The remaining services move one `refactor(<service>)` series at a time,
 following the checklist below.
 
@@ -39,6 +39,7 @@ release pipeline do not change.
 | `pkg/openstack/extension` | `List`, `Get`, `Extension` (nova, cinder and neutron answer `/extensions` alike) | 28 |
 | `pkg/openstack/ratelimit` | `List`, `Limit` (nova and cinder answer the `rate` half of `/limits` alike) | 24 |
 | `pkg/openstack/loadbalancer` | `FindLoadBalancerID`, `ListLoadBalancers`, `GetLoadBalancer`, `CreateLoadBalancer`, `UpdateLoadBalancer`, `DeleteLoadBalancer`, `FailoverLoadBalancer`, `GetLoadBalancerStats`, `GetLoadBalancerStatuses`; `WaitForLoadBalancerActive`, `WaitForLoadBalancerDeleted`, `ProvisioningActive`, `ProvisioningError`, `ProvisioningDeleted`; `FindListenerID`, `ListListeners`, `GetListener`, `CreateListener`, `UpdateListener`, `DeleteListener`; `FindPoolID`, `ListPools`, `GetPool`, `CreatePool`, `UpdatePool`, `DeletePool`, `FindMemberID`, `ListMembers`, `GetMember`, `CreateMember`, `UpdateMember`, `DeleteMember`; `FindHealthMonitorID`, `ListHealthMonitors`, `GetHealthMonitor`, `CreateHealthMonitor`, `UpdateHealthMonitor`, `DeleteHealthMonitor`; `FindL7PolicyID`, `ListL7Policies`, `GetL7Policy`, `CreateL7Policy`, `UpdateL7Policy`, `DeleteL7Policy`, `ListL7Rules`, `GetL7Rule`, `CreateL7Rule`, `UpdateL7Rule`, `DeleteL7Rule`; `FindFlavorID`, `ListFlavors`, `GetFlavor`, `CreateFlavor`, `UpdateFlavor`, `SetFlavorEnabled`, `DeleteFlavor`, `FindFlavorProfileID`, `ListFlavorProfiles`, `GetFlavorProfile`, `CreateFlavorProfile`, `UpdateFlavorProfile`, `DeleteFlavorProfile`; `ListAmphorae`, `GetAmphora`, `FailoverAmphora`, `ConfigureAmphora`, `DeleteAmphora`, `GetAmphoraStats`, `AmphoraListenerStats`; `ListProviders`, `ListProviderCapabilities`, `ProviderCapability`; `ListQuotas`, `ProjectQuota`, `GetQuota`, `UpdateQuota`, `UnsetQuotas`, `ResetQuota`, `GetDefaultQuota` | 307 |
+| `pkg/openstack/dns` | `Scope`, `WithScope`; `FindZone`, `FindZoneID`, `ListZones`, `GetZone`, `CreateZone`, `UpdateZone`, `ZoneUpdateMap`, `DeleteZone`, `ZoneDetail`, `ZoneTask`, `ListZoneNameservers`, `ShareZone`, `ListZoneShares`, `GetZoneShare`, `UnshareZone`; `FindRecordSets`, `FindRecordSetID`, `ListRecordSets`, `GetRecordSet`, `CreateRecordSet`, `UpdateRecordSet`, `DeleteRecordSet`, `RecordSet`, `ExtractRecordSets`; `CreateTransferRequest`, `ListTransferRequests`, `GetTransferRequest`, `UpdateTransferRequest`, `DeleteTransferRequest`, `AcceptTransferRequest`, `ListTransferAccepts`, `GetTransferAccept`; `GetQuota`, `UpdateQuota`, `ResetQuota`; `FindTSIGKeyID`, `ListTSIGKeys`, `GetTSIGKey`, `CreateTSIGKey`, `UpdateTSIGKey`, `DeleteTSIGKey`; `CreateZoneExport`, `ListZoneExports`, `ZoneExportListOpts`, `GetZoneExport`, `GetZoneExportFile`, `DeleteZoneExport`, `ZoneExport`, `CreateZoneImport`, `ListZoneImports`, `ZoneImportListOpts`, `GetZoneImport`, `DeleteZoneImport`, `ZoneImport`; `GetLimits`; `FindPoolID`, `ListPools`, `GetPool`, `Pool`, `PoolNS`; `ListPTRRecords`, `GetPTRRecord`, `SetPTRRecord`, `UnsetPTRRecord`, `PTRRecord`; `ListServiceStatuses`, `ServiceStatusListOpts`, `GetServiceStatus`, `ServiceStatus`; `FindBlacklistID`, `ListBlacklists`, `GetBlacklist`, `CreateBlacklist`, `UpdateBlacklist`, `DeleteBlacklist`, `Blacklist`; `FindTLDID`, `ListTLDs`, `GetTLD`, `CreateTLD`, `UpdateTLD`, `DeleteTLD`, `TLD` | 412 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -299,6 +300,21 @@ explicit, ERROR fails fast, and five failed reads in a row end the wait. The
 CLI keeps `--wait-timeout` and its package-level poll interval and timeout,
 which its tests shorten.
 
+Designate moved in one MR. Its admin context (`--all-projects`,
+`--sudo-project-id`) is a `Scope` that `WithScope` puts on a shallow copy of
+the client, so every call made with it sends the headers and no function
+takes them as an argument; on the wire it is the same per-request headers as
+before. The `Find…ID` functions are strict. The CLI's lenient lookups (a TSIG
+key or pool name with no match passed on as given, the zone's own
+`zone %q not found`) stay in `internal/cli/dns` on top of them, and
+`FindRecordSets` returns every exact match so the CLI can still list the
+types of an ambiguous recordset name. gophercloud covers zones, recordsets,
+transfers, quotas and TSIG keys; the rest is raw and koc-owned: zone tasks,
+nameservers, quota reset, exports and imports (the zonefile as `text/dns`),
+pools, PTR records, service statuses, blacklists and TLDs, all paged by
+following `links.next`. `ZoneDetail` and `RecordSet` add what gophercloud's
+types drop: the zone's `shared` flag and a recordset's null TTL.
+
 **Shapes worth copying.** `image.CreateImageWithData` (a multi-step flow with
 its cleanup, behind one call, with the single steps public too);
 `image.ImportOpts` and `image.TaskListOpts` (gophercloud's opts plus the field
@@ -370,7 +386,7 @@ seams, 2k lines) took about a third of one.
 | 5 | `network` core: floating IPs, ports, security groups (+ networks, subnets, routers, `helpers.go`) | 6 409 of 20 621 | 37 | 19 | — | M, 2 sessions; **done** | The strict helpers in `helpers.go` (`no %s found for %q`) become the public lookups. |
 | 6 | `network`: the long tail (QoS, FWaaS, VPNaaS, BGP VPN, trunks, tap, …) | 14 212 | 166 | 69 | — | L, 4 sessions; **done** | Extension-gated; keep each extension's file as its own public file. |
 | 7 | `loadbalancer` | 5 367 / 3 008 | 62 | 28 | 1 | M, 2 sessions; **done** | `wait.go` provisioning poll. |
-| 8 | `dns` | 4 945 / 3 924 | 60 | 18 | — | M, 1½ sessions | Lenient resolvers move to strict on the public side. |
+| 8 | `dns` | 4 945 / 3 924 | 60 | 18 | — | M, 1½ sessions; **done** | Lenient resolvers move to strict on the public side. |
 | 9 | `identity` | 3 784 / 3 116 | 57 | 21 | — | M, 1½ sessions; **done** | Lenient resolvers; application credentials, roles. |
 | 10 | `placement` | 2 076 / 2 094 | 31 | 13 | — | S–M, 1 session | Microversion-gated calls. |
 | 11 | `baremetal` (+ inspector) | 8 148 / 5 532 | 99 | 20 | 2 | L, 3 sessions | `explainMicroversion` → an exported `MicroversionError` (service, feature, required, cloud max) so importers can `errors.As`; provision-state `--wait`; both inspection dialects; `--creds-from-ns`'s standalone basic-auth ironic stays CLI-side (an importer brings its own ProviderClient). |
