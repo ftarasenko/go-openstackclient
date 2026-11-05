@@ -13,7 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // "volume qos" — cinder QoS specs and their association with volume types.
@@ -67,9 +67,9 @@ func newQoSListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runQoSList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, limit int, w io.Writer) error {
-	all, err := paging.Collect(ctx, qos.List(client, qos.ListOpts{Limit: limit}), limit, qos.ExtractQoS)
+	all, err := volumeapi.ListQoS(ctx, client, qos.ListOpts{Limit: limit}, limit)
 	if err != nil {
-		return fmt.Errorf("listing volume QoS specifications: %w", err)
+		return err
 	}
 	// Associations costs one request per spec, as upstream's does, so it is
 	// only paid for when the column is going to be rendered.
@@ -92,13 +92,9 @@ func runQoSList(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 // 10.3.0, volume/v3/qos_specs.py ListQos), which it reads from the spec's
 // associations endpoint, one request per spec.
 func qosAssociationNames(ctx context.Context, client *gophercloud.ServiceClient, id string) ([]string, error) {
-	pages, err := qos.ListAssociations(client, id).AllPages(ctx)
+	all, err := volumeapi.ListQoSAssociations(ctx, client, id)
 	if err != nil {
-		return nil, fmt.Errorf("listing the associations of volume QoS specification %q: %w", id, err)
-	}
-	all, err := qos.ExtractAssociations(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing the associations of volume QoS specification %q: %w", id, err)
+		return nil, relabel(err, "listing the associations of volume QoS specification %q", id)
 	}
 	names := make([]string, 0, len(all))
 	for _, a := range all {
@@ -131,9 +127,9 @@ func runQoSShow(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if err != nil {
 		return err
 	}
-	q, err := qos.Get(ctx, client, id).Extract()
+	q, err := volumeapi.GetQoS(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing volume QoS specification %q: %w", ref, err)
+		return relabel(err, "showing volume QoS specification %q", ref)
 	}
 	fields, values := qosShowFields(q)
 	return o.WriteSingle(w, fields, values)
@@ -145,13 +141,9 @@ func resolveQoSID(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	if resolve.IsUUID(ref) {
 		return ref, nil
 	}
-	pages, err := qos.List(client, qos.ListOpts{}).AllPages(ctx)
+	all, err := volumeapi.ListQoS(ctx, client, qos.ListOpts{}, 0)
 	if err != nil {
-		return "", fmt.Errorf("looking up QoS specification %q: %w", ref, err)
-	}
-	all, err := qos.ExtractQoS(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing the QoS specification list: %w", err)
+		return "", relabel(err, "looking up QoS specification %q", ref)
 	}
 	var matches []string
 	for _, q := range all {
@@ -206,13 +198,13 @@ func runQoSCreate(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)
 	}
-	q, err := qos.Create(ctx, client, qos.CreateOpts{
+	q, err := volumeapi.CreateQoS(ctx, client, qos.CreateOpts{
 		Name:     name,
 		Consumer: qos.QoSConsumer(consumer),
 		Specs:    specs,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating volume QoS specification %q: %w", name, err)
+		return err
 	}
 	fields, values := qosShowFields(q)
 	return o.WriteSingle(w, fields, values)
@@ -246,8 +238,8 @@ func runQoSDelete(ctx context.Context, client *gophercloud.ServiceClient, refs [
 		if err != nil {
 			return err
 		}
-		if err := qos.Delete(ctx, client, id, qos.DeleteOpts{Force: force}).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting volume QoS specification %q: %w", ref, err)
+		if err := volumeapi.DeleteQoS(ctx, client, id, force); err != nil {
+			return relabel(err, "deleting volume QoS specification %q", ref)
 		}
 		return nil
 	})
@@ -303,8 +295,8 @@ func runQoSSet(ctx context.Context, client *gophercloud.ServiceClient, o *output
 		}
 	}
 	if len(add) > 0 {
-		if _, err := qos.Update(ctx, client, id, qos.UpdateOpts{Specs: add}).Extract(); err != nil {
-			return fmt.Errorf("updating QoS specification %q: %w", ref, err)
+		if _, err := volumeapi.SetQoSSpecs(ctx, client, id, add); err != nil {
+			return relabel(err, "updating QoS specification %q", ref)
 		}
 	}
 	return runQoSShow(ctx, client, o, id, w)
@@ -321,16 +313,16 @@ func runQoSSet(ctx context.Context, client *gophercloud.ServiceClient, o *output
 func clearOtherProperties(ctx context.Context, client *gophercloud.ServiceClient,
 	id, ref string, keep map[string]string,
 ) error {
-	current, err := qos.Get(ctx, client, id).Extract()
+	current, err := volumeapi.GetQoS(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("reading QoS specification %q before clearing it: %w", ref, err)
+		return relabel(err, "reading QoS specification %q before clearing it", ref)
 	}
 	keys := staleProperties(current.Specs, keep)
 	if len(keys) == 0 {
 		return nil
 	}
-	if err := qos.DeleteKeys(ctx, client, id, qos.DeleteKeysOpts(keys)).ExtractErr(); err != nil {
-		return fmt.Errorf("clearing properties of QoS specification %q: %w", ref, err)
+	if err := volumeapi.DeleteQoSKeys(ctx, client, id, keys); err != nil {
+		return relabel(err, "clearing properties of QoS specification %q", ref)
 	}
 	return nil
 }
@@ -380,8 +372,8 @@ func runQoSUnset(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	if err := qos.DeleteKeys(ctx, client, id, qos.DeleteKeysOpts(keys)).ExtractErr(); err != nil {
-		return fmt.Errorf("removing properties from QoS specification %q: %w", ref, err)
+	if err := volumeapi.DeleteQoSKeys(ctx, client, id, keys); err != nil {
+		return relabel(err, "removing properties from QoS specification %q", ref)
 	}
 	return runQoSShow(ctx, client, o, id, w)
 }
@@ -416,8 +408,8 @@ func runQoSAssociate(ctx context.Context, client *gophercloud.ServiceClient, qos
 	if err != nil {
 		return err
 	}
-	if err := qos.Associate(ctx, client, qosID, qos.AssociateOpts{VolumeTypeID: typeID}).ExtractErr(); err != nil {
-		return fmt.Errorf("associating QoS specification %q with volume type %q: %w", qosRef, typeRef, err)
+	if err := volumeapi.AssociateQoS(ctx, client, qosID, typeID); err != nil {
+		return relabel(err, "associating QoS specification %q with volume type %q", qosRef, typeRef)
 	}
 	return nil
 }
@@ -455,8 +447,8 @@ func runQoSDisassociate(ctx context.Context, client *gophercloud.ServiceClient, 
 		return err
 	}
 	if all {
-		if err := qos.DisassociateAll(ctx, client, qosID).ExtractErr(); err != nil {
-			return fmt.Errorf("disassociating every volume type from QoS specification %q: %w", qosRef, err)
+		if err := volumeapi.DisassociateAllQoS(ctx, client, qosID); err != nil {
+			return relabel(err, "disassociating every volume type from QoS specification %q", qosRef)
 		}
 		return nil
 	}
@@ -464,8 +456,8 @@ func runQoSDisassociate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	if err := qos.Disassociate(ctx, client, qosID, qos.DisassociateOpts{VolumeTypeID: typeID}).ExtractErr(); err != nil {
-		return fmt.Errorf("disassociating volume type %q from QoS specification %q: %w", typeRef, qosRef, err)
+	if err := volumeapi.DisassociateQoS(ctx, client, qosID, typeID); err != nil {
+		return relabel(err, "disassociating volume type %q from QoS specification %q", typeRef, qosRef)
 	}
 	return nil
 }

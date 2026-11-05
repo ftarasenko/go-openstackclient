@@ -12,7 +12,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // newBackupCommand builds "volume backup ...".
@@ -98,9 +98,9 @@ func runBackupList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		Marker:     f.marker,
 	}
 	// Limit is only the page size to cinder; enforce it as a hard result cap.
-	all, err := paging.Collect(ctx, backups.ListDetail(client, backupListDetailOpts{opts}), f.limit, backups.ExtractBackups)
+	all, err := volumeapi.ListBackups(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing backups: %w", err)
+		return err
 	}
 	var names map[string]string
 	if f.long {
@@ -135,19 +135,6 @@ func backupListTable(list []backups.Backup, long bool, volumeNames map[string]st
 	return t
 }
 
-// backupListDetailOpts sends ListOpts's filters to cinder's detail listing.
-//
-// GET /backups is cinder's summary view — id, name and links, nothing else
-// (cinder/api/views/backups.py summary) — so a listing read from it showed an
-// empty Description, Status and Size for every backup. /backups/detail takes
-// the same name, status and volume_id filters, but gophercloud's
-// ListDetailOpts does not model them, hence this adapter over ListOpts.
-type backupListDetailOpts struct{ backups.ListOpts }
-
-func (opts backupListDetailOpts) ToBackupListDetailQuery() (string, error) {
-	return opts.ToBackupListQuery()
-}
-
 func newBackupShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <backup>",
@@ -172,9 +159,9 @@ func runBackupShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	b, err := backups.Get(ctx, client, id).Extract()
+	b, err := volumeapi.GetBackup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting backup %q: %w", ref, err)
+		return relabel(err, "getting backup %q", ref)
 	}
 	fields, values := backupShowFields(b)
 	return o.WriteSingle(w, fields, values)
@@ -241,9 +228,9 @@ func runBackupCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		}
 		opts.SnapshotID = snapID
 	}
-	b, err := backups.Create(ctx, client, opts).Extract()
+	b, err := volumeapi.CreateBackup(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating backup: %w", err)
+		return err
 	}
 	fields, values := backupShowFields(b)
 	return o.WriteSingle(w, fields, values)
@@ -274,8 +261,8 @@ func runBackupDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err != nil {
 			return err
 		}
-		if err := backups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting backup %q: %w", ref, err)
+		if err := volumeapi.DeleteBackup(ctx, client, id); err != nil {
+			return relabel(err, "deleting backup %q", ref)
 		}
 		if _, err := fmt.Fprintf(w, "Deleted backup: %s\n", ref); err != nil {
 			return err
@@ -326,9 +313,9 @@ func runBackupRestore(ctx context.Context, client *gophercloud.ServiceClient, o 
 		}
 		opts.VolumeID = volID
 	}
-	r, err := backups.RestoreFromBackup(ctx, client, backupID, opts).Extract()
+	r, err := volumeapi.RestoreBackup(ctx, client, backupID, opts)
 	if err != nil {
-		return fmt.Errorf("restoring backup %q: %w", backupRef, err)
+		return relabel(err, "restoring backup %q", backupRef)
 	}
 	return o.WriteSingle(w, backupRestoreColumns, []any{r.BackupID, r.VolumeID, r.VolumeName})
 }

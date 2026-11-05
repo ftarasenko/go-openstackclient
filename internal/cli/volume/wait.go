@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumetypes"
 
 	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
@@ -33,7 +32,7 @@ func waitContext(ctx context.Context, timeout time.Duration) (context.Context, c
 // not fatal: matching falls back to the ID, which is always known.
 func newRetypeTarget(ctx context.Context, client *gophercloud.ServiceClient, typeID string) retypeTarget {
 	t := retypeTarget{id: typeID}
-	if vt, err := volumetypes.Get(ctx, client, typeID).Extract(); err == nil {
+	if vt, err := volumeapi.GetVolumeType(ctx, client, typeID); err == nil {
 		t.name = vt.Name
 	}
 	return t

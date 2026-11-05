@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
 )
 
 // The set/unset verbs of "volume snapshot" and "volume backup".
@@ -81,8 +82,8 @@ func runSnapshotSet(ctx context.Context, client *gophercloud.ServiceClient, ref 
 		if descSet {
 			opts.Description = &f.description
 		}
-		if _, err := snapshots.Update(ctx, client, id, opts).Extract(); err != nil {
-			return fmt.Errorf("updating snapshot %q: %w", ref, err)
+		if _, err := volumeapi.UpdateSnapshot(ctx, client, id, opts); err != nil {
+			return relabel(err, "updating snapshot %q", ref)
 		}
 	}
 	if len(f.property) > 0 || f.noProperty {
@@ -94,13 +95,13 @@ func runSnapshotSet(ctx context.Context, client *gophercloud.ServiceClient, ref 
 		if merr != nil {
 			return merr
 		}
-		if _, err := snapshots.UpdateMetadata(ctx, client, id, snapshots.UpdateMetadataOpts{Metadata: merged}).Extract(); err != nil {
-			return fmt.Errorf("updating properties of snapshot %q: %w", ref, err)
+		if _, err := volumeapi.ReplaceSnapshotMetadata(ctx, client, id, merged); err != nil {
+			return relabel(err, "updating properties of snapshot %q", ref)
 		}
 	}
 	if f.state != "" {
-		if err := snapshots.ResetStatus(ctx, client, id, snapshots.ResetStatusOpts{Status: f.state}).ExtractErr(); err != nil {
-			return fmt.Errorf("resetting the status of snapshot %q: %w", ref, err)
+		if err := volumeapi.ResetSnapshotStatus(ctx, client, id, f.state); err != nil {
+			return relabel(err, "resetting the status of snapshot %q", ref)
 		}
 	}
 	return nil
@@ -140,8 +141,8 @@ func runSnapshotUnset(ctx context.Context, client *gophercloud.ServiceClient, re
 	if err != nil {
 		return err
 	}
-	if _, err := snapshots.UpdateMetadata(ctx, client, id, snapshots.UpdateMetadataOpts{Metadata: merged}).Extract(); err != nil {
-		return fmt.Errorf("removing properties from snapshot %q: %w", ref, err)
+	if _, err := volumeapi.ReplaceSnapshotMetadata(ctx, client, id, merged); err != nil {
+		return relabel(err, "removing properties from snapshot %q", ref)
 	}
 	return nil
 }
@@ -153,9 +154,9 @@ func mergedSnapshotMetadata(ctx context.Context, client *gophercloud.ServiceClie
 ) (map[string]any, error) {
 	merged := map[string]any{}
 	if !clearAll {
-		current, err := snapshots.Get(ctx, client, id).Extract()
+		current, err := volumeapi.GetSnapshot(ctx, client, id)
 		if err != nil {
-			return nil, fmt.Errorf("reading snapshot %s before updating its properties: %w", id, err)
+			return nil, relabel(err, "reading snapshot %s before updating its properties", id)
 		}
 		for k, v := range current.Metadata {
 			merged[k] = v
@@ -171,34 +172,6 @@ func mergedSnapshotMetadata(ctx context.Context, client *gophercloud.ServiceClie
 }
 
 // --- volume backup set/unset ------------------------------------------------
-
-// backupUpdateOpts wraps gophercloud's UpdateOpts in the "backup" object cinder
-// requires.
-//
-// At v2.13.0 backups.UpdateOpts.ToBackupUpdateMap calls BuildRequestBody(opts,
-// "") — with an empty parent — so the body goes out as {"name": ...} rather than
-// {"backup": {"name": ...}}. cinder/api/v3/backups.py does `body['backup']`
-// unconditionally, so a real cloud answers 400 and every `volume backup set`
-// would fail. The wrap is skipped if the key is already present, so this becomes
-// a no-op the moment gophercloud is fixed upstream.
-type backupUpdateOpts struct {
-	backups.UpdateOpts
-}
-
-func (o backupUpdateOpts) ToBackupUpdateMap() (map[string]any, error) {
-	body, err := o.UpdateOpts.ToBackupUpdateMap()
-	if err != nil {
-		return nil, err
-	}
-	return o.wrap(body)
-}
-
-func (backupUpdateOpts) wrap(body map[string]any) (map[string]any, error) {
-	if _, wrapped := body["backup"]; wrapped {
-		return body, nil
-	}
-	return map[string]any{"backup": body}, nil
-}
 
 type backupSetFlags struct {
 	name        string
@@ -267,13 +240,13 @@ func runBackupSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 		opts.Metadata = merged
 	}
 	if nameSet || descSet || len(f.property) > 0 || f.noProperty {
-		if _, err := backups.Update(ctx, client, id, backupUpdateOpts{opts}).Extract(); err != nil {
-			return fmt.Errorf("updating backup %q: %w", ref, err)
+		if _, err := volumeapi.UpdateBackup(ctx, client, id, opts); err != nil {
+			return relabel(err, "updating backup %q", ref)
 		}
 	}
 	if f.state != "" {
-		if err := backups.ResetStatus(ctx, client, id, backups.ResetStatusOpts{Status: f.state}).ExtractErr(); err != nil {
-			return fmt.Errorf("resetting the status of backup %q: %w", ref, err)
+		if err := volumeapi.ResetBackupStatus(ctx, client, id, f.state); err != nil {
+			return relabel(err, "resetting the status of backup %q", ref)
 		}
 	}
 	return nil
@@ -313,9 +286,8 @@ func runBackupUnset(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	if err != nil {
 		return err
 	}
-	opts := backupUpdateOpts{backups.UpdateOpts{Metadata: merged}}
-	if _, err := backups.Update(ctx, client, id, opts).Extract(); err != nil {
-		return fmt.Errorf("removing properties from backup %q: %w", ref, err)
+	if _, err := volumeapi.UpdateBackup(ctx, client, id, backups.UpdateOpts{Metadata: merged}); err != nil {
+		return relabel(err, "removing properties from backup %q", ref)
 	}
 	return nil
 }
@@ -325,9 +297,9 @@ func mergedBackupMetadata(ctx context.Context, client *gophercloud.ServiceClient
 ) (map[string]string, error) {
 	merged := map[string]string{}
 	if !clearAll {
-		current, err := backups.Get(ctx, client, id).Extract()
+		current, err := volumeapi.GetBackup(ctx, client, id)
 		if err != nil {
-			return nil, fmt.Errorf("reading backup %s before updating its properties: %w", id, err)
+			return nil, relabel(err, "reading backup %s before updating its properties", id)
 		}
 		// gophercloud models the backup's metadata as *map[string]string, so a
 		// backup with none at all comes back as a nil pointer rather than an

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/backups"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
@@ -125,6 +126,25 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /block-storage/volumes/vol-1", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"volume": map[string]any{"id": "vol-1", "status": "available", "volume_type": "ssd"}})
+	})
+	mux.HandleFunc("GET /block-storage/backups/detail", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("volume_id") != "vol-1" {
+			http.Error(w, "want volume_id", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"backups": []map[string]any{{"id": "bak-1", "volume_id": "vol-1", "status": "available"}}})
+	})
+	mux.HandleFunc("PUT /block-storage/backups/bak-1", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Backup *struct {
+				Name string `json:"name"`
+			} `json:"backup"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Backup == nil {
+			http.Error(w, "want a backup object", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"backup": map[string]any{"id": "bak-1", "name": body.Backup.Name}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -243,5 +263,13 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if err := volume.WaitForRetype(ctx, volumeClient, "vol-1", "", "ssd", time.Millisecond); err != nil {
 		t.Fatalf("WaitForRetype: %v", err)
+	}
+	baks, err := volume.ListBackups(ctx, volumeClient, backups.ListOpts{VolumeID: "vol-1"}, 0)
+	if err != nil || len(baks) != 1 || baks[0].ID != "bak-1" {
+		t.Fatalf("ListBackups = %+v, %v", baks, err)
+	}
+	name := "nightly"
+	if b, err := volume.UpdateBackup(ctx, volumeClient, "bak-1", backups.UpdateOpts{Name: &name}); err != nil || b.Name != name {
+		t.Fatalf("UpdateBackup = %+v, %v", b, err)
 	}
 }
