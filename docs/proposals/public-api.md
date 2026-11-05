@@ -1,8 +1,9 @@
 # Public Go API under `pkg/`
 
 Status: phases 0–2 landed (scaffolding and guards; session, paging, resolve;
-the keyvrm and image pilots). The remaining services move one
-`refactor(<service>)` series at a time, following the checklist below.
+the keyvrm and image pilots), and compute's flavors and keypairs have moved.
+The remaining services move one `refactor(<service>)` series at a time,
+following the checklist below.
 
 ## Why
 
@@ -21,6 +22,7 @@ release pipeline do not change.
 | `pkg/openstack/paging` | `Collect[T]` | 22 |
 | `pkg/openstack/resolve` | `ImageID`, `NetworkID`, `SubnetID`, `PortID`, `VolumeID`, `ServerID`, `ProjectID`, `ProjectIDInDomain`, `ProjectIDInDomainID`, `DomainID`, `UserID`, `UserIDInDomain`, `UserIDInDomainID` (package funcs and `Resolver` methods); `Resolver`, `Cache`, `NewCache`, `WithClock`, `CacheOption`; `NotFoundError`, `AmbiguousError`; `IsUUID` | 182 |
 | `pkg/openstack/image` | `ListImages`, `FindByName`, `GetImage`, `DeleteImage`, `UpdateImage`, `EscapePropertyName`, `ActivateImage`, `DeactivateImage`, `CreateImage`, `CreateImageWithData`, `UploadImageData`, `StageImageData`, `DiscardImage`, `DownloadImage`, `CreateImageFromVolume`, `ImportImage`, `ImportOpts`, `GetImportInfo`, `AddMember`, `RemoveMember`, `ListMembers`, `UpdateMember`, `ListTasks`, `TaskListOpts`, `GetTask`, `ListStores`, `Store`, `WaitForStatus`, `Data`, `VisibilityAll`, `ErrGlanceDirectUnavailable` | 217 |
+| `pkg/openstack/compute` | `ListFlavors`, `GetFlavor`, `FindFlavor`, `CreateFlavor`, `DeleteFlavor`, `ListFlavorAccess`, `AddFlavorAccess`, `RemoveFlavorAccess`, `SetFlavorExtraSpecs`, `DeleteFlavorExtraSpec`, `ClearFlavorExtraSpecs`, `UpdateFlavorDescription`, `FlavorDescriptionMicroversion`; `ListKeypairs`, `GetKeypair`, `CreateKeypair`, `DeleteKeypair` | 97 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -76,6 +78,13 @@ operator's reference instead; the CLI re-labels the same inner error
 (`relabel`), so output is byte-identical. A message that names a CLI flag
 (`--import: the cloud does not offer the glance-direct import method`) became
 a sentinel (`image.ErrGlanceDirectUnavailable`) that the CLI prefixes.
+
+Compute's flavor verbs all name the operator's reference, so the public
+functions keep the CLI's texts with the quoted flavor ID, and
+`internal/cli/compute` swaps that ID for the reference (`relabel`). The
+flavor lookup was already strict; `compute.FindFlavor` returns
+`*resolve.NotFoundError`/`*resolve.AmbiguousError`, and the CLI keeps its
+own wording for both.
 
 **Shapes worth copying.** `image.CreateImageWithData` (a multi-step flow with
 its cleanup, behind one call, with the single steps public too);
@@ -141,7 +150,7 @@ seams, 2k lines) took about a third of one.
 
 | Order | Service (package) | src / test lines | Seams | Raw | Wait | Effort | Notes |
 | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 1 | `compute`: flavors, keypairs (`internal/cli/compute`) | 1 215 / 1 845 | 10 | 5 | — | S, ½ session | Opens `pkg/openstack/compute`, following the API rather than the CLI tree. |
+| 1 | `compute`: flavors, keypairs (`internal/cli/compute`) | 1 215 / 1 845 | 10 | 5 | — | **Done** | `pkg/openstack/compute`, laid out by API resource rather than the CLI tree. |
 | 2 | `compute`: servers (`internal/cli/server`) | 10 256 / 11 132 | 63 | 37 | 2 | L, 3 sessions | `serverActionRaw` microversion pin, `readUserData` encoding, `serverRebuildOptsExt`, migration/live-migration waits, console POSTs; cross-service image/network/volume resolution takes the extra clients explicitly. |
 | 3 | `volume` | 5 003 / 5 316 | 53 | 37 | 1 | M–L, 2 sessions | `wait.go`; raw cinder service enable/disable and other untyped actions; already strict resolution (`no %s found matching %q`). |
 | 4 | `quota` + `crossservice` | 1 702 / 1 278 | 8 | 10 | — | S, ½–1 session | The cross-service calls (nova + cinder + neutron) take a `*openstack.Session`. |
@@ -154,6 +163,11 @@ seams, 2k lines) took about a third of one.
 | 11 | `baremetal` (+ inspector) | 8 148 / 5 532 | 99 | 20 | 2 | L, 3 sessions | `explainMicroversion` → an exported `MicroversionError` (service, feature, required, cloud max) so importers can `errors.As`; provision-state `--wait`; both inspection dialects; `--creds-from-ns`'s standalone basic-auth ironic stays CLI-side (an importer brings its own ProviderClient). |
 
 Total: about 20 sessions, network and servers being half of it.
+
+The order now follows a downstream importer's needs rather than the "Order"
+column: compute servers (aggregates, hypervisors and services first, then
+actions, then migration and evacuate, then create), identity, volume, quota
+and crossservice, network core, placement, then the rest as listed.
 
 ## Constraints from neighbouring work
 

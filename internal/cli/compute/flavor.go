@@ -2,9 +2,9 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -16,7 +16,8 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // newFlavorCommand builds "flavor ...".
@@ -107,11 +108,11 @@ func runFlavorList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		opts.AccessType = flavors.PublicAccess
 	}
 
-	// Nova treats limit only as a page size, so --limit is enforced as a hard
-	// result cap; Collect also stops paging once it is met.
-	all, err := paging.Collect(ctx, flavors.ListDetail(client, opts), f.limit, flavors.ExtractFlavors)
+	// Nova treats limit only as a page size; ListFlavors enforces --limit as a
+	// hard result cap.
+	all, err := computeapi.ListFlavors(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing flavors: %w", err)
+		return err
 	}
 	return o.WriteList(w, flavorListTable(all, f.long))
 }
@@ -161,9 +162,9 @@ func runFlavorShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	fl, err := flavors.Get(ctx, client, id).Extract()
+	fl, err := computeapi.GetFlavor(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing flavor %q: %w", ref, err)
+		return relabel(err, id, ref)
 	}
 	fields, values := flavorSingle(fl)
 	// A private flavor's whole point is which projects may boot it, and that
@@ -183,13 +184,9 @@ func runFlavorShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 
 // flavorAccessProjectIDs lists the projects granted access to a private flavor.
 func flavorAccessProjectIDs(ctx context.Context, client *gophercloud.ServiceClient, id, ref string) ([]string, error) {
-	pages, err := flavors.ListAccesses(client, id).AllPages(ctx)
+	access, err := computeapi.ListFlavorAccess(ctx, client, id)
 	if err != nil {
-		return nil, fmt.Errorf("listing project access for flavor %q: %w", ref, err)
-	}
-	access, err := flavors.ExtractAccesses(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing project access for flavor %q: %w", ref, err)
+		return nil, relabel(err, id, ref)
 	}
 	projects := make([]string, 0, len(access))
 	for _, a := range access {
@@ -343,23 +340,23 @@ func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	isPublic := f.public && !f.private
 	opts.IsPublic = &isPublic
 
-	fl, err := flavors.Create(ctx, client, opts).Extract()
+	fl, err := computeapi.CreateFlavor(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating flavor %q: %w", name, err)
+		return err
 	}
 	// Nova has no way to create a flavor with its access list or extra specs in
 	// the same call, so both follow the POST — as they do upstream. A failure
 	// here is reported rather than logged: the flavor exists but is not the one
 	// that was asked for, and an exit code is the only way a script sees that.
 	if projectID != "" {
-		if _, aerr := flavors.AddAccess(ctx, client, fl.ID, flavors.AddAccessOpts{Tenant: projectID}).Extract(); aerr != nil {
-			return fmt.Errorf("granting project %q access to flavor %q: %w", projectID, name, aerr)
+		if _, aerr := computeapi.AddFlavorAccess(ctx, client, fl.ID, projectID); aerr != nil {
+			return relabel(aerr, fl.ID, name)
 		}
 	}
 	if len(specs) > 0 {
-		created, serr := flavors.CreateExtraSpecs(ctx, client, fl.ID, flavors.ExtraSpecsOpts(specs)).Extract()
+		created, serr := computeapi.SetFlavorExtraSpecs(ctx, client, fl.ID, specs)
 		if serr != nil {
-			return fmt.Errorf("setting properties on flavor %q: %w", name, serr)
+			return relabel(serr, fl.ID, name)
 		}
 		// The create response predates the extra specs, so fold them in rather
 		// than rendering a flavor whose Properties column is empty.
@@ -410,10 +407,7 @@ func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err != nil {
 			return err
 		}
-		if err := flavors.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting flavor %q: %w", ref, err)
-		}
-		return nil
+		return relabel(computeapi.DeleteFlavor(ctx, client, id), id, ref)
 	})
 }
 
@@ -422,10 +416,10 @@ func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 // ---------------------------------------------------------------------------
 
 // flavorDescriptionMicroversion is the compute microversion that added the
-// flavor description — and with it PUT /flavors/{id}, the only way to change
-// one. Zed's nova caps at 2.93 so every supported cloud has it; a client pinned
-// below it gets a flag error naming the requirement instead of nova's 400.
-const flavorDescriptionMicroversion = "2.55"
+// flavor description. Zed's nova caps at 2.93 so every supported cloud has it;
+// a client pinned below it gets a flag error naming the requirement instead of
+// nova's 400.
+const flavorDescriptionMicroversion = computeapi.FlavorDescriptionMicroversion
 
 // flavorSetFlags holds the flags of "flavor set". Upstream OSC puts three
 // unrelated nova mutations behind this one verb: the extra specs
@@ -513,71 +507,24 @@ func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, ref st
 	// --property writes the new ones, so passing both replaces the set outright.
 	// That combination is exactly what upstream documents the pair for.
 	if f.noProperty {
-		if cerr := clearFlavorExtraSpecs(ctx, client, fl.ID, ref); cerr != nil {
-			return cerr
+		if cerr := computeapi.ClearFlavorExtraSpecs(ctx, client, fl.ID); cerr != nil {
+			return relabel(cerr, fl.ID, ref)
 		}
 	}
 	if len(specs) > 0 {
-		if _, serr := flavors.CreateExtraSpecs(ctx, client, fl.ID, flavors.ExtraSpecsOpts(specs)).Extract(); serr != nil {
-			return fmt.Errorf("setting properties on flavor %q: %w", ref, serr)
+		if _, serr := computeapi.SetFlavorExtraSpecs(ctx, client, fl.ID, specs); serr != nil {
+			return relabel(serr, fl.ID, ref)
 		}
 	}
 	if projectID != "" {
-		if _, aerr := flavors.AddAccess(ctx, client, fl.ID, flavors.AddAccessOpts{Tenant: projectID}).Extract(); aerr != nil {
-			return fmt.Errorf("granting project %q access to flavor %q: %w", projectID, ref, aerr)
+		if _, aerr := computeapi.AddFlavorAccess(ctx, client, fl.ID, projectID); aerr != nil {
+			return relabel(aerr, fl.ID, ref)
 		}
 	}
 	if f.descriptionSet {
-		if derr := updateFlavorDescription(ctx, client, fl.ID, ref, f.description); derr != nil {
-			return derr
+		if derr := computeapi.UpdateFlavorDescription(ctx, client, fl.ID, f.description); derr != nil {
+			return relabel(derr, fl.ID, ref)
 		}
-	}
-	return nil
-}
-
-// clearFlavorExtraSpecs backs --no-property. Nova has no bulk delete for extra
-// specs, so the current set is listed and removed one key at a time; the keys are
-// sorted so the request sequence is deterministic.
-func clearFlavorExtraSpecs(ctx context.Context, client *gophercloud.ServiceClient, id, ref string) error {
-	specs, err := flavors.ListExtraSpecs(ctx, client, id).Extract()
-	if err != nil {
-		return fmt.Errorf("listing properties of flavor %q: %w", ref, err)
-	}
-	keys := make([]string, 0, len(specs))
-	for k := range specs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if err := flavors.DeleteExtraSpec(ctx, client, id, k).ExtractErr(); err != nil {
-			return fmt.Errorf("unsetting property %q on flavor %q: %w", k, ref, err)
-		}
-	}
-	return nil
-}
-
-// updateFlavorDescription sets — or, for an empty value, clears — a flavor's
-// description via PUT /flavors/{id} (nova 2.55+).
-//
-// This is a raw call because gophercloud's flavors.UpdateOpts tags Description
-// `omitempty` and so cannot express the clear: an empty string would send
-// {"flavor": {}} and nova 400s on the empty body. The raw PUT sends an explicit
-// null, which is how nova unsets the field. Replace it with flavors.Update once
-// the typed opts model a nullable description.
-func updateFlavorDescription(ctx context.Context, client *gophercloud.ServiceClient, id, ref, description string) error {
-	var value any
-	if description != "" {
-		value = description
-	}
-	body := map[string]any{"flavor": map[string]any{"description": value}}
-	resp, err := client.Put(ctx, client.ServiceURL("flavors", id), body, nil, &gophercloud.RequestOpts{
-		OkCodes: []int{200},
-	})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if err != nil {
-		return fmt.Errorf("setting description on flavor %q: %w", ref, err)
 	}
 	return nil
 }
@@ -650,13 +597,13 @@ func runFlavorUnset(ctx context.Context, client *gophercloud.ServiceClient, ref 
 	}
 
 	for _, key := range keys {
-		if err := flavors.DeleteExtraSpec(ctx, client, fl.ID, key).ExtractErr(); err != nil {
-			return fmt.Errorf("unsetting property %q on flavor %q: %w", key, ref, err)
+		if err := computeapi.DeleteFlavorExtraSpec(ctx, client, fl.ID, key); err != nil {
+			return relabel(err, fl.ID, ref)
 		}
 	}
 	if projectID != "" {
-		if _, rerr := flavors.RemoveAccess(ctx, client, fl.ID, flavors.RemoveAccessOpts{Tenant: projectID}).Extract(); rerr != nil {
-			return fmt.Errorf("revoking project %q access to flavor %q: %w", projectID, ref, rerr)
+		if _, rerr := computeapi.RemoveFlavorAccess(ctx, client, fl.ID, projectID); rerr != nil {
+			return relabel(rerr, fl.ID, ref)
 		}
 	}
 	return nil
@@ -683,55 +630,39 @@ func parseProperties(props []string) (map[string]string, error) {
 	return out, nil
 }
 
-// resolveFlavor turns a flavor reference (ID or name) into the flavor itself.
-// The nova flavor API keys on ID, so a name is resolved by listing flavors and
-// matching. An exact ID match is preferred so lookups stay cheap and unambiguous
-// when the caller already passes an ID.
-//
-// Nova's flavor listing defaults to is_public=true — even for an admin token —
-// so a private flavor is invisible in the default view. That view is tried first
-// (the common case, one call) and only a miss retries with is_public=None, which
-// nova ignores for a non-admin token rather than rejecting. The retry is what
-// lets an admin name a private flavor, the only kind "flavor set --project"
-// applies to.
+// resolveFlavor turns a flavor reference (ID or name) into the flavor itself,
+// through computeapi.FindFlavor (which also finds an admin's private flavors),
+// keeping this command's wording for no match and several.
 func resolveFlavor(ctx context.Context, client *gophercloud.ServiceClient, ref string) (*flavors.Flavor, error) {
-	for _, access := range []flavors.AccessType{"", flavors.AllAccess} {
-		fl, err := findFlavor(ctx, client, ref, access)
-		if err != nil || fl != nil {
-			return fl, err
-		}
-	}
-	return nil, fmt.Errorf("no flavor found with name or ID %q", ref)
-}
-
-// findFlavor returns the flavor matching ref within one access view, or nil when
-// that view holds no match.
-func findFlavor(ctx context.Context, client *gophercloud.ServiceClient, ref string, access flavors.AccessType) (*flavors.Flavor, error) {
-	pages, err := flavors.ListDetail(client, flavors.ListOpts{AccessType: access}).AllPages(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("resolving flavor %q: %w", ref, err)
-	}
-	all, err := flavors.ExtractFlavors(pages)
-	if err != nil {
-		return nil, fmt.Errorf("resolving flavor %q: %w", ref, err)
-	}
-	var byName []int
-	for i := range all {
-		if all[i].ID == ref {
-			return &all[i], nil
-		}
-		if all[i].Name == ref {
-			byName = append(byName, i)
-		}
-	}
-	switch len(byName) {
-	case 0:
-		return nil, nil
-	case 1:
-		return &all[byName[0]], nil
-	default:
+	fl, err := computeapi.FindFlavor(ctx, client, ref)
+	var notFound *osresolve.NotFoundError
+	var ambiguous *osresolve.AmbiguousError
+	switch {
+	case errors.As(err, &notFound):
+		return nil, fmt.Errorf("no flavor found with name or ID %q", ref)
+	case errors.As(err, &ambiguous):
 		return nil, fmt.Errorf("multiple flavors match name %q; specify the ID instead", ref)
 	}
+	return fl, err
+}
+
+// relabel rewords an error from pkg/openstack/compute the way this command
+// has always printed it. The public functions name the flavor by the ID they
+// were given; these verbs name it by the reference the operator typed (or the
+// name being created), so the quoted ID — the last one in the message — is
+// swapped for it around the same underlying error.
+func relabel(err error, id, ref string) error {
+	inner := errors.Unwrap(err)
+	if inner == nil || id == ref {
+		return err
+	}
+	outer := strings.TrimSuffix(err.Error(), ": "+inner.Error())
+	quoted := strconv.Quote(id)
+	i := strings.LastIndex(outer, quoted)
+	if i < 0 {
+		return err
+	}
+	return fmt.Errorf("%s%s%s: %w", outer[:i], strconv.Quote(ref), outer[i+len(quoted):], inner)
 }
 
 // resolveFlavorID is resolveFlavor for the callers that only need the ID.
