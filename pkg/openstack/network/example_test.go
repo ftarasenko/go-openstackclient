@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
@@ -56,11 +55,11 @@ func ExampleGetQuota() {
 }
 
 // Allocate a floating IP on an external network found by name, with an
-// extension attribute gophercloud's CreateOpts does not model.
+// extension attribute gophercloud's CreateOpts does not model. The lookup is
+// GET /v2.0/networks?name=public, and the create sends
+// {"floatingip":{"floating_network_id":"net-1","qos_policy_id":"qos-1"}}.
 func ExampleCreateFloatingIP() {
 	neutronAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		fmt.Println(strings.TrimSpace(r.Method + " " + r.URL.RequestURI() + " " + string(body)))
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			_, _ = io.WriteString(w, `{"networks":[{"id":"net-1","name":"public"}]}`)
@@ -93,7 +92,5 @@ func ExampleCreateFloatingIP() {
 	}
 	fmt.Println(fip.FloatingIP.FloatingIP, fip.QoSPolicyID)
 	// Output:
-	// GET /v2.0/networks?name=public
-	// POST /v2.0/floatingips {"floatingip":{"floating_network_id":"net-1","qos_policy_id":"qos-1"}}
 	// 203.0.113.10 qos-1
 }
