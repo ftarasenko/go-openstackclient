@@ -105,8 +105,8 @@ func SetL3AgentRouterPriority(ctx context.Context, c *gophercloud.ServiceClient,
 	resp, err := c.Put(ctx, c.ServiceURL("agents", agentID, "l3-routers", routerID),
 		map[string]any{"ha_chassis_priority": priority}, nil,
 		&gophercloud.RequestOpts{OkCodes: []int{200, 201, 202, 204}})
-	if resp != nil {
-		closeBody(resp.Body)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 	return wrap(err, "setting router %s on L3 agent %s", routerID, agentID)
 }

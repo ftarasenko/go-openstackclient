@@ -86,7 +86,7 @@ func TestRelabelList(t *testing.T) {
 		t.Errorf("listing = %v", err)
 	}
 	parsing := fmt.Errorf("parsing L3 agent list: %w", inner)
-	if err := relabelList(parsing, "listing L3 agents hosting router %q", "r1"); err != parsing {
+	if err := relabelList(parsing, "listing L3 agents hosting router %q", "r1"); !errors.Is(err, parsing) || err.Error() != parsing.Error() {
 		t.Errorf("parsing = %v", err)
 	}
 	if err := relabelList(nil, "x"); err != nil {
