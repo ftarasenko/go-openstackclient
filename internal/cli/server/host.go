@@ -20,7 +20,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // The "compute host" drains: emptying one compute host of its servers.
@@ -228,13 +228,8 @@ func hostServers(ctx context.Context, client *gophercloud.ServiceClient, host st
 	}
 	// host is an admin-only filter, and without all_tenants nova answers with
 	// only the caller's own project's servers — which would silently drain half
-	// a host.
-	opts := servers.ListOpts{Host: host, AllTenants: true}
-	all, err := paging.Collect(ctx, servers.List(listClient, opts), 0, servers.ExtractServers)
-	if err != nil {
-		return nil, fmt.Errorf("listing servers on host %q: %w", host, err)
-	}
-	return all, nil
+	// a host. computeapi.ListServersOnHost sends both.
+	return computeapi.ListServersOnHost(ctx, listClient, host)
 }
 
 // emptyHostResult decides what "no servers came back" means.
@@ -274,11 +269,7 @@ func unknownHostError(host string) error {
 func computeServiceOn(ctx context.Context, client *gophercloud.ServiceClient, host string) (
 	svc services.Service, found, ok bool,
 ) {
-	pages, err := services.List(client, services.ListOpts{Binary: "nova-compute", Host: host}).AllPages(ctx)
-	if err != nil {
-		return svc, false, false
-	}
-	all, err := services.ExtractServices(pages)
+	all, _, err := computeapi.ListServices(ctx, client, services.ListOpts{Binary: "nova-compute", Host: host})
 	if err != nil {
 		return svc, false, false
 	}
@@ -390,7 +381,7 @@ func drainOne(ctx context.Context, client *gophercloud.ServiceClient, host strin
 ) (result, detail string) {
 	ref := r.displayRef()
 	pr.began(ref, "starting")
-	if err := serverActionNegotiated(ctx, client, r.id, mode.action); err != nil {
+	if err := errors.Unwrap(computeapi.ServerAction(ctx, client, r.id, mode.action)); err != nil {
 		return drainFail(pr, ref, err)
 	}
 	if !f.wait {
@@ -425,7 +416,7 @@ func drainFail(pr *drainProgress, ref string, err error) (result, detail string)
 }
 
 // awaitServerLeft polls until the server is no longer on host with no task in
-// flight, and returns the status it settled in.
+// flight, and returns the status it settled in (computeapi.WaitForServerToLeaveHost).
 //
 // "It left the host" is the exact signal, and the only one that serves all
 // three drains. Matching statuses cannot: a live migration ends in the status
@@ -452,66 +443,11 @@ func awaitServerLeft(ctx context.Context, client *gophercloud.ServiceClient, ref
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(migratePollInterval)
-	defer ticker.Stop()
-
-	var getErrors int
-	for {
-		var s struct {
-			Status    string `json:"status"`
-			TaskState string `json:"OS-EXT-STS:task_state"`
-			Host      string `json:"OS-EXT-SRV-ATTR:host"`
-		}
-		if err := servers.Get(ctx, client, id).ExtractInto(&s); err != nil {
-			if ctx.Err() != nil {
-				return "", fmt.Errorf("waiting for server %q to leave host %q: %w", ref, host, ctx.Err())
-			}
-			// Tolerate a few consecutive transient Get errors before giving up.
-			getErrors++
-			if getErrors > maxConsecutiveGetErrors {
-				return "", fmt.Errorf("polling server %q during the move: %w", ref, err)
-			}
-		} else {
-			getErrors = 0
-			left := s.TaskState == "" && s.Host != "" && s.Host != host
-			if err := classifyDrainState(ref, host, s.Status, startStatus, left); err != nil {
-				return "", err
-			}
-			if left {
-				return s.Status, nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return "", fmt.Errorf("waiting for server %q to leave host %q: %w", ref, host, ctx.Err())
-		case <-ticker.C:
-		}
+	status, err := computeapi.WaitForServerToLeaveHost(ctx, client, id, host, startStatus, migratePollInterval)
+	if err != nil {
+		return "", relabelMove(err, ref, host, "waiting for server %q to leave host %q", "polling server %q during the move")
 	}
-}
-
-// classifyDrainState decides whether one poll of a moving server is a failure.
-// It is pure, so every combination is reachable from a table test rather than
-// only from a live nova transition.
-//
-// Three cases, and the middle one is why this is not a one-liner:
-//
-//   - The server reached its new host in ERROR: the move ran and the rebuild
-//     failed, whatever state it started in.
-//   - The server is still on the source host in ERROR, having started there in
-//     ERROR: that is where an evacuation begins. Keep polling.
-//   - The server is still on the source host in ERROR, having started healthy:
-//     the move put it there. Fail.
-func classifyDrainState(ref, host, status, startStatus string, left bool) error {
-	if !statusIn(status, "ERROR") {
-		return nil
-	}
-	if left {
-		return fmt.Errorf("server %q reached its new host in ERROR status", ref)
-	}
-	if statusIn(startStatus, "ERROR") {
-		return nil
-	}
-	return fmt.Errorf("server %q entered ERROR status while leaving host %q", ref, host)
+	return status, nil
 }
 
 // drainError condenses an API failure to what fits a table cell.

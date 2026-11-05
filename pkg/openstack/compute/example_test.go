@@ -2,6 +2,7 @@ package compute_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -194,4 +195,75 @@ func ExampleWaitForServerStatus() {
 	fmt.Println(err, "after", reads, "reads")
 	// Output:
 	// <nil> after 2 reads
+}
+
+// Live-migrate a server and follow it off its host. A nil BlockMigration lets
+// nova choose block or shared storage.
+func ExampleWaitForServerToLeaveHost() {
+	reads := 0
+	novaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			var body map[string]map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			fmt.Println("block_migration auto:", body["os-migrateLive"]["block_migration"] == "auto")
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		reads++
+		host, task := "cmp-01", `"migrating"`
+		if reads > 1 {
+			host, task = "cmp-02", "null"
+		}
+		_, _ = fmt.Fprintf(w, `{"server":{"id":"1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e","status":"ACTIVE",`+
+			`"OS-EXT-STS:task_state":%s,"OS-EXT-SRV-ATTR:host":%q}}`, task, host)
+	}))
+	defer novaAPI.Close()
+
+	client, err := sessionFor(novaAPI.URL).Compute()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	const id = "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"
+	if err := compute.LiveMigrateServer(ctx, client, id, compute.LiveMigrateOpts{}); err != nil {
+		fmt.Println(err)
+		return
+	}
+	status, err := compute.WaitForServerToLeaveHost(ctx, client, id, "cmp-01", "ACTIVE", 10*time.Millisecond)
+	fmt.Println(status, err)
+	// Output:
+	// block_migration auto: true
+	// ACTIVE <nil>
+}
+
+// List a host's live migrations, every page of them.
+func ExampleListMigrations() {
+	novaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Println(r.URL.Path, r.URL.RawQuery)
+		_, _ = fmt.Fprint(w, `{"migrations":[{"id":7,"status":"running","migration_type":"live-migration",`+
+			`"source_compute":"cmp-01","dest_compute":"cmp-02"}]}`)
+	}))
+	defer novaAPI.Close()
+
+	client, err := sessionFor(novaAPI.URL).Compute()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	list, err := compute.ListMigrations(context.Background(), client,
+		compute.MigrationListOpts{Host: "cmp-01", MigrationType: "live-migration"}, 0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, m := range list {
+		fmt.Println(m.ID, m.Status, m.SourceCompute, "->", m.DestCompute)
+	}
+	// Output:
+	// /os-migrations host=cmp-01&migration_type=live-migration
+	// 7 running cmp-01 -> cmp-02
 }

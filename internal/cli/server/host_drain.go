@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // "compute host drain" — empty a compute host that is still up, by migrating
@@ -285,26 +285,12 @@ func confirmColdMigration(ctx context.Context, client *gophercloud.ServiceClient
 	if !statusIn(status, "VERIFY_RESIZE") {
 		return "auto-confirmed by nova (status " + status + ")", nil
 	}
-	err := servers.ConfirmResize(ctx, client, id).ExtractErr()
-	if err == nil {
-		return "migrated and confirmed", nil
-	}
-	if raced, rerr := confirmRaced(ctx, client, id); rerr == nil && raced {
+	auto, err := computeapi.ConfirmMigration(ctx, client, id)
+	switch {
+	case err != nil:
+		return "", relabel(err, "confirming the migration")
+	case auto:
 		return "auto-confirmed by nova", nil
 	}
-	return "", fmt.Errorf("confirming the migration: %w", err)
-}
-
-// confirmRaced reports whether a rejected confirmResize means nova's
-// resize_confirm_window got there first. Re-reading is what distinguishes that
-// from a real refusal: nova answers 409 both for "no longer in VERIFY_RESIZE"
-// and for reasons worth surfacing, and only the status says which.
-func confirmRaced(ctx context.Context, client *gophercloud.ServiceClient, id string) (bool, error) {
-	var s struct {
-		Status string `json:"status"`
-	}
-	if err := servers.Get(ctx, client, id).ExtractInto(&s); err != nil {
-		return false, err
-	}
-	return !statusIn(s.Status, "VERIFY_RESIZE"), nil
+	return "migrated and confirmed", nil
 }

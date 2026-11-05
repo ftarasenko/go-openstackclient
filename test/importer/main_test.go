@@ -62,6 +62,9 @@ func cloud(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /compute/servers/srv-1", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"server": map[string]any{"id": "srv-1", "status": "ACTIVE"}})
 	})
+	mux.HandleFunc("GET /compute/os-migrations", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"migrations": []map[string]any{{"id": 1, "status": "completed"}}})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -122,5 +125,11 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if err := compute.WaitForServerStatus(ctx, computeClient, "srv-1", []string{"ACTIVE"}, time.Millisecond); err != nil {
 		t.Fatalf("WaitForServerStatus: %v", err)
+	}
+	if err := compute.MigrateServer(ctx, computeClient, "srv-1", ""); err != nil {
+		t.Fatalf("MigrateServer: %v", err)
+	}
+	if ms, err := compute.ListMigrations(ctx, computeClient, compute.MigrationListOpts{}, 0); err != nil || len(ms) != 1 {
+		t.Fatalf("ListMigrations = %v, %v", ms, err)
 	}
 }
