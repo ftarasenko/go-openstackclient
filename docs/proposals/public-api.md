@@ -2,7 +2,8 @@
 
 Status: phases 0–2 landed (scaffolding and guards; session, paging, resolve;
 the keyvrm and image pilots), and compute's flavors, keypairs, aggregates,
-hypervisors, compute services, server actions and migrations have moved.
+hypervisors, compute services, server actions, migrations and the server
+lifecycle (list, show, create, delete, set, unset) have moved.
 The remaining services move one `refactor(<service>)` series at a time,
 following the checklist below.
 
@@ -23,7 +24,7 @@ release pipeline do not change.
 | `pkg/openstack/paging` | `Collect[T]` | 22 |
 | `pkg/openstack/resolve` | `ImageID`, `NetworkID`, `SubnetID`, `PortID`, `VolumeID`, `ServerID`, `ProjectID`, `ProjectIDInDomain`, `ProjectIDInDomainID`, `DomainID`, `UserID`, `UserIDInDomain`, `UserIDInDomainID` (package funcs and `Resolver` methods); `Resolver`, `Cache`, `NewCache`, `WithClock`, `CacheOption`; `NotFoundError`, `AmbiguousError`; `IsUUID` | 182 |
 | `pkg/openstack/image` | `ListImages`, `FindByName`, `GetImage`, `DeleteImage`, `UpdateImage`, `EscapePropertyName`, `ActivateImage`, `DeactivateImage`, `CreateImage`, `CreateImageWithData`, `UploadImageData`, `StageImageData`, `DiscardImage`, `DownloadImage`, `CreateImageFromVolume`, `ImportImage`, `ImportOpts`, `GetImportInfo`, `AddMember`, `RemoveMember`, `ListMembers`, `UpdateMember`, `ListTasks`, `TaskListOpts`, `GetTask`, `ListStores`, `Store`, `WaitForStatus`, `Data`, `VisibilityAll`, `ErrGlanceDirectUnavailable` | 217 |
-| `pkg/openstack/compute` | `ListFlavors`, `GetFlavor`, `FindFlavor`, `CreateFlavor`, `DeleteFlavor`, `ListFlavorAccess`, `AddFlavorAccess`, `RemoveFlavorAccess`, `SetFlavorExtraSpecs`, `DeleteFlavorExtraSpec`, `ClearFlavorExtraSpecs`, `UpdateFlavorDescription`, `FlavorDescriptionMicroversion`; `ListKeypairs`, `GetKeypair`, `CreateKeypair`, `DeleteKeypair`; `ListAggregates`, `FindAggregateID`, `HostAggregates`, `GetAggregate`, `CreateAggregate`, `UpdateAggregate`, `SetAggregateMetadata`, `DeleteAggregate`, `AddAggregateHost`, `RemoveAggregateHost`; `ListHypervisors`, `ListHypervisorsWithUsage`, `FindHypervisor`, `HypervisorIDs`, `PlacementUsage`, `ProviderUsage`; `ListServices`, `ExtractServiceAdminState`, `ServiceAdminState`, `FindServiceID`, `UpdateService`, `ServiceUpdateOpts`, `DeleteService`; `StartServer`, `StopServer`, `PauseServer`, `UnpauseServer`, `SuspendServer`, `ResumeServer`, `LockServer`, `UnlockServer`, `RebootServer`, `ResizeServer`, `ConfirmResize`, `RevertResize`, `RebuildServer`, `RebuildOpts`, `RebuildUserDataMicroversion`, `ShelveServer`, `ShelveOffloadServer`, `UnshelveServer`, `UnshelveOpts`, `RescueServer`, `UnrescueServer`, `CreateServerImage`, `AttachVolume`, `VolumeAttachOpts`, `DetachVolume`, `AddFloatingIP`, `RemoveFloatingIP`, `FloatingIPActionMicroversion`, `AddSecurityGroup`, `RemoveSecurityGroup`, `AddServerGroup`, `RemoveServerGroup`, `ConsoleOutput`, `CreateRemoteConsole`, `ListInterfaces`, `AttachInterface`, `DetachInterface`, `InterfaceAttachOpts`, `InterfaceTagMicroversion`, `SupportsMicroversion`, `WaitForServerStatus`, `WaitForServerDeleted`, `ErrServerSoftDeleted`; `MigrateServer`, `MigrateHostMicroversion`, `LiveMigrateServer`, `LiveMigrateOpts`, `LiveMigrateBody`, `LiveMigrateAutoMicroversion`, `EvacuateServer`, `EvacuateOpts`, `EvacuateBody`, `EvacuateForceRemovedMicroversion`, `ServerAction`, `ConfirmMigration`, `WaitForMigration`, `WaitForServerToLeaveHost`, `MigrationFailedError`, `ListServersOnHost`; `ListMigrations`, `MigrationListOpts`, `Migration`, `ListServerMigrations`, `GetServerMigration`, `ServerMigration`, `AbortServerMigration`, `ForceCompleteServerMigration` | 653 |
+| `pkg/openstack/compute` | `ListFlavors`, `GetFlavor`, `FindFlavor`, `CreateFlavor`, `DeleteFlavor`, `ListFlavorAccess`, `AddFlavorAccess`, `RemoveFlavorAccess`, `SetFlavorExtraSpecs`, `DeleteFlavorExtraSpec`, `ClearFlavorExtraSpecs`, `UpdateFlavorDescription`, `FlavorDescriptionMicroversion`; `ListKeypairs`, `GetKeypair`, `CreateKeypair`, `DeleteKeypair`; `ListAggregates`, `FindAggregateID`, `HostAggregates`, `GetAggregate`, `CreateAggregate`, `UpdateAggregate`, `SetAggregateMetadata`, `DeleteAggregate`, `AddAggregateHost`, `RemoveAggregateHost`; `ListHypervisors`, `ListHypervisorsWithUsage`, `FindHypervisor`, `HypervisorIDs`, `PlacementUsage`, `ProviderUsage`; `ListServices`, `ExtractServiceAdminState`, `ServiceAdminState`, `FindServiceID`, `UpdateService`, `ServiceUpdateOpts`, `DeleteService`; `StartServer`, `StopServer`, `PauseServer`, `UnpauseServer`, `SuspendServer`, `ResumeServer`, `LockServer`, `UnlockServer`, `RebootServer`, `ResizeServer`, `ConfirmResize`, `RevertResize`, `RebuildServer`, `RebuildOpts`, `RebuildUserDataMicroversion`, `ShelveServer`, `ShelveOffloadServer`, `UnshelveServer`, `UnshelveOpts`, `RescueServer`, `UnrescueServer`, `CreateServerImage`, `AttachVolume`, `VolumeAttachOpts`, `DetachVolume`, `AddFloatingIP`, `RemoveFloatingIP`, `FloatingIPActionMicroversion`, `AddSecurityGroup`, `RemoveSecurityGroup`, `AddServerGroup`, `RemoveServerGroup`, `ConsoleOutput`, `CreateRemoteConsole`, `ListInterfaces`, `AttachInterface`, `DetachInterface`, `InterfaceAttachOpts`, `InterfaceTagMicroversion`, `SupportsMicroversion`, `WaitForServerStatus`, `WaitForServerDeleted`, `ErrServerSoftDeleted`; `MigrateServer`, `MigrateHostMicroversion`, `LiveMigrateServer`, `LiveMigrateOpts`, `LiveMigrateBody`, `LiveMigrateAutoMicroversion`, `EvacuateServer`, `EvacuateOpts`, `EvacuateBody`, `EvacuateForceRemovedMicroversion`, `ServerAction`, `ConfirmMigration`, `WaitForMigration`, `WaitForServerToLeaveHost`, `MigrationFailedError`, `ListServersOnHost`; `ListMigrations`, `MigrationListOpts`, `Migration`, `ListServerMigrations`, `GetServerMigration`, `ServerMigration`, `AbortServerMigration`, `ForceCompleteServerMigration`; `ListServers`, `ListServerNames`, `ListServersRaw`, `ServerListOpts`, `GetServer`, `GetServerRaw`, `EncodeUserData`, `CreateServer`, `ServerCreateOptsExt`, `DeleteServer`, `ForceDeleteServer`, `UpdateServer`, `ServerUpdateOpts`, `SetServerAvailabilityZone`, `UpdateServerMetadata`, `ReplaceServerMetadata`, `DeleteServerMetadatum`, `ChangeAdminPassword`, `ClearServerPassword`, `ResetServerState`, `AddServerTag`, `DeleteServerTag`, `DeleteServerTags` | 782 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -108,10 +109,22 @@ gophercloud's opts miss (rebuild user data, unshelve host, volume tag and
 delete-on-termination, interface tag). `compute.WaitForServerStatus` and
 `compute.WaitForServerDeleted` follow `image.WaitForStatus`; the CLI keeps
 `--wait-timeout` and the poll interval, and adds `; use --force to delete it
-now` to `compute.ErrServerSoftDeleted`. Server lookup by name, the
-server-group membership wait and the snapshot's image wait stay in the CLI for
-now: the first moves with server create, whose lookups decide the strict form,
-and the other two are worded around the operator's reference.
+now` to `compute.ErrServerSoftDeleted`. The server-group membership wait and
+the snapshot's image wait stay in the CLI: both are worded around the
+operator's reference.
+
+The server lifecycle verbs keep their requests: `compute.ListServers`,
+`compute.ListServerNames` (the non-detail listing) and `compute.ListServersRaw`
+(the attributes `servers.Server` drops, for `server list -c`) all take the
+`compute.ServerListOpts` filters, and the caller pins the microversion on a
+client copy. `compute.ServerCreateOptsExt` carries 2.74's `host` and
+`block_device_mapping_v2`; `compute.EncodeUserData` is the encoding
+`servers.CreateOpts.UserData` needs before it guesses. Server lookup by name
+lists through `compute.ListServerNames` but keeps the CLI's wording and
+policy: `resolve.ServerID` resolves an empty reference to itself without a
+request, where the CLI has always listed and failed. Flavor lookup in
+`server create` and `server resize` keeps its single public listing for the
+same reason; `compute.FindFlavor` would retry a miss across every access type.
 
 Migration builds its bodies itself, because gophercloud's opts cannot express
 them: `servers.LiveMigrateOpts` cannot send `"auto"` and drops
@@ -195,7 +208,7 @@ seams, 2k lines) took about a third of one.
 | Order | Service (package) | src / test lines | Seams | Raw | Wait | Effort | Notes |
 | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
 | 1 | `compute`: flavors, keypairs (`internal/cli/compute`) | 1 215 / 1 845 | 10 | 5 | — | **Done** | `pkg/openstack/compute`, laid out by API resource rather than the CLI tree. |
-| 2 | `compute`: servers (`internal/cli/server`) | 10 256 / 11 132 | 63 | 37 | 2 | L, 3 sessions; aggregates, hypervisors, services, actions and migrations **done** | `serverActionRaw` microversion pin, `readUserData` encoding, `serverRebuildOptsExt`, migration/live-migration waits, console POSTs; cross-service image/network/volume resolution takes the extra clients explicitly. |
+| 2 | `compute`: servers (`internal/cli/server`) | 10 256 / 11 132 | 63 | 37 | 2 | L, 3 sessions; aggregates, hypervisors, services, actions, migrations and the server lifecycle **done**; server groups, volume attachments, events and password left | `serverActionRaw` microversion pin, `readUserData` encoding, `serverRebuildOptsExt`, migration/live-migration waits, console POSTs; cross-service image/network/volume resolution takes the extra clients explicitly. |
 | 3 | `volume` | 5 003 / 5 316 | 53 | 37 | 1 | M–L, 2 sessions | `wait.go`; raw cinder service enable/disable and other untyped actions; already strict resolution (`no %s found matching %q`). |
 | 4 | `quota` + `crossservice` | 1 702 / 1 278 | 8 | 10 | — | S, ½–1 session | The cross-service calls (nova + cinder + neutron) take a `*openstack.Session`. |
 | 5 | `network` core: floating IPs, ports, security groups (+ networks, subnets, routers, `helpers.go`) | 6 409 of 20 621 | 37 | 19 | — | M, 2 sessions | The strict helpers in `helpers.go` (`no %s found for %q`) become the public lookups. |

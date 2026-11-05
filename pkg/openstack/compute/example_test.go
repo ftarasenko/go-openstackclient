@@ -12,6 +12,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
 
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
@@ -266,4 +267,37 @@ func ExampleListMigrations() {
 	// Output:
 	// /os-migrations host=cmp-01&migration_type=live-migration
 	// 7 running cmp-01 -> cmp-02
+}
+
+// List the servers changed since a moment, without nova's tombstones, on a
+// client pinned low: at 2.1 each entry carries no user_data.
+func ExampleListServers() {
+	novaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Println(r.URL.Path, r.URL.RawQuery, r.Header.Get("OpenStack-API-Version"))
+		_, _ = fmt.Fprint(w, `{"servers":[{"id":"1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e","name":"web","status":"ACTIVE"}]}`)
+	}))
+	defer novaAPI.Close()
+
+	client, err := sessionFor(novaAPI.URL).Compute()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	pinned := *client
+	pinned.Microversion = "2.1"
+	list, err := compute.ListServers(context.Background(), &pinned, compute.ServerListOpts{
+		ListOpts:       servers.ListOpts{ChangesSince: "2026-01-01T00:00:00Z"},
+		ExcludeDeleted: true,
+	}, 0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, s := range list {
+		fmt.Println(s.Name, s.Status)
+	}
+	// Output:
+	// /servers/detail changes-since=2026-01-01T00%3A00%3A00Z&deleted=false compute 2.1
+	// web ACTIVE
 }

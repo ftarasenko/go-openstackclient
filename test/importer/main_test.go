@@ -13,6 +13,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
@@ -61,6 +62,18 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /compute/servers/srv-1", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"server": map[string]any{"id": "srv-1", "status": "ACTIVE"}})
+	})
+	mux.HandleFunc("GET /compute/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("deleted") != "false" {
+			http.Error(w, "want deleted=false", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"servers": []map[string]any{{"id": "srv-1", "name": "web"}}})
+	})
+	mux.HandleFunc("POST /compute/servers", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"server":{"id":"srv-1"}}`))
 	})
 	mux.HandleFunc("GET /compute/os-migrations", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"migrations": []map[string]any{{"id": 1, "status": "completed"}}})
@@ -131,5 +144,18 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if ms, err := compute.ListMigrations(ctx, computeClient, compute.MigrationListOpts{}, 0); err != nil || len(ms) != 1 {
 		t.Fatalf("ListMigrations = %v, %v", ms, err)
+	}
+	list, err := compute.ListServers(ctx, computeClient, compute.ServerListOpts{
+		ListOpts: servers.ListOpts{ChangesSince: "2026-01-01T00:00:00Z"}, ExcludeDeleted: true,
+	}, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListServers = %v, %v", list, err)
+	}
+	created, err := compute.CreateServer(ctx, computeClient, compute.ServerCreateOptsExt{
+		CreateOptsBuilder: servers.CreateOpts{Name: "web", FlavorRef: "1", UserData: compute.EncodeUserData([]byte("hostname\n"))},
+		Host:              "cmp-01",
+	}, nil)
+	if err != nil || created.ID != "srv-1" {
+		t.Fatalf("CreateServer = %v, %v", created, err)
 	}
 }
