@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // "server add/remove port|network|fixed ip" — nova's os-interface subresource,
@@ -25,31 +27,10 @@ import (
 // (nova/api/openstack/compute/schemas/attach_interfaces.py, create_v249). The
 // schema sets additionalProperties=false, so sending it to an older cloud is a
 // 400 rather than an ignored field.
-const interfaceTagMicroversion = "2.49"
+const interfaceTagMicroversion = computeapi.InterfaceTagMicroversion
 
-// attachOpts extends gophercloud's CreateOpts with `tag`, which the typed
-// struct does not model.
-type attachOpts struct {
-	attachinterfaces.CreateOpts
-	Tag string
-}
-
-func (o attachOpts) ToAttachInterfacesCreateMap() (map[string]any, error) {
-	body, err := o.CreateOpts.ToAttachInterfacesCreateMap()
-	if err != nil {
-		return nil, err
-	}
-	if o.Tag == "" {
-		return body, nil
-	}
-	inner, ok := body["interfaceAttachment"].(map[string]any)
-	if !ok {
-		inner = map[string]any{}
-	}
-	inner["tag"] = o.Tag
-	body["interfaceAttachment"] = inner
-	return body, nil
-}
+// attachOpts is the attachment body with nova 2.49's tag.
+type attachOpts = computeapi.InterfaceAttachOpts
 
 // --- add port ---------------------------------------------------------------
 
@@ -93,9 +74,9 @@ func runServerAddPort(ctx context.Context, s *computeSession, o *output.Options,
 	if err != nil {
 		return err
 	}
-	iface, err := attachinterfaces.Create(ctx, s.client, id, opts).Extract()
+	iface, err := computeapi.AttachInterface(ctx, s.client, id, opts)
 	if err != nil {
-		return fmt.Errorf("attaching port %q to server %q: %w", portRef, serverRef, err)
+		return relabel(err, "attaching port %q to server %q", portRef, serverRef)
 	}
 	return writeInterface(o, w, iface)
 }
@@ -200,9 +181,9 @@ func runServerAddNetworkForID(ctx context.Context, client *gophercloud.ServiceCl
 	if err != nil {
 		return err
 	}
-	iface, err := attachinterfaces.Create(ctx, client, serverID, opts).Extract()
+	iface, err := computeapi.AttachInterface(ctx, client, serverID, opts)
 	if err != nil {
-		return err
+		return errors.Unwrap(err)
 	}
 	return writeInterface(o, w, iface)
 }
@@ -239,8 +220,8 @@ func runServerRemovePort(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	if err := attachinterfaces.Delete(ctx, client, id, portID).ExtractErr(); err != nil {
-		return fmt.Errorf("detaching port %q from server %q: %w", portRef, serverRef, err)
+	if err := relabel(computeapi.DetachInterface(ctx, client, id, portID), "detaching port %q from server %q", portRef, serverRef); err != nil {
+		return err
 	}
 	_, err = fmt.Fprintf(w, "Detached port %s from server %s\n", portRef, serverRef)
 	return err
@@ -288,17 +269,17 @@ func runServerRemoveNetwork(ctx context.Context, client *gophercloud.ServiceClie
 func runServerRemoveNetworkForID(ctx context.Context, client *gophercloud.ServiceClient,
 	serverID, networkID string, w io.Writer,
 ) error {
-	ifaces, err := listServerInterfaces(ctx, client, serverID)
+	ifaces, err := computeapi.ListInterfaces(ctx, client, serverID)
 	if err != nil {
-		return fmt.Errorf("listing interfaces of server %s: %w", serverID, err)
+		return err
 	}
 	var detached int
 	for _, iface := range ifaces {
 		if iface.NetID != networkID {
 			continue
 		}
-		if err := attachinterfaces.Delete(ctx, client, serverID, iface.PortID).ExtractErr(); err != nil {
-			return fmt.Errorf("detaching port %s from server %s: %w", iface.PortID, serverID, err)
+		if err := computeapi.DetachInterface(ctx, client, serverID, iface.PortID); err != nil {
+			return err
 		}
 		detached++
 	}
@@ -341,17 +322,18 @@ func runServerRemoveFixedIP(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	ifaces, err := listServerInterfaces(ctx, client, id)
+	ifaces, err := computeapi.ListInterfaces(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing interfaces of server %q: %w", serverRef, err)
+		return relabel(err, "listing interfaces of server %q", serverRef)
 	}
 	for _, iface := range ifaces {
 		for _, fixed := range iface.FixedIPs {
 			if fixed.IPAddress != address {
 				continue
 			}
-			if err := attachinterfaces.Delete(ctx, client, id, iface.PortID).ExtractErr(); err != nil {
-				return fmt.Errorf("detaching port %s from server %q: %w", iface.PortID, serverRef, err)
+			if err := relabel(computeapi.DetachInterface(ctx, client, id, iface.PortID),
+				"detaching port %s from server %q", iface.PortID, serverRef); err != nil {
+				return err
 			}
 			_, err := fmt.Fprintf(w, "Detached fixed IP %s from server %s\n", address, serverRef)
 			return err
@@ -361,14 +343,6 @@ func runServerRemoveFixedIP(ctx context.Context, client *gophercloud.ServiceClie
 }
 
 // --- shared -----------------------------------------------------------------
-
-func listServerInterfaces(ctx context.Context, client *gophercloud.ServiceClient, serverID string) ([]attachinterfaces.Interface, error) {
-	pages, err := attachinterfaces.List(client, serverID).AllPages(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return attachinterfaces.ExtractInterfaces(pages)
-}
 
 // newAttachOpts builds the attachment body, refusing --tag when the client is
 // pinned below the microversion that added it.

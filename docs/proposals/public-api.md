@@ -2,7 +2,7 @@
 
 Status: phases 0–2 landed (scaffolding and guards; session, paging, resolve;
 the keyvrm and image pilots), and compute's flavors, keypairs, aggregates,
-hypervisors and compute services have moved.
+hypervisors, compute services and server actions have moved.
 The remaining services move one `refactor(<service>)` series at a time,
 following the checklist below.
 
@@ -23,7 +23,7 @@ release pipeline do not change.
 | `pkg/openstack/paging` | `Collect[T]` | 22 |
 | `pkg/openstack/resolve` | `ImageID`, `NetworkID`, `SubnetID`, `PortID`, `VolumeID`, `ServerID`, `ProjectID`, `ProjectIDInDomain`, `ProjectIDInDomainID`, `DomainID`, `UserID`, `UserIDInDomain`, `UserIDInDomainID` (package funcs and `Resolver` methods); `Resolver`, `Cache`, `NewCache`, `WithClock`, `CacheOption`; `NotFoundError`, `AmbiguousError`; `IsUUID` | 182 |
 | `pkg/openstack/image` | `ListImages`, `FindByName`, `GetImage`, `DeleteImage`, `UpdateImage`, `EscapePropertyName`, `ActivateImage`, `DeactivateImage`, `CreateImage`, `CreateImageWithData`, `UploadImageData`, `StageImageData`, `DiscardImage`, `DownloadImage`, `CreateImageFromVolume`, `ImportImage`, `ImportOpts`, `GetImportInfo`, `AddMember`, `RemoveMember`, `ListMembers`, `UpdateMember`, `ListTasks`, `TaskListOpts`, `GetTask`, `ListStores`, `Store`, `WaitForStatus`, `Data`, `VisibilityAll`, `ErrGlanceDirectUnavailable` | 217 |
-| `pkg/openstack/compute` | `ListFlavors`, `GetFlavor`, `FindFlavor`, `CreateFlavor`, `DeleteFlavor`, `ListFlavorAccess`, `AddFlavorAccess`, `RemoveFlavorAccess`, `SetFlavorExtraSpecs`, `DeleteFlavorExtraSpec`, `ClearFlavorExtraSpecs`, `UpdateFlavorDescription`, `FlavorDescriptionMicroversion`; `ListKeypairs`, `GetKeypair`, `CreateKeypair`, `DeleteKeypair`; `ListAggregates`, `FindAggregateID`, `HostAggregates`, `GetAggregate`, `CreateAggregate`, `UpdateAggregate`, `SetAggregateMetadata`, `DeleteAggregate`, `AddAggregateHost`, `RemoveAggregateHost`; `ListHypervisors`, `ListHypervisorsWithUsage`, `FindHypervisor`, `HypervisorIDs`, `PlacementUsage`, `ProviderUsage`; `ListServices`, `ExtractServiceAdminState`, `ServiceAdminState`, `FindServiceID`, `UpdateService`, `ServiceUpdateOpts`, `DeleteService` | 230 |
+| `pkg/openstack/compute` | `ListFlavors`, `GetFlavor`, `FindFlavor`, `CreateFlavor`, `DeleteFlavor`, `ListFlavorAccess`, `AddFlavorAccess`, `RemoveFlavorAccess`, `SetFlavorExtraSpecs`, `DeleteFlavorExtraSpec`, `ClearFlavorExtraSpecs`, `UpdateFlavorDescription`, `FlavorDescriptionMicroversion`; `ListKeypairs`, `GetKeypair`, `CreateKeypair`, `DeleteKeypair`; `ListAggregates`, `FindAggregateID`, `HostAggregates`, `GetAggregate`, `CreateAggregate`, `UpdateAggregate`, `SetAggregateMetadata`, `DeleteAggregate`, `AddAggregateHost`, `RemoveAggregateHost`; `ListHypervisors`, `ListHypervisorsWithUsage`, `FindHypervisor`, `HypervisorIDs`, `PlacementUsage`, `ProviderUsage`; `ListServices`, `ExtractServiceAdminState`, `ServiceAdminState`, `FindServiceID`, `UpdateService`, `ServiceUpdateOpts`, `DeleteService`; `StartServer`, `StopServer`, `PauseServer`, `UnpauseServer`, `SuspendServer`, `ResumeServer`, `LockServer`, `UnlockServer`, `RebootServer`, `ResizeServer`, `ConfirmResize`, `RevertResize`, `RebuildServer`, `RebuildOpts`, `RebuildUserDataMicroversion`, `ShelveServer`, `ShelveOffloadServer`, `UnshelveServer`, `UnshelveOpts`, `RescueServer`, `UnrescueServer`, `CreateServerImage`, `AttachVolume`, `VolumeAttachOpts`, `DetachVolume`, `AddFloatingIP`, `RemoveFloatingIP`, `FloatingIPActionMicroversion`, `AddSecurityGroup`, `RemoveSecurityGroup`, `AddServerGroup`, `RemoveServerGroup`, `ConsoleOutput`, `CreateRemoteConsole`, `ListInterfaces`, `AttachInterface`, `DetachInterface`, `InterfaceAttachOpts`, `InterfaceTagMicroversion`, `SupportsMicroversion`, `WaitForServerStatus`, `WaitForServerDeleted`, `ErrServerSoftDeleted` | 448 |
 | `pkg/keyvrm` | `GetAppConfig`, `UpdateAppConfig`, `ListHostAggregates`, `GetHostAggregate`, `UpdateHostAggregate`, `GetMarkers`, `ListHostAggregateEvents`, `ListAvailabilityZones`, `ListZoneHostAggregates`, `GetEvent`, `ListEventRecommendations`, `RunEventRecommendations`, `ListRecommendations`, `GetRecommendation`, `ListRecommendationOperations`, `RunRecommendation`, `StopRecommendation`; the DTOs; `Page[T]`, `ListOpts` | 186 |
 
 Stays internal, CLI only: `internal/cli/**` (cobra commands, flag tables,
@@ -97,6 +97,22 @@ state. `compute.ListHypervisorsWithUsage` reads at 2.1 because nova dropped the
 usage fields at 2.88. `compute.PlacementUsage` takes the placement client and
 returns what those fields became.
 
+The server actions take nova's server ID and name it in their errors; the CLI
+resolves the operator's reference first and re-labels, as above. Where the
+CLI printed gophercloud's error bare (start, stop, pause and the other simple
+actions, `server add network`), it unwraps the public error instead. The
+floating-IP actions pin a copy of the client to 2.43, since nova removed them
+at 2.44; `compute.RebuildOpts`, `compute.UnshelveOpts`,
+`compute.VolumeAttachOpts` and `compute.InterfaceAttachOpts` add the fields
+gophercloud's opts miss (rebuild user data, unshelve host, volume tag and
+delete-on-termination, interface tag). `compute.WaitForServerStatus` and
+`compute.WaitForServerDeleted` follow `image.WaitForStatus`; the CLI keeps
+`--wait-timeout` and the poll interval, and adds `; use --force to delete it
+now` to `compute.ErrServerSoftDeleted`. Server lookup by name, the
+server-group membership wait and the snapshot's image wait stay in the CLI for
+now: the first moves with server create, whose lookups decide the strict form,
+and the other two are worded around the operator's reference.
+
 **Shapes worth copying.** `image.CreateImageWithData` (a multi-step flow with
 its cleanup, behind one call, with the single steps public too);
 `image.ImportOpts` and `image.TaskListOpts` (gophercloud's opts plus the field
@@ -162,7 +178,7 @@ seams, 2k lines) took about a third of one.
 | Order | Service (package) | src / test lines | Seams | Raw | Wait | Effort | Notes |
 | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
 | 1 | `compute`: flavors, keypairs (`internal/cli/compute`) | 1 215 / 1 845 | 10 | 5 | — | **Done** | `pkg/openstack/compute`, laid out by API resource rather than the CLI tree. |
-| 2 | `compute`: servers (`internal/cli/server`) | 10 256 / 11 132 | 63 | 37 | 2 | L, 3 sessions; aggregates, hypervisors and services **done** | `serverActionRaw` microversion pin, `readUserData` encoding, `serverRebuildOptsExt`, migration/live-migration waits, console POSTs; cross-service image/network/volume resolution takes the extra clients explicitly. |
+| 2 | `compute`: servers (`internal/cli/server`) | 10 256 / 11 132 | 63 | 37 | 2 | L, 3 sessions; aggregates, hypervisors, services and actions **done** | `serverActionRaw` microversion pin, `readUserData` encoding, `serverRebuildOptsExt`, migration/live-migration waits, console POSTs; cross-service image/network/volume resolution takes the extra clients explicitly. |
 | 3 | `volume` | 5 003 / 5 316 | 53 | 37 | 1 | M–L, 2 sessions | `wait.go`; raw cinder service enable/disable and other untyped actions; already strict resolution (`no %s found matching %q`). |
 | 4 | `quota` + `crossservice` | 1 702 / 1 278 | 8 | 10 | — | S, ½–1 session | The cross-service calls (nova + cinder + neutron) take a `*openstack.Session`. |
 | 5 | `network` core: floating IPs, ports, security groups (+ networks, subnets, routers, `helpers.go`) | 6 409 of 20 621 | 37 | 19 | — | M, 2 sessions | The strict helpers in `helpers.go` (`no %s found for %q`) become the public lookups. |

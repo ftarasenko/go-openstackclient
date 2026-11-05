@@ -2,25 +2,24 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/remoteconsoles"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/secgroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/volumeattach"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // simpleAction is a server-scoped action that only needs the resolved server ID.
@@ -77,56 +76,56 @@ func runSimpleAction(ctx context.Context, client *gophercloud.ServiceClient, ref
 func newServerStartCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "start", "Start a server", "Started",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Start(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.StartServer(ctx, c, id))
 		})
 }
 
 func newServerStopCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "stop", "Stop a server", "Stopped",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Stop(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.StopServer(ctx, c, id))
 		})
 }
 
 func newServerPauseCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "pause", "Pause a server", "Paused",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Pause(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.PauseServer(ctx, c, id))
 		})
 }
 
 func newServerUnpauseCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "unpause", "Unpause a server", "Unpaused",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Unpause(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.UnpauseServer(ctx, c, id))
 		})
 }
 
 func newServerSuspendCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "suspend", "Suspend a server", "Suspended",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Suspend(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.SuspendServer(ctx, c, id))
 		})
 }
 
 func newServerResumeCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "resume", "Resume a suspended server", "Resumed",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Resume(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.ResumeServer(ctx, c, id))
 		})
 }
 
 func newServerLockCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "lock", "Lock a server", "Locked",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Lock(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.LockServer(ctx, c, id))
 		})
 }
 
 func newServerUnlockCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "unlock", "Unlock a server", "Unlocked",
 		func(ctx context.Context, c *gophercloud.ServiceClient, id string) error {
-			return servers.Unlock(ctx, c, id).ExtractErr()
+			return errors.Unwrap(computeapi.UnlockServer(ctx, c, id))
 		})
 }
 
@@ -267,24 +266,13 @@ func liveMigrateBody(client *gophercloud.ServiceClient, f *serverMigrateFlags, w
 	return live, nil
 }
 
-// computeSupportsMicroversion reports whether the compute client's negotiated
-// microversion is at least want. "latest" (koc's default) supports everything;
-// an unset microversion is nova's 2.1 baseline and supports nothing newer.
+// computeSupportsMicroversion reports whether the compute client's
+// microversion is at least want (computeapi.SupportsMicroversion).
 func computeSupportsMicroversion(client *gophercloud.ServiceClient, want string) bool {
-	if client.Microversion == "latest" {
-		return true
-	}
-	hMaj, hMin, ok := parseMicroversion(client.Microversion)
-	if !ok {
-		return false
-	}
-	wMaj, wMin, _ := parseMicroversion(want)
-	if hMaj != wMaj {
-		return hMaj > wMaj
-	}
-	return hMin >= wMin
+	return computeapi.SupportsMicroversion(client, want)
 }
 
+// parseMicroversion splits "2.53" into 2 and 53.
 func parseMicroversion(v string) (major, minor int, ok bool) {
 	majStr, minStr, found := strings.Cut(v, ".")
 	if !found {
@@ -430,8 +418,8 @@ func runServerReboot(ctx context.Context, client *gophercloud.ServiceClient, ref
 	if err != nil {
 		return err
 	}
-	if err := servers.Reboot(ctx, client, id, servers.RebootOpts{Type: method}).ExtractErr(); err != nil {
-		return fmt.Errorf("rebooting server %q: %w", ref, err)
+	if err := relabel(computeapi.RebootServer(ctx, client, id, method), "rebooting server %q", ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Rebooted server %s (%s)\n", ref, method); err != nil {
 		return err
@@ -474,15 +462,15 @@ func runServerResize(ctx context.Context, client *gophercloud.ServiceClient, ref
 	}
 	switch {
 	case confirm:
-		if err := servers.ConfirmResize(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("confirming resize of server %q: %w", ref, err)
+		if err := relabel(computeapi.ConfirmResize(ctx, client, id), "confirming resize of server %q", ref); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Confirmed resize of server %s\n", ref); err != nil {
 			return err
 		}
 	case revert:
-		if err := servers.RevertResize(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("reverting resize of server %q: %w", ref, err)
+		if err := relabel(computeapi.RevertResize(ctx, client, id), "reverting resize of server %q", ref); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Reverted resize of server %s\n", ref); err != nil {
 			return err
@@ -495,8 +483,8 @@ func runServerResize(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err != nil {
 			return err
 		}
-		if err := servers.Resize(ctx, client, id, servers.ResizeOpts{FlavorRef: flavorRef}).ExtractErr(); err != nil {
-			return fmt.Errorf("resizing server %q: %w", ref, err)
+		if err := relabel(computeapi.ResizeServer(ctx, client, id, flavorRef), "resizing server %q", ref); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Resized server %s to flavor %s (confirm or revert when ready)\n", ref, flavor); err != nil {
 			return err
@@ -517,7 +505,7 @@ func runServerResize(ctx context.Context, client *gophercloud.ServiceClient, ref
 // text says 2.57; 2.54 is the microversion that added key_name, and nova's
 // schema rejects user_data below 2.57 as an unexpected property. koc follows
 // nova.
-const rebuildUserDataMicroversion = "2.57"
+const rebuildUserDataMicroversion = computeapi.RebuildUserDataMicroversion
 
 type serverRebuildFlags struct {
 	image string
@@ -566,39 +554,6 @@ func newServerRebuildCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	return cmd
 }
 
-// serverRebuildOptsExt carries the one rebuild field gophercloud's
-// servers.RebuildOpts cannot express: user_data. That struct predates
-// microversion 2.57 — it still models the personality files 2.57 removed — so
-// the field is spliced into the body here, the way serverCreateOptsExt splices
-// nova 2.74's host into a create.
-type serverRebuildOptsExt struct {
-	servers.RebuildOptsBuilder
-
-	// UserData is the base64 payload to set; nil leaves user_data out of the
-	// request, which is what keeps the server's current value. ClearUserData
-	// sends JSON null instead, nova's reset.
-	UserData      *string
-	ClearUserData bool
-}
-
-func (opts serverRebuildOptsExt) ToServerRebuildMap() (map[string]any, error) {
-	body, err := opts.RebuildOptsBuilder.ToServerRebuildMap()
-	if err != nil {
-		return nil, err
-	}
-	rebuild, ok := body["rebuild"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected rebuild request body: %T", body["rebuild"])
-	}
-	switch {
-	case opts.ClearUserData:
-		rebuild["user_data"] = nil
-	case opts.UserData != nil:
-		rebuild["user_data"] = *opts.UserData
-	}
-	return body, nil
-}
-
 // newServerRebuildOpts builds the rebuild body, refusing the user-data flags
 // when the client is pinned below the microversion that added the field. The
 // file is read here, before the server reference is resolved, so a bad path
@@ -619,7 +574,7 @@ func newServerRebuildOpts(client *gophercloud.ServiceClient, f *serverRebuildFla
 			flag, rebuildUserDataMicroversion, client.Microversion)
 	}
 	if f.noUserData {
-		return serverRebuildOptsExt{RebuildOptsBuilder: base, ClearUserData: true}, nil
+		return computeapi.RebuildOpts{RebuildOptsBuilder: base, ClearUserData: true}, nil
 	}
 	userData, err := readUserData(f.userData)
 	if err != nil {
@@ -632,7 +587,7 @@ func newServerRebuildOpts(client *gophercloud.ServiceClient, f *serverRebuildFla
 		// server with an empty-but-present value instead.
 		return nil, fmt.Errorf("--user-data file %q is empty; use --no-user-data to clear the server's user data", f.userData)
 	}
-	return serverRebuildOptsExt{RebuildOptsBuilder: base, UserData: &userData}, nil
+	return computeapi.RebuildOpts{RebuildOptsBuilder: base, UserData: &userData}, nil
 }
 
 // serverRebuildColumns are the fields server rebuild renders.
@@ -652,9 +607,9 @@ func runServerRebuild(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	s, err := servers.Rebuild(ctx, client, id, opts).Extract()
+	s, err := computeapi.RebuildServer(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("rebuilding server %q: %w", ref, err)
+		return relabel(err, "rebuilding server %q", ref)
 	}
 	return o.WriteSingle(w, serverRebuildColumns, []any{s.ID, s.Name, s.Status})
 }
@@ -722,31 +677,17 @@ func runServerAddVolume(ctx context.Context, client, volumeClient *gophercloud.S
 	if err != nil {
 		return err
 	}
-	body, err := volumeAttachBody(client, volumeID, f.device, f.tag, f.deleteOnTermination)
+	opts, err := volumeAttachOpts(client, volumeID, f.device, f.tag, f.deleteOnTermination)
 	if err != nil {
 		return err
 	}
-	if err := attachVolume(ctx, client, id, body); err != nil {
-		return fmt.Errorf("attaching volume %q to server %q: %w", volumeRef, ref, err)
+	if err := relabel(computeapi.AttachVolume(ctx, client, id, opts), "attaching volume %q to server %q", volumeRef, ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Attached volume %s to server %s\n", volumeRef, ref); err != nil {
 		return err
 	}
 	return nil
-}
-
-// attachVolume is volumeattach.Create accepting both answers nova gives. The
-// attach used to be synchronous, 200 with the attachment; a current nova
-// (seen on 2026.2) answers 202 with no body and finishes the attach
-// asynchronously, which gophercloud's Create (200 only) reports as a failure.
-// Callers that need the attachment read it back.
-func attachVolume(ctx context.Context, client *gophercloud.ServiceClient, serverID string, body map[string]any) error {
-	resp, err := client.Post(ctx, client.ServiceURL("servers", serverID, "os-volume_attachments"), body, nil,
-		&gophercloud.RequestOpts{OkCodes: []int{http.StatusOK, http.StatusAccepted}})
-	if resp != nil {
-		_ = resp.Body.Close()
-	}
-	return err
 }
 
 func newServerRemoveVolumeCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -785,8 +726,8 @@ func runServerRemoveVolume(ctx context.Context, client, volumeClient *gopherclou
 	if err != nil {
 		return err
 	}
-	if err := volumeattach.Delete(ctx, client, id, volumeID).ExtractErr(); err != nil {
-		return fmt.Errorf("detaching volume %q from server %q: %w", volumeRef, ref, err)
+	if err := relabel(computeapi.DetachVolume(ctx, client, id, volumeID), "detaching volume %q from server %q", volumeRef, ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Detached volume %s from server %s\n", volumeRef, ref); err != nil {
 		return err
@@ -796,28 +737,8 @@ func runServerRemoveVolume(ctx context.Context, client, volumeClient *gopherclou
 
 // floating IPs -----------------------------------------------------------------
 //
-// gophercloud v2 has no compute floating-IP action helper (the historical
-// os-floating-ips server actions were removed from the typed API), so these use
-// the raw server-action endpoint directly. Documented as a raw fallback.
-
-func serverActionRaw(ctx context.Context, client *gophercloud.ServiceClient, id string, body map[string]any) error {
-	// The addFloatingIp/removeFloatingIp server actions were removed from nova
-	// at microversion 2.44. The compute client negotiates "latest", so these
-	// requests must be pinned to a pre-2.44 microversion or nova 404s. Setting
-	// RequestOpts.MoreHeaders is not enough: service_client.go's
-	// setMicroversionHeader overwrites X-OpenStack-Nova-API-Version from
-	// client.Microversion on every Request. Shallow-copy the service client
-	// (sharing the ProviderClient) and override its Microversion for this call.
-	legacy := *client
-	legacy.Microversion = "2.43"
-	url := legacy.ServiceURL("servers", id, "action")
-	resp, err := legacy.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
-}
+// nova's addFloatingIp/removeFloatingIp actions, pinned below 2.44 inside
+// computeapi.AddFloatingIP/RemoveFloatingIP.
 
 func newServerAddFloatingIPCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	var fixed string
@@ -846,12 +767,9 @@ func runServerAddFloatingIP(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	action := map[string]any{"address": address}
-	if fixed != "" {
-		action["fixed_address"] = fixed
-	}
-	if err := serverActionRaw(ctx, client, id, map[string]any{"addFloatingIp": action}); err != nil {
-		return fmt.Errorf("associating floating IP %q with server %q: %w", address, ref, err)
+	if err := relabel(computeapi.AddFloatingIP(ctx, client, id, address, fixed),
+		"associating floating IP %q with server %q", address, ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Associated floating IP %s with server %s\n", address, ref); err != nil {
 		return err
@@ -884,9 +802,9 @@ func runServerRemoveFloatingIP(ctx context.Context, client *gophercloud.ServiceC
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"removeFloatingIp": map[string]any{"address": address}}
-	if err := serverActionRaw(ctx, client, id, body); err != nil {
-		return fmt.Errorf("disassociating floating IP %q from server %q: %w", address, ref, err)
+	if err := relabel(computeapi.RemoveFloatingIP(ctx, client, id, address),
+		"disassociating floating IP %q from server %q", address, ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Disassociated floating IP %s from server %s\n", address, ref); err != nil {
 		return err
@@ -921,8 +839,8 @@ func runServerAddSecurityGroup(ctx context.Context, client *gophercloud.ServiceC
 	if err != nil {
 		return err
 	}
-	if err := secgroups.AddServer(ctx, client, id, group).ExtractErr(); err != nil {
-		return fmt.Errorf("adding security group %q to server %q: %w", group, ref, err)
+	if err := relabel(computeapi.AddSecurityGroup(ctx, client, id, group), "adding security group %q to server %q", group, ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Added security group %s to server %s\n", group, ref); err != nil {
 		return err
@@ -955,8 +873,8 @@ func runServerRemoveSecurityGroup(ctx context.Context, client *gophercloud.Servi
 	if err != nil {
 		return err
 	}
-	if err := secgroups.RemoveServer(ctx, client, id, group).ExtractErr(); err != nil {
-		return fmt.Errorf("removing security group %q from server %q: %w", group, ref, err)
+	if err := relabel(computeapi.RemoveSecurityGroup(ctx, client, id, group), "removing security group %q from server %q", group, ref); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Removed security group %s from server %s\n", group, ref); err != nil {
 		return err
@@ -1023,9 +941,9 @@ func runConsoleLogShow(ctx context.Context, client *gophercloud.ServiceClient, r
 	if err != nil {
 		return err
 	}
-	out, err := servers.ShowConsoleOutput(ctx, client, id, servers.ShowConsoleOutputOpts{Length: lines}).Extract()
+	out, err := computeapi.ConsoleOutput(ctx, client, id, lines)
 	if err != nil {
-		return fmt.Errorf("fetching console log for server %q: %w", ref, err)
+		return relabel(err, "fetching console log for server %q", ref)
 	}
 	if _, err := fmt.Fprint(w, out); err != nil {
 		return err
@@ -1111,29 +1029,16 @@ func runConsoleURLShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	protocol := remoteconsoles.ConsoleProtocolVNC
-	switch remoteconsoles.ConsoleType(consoleType) {
-	case remoteconsoles.ConsoleTypeSPICEHTML5:
-		protocol = remoteconsoles.ConsoleProtocolSPICE
-	case remoteconsoles.ConsoleTypeSerial:
-		protocol = remoteconsoles.ConsoleProtocolSerial
-	case remoteconsoles.ConsoleTypeWebMKS:
-		protocol = remoteconsoles.ConsoleProtocolMKS
-	}
-	rc, err := remoteconsoles.Create(ctx, client, id, remoteconsoles.CreateOpts{
-		Protocol: protocol,
-		Type:     remoteconsoles.ConsoleType(consoleType),
-	}).Extract()
+	rc, err := computeapi.CreateRemoteConsole(ctx, client, id, remoteconsoles.ConsoleType(consoleType))
 	if err != nil {
-		return fmt.Errorf("creating console for server %q: %w", ref, err)
+		return relabel(err, "creating console for server %q", ref)
 	}
 	return o.WriteSingle(w, consoleURLColumns, []any{rc.Type, rc.Protocol, rc.URL})
 }
 
 // serverActionNegotiated posts a server action at the compute client's
-// negotiated microversion (default "latest"), unlike serverActionRaw which
-// pins to 2.43 for the floating-IP actions removed at 2.44. Used by the
-// KeyStack dynamic server-group actions (addServerGroup / removeServerGroup).
+// negotiated microversion (default "latest"). Used by migrate, evacuate and
+// the host verbs.
 func serverActionNegotiated(ctx context.Context, client *gophercloud.ServiceClient, id string, body map[string]any) error {
 	url := client.ServiceURL("servers", id, "action")
 	resp, err := client.Post(ctx, url, body, nil, &gophercloud.RequestOpts{OkCodes: []int{200, 202}})
@@ -1188,9 +1093,8 @@ func runServerAddServerGroup(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"addServerGroup": map[string]any{"server_group_id": groupID}}
-	if err := serverActionNegotiated(ctx, client, id, body); err != nil {
-		return keystackExtErr(fmt.Errorf("adding server %q to server group %q: %w", ref, groupRef, err), "dynamic server groups (addServerGroup)")
+	if err := computeapi.AddServerGroup(ctx, client, id, groupID); err != nil {
+		return keystackExtErr(relabel(err, "adding server %q to server group %q", ref, groupRef), "dynamic server groups (addServerGroup)")
 	}
 	if f.wait {
 		if err := waitForServerGroupAdd(ctx, client, ref, id, groupID, f.waitTimeout); err != nil {
@@ -1291,9 +1195,8 @@ func runServerRemoveServerGroup(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"removeServerGroup": nil}
-	if err := serverActionNegotiated(ctx, client, id, body); err != nil {
-		return keystackExtErr(fmt.Errorf("removing server %q from its server group: %w", ref, err), "dynamic server groups (removeServerGroup)")
+	if err := computeapi.RemoveServerGroup(ctx, client, id); err != nil {
+		return keystackExtErr(relabel(err, "removing server %q from its server group", ref), "dynamic server groups (removeServerGroup)")
 	}
 	if _, err := fmt.Fprintf(w, "Removed server %s from its server group\n", ref); err != nil {
 		return err

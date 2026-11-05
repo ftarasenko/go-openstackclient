@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // Server state verbs that park or recover an instance: shelve, unshelve,
@@ -73,25 +73,19 @@ func runServerShelve(ctx context.Context, client *gophercloud.ServiceClient, ref
 	// shelved_offload_time, and both are past the point of no return.
 	want := []string{"SHELVED", "SHELVED_OFFLOADED"}
 	verb := "Shelved"
-	// Shelve and ShelveOffload return different result types, so the action is
-	// wrapped rather than assigned directly.
-	action := func(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-		return servers.Shelve(ctx, client, id).ExtractErr()
-	}
+	action := computeapi.ShelveServer
 	if offload {
 		// Explicitly asked for, so only the offloaded state will do.
 		want = []string{"SHELVED_OFFLOADED"}
-		action = func(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-			return servers.ShelveOffload(ctx, client, id).ExtractErr()
-		}
+		action = computeapi.ShelveOffloadServer
 	}
 	for _, ref := range refs {
 		id, err := resolveServerID(ctx, client, ref)
 		if err != nil {
 			return err
 		}
-		if err := action(ctx, client, id); err != nil {
-			return fmt.Errorf("shelving server %q: %w", ref, err)
+		if err := relabel(action(ctx, client, id), "shelving server %q", ref); err != nil {
+			return err
 		}
 		if wait {
 			if err := waitForServerStatuses(ctx, client, id, want, waitTimeout); err != nil {
@@ -106,32 +100,6 @@ func runServerShelve(ctx context.Context, client *gophercloud.ServiceClient, ref
 }
 
 // --- unshelve ---------------------------------------------------------------
-
-// unshelveOpts extends gophercloud's UnshelveOpts with `host`, which nova
-// accepts from microversion 2.91 and the typed struct does not model.
-type unshelveOpts struct {
-	servers.UnshelveOpts
-	Host string
-}
-
-func (o unshelveOpts) ToUnshelveMap() (map[string]any, error) {
-	body, err := o.UnshelveOpts.ToUnshelveMap()
-	if err != nil {
-		return nil, err
-	}
-	if o.Host == "" {
-		return body, nil
-	}
-	// gophercloud renders {"unshelve": nil} when no field is set, so the inner
-	// object may need creating before the host can be added.
-	inner, _ := body["unshelve"].(map[string]any)
-	if inner == nil {
-		inner = map[string]any{}
-	}
-	inner["host"] = o.Host
-	body["unshelve"] = inner
-	return body, nil
-}
 
 type unshelveFlags struct {
 	az          string
@@ -169,7 +137,7 @@ func newServerUnshelveCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runServerUnshelve(ctx context.Context, client *gophercloud.ServiceClient, refs []string,
 	f *unshelveFlags, w io.Writer,
 ) error {
-	opts := unshelveOpts{
+	opts := computeapi.UnshelveOpts{
 		UnshelveOpts: servers.UnshelveOpts{AvailabilityZone: f.az},
 		Host:         f.host,
 	}
@@ -178,8 +146,8 @@ func runServerUnshelve(ctx context.Context, client *gophercloud.ServiceClient, r
 		if err != nil {
 			return err
 		}
-		if err := servers.Unshelve(ctx, client, id, opts).ExtractErr(); err != nil {
-			return fmt.Errorf("unshelving server %q: %w", ref, err)
+		if err := relabel(computeapi.UnshelveServer(ctx, client, id, opts), "unshelving server %q", ref); err != nil {
+			return err
 		}
 		if f.wait {
 			if err := waitForServerStatus(ctx, client, id, "ACTIVE", f.waitTimeout); err != nil {
@@ -245,12 +213,12 @@ func runServerRescue(ctx context.Context, client *gophercloud.ServiceClient, ac 
 	if err != nil {
 		return err
 	}
-	adminPass, err := servers.Rescue(ctx, client, id, servers.RescueOpts{
+	adminPass, err := computeapi.RescueServer(ctx, client, id, servers.RescueOpts{
 		AdminPass:      f.password,
 		RescueImageRef: imageID,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("rescuing server %q: %w", ref, err)
+		return relabel(err, "rescuing server %q", ref)
 	}
 	return o.WriteSingle(w, serverRescueColumns, []any{adminPass})
 }
@@ -273,7 +241,7 @@ func resolveImageRef(ctx context.Context, ac *auth.Client, ref string) (string, 
 func newServerUnrescueCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return newSimpleActionCommand(a, o, "unrescue", "Return a rescued server to active", "Unrescued",
 		func(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-			return servers.Unrescue(ctx, client, id).ExtractErr()
+			return errors.Unwrap(computeapi.UnrescueServer(ctx, client, id))
 		})
 }
 
@@ -344,12 +312,12 @@ func runServerImageCreate(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return fmt.Errorf("parsing --property: %w", err)
 	}
-	imageID, err := servers.CreateImage(ctx, client, id, servers.CreateImageOpts{
+	imageID, err := computeapi.CreateServerImage(ctx, client, id, servers.CreateImageOpts{
 		Name:     name,
 		Metadata: metadata,
-	}).ExtractImageID()
+	})
 	if err != nil {
-		return fmt.Errorf("creating an image from server %q: %w", ref, err)
+		return relabel(err, "creating an image from server %q", ref)
 	}
 	if f.wait {
 		if err := waitForImageActive(ctx, ac, imageID, f.waitTimeout); err != nil {
@@ -400,44 +368,7 @@ func waitForServerStatuses(ctx context.Context, client *gophercloud.ServiceClien
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	ticker := time.NewTicker(statusPollInterval)
-	defer ticker.Stop()
-
-	accept := make(map[string]bool, len(want))
-	for _, s := range want {
-		accept[s] = true
-	}
-	wanted := strings.Join(want, " or ")
-
-	var last string
-	for {
-		s, err := servers.Get(ctx, client, id).Extract()
-		if err != nil {
-			if ctx.Err() != nil {
-				return fmt.Errorf("waiting for status %q%s: %w", wanted, lastStatus(last), ctx.Err())
-			}
-			return err
-		}
-		last = s.Status
-		if s.TaskState != "" {
-			last += " (task " + s.TaskState + ")"
-		}
-		switch {
-		// A status is a resting one only once nova has no task running on the
-		// server: it reports SHELVED while still offloading, and ACTIVE through
-		// a live migration, and an action sent then is refused with a 409.
-		case accept[s.Status] && s.TaskState == "":
-			return nil
-		case s.Status == "ERROR":
-			return fmt.Errorf("server entered ERROR status while waiting for %q", wanted)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("waiting for status %q%s: %w", wanted, lastStatus(last), ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return computeapi.WaitForServerStatus(ctx, client, id, want, statusPollInterval)
 }
 
 // waitForServerDeleted polls until nova answers 404 for the server, which is
@@ -456,34 +387,11 @@ func waitForServerDeleted(ctx context.Context, client *gophercloud.ServiceClient
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	ticker := time.NewTicker(statusPollInterval)
-	defer ticker.Stop()
-
-	var last string
-	for {
-		s, err := servers.Get(ctx, client, id).Extract()
-		switch {
-		case gophercloud.ResponseCodeIs(err, http.StatusNotFound):
-			return nil
-		case err != nil && ctx.Err() != nil:
-			return fmt.Errorf("waiting for deletion%s: %w", lastStatus(last), ctx.Err())
-		case err != nil:
-			return err
-		}
-		// A DELETED status is not the 404 yet: nova can show the record for a
-		// moment before the server is gone.
-		last = s.Status
-		if s.Status == "SOFT_DELETED" {
-			return errors.New("server is SOFT_DELETED: nova defers the real delete until its reclaim " +
-				"interval lapses; use --force to delete it now")
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("waiting for deletion%s: %w", lastStatus(last), ctx.Err())
-		case <-ticker.C:
-		}
+	err := computeapi.WaitForServerDeleted(ctx, client, id, statusPollInterval)
+	if errors.Is(err, computeapi.ErrServerSoftDeleted) {
+		return fmt.Errorf("%w; use --force to delete it now", err)
 	}
+	return err
 }
 
 // waitForImageActive polls glance rather than nova: nova returns as soon as the
