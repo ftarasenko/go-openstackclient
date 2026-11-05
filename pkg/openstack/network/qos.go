@@ -95,12 +95,6 @@ func qosRuleURL(c *gophercloud.ServiceClient, policyID, ruleType string, ruleID 
 	return c.ServiceURL(append([]string{"qos", "policies", policyID, ruleType + "_rules"}, ruleID...)...)
 }
 
-func closeBody(resp interface{ Close() error }) {
-	if resp != nil {
-		_ = resp.Close()
-	}
-}
-
 // GetQoSRule reads one rule of the given type.
 func GetQoSRule(ctx context.Context, c *gophercloud.ServiceClient, policyID, ruleType, ruleID string) (map[string]any, error) {
 	var doc map[string]map[string]any
@@ -115,8 +109,8 @@ func CreateQoSRule(ctx context.Context, c *gophercloud.ServiceClient, policyID, 
 	var doc map[string]map[string]any
 	resp, err := c.Post(ctx, qosRuleURL(c, policyID, ruleType), map[string]any{ruleType + "_rule": attrs}, &doc,
 		&gophercloud.RequestOpts{OkCodes: []int{201}})
-	if resp != nil {
-		closeBody(resp.Body)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("creating a %s rule on QoS policy %s: %w", ruleType, policyID, err)
@@ -129,8 +123,8 @@ func UpdateQoSRule(ctx context.Context, c *gophercloud.ServiceClient, policyID, 
 	var doc map[string]map[string]any
 	resp, err := c.Put(ctx, qosRuleURL(c, policyID, ruleType, ruleID), map[string]any{ruleType + "_rule": attrs}, &doc,
 		&gophercloud.RequestOpts{OkCodes: []int{200}})
-	if resp != nil {
-		closeBody(resp.Body)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("updating QoS rule %s: %w", ruleID, err)
@@ -141,8 +135,8 @@ func UpdateQoSRule(ctx context.Context, c *gophercloud.ServiceClient, policyID, 
 // DeleteQoSRule deletes one rule of the given type.
 func DeleteQoSRule(ctx context.Context, c *gophercloud.ServiceClient, policyID, ruleType, ruleID string) error {
 	resp, err := c.Delete(ctx, qosRuleURL(c, policyID, ruleType, ruleID), &gophercloud.RequestOpts{OkCodes: []int{204}})
-	if resp != nil {
-		closeBody(resp.Body)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 	return wrap(err, "deleting QoS rule %s", ruleID)
 }

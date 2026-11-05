@@ -5,17 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/taas/tapmirrors"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "tap mirror ..." mirrors upstream network/v2/taas/tap_mirror.py (TaaS GRE /
@@ -44,94 +43,20 @@ func newTapCommands(a *auth.Options, o *output.Options) []*cobra.Command {
 	return []*cobra.Command{tap}
 }
 
-// tapMirror is what koc decodes a mirror into. gophercloud's
-// tapmirrors.Directions types the tunnel IDs as JSON strings holding integers,
-// but neutron-lib's DIRECTION_SPEC validates them as integers and neutron
-// echoes what it was sent, so a number there would fail to decode; a plain map
-// takes either.
-type tapMirror struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	TenantID    string         `json:"tenant_id"`
-	ProjectID   string         `json:"project_id"`
-	PortID      string         `json:"port_id"`
-	Directions  map[string]any `json:"directions"`
-	RemoteIP    string         `json:"remote_ip"`
-	MirrorType  string         `json:"mirror_type"`
-}
+type tapMirror = networkapi.TapMirror
 
-func extractTapMirror(r interface{ ExtractInto(any) error }) (*tapMirror, error) {
-	var s struct {
-		TapMirror *tapMirror `json:"tap_mirror"`
-	}
-	if err := r.ExtractInto(&s); err != nil {
-		return nil, err
-	}
-	if s.TapMirror == nil {
-		return nil, fmt.Errorf("response carries no tap_mirror")
-	}
-	return s.TapMirror, nil
-}
-
-// tapMirrorPage replaces tapmirrors.TapMirrorPage, whose IsEmpty decodes
-// through the typed Directions and so fails on a list with numeric tunnel IDs
-// before koc ever sees the page.
-type tapMirrorPage struct {
-	pagination.LinkedPageBase
-}
-
-func (p tapMirrorPage) NextPageURL() (string, error) {
-	var s struct {
-		Links []gophercloud.Link `json:"tap_mirrors_links"`
-	}
-	if err := p.ExtractInto(&s); err != nil {
-		return "", err
-	}
-	return gophercloud.ExtractNextURL(s.Links)
-}
-
-func (p tapMirrorPage) IsEmpty() (bool, error) {
-	if p.StatusCode == http.StatusNoContent {
-		return true, nil
-	}
-	all, err := extractTapMirrors(p)
-	return len(all) == 0, err
-}
-
-// listTapMirrors is tapmirrors.List over tapMirrorPage; the query still comes
-// from the typed ListOpts.
-func listTapMirrors(client *gophercloud.ServiceClient, opts tapmirrors.ListOpts) pagination.Pager {
-	q, err := opts.ToTapMirrorListQuery()
-	if err != nil {
-		return pagination.Pager{Err: err}
-	}
-	return pagination.NewPager(client, client.ServiceURL("taas", "tap_mirrors")+q, func(r pagination.PageResult) pagination.Page {
-		return tapMirrorPage{pagination.LinkedPageBase{PageResult: r}}
-	})
-}
-
-func extractTapMirrors(page pagination.Page) ([]tapMirror, error) {
-	p, ok := page.(tapMirrorPage)
-	if !ok {
-		return nil, fmt.Errorf("unexpected tap mirror page type %T", page)
-	}
-	var all []tapMirror
-	err := p.ExtractIntoSlicePtr(&all, "tap_mirrors")
-	return all, err
-}
-
-// tenant is upstream's "Tenant" column (the tenant_id key), falling back to
-// project_id for a neutron that returns only the newer name.
-func (m *tapMirror) tenant() string {
+// tapMirrorTenant is upstream's "Tenant" column (the tenant_id key), falling
+// back to project_id for a neutron that returns only the newer name.
+func tapMirrorTenant(m *tapMirror) string {
 	if m.TenantID != "" {
 		return m.TenantID
 	}
 	return m.ProjectID
 }
 
-// directions renders an absent map as empty rather than as JSON "null".
-func (m *tapMirror) directions() any {
+// tapMirrorDirections renders an absent map as empty rather than as JSON
+// "null".
+func tapMirrorDirections(m *tapMirror) any {
 	if len(m.Directions) == 0 {
 		return nil
 	}
@@ -140,20 +65,14 @@ func (m *tapMirror) directions() any {
 
 func tapMirrorShowFields(m *tapMirror) ([]string, []any) {
 	fields := []string{"id", "name", "description", "port_id", "directions", "remote_ip", "mirror_type", "project_id"}
-	values := []any{m.ID, m.Name, m.Description, m.PortID, m.directions(), m.RemoteIP, m.MirrorType, m.ProjectID}
+	values := []any{m.ID, m.Name, m.Description, m.PortID, tapMirrorDirections(m), m.RemoteIP, m.MirrorType, m.ProjectID}
 	return fields, values
 }
 
 var tapMirrorColumns = fieldNames(tapMirrorShowFields(&tapMirror{}))
 
 func resolveTapMirrorID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	id, err := resolveByName(client, "tap mirror", nameOrID, func(c *gophercloud.ServiceClient) ([]tapMirror, error) {
-		pages, err := listTapMirrors(c, tapmirrors.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return extractTapMirrors(pages)
-	}, func(m tapMirror) string { return m.ID })
+	id, err := cliLookup(networkapi.FindTapMirrorID(ctx, client, nameOrID))
 	return id, explainMissingService(ctx, client, err, extTapMirror)
 }
 
@@ -256,9 +175,9 @@ func runTapMirrorCreate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if f.projectID != "" {
 		attrs["project_id"] = f.projectID
 	}
-	m, err := extractTapMirror(tapmirrors.Create(ctx, client, bgptapBody{key: "tap_mirror", attrs: attrs}))
+	m, err := networkapi.CreateTapMirror(ctx, client, bgptapBody{key: "tap_mirror", attrs: attrs})
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("creating tap mirror: %w", err), extTapMirror)
+		return explainMissingService(ctx, client, err, extTapMirror)
 	}
 	fields, values := tapMirrorShowFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -289,8 +208,8 @@ func runTapMirrorDelete(ctx context.Context, client *gophercloud.ServiceClient, 
 		if err != nil {
 			return err
 		}
-		if err := tapmirrors.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return explainMissingService(ctx, client, fmt.Errorf("deleting tap mirror %s: %w", ref, err), extTapMirror)
+		if err := networkapi.DeleteTapMirror(ctx, client, id); err != nil {
+			return explainMissingService(ctx, client, relabel(err, "deleting tap mirror %s", ref), extTapMirror)
 		}
 		_, err = fmt.Fprintf(w, "Deleted tap mirror %s\n", ref)
 		return err
@@ -335,18 +254,14 @@ func newTapMirrorListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 var tapMirrorListColumns = []string{"ID", "Tenant", "Name", "Port", "Directions", "Remote IP", "Mirror Type"}
 
 func runTapMirrorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, projectID string, w io.Writer) error {
-	pages, err := listTapMirrors(client, tapmirrors.ListOpts{ProjectID: projectID}).AllPages(ctx)
+	all, err := networkapi.ListTapMirrors(ctx, client, tapmirrors.ListOpts{ProjectID: projectID})
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("listing tap mirrors: %w", err), extTapMirror)
-	}
-	all, err := extractTapMirrors(pages)
-	if err != nil {
-		return fmt.Errorf("parsing tap mirror list: %w", err)
+		return explainMissingService(ctx, client, err, extTapMirror)
 	}
 	t := output.Table{Columns: tapMirrorListColumns, Rows: make([][]any, 0, len(all))}
 	for i := range all {
 		m := &all[i]
-		t.Rows = append(t.Rows, []any{m.ID, m.tenant(), m.Name, m.PortID, m.directions(), m.RemoteIP, m.MirrorType})
+		t.Rows = append(t.Rows, []any{m.ID, tapMirrorTenant(m), m.Name, m.PortID, tapMirrorDirections(m), m.RemoteIP, m.MirrorType})
 	}
 	return o.WriteList(w, t)
 }
@@ -375,9 +290,9 @@ func runTapMirrorShow(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	m, err := extractTapMirror(tapmirrors.Get(ctx, client, id))
+	m, err := networkapi.GetTapMirror(ctx, client, id)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("getting tap mirror %s: %w", ref, err), extTapMirror)
+		return explainMissingService(ctx, client, relabel(err, "getting tap mirror %s", ref), extTapMirror)
 	}
 	fields, values := tapMirrorShowFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -432,9 +347,9 @@ func runTapMirrorUpdate(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	m, err := extractTapMirror(tapmirrors.Update(ctx, client, id, opts))
+	m, err := networkapi.UpdateTapMirror(ctx, client, id, opts)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("updating tap mirror %s: %w", ref, err), extTapMirror)
+		return explainMissingService(ctx, client, relabel(err, "updating tap mirror %s", ref), extTapMirror)
 	}
 	fields, values := tapMirrorShowFields(m)
 	return o.WriteSingle(w, fields, values)

@@ -94,6 +94,9 @@ func TestFindIDs(t *testing.T) {
 		{"subnet pool", "/subnetpools", "name", network.FindSubnetPoolID},
 		{"network trunk", "/trunks", "name", network.FindTrunkID},
 		{"network segment", "/segments", "name", network.FindSegmentID},
+		{"BGP speaker", "/bgp-speakers", "name", network.FindBGPSpeakerID},
+		{"BGP peer", "/bgp-peers", "name", network.FindBGPPeerID},
+		{"tap mirror", "/taas/tap_mirrors", "name", network.FindTapMirrorID},
 	}
 	for _, f := range finds {
 		t.Run(f.kind, func(t *testing.T) {
@@ -101,11 +104,14 @@ func TestFindIDs(t *testing.T) {
 			key := strings.ReplaceAll(f.path[strings.LastIndex(f.path, "/")+1:], "-", "_")
 			// subnetpools.SubnetPool's UnmarshalJSON needs the prefix lengths.
 			prefixes := `,"default_prefixlen":8,"min_prefixlen":8,"max_prefixlen":32`
-			item := func(id string) string { return `{"id":"` + id + `"` + prefixes + `}` }
+			// The BGP lookups keep only exact name matches.
+			item := func(id, name string) string {
+				return `{"id":"` + id + `","name":"` + name + `"` + prefixes + `}`
+			}
 			seen, sc := fakeNeutron(t, map[string]reply{
-				"GET " + f.path + "?" + f.filter + "=one":  {Body: `{"` + key + `":[` + item("id-1") + `]}`},
+				"GET " + f.path + "?" + f.filter + "=one":  {Body: `{"` + key + `":[` + item("id-1", "one") + `]}`},
 				"GET " + f.path + "?" + f.filter + "=none": {Body: `{"` + key + `":[]}`},
-				"GET " + f.path + "?" + f.filter + "=two":  {Body: `{"` + key + `":[` + item("a") + `,` + item("b") + `]}`},
+				"GET " + f.path + "?" + f.filter + "=two":  {Body: `{"` + key + `":[` + item("a", "two") + `,` + item("b", "two") + `]}`},
 			})
 			ctx := context.Background()
 			if id, err := f.find(ctx, sc, netID); id != netID || err != nil || len(*seen) != 0 {

@@ -4,17 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgp/peers"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -26,19 +25,9 @@ const (
 
 const bgpAuthTypeNone = "none"
 
-// resolveBGPPeerID resolves a BGP peer name or ID; see resolveBGPSpeakerID.
+// resolveBGPPeerID resolves a BGP peer name or ID.
 func resolveBGPPeerID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	id, err := resolveByName(client, "BGP peer", nameOrID, func(c *gophercloud.ServiceClient) ([]peers.BGPPeer, error) {
-		u := c.ServiceURL("bgp-peers") + "?" + url.Values{"name": {nameOrID}}.Encode()
-		pages, err := pagination.NewPager(c, u, func(r pagination.PageResult) pagination.Page {
-			return peers.BGPPeerPage{SinglePageBase: pagination.SinglePageBase(r)}
-		}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := peers.ExtractBGPPeers(pages)
-		return keepUnmatched(all, func(p peers.BGPPeer) bool { return p.Name != nameOrID }), err
-	}, func(p peers.BGPPeer) string { return p.ID })
+	id, err := cliLookup(networkapi.FindBGPPeerID(ctx, client, nameOrID))
 	return id, explainMissingService(ctx, client, err, extBGP)
 }
 
@@ -146,9 +135,9 @@ func runBGPPeerCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	p, err := peers.Create(ctx, client, bgptapBody{key: "bgp_peer", attrs: attrs}).Extract()
+	p, err := networkapi.CreateBGPPeer(ctx, client, bgptapBody{key: "bgp_peer", attrs: attrs})
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("creating BGP peer: %w", err), extBGP)
+		return explainMissingService(ctx, client, err, extBGP)
 	}
 	fields, values := bgpPeerShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -179,8 +168,8 @@ func runBGPPeerDelete(ctx context.Context, client *gophercloud.ServiceClient, re
 		if err != nil {
 			return err
 		}
-		if err := peers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return explainMissingService(ctx, client, fmt.Errorf("deleting BGP peer %s: %w", ref, err), extBGP)
+		if err := networkapi.DeleteBGPPeer(ctx, client, id); err != nil {
+			return explainMissingService(ctx, client, relabel(err, "deleting BGP peer %s", ref), extBGP)
 		}
 		_, err = fmt.Fprintf(w, "Deleted BGP peer %s\n", ref)
 		return err
@@ -207,13 +196,9 @@ func newBGPPeerListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runBGPPeerList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := peers.List(client).AllPages(ctx)
+	all, err := networkapi.ListBGPPeers(ctx, client)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("listing BGP peers: %w", err), extBGP)
-	}
-	all, err := peers.ExtractBGPPeers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing BGP peer list: %w", err)
+		return explainMissingService(ctx, client, err, extBGP)
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Peer IP", "Remote AS"}, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
@@ -272,9 +257,9 @@ func runBGPPeerSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	p, err := peers.Update(ctx, client, id, bgptapBody{key: "bgp_peer", attrs: attrs}).Extract()
+	p, err := networkapi.UpdateBGPPeer(ctx, client, id, bgptapBody{key: "bgp_peer", attrs: attrs})
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("updating BGP peer %s: %w", ref, err), extBGP)
+		return explainMissingService(ctx, client, relabel(err, "updating BGP peer %s", ref), extBGP)
 	}
 	fields, values := bgpPeerShowFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -304,9 +289,9 @@ func runBGPPeerShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	p, err := peers.Get(ctx, client, id).Extract()
+	p, err := networkapi.GetBGPPeer(ctx, client, id)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("getting BGP peer %s: %w", ref, err), extBGP)
+		return explainMissingService(ctx, client, relabel(err, "getting BGP peer %s", ref), extBGP)
 	}
 	fields, values := bgpPeerShowFields(p)
 	return o.WriteSingle(w, fields, values)

@@ -7,12 +7,12 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/routers"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // newAgentCommand builds "network agent ...".
@@ -133,13 +133,9 @@ func runAgentList(ctx context.Context, client *gophercloud.ServiceClient, o *out
 		return runAgentListByRouter(ctx, client, o, f.router, f.long, w)
 	}
 	opts := agents.ListOpts{AgentType: agentTypeFilter(f.agentType), Host: f.host}
-	pages, err := agents.List(client, opts).AllPages(ctx)
+	all, err := networkapi.ListAgents(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing network agents: %w", err)
-	}
-	all, err := agents.ExtractAgents(pages)
-	if err != nil {
-		return fmt.Errorf("parsing network agent list: %w", err)
+		return err
 	}
 	return writeAgentRows(o, w, all)
 }
@@ -157,28 +153,11 @@ func runAgentListByNetwork(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	all, err := listNetworkDHCPAgents(ctx, client, netID)
+	all, err := networkapi.ListNetworkDHCPAgents(ctx, client, netID)
 	if err != nil {
-		return fmt.Errorf("listing DHCP agents hosting network %q: %w", ref, err)
+		return relabel(err, "listing DHCP agents hosting network %q", ref)
 	}
 	return writeAgentRows(o, w, all)
-}
-
-// listNetworkDHCPAgents reads GET /networks/{id}/dhcp-agents. gophercloud only
-// models the other direction (agents.ListDHCPNetworks: the networks one agent
-// hosts), so this is a raw call; swap it for a typed one if gophercloud grows it.
-func listNetworkDHCPAgents(ctx context.Context, client *gophercloud.ServiceClient, networkID string) ([]agents.Agent, error) {
-	var body struct {
-		Agents []agents.Agent `json:"agents"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("networks", networkID, "dhcp-agents"), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return nil, err
-	}
-	return body.Agents, nil
 }
 
 func runAgentListByRouter(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
@@ -188,13 +167,9 @@ func runAgentListByRouter(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	pages, err := routers.ListL3Agents(client, routerID).AllPages(ctx)
+	all, err := networkapi.ListRouterL3Agents(ctx, client, routerID)
 	if err != nil {
-		return fmt.Errorf("listing L3 agents hosting router %q: %w", ref, err)
-	}
-	all, err := routers.ExtractL3Agents(pages)
-	if err != nil {
-		return fmt.Errorf("parsing L3 agent list: %w", err)
+		return relabelList(err, "listing L3 agents hosting router %q", ref)
 	}
 	cols := agentListColumns
 	if long {
@@ -239,9 +214,9 @@ func newAgentShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAgentShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	ag, err := agents.Get(ctx, client, id).Extract()
+	ag, err := networkapi.GetAgent(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting network agent %s: %w", id, err)
+		return err
 	}
 	fields, values := agentShowFields(ag)
 	return o.WriteSingle(w, fields, values)
@@ -269,8 +244,8 @@ func newAgentDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 func runAgentDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := agents.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting network agent %s: %w", id, err)
+		if err := networkapi.DeleteAgent(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted agent %s\n", id); err != nil {
 			return err
@@ -325,9 +300,9 @@ func runAgentSet(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if opts.AdminStateUp == nil && opts.Description == nil {
 		return fmt.Errorf("agent set requires --description, --enable or --disable")
 	}
-	ag, err := agents.Update(ctx, client, id, opts).Extract()
+	ag, err := networkapi.UpdateAgent(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating network agent %s: %w", id, err)
+		return err
 	}
 	fields, values := agentShowFields(ag)
 	return o.WriteSingle(w, fields, values)

@@ -206,6 +206,12 @@ func cloud(t *testing.T) *httptest.Server {
 		answer(w, map[string]any{"network_ip_availabilities": []map[string]any{{"network_id": "net-1", "total_ips": 253, "used_ips": 3,
 			"ip_availability_details": map[string]any{"used": 3}}}})
 	})
+	mux.HandleFunc("GET /network/v2.0/taas/tap_mirrors", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"tap_mirrors": []map[string]any{{"id": "tm-1", "directions": map[string]any{"IN": 101}}}})
+	})
+	mux.HandleFunc("GET /network/v2.0/routers/router-1/l3-agents", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"agents": []map[string]any{{"id": "agent-1", "ha_state": "active"}}})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -390,5 +396,11 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if av, err := network.ListIPAvailabilities(ctx, networkClient, nil); err != nil || len(av) != 1 || av[0].Details["used"] != float64(3) {
 		t.Fatalf("network.ListIPAvailabilities = %+v, %v", av, err)
+	}
+	if tm, err := network.ListTapMirrors(ctx, networkClient, nil); err != nil || len(tm) != 1 || tm[0].Directions["IN"] != float64(101) {
+		t.Fatalf("network.ListTapMirrors = %+v, %v", tm, err)
+	}
+	if l3, err := network.ListRouterL3Agents(ctx, networkClient, "router-1"); err != nil || len(l3) != 1 || l3[0].HAState != "active" {
+		t.Fatalf("network.ListRouterL3Agents = %+v, %v", l3, err)
 	}
 }

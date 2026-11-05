@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "bgp dragent ..." mirrors upstream network/v2/dynamic_routing/bgp_dragent.py:
@@ -61,10 +62,9 @@ func runBGPDRAgentAddSpeaker(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
-	opts := agents.ScheduleBGPSpeakerOpts{SpeakerID: speakerID}
-	if err := agents.ScheduleBGPSpeaker(ctx, client, agentID, opts).ExtractErr(); err != nil {
+	if err := networkapi.AddDRAgentBGPSpeaker(ctx, client, agentID, speakerID); err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("adding BGP speaker %s to dynamic routing agent %s: %w", speakerRef, agentID, err), extBGPDRAgentSchedule)
+			relabel(err, "adding BGP speaker %s to dynamic routing agent %s", speakerRef, agentID), extBGPDRAgentSchedule)
 	}
 	_, err = fmt.Fprintf(w, "Added BGP speaker %s to dynamic routing agent %s\n", speakerRef, agentID)
 	return err
@@ -75,9 +75,9 @@ func runBGPDRAgentRemoveSpeaker(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return err
 	}
-	if err := agents.RemoveBGPSpeaker(ctx, client, agentID, speakerID).ExtractErr(); err != nil {
+	if err := networkapi.RemoveDRAgentBGPSpeaker(ctx, client, agentID, speakerID); err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("removing BGP speaker %s from dynamic routing agent %s: %w", speakerRef, agentID, err), extBGPDRAgentSchedule)
+			relabel(err, "removing BGP speaker %s from dynamic routing agent %s", speakerRef, agentID), extBGPDRAgentSchedule)
 	}
 	_, err = fmt.Fprintf(w, "Removed BGP speaker %s from dynamic routing agent %s\n", speakerRef, agentID)
 	return err
@@ -110,13 +110,11 @@ func newBGPDRAgentListCommand(a *auth.Options, o *output.Options) *cobra.Command
 // columns of "network agent list" — upstream's ListDRAgent uses the same ones.
 func runBGPDRAgentList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, speakerRef string, w io.Writer) error {
 	if speakerRef == "" {
-		pages, err := agents.List(client, agents.ListOpts{AgentType: bgpDRAgentType}).AllPages(ctx)
+		// agents.AgentPage is a linked page, whose IsEmpty extracts, so
+		// any failure is the listing's.
+		all, err := networkapi.ListAgents(ctx, client, agents.ListOpts{AgentType: bgpDRAgentType})
 		if err != nil {
-			return fmt.Errorf("listing dynamic routing agents: %w", err)
-		}
-		all, err := agents.ExtractAgents(pages)
-		if err != nil {
-			return fmt.Errorf("parsing dynamic routing agent list: %w", err)
+			return relabel(err, "listing dynamic routing agents")
 		}
 		return writeAgentRows(o, w, all)
 	}
@@ -124,14 +122,10 @@ func runBGPDRAgentList(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	pages, err := agents.ListDRAgentHostingBGPSpeakers(client, speakerID).AllPages(ctx)
+	all, err := networkapi.ListBGPSpeakerDRAgents(ctx, client, speakerID)
 	if err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("listing dynamic routing agents hosting BGP speaker %s: %w", speakerRef, err), extBGPDRAgentSchedule)
-	}
-	all, err := agents.ExtractAgents(pages)
-	if err != nil {
-		return fmt.Errorf("parsing dynamic routing agent list: %w", err)
+			relabelList(err, "listing dynamic routing agents hosting BGP speaker %s", speakerRef), extBGPDRAgentSchedule)
 	}
 	return writeAgentRows(o, w, all)
 }

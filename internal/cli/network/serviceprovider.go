@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // newServiceProviderCommand builds "network service provider ...", upstream's
@@ -48,32 +48,10 @@ func newServiceProviderListCommand(a *auth.Options, o *output.Options) *cobra.Co
 	}
 }
 
-type serviceProvider struct {
-	ServiceType string `json:"service_type"`
-	Name        string `json:"name"`
-	Default     bool   `json:"default"`
-}
-
-// listServiceProviders is GET /service-providers. gophercloud has no package
-// for the resource, so it is one raw call, isolated here.
-func listServiceProviders(ctx context.Context, client *gophercloud.ServiceClient) ([]serviceProvider, error) {
-	var body struct {
-		ServiceProviders []serviceProvider `json:"service_providers"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("service-providers"), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return nil, err
-	}
-	return body.ServiceProviders, nil
-}
-
 func runServiceProviderList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	all, err := listServiceProviders(ctx, client)
+	all, err := networkapi.ListServiceProviders(ctx, client)
 	if err != nil {
-		return fmt.Errorf("listing service providers: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"Service Type", "Name", "Default"}, Rows: make([][]any, 0, len(all))}
 	for _, sp := range all {
