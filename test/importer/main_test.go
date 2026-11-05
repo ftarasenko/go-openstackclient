@@ -12,6 +12,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
@@ -47,6 +48,11 @@ func cloud(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /compute/flavors/detail", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"flavors": []map[string]any{
 			{"id": "1", "name": "m1.small", "os-flavor-access:is_public": true},
+		}})
+	})
+	mux.HandleFunc("GET /compute/os-services", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"services": []map[string]any{
+			{"id": "svc-1", "binary": "nova-compute", "host": "cmp-01", "status": "enabled", "admin_state": "Active"},
 		}})
 	})
 	srv := httptest.NewServer(mux)
@@ -96,5 +102,12 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if fl, err := compute.FindFlavor(ctx, computeClient, "m1.small"); err != nil || fl.ID != "1" {
 		t.Fatalf("FindFlavor = %v, %v", fl, err)
+	}
+	svcs, ext, err := compute.ListServices(ctx, computeClient, services.ListOpts{})
+	if err != nil || len(svcs) != 1 || ext[0].AdminState != "Active" {
+		t.Fatalf("ListServices = %v, %v, %v", svcs, ext, err)
+	}
+	if id, err := compute.FindServiceID(ctx, computeClient, "cmp-01", "nova-compute"); err != nil || id != "svc-1" {
+		t.Fatalf("FindServiceID = %q, %v", id, err)
 	}
 }

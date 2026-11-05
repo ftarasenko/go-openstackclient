@@ -2,20 +2,21 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"strings"
-	"sync"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/aggregates"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceproviders"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // newHypervisorCommand builds the "hypervisor" command group.
@@ -93,110 +94,28 @@ func runHypervisorShow(ctx context.Context, client *gophercloud.ServiceClient, o
 
 // hypervisorIDs returns the IDs of h, a hypervisor read at 2.1, and of its
 // service, as nova names them at the client's microversion: UUIDs from 2.53.
-// The hypervisor is matched on hostname and service host, as findHypervisor
-// matches a UUID. The lookup is best-effort — on a failed listing, a pinned
-// pre-2.53 client or no unique match, the 2.1 IDs are what there is.
+// The lookup is best-effort — on a failed listing, a pinned pre-2.53 client or
+// no unique match, the 2.1 IDs are what there is.
 func hypervisorIDs(ctx context.Context, client *gophercloud.ServiceClient, h hypervisors.Hypervisor) (id, serviceID string) {
-	id, serviceID = h.ID, h.Service.ID
-	if client.Microversion == "" {
-		return id, serviceID
-	}
-	pages, err := hypervisors.List(client, nil).AllPages(ctx)
-	if err != nil {
-		return id, serviceID
-	}
-	all, err := hypervisors.ExtractHypervisors(pages)
-	if err != nil {
-		return id, serviceID
-	}
-	var match []hypervisors.Hypervisor
-	for _, cand := range all {
-		if cand.HypervisorHostname == h.HypervisorHostname && cand.Service.Host == h.Service.Host {
-			match = append(match, cand)
-		}
-	}
-	if len(match) != 1 {
-		return id, serviceID
-	}
-	return match[0].ID, match[0].Service.ID
+	id, serviceID, _ = computeapi.HypervisorIDs(ctx, client, h)
+	return id, serviceID
 }
 
-// findHypervisor resolves a hypervisor by ID or hostname.
-//
-// The list is fetched with the default microversion (2.1) rather than the
-// negotiated "latest": nova removed the usage fields at 2.88 (they moved to
-// placement), so a negotiated-latest request would report them as 0, and 2.1
-// also avoids the UUID-vs-integer hypervisor ID split introduced at 2.53.
-//
-// A ref matching more than one hypervisor is an error rather than a silent pick:
-// hostnames are not unique across cells, and showing the wrong host's usage is
-// worse than saying so.
+// findHypervisor resolves a hypervisor by ID or hostname, read at 2.1 so the
+// usage fields nova removed at 2.88 are there (computeapi.FindHypervisor), in
+// this command's wording for no match and several. Hostnames are not unique
+// across cells, and showing the wrong host's usage is worse than saying so.
 func findHypervisor(ctx context.Context, client *gophercloud.ServiceClient, ref string) (hypervisors.Hypervisor, error) {
-	hvClient := *client
-	hvClient.Microversion = ""
-
-	pages, err := hypervisors.List(&hvClient, nil).AllPages(ctx)
-	if err != nil {
-		return hypervisors.Hypervisor{}, fmt.Errorf("listing hypervisors: %w", err)
+	h, err := computeapi.FindHypervisor(ctx, client, ref)
+	var notFound *osresolve.NotFoundError
+	var ambiguous *osresolve.AmbiguousError
+	switch {
+	case errors.As(err, &notFound):
+		return h, fmt.Errorf("hypervisor %q not found", ref)
+	case errors.As(err, &ambiguous):
+		return h, fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, ambiguous.Count)
 	}
-	all, err := hypervisors.ExtractHypervisors(pages)
-	if err != nil {
-		return hypervisors.Hypervisor{}, fmt.Errorf("parsing hypervisor list: %w", err)
-	}
-
-	matches := matchHypervisors(all, ref)
-	if len(matches) == 0 && client.Microversion != "" {
-		// "hypervisor list" runs at the negotiated microversion, where nova has
-		// named hypervisors by UUID since 2.53, while 2.1 still names them by
-		// integer. Map a UUID copied from that listing to its hostname and
-		// service host, and match those in the 2.1 list.
-		if h, ok, err := hypervisorAtMicroversion(ctx, client, ref); err != nil {
-			return hypervisors.Hypervisor{}, err
-		} else if ok {
-			for _, cand := range all {
-				if cand.HypervisorHostname == h.HypervisorHostname && cand.Service.Host == h.Service.Host {
-					matches = append(matches, cand)
-				}
-			}
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return hypervisors.Hypervisor{}, fmt.Errorf("hypervisor %q not found", ref)
-	case 1:
-		return matches[0], nil
-	default:
-		return hypervisors.Hypervisor{}, fmt.Errorf("hypervisor %q is ambiguous (%d matches); specify the hypervisor ID instead", ref, len(matches))
-	}
-}
-
-func matchHypervisors(all []hypervisors.Hypervisor, ref string) []hypervisors.Hypervisor {
-	var matches []hypervisors.Hypervisor
-	for _, h := range all {
-		if h.ID == ref || h.HypervisorHostname == ref {
-			matches = append(matches, h)
-		}
-	}
-	return matches
-}
-
-// hypervisorAtMicroversion finds the hypervisor whose ID is ref in a listing at
-// the client's own microversion.
-func hypervisorAtMicroversion(ctx context.Context, client *gophercloud.ServiceClient, ref string) (hypervisors.Hypervisor, bool, error) {
-	pages, err := hypervisors.List(client, nil).AllPages(ctx)
-	if err != nil {
-		return hypervisors.Hypervisor{}, false, fmt.Errorf("listing hypervisors: %w", err)
-	}
-	all, err := hypervisors.ExtractHypervisors(pages)
-	if err != nil {
-		return hypervisors.Hypervisor{}, false, fmt.Errorf("parsing hypervisor list: %w", err)
-	}
-	for _, h := range all {
-		if h.ID == ref {
-			return h, true, nil
-		}
-	}
-	return hypervisors.Hypervisor{}, false, nil
+	return h, err
 }
 
 // hostAggregates maps each compute host to the names of the aggregates holding
@@ -206,21 +125,11 @@ func hypervisorAtMicroversion(ctx context.Context, client *gophercloud.ServiceCl
 // token, yields an empty map rather than failing the command, because the
 // aggregate is a column on a hypervisor view and never the point of it.
 func hostAggregates(ctx context.Context, client *gophercloud.ServiceClient) map[string][]string {
-	hostAggr := map[string][]string{}
-	apages, err := aggregates.List(client).AllPages(ctx)
+	byHost, err := computeapi.HostAggregates(ctx, client)
 	if err != nil {
-		return hostAggr
+		return map[string][]string{}
 	}
-	aggs, err := aggregates.ExtractAggregates(apages)
-	if err != nil {
-		return hostAggr
-	}
-	for _, ag := range aggs {
-		for _, h := range ag.Hosts {
-			hostAggr[h] = append(hostAggr[h], ag.Name)
-		}
-	}
-	return hostAggr
+	return byHost
 }
 
 func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -289,13 +198,9 @@ func newHypervisorListCommand(a *auth.Options, o *output.Options) *cobra.Command
 // runHypervisorList is the plain, OSC-compatible listing: upstream's columns,
 // plus the service status nova reports alongside the state.
 func runHypervisorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := hypervisors.List(client, nil).AllPages(ctx)
+	all, err := computeapi.ListHypervisors(ctx, client, nil)
 	if err != nil {
-		return fmt.Errorf("listing hypervisors: %w", err)
-	}
-	all, err := hypervisors.ExtractHypervisors(pages)
-	if err != nil {
-		return fmt.Errorf("parsing hypervisor list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Hypervisor Hostname", "Hypervisor Type", "Host IP", "State", "Status"},
@@ -338,16 +243,9 @@ func gatherHypervisorRows(ctx context.Context, client *gophercloud.ServiceClient
 	// placement — so the negotiated "latest" returns them as 0. Fetch the gauge
 	// data with the default microversion (2.1), which still includes every field
 	// and is supported by every nova.
-	hvClient := *client
-	hvClient.Microversion = ""
-
-	pages, err := hypervisors.List(&hvClient, nil).AllPages(ctx)
+	all, err := computeapi.ListHypervisorsWithUsage(ctx, client)
 	if err != nil {
-		return nil, fmt.Errorf("listing hypervisors: %w", err)
-	}
-	all, err := hypervisors.ExtractHypervisors(pages)
-	if err != nil {
-		return nil, fmt.Errorf("parsing hypervisor list: %w", err)
+		return nil, err
 	}
 
 	hostAggr := hostAggregates(ctx, client)
@@ -424,43 +322,21 @@ func gaugeRawTable(rows []hostRow, checkActual bool) output.Table {
 // resource class is only overridden when the RP actually has that inventory
 // (e.g. DISK_GB may live on a shared-storage provider), so nothing is zeroed.
 func enrichFromPlacement(ctx context.Context, pc *gophercloud.ServiceClient, rows []hostRow) {
-	pages, err := resourceproviders.List(pc, resourceproviders.ListOpts{}).AllPages(ctx)
-	if err != nil {
-		return
-	}
-	rps, err := resourceproviders.ExtractResourceProviders(pages)
-	if err != nil {
-		return
-	}
-	nameToUUID := make(map[string]string, len(rps))
-	for _, rp := range rps {
-		nameToUUID[rp.Name] = rp.UUID
-	}
-
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
+	names := make([]string, len(rows))
 	for i := range rows {
-		uuid, ok := nameToUUID[rows[i].name]
-		if !ok {
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(r *hostRow, id string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			inv, err := resourceproviders.GetInventories(ctx, pc, id).Extract()
-			if err != nil {
-				return
-			}
-			use, err := resourceproviders.GetUsages(ctx, pc, id).Extract()
-			if err != nil {
-				return
-			}
-			applyPlacement(r, inv, use)
-		}(&rows[i], uuid)
+		names[i] = rows[i].name
 	}
-	wg.Wait()
+	usage, err := computeapi.PlacementUsage(ctx, pc, names)
+	if err != nil {
+		return
+	}
+	for i := range rows {
+		if u, ok := usage[rows[i].name]; ok {
+			applyPlacement(&rows[i],
+				&resourceproviders.ResourceProviderInventories{Inventories: u.Inventories},
+				&resourceproviders.ResourceProviderUsage{Usages: u.Usages})
+		}
+	}
 }
 
 func applyPlacement(r *hostRow, inv *resourceproviders.ResourceProviderInventories, use *resourceproviders.ResourceProviderUsage) {
