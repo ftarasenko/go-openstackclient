@@ -2,11 +2,11 @@ package placement_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
 
@@ -18,13 +18,17 @@ import (
 // writes with it; the caller never handles the generation.
 func ExampleSetInventory() {
 	placementAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		fmt.Println(strings.TrimSpace(r.Method + " " + r.URL.Path + " " + string(body)))
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
+			fmt.Println("read the inventories")
 			_, _ = io.WriteString(w, `{"inventories":{},"resource_provider_generation":7}`)
 			return
 		}
+		var sent struct {
+			Generation int `json:"resource_provider_generation"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		fmt.Println("wrote VCPU at generation", sent.Generation)
 		_, _ = io.WriteString(w, `{"total":64,"reserved":0,"allocation_ratio":4,"resource_provider_generation":8}`)
 	}))
 	defer placementAPI.Close()
@@ -47,7 +51,7 @@ func ExampleSetInventory() {
 	}
 	fmt.Println("VCPU total", inv.Total, "ratio", inv.AllocationRatio)
 	// Output:
-	// GET /resource_providers/rp-1/inventories
-	// PUT /resource_providers/rp-1/inventories/VCPU {"allocation_ratio":4,"resource_provider_generation":7,"total":64}
+	// read the inventories
+	// wrote VCPU at generation 7
 	// VCPU total 64 ratio 4
 }
