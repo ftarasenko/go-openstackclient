@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 // newHealthMonitorCommand builds "loadbalancer healthmonitor ...".
@@ -48,21 +49,7 @@ func healthMonitorFields(m *monitors.Monitor) ([]string, []any) {
 }
 
 func resolveHealthMonitorID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("health monitor", ref, func() ([]string, error) {
-		pages, err := monitors.List(client, monitors.ListOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := monitors.ExtractMonitors(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, m := range all {
-			ids = append(ids, m.ID)
-		}
-		return ids, nil
-	})
+	return lookup("health monitor", ref, func() (string, error) { return loadbalancerapi.FindHealthMonitorID(ctx, client, ref) })
 }
 
 // --- list ------------------------------------------------------------------
@@ -133,13 +120,9 @@ func runHealthMonitorList(ctx context.Context, client *gophercloud.ServiceClient
 		}
 		opts.PoolID = poolID
 	}
-	pages, err := monitors.List(client, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListHealthMonitors(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing health monitors: %w", err)
-	}
-	all, err := monitors.ExtractMonitors(pages)
-	if err != nil {
-		return fmt.Errorf("parsing health monitor list: %w", err)
+		return relabelList(err, "listing health monitors")
 	}
 
 	cols := []string{"ID", "Name", "Type", "Delay", "Timeout", "Max Retries", "Operating Status"}
@@ -183,9 +166,9 @@ func runHealthMonitorShow(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	m, err := monitors.Get(ctx, client, id).Extract()
+	m, err := loadbalancerapi.GetHealthMonitor(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing health monitor %q: %w", ref, err)
+		return relabel(err, "showing health monitor %q", ref)
 	}
 	fields, values := healthMonitorFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -326,9 +309,9 @@ func runHealthMonitorCreate(ctx context.Context, client *gophercloud.ServiceClie
 		Tags:           f.tag,
 		AdminStateUp:   f.adminStateUp,
 	}
-	m, err := monitors.Create(ctx, client, opts).Extract()
+	m, err := loadbalancerapi.CreateHealthMonitor(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating health monitor %q for pool %q: %w", name, poolRef, err)
+		return relabel(err, "creating health monitor %q for pool %q", name, poolRef)
 	}
 	fields, values := healthMonitorFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -410,9 +393,9 @@ func runHealthMonitorSet(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	m, err := monitors.Update(ctx, client, id, opts).Extract()
+	m, err := loadbalancerapi.UpdateHealthMonitor(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating health monitor %q: %w", ref, err)
+		return relabel(err, "updating health monitor %q", ref)
 	}
 	fields, values := healthMonitorFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -445,8 +428,8 @@ func runHealthMonitorDelete(ctx context.Context, client *gophercloud.ServiceClie
 		if err != nil {
 			return err
 		}
-		if derr := monitors.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting health monitor %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeleteHealthMonitor(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting health monitor %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of health monitor %s\n", ref); werr != nil {
 			return werr

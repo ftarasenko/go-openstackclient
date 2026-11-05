@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 // newListenerCommand builds "loadbalancer listener ...".
@@ -54,21 +55,7 @@ func listenerFields(l *listeners.Listener) ([]string, []any) {
 // resolveListenerID turns a listener name or ID into an ID, rejecting an
 // ambiguous name rather than picking arbitrarily.
 func resolveListenerID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("listener", ref, func() ([]string, error) {
-		pages, err := listeners.List(client, listeners.ListOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := listeners.ExtractListeners(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, l := range all {
-			ids = append(ids, l.ID)
-		}
-		return ids, nil
-	})
+	return lookup("listener", ref, func() (string, error) { return loadbalancerapi.FindListenerID(ctx, client, ref) })
 }
 
 // --- list ------------------------------------------------------------------
@@ -142,13 +129,9 @@ func runListenerList(ctx context.Context, client *gophercloud.ServiceClient, o *
 		}
 		opts.LoadbalancerID = lbID
 	}
-	pages, err := listeners.List(client, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListListeners(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing listeners: %w", err)
-	}
-	all, err := listeners.ExtractListeners(pages)
-	if err != nil {
-		return fmt.Errorf("parsing listener list: %w", err)
+		return relabelList(err, "listing listeners")
 	}
 
 	cols := []string{"ID", "Name", "Protocol", "Protocol Port", "Default Pool ID", "Operating Status"}
@@ -192,9 +175,9 @@ func runListenerShow(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	l, err := listeners.Get(ctx, client, id).Extract()
+	l, err := loadbalancerapi.GetListener(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing listener %q: %w", ref, err)
+		return relabel(err, "showing listener %q", ref)
 	}
 	fields, values := listenerFields(l)
 	return o.WriteSingle(w, fields, values)
@@ -341,9 +324,9 @@ func runListenerCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 	setIfNonZero(&opts.TimeoutMemberData, f.timeoutMemberData)
 	setIfNonZero(&opts.TimeoutTCPInspect, f.timeoutTCPInspect)
 
-	l, err := listeners.Create(ctx, client, opts).Extract()
+	l, err := loadbalancerapi.CreateListener(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating listener %q: %w", name, err)
+		return relabel(err, "creating listener %q", name)
 	}
 	fields, values := listenerFields(l)
 	return o.WriteSingle(w, fields, values)
@@ -435,9 +418,9 @@ func runListenerSet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	l, err := listeners.Update(ctx, client, id, opts).Extract()
+	l, err := loadbalancerapi.UpdateListener(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating listener %q: %w", ref, err)
+		return relabel(err, "updating listener %q", ref)
 	}
 	fields, values := listenerFields(l)
 	return o.WriteSingle(w, fields, values)
@@ -470,8 +453,8 @@ func runListenerDelete(ctx context.Context, client *gophercloud.ServiceClient, r
 		if err != nil {
 			return err
 		}
-		if derr := listeners.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting listener %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeleteListener(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting listener %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of listener %s\n", ref); werr != nil {
 			return werr

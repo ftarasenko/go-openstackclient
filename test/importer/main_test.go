@@ -30,6 +30,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
 	"github.com/ftarasenko/go-openstackclient/pkg/openstack/ratelimit"
@@ -220,6 +221,15 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /network/v2.0/vpn/vpnservices", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"vpnservices": []map[string]any{{"id": "vpns-1", "router_id": "router-1"}}})
+	})
+	mux.HandleFunc("GET /load-balancer/v2.0/lbaas/loadbalancers", func(w http.ResponseWriter, r *http.Request) {
+		answer(w, map[string]any{"loadbalancers": []map[string]any{{"id": "lb-1", "name": r.URL.Query().Get("name"), "provisioning_status": "ACTIVE"}}})
+	})
+	mux.HandleFunc("GET /load-balancer/v2.0/lbaas/loadbalancers/lb-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"loadbalancer": map[string]any{"id": "lb-1", "provisioning_status": "ACTIVE"}})
+	})
+	mux.HandleFunc("GET /load-balancer/v2.0/quotas", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"quotas": []map[string]any{{"project_id": "prj-1", "load_balancer": 5}}, "quotas_links": []any{}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -420,5 +430,20 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if svcs, err := network.ListVPNServices(ctx, networkClient, nil); err != nil || len(svcs) != 1 || svcs[0].RouterID != "router-1" {
 		t.Fatalf("network.ListVPNServices = %+v, %v", svcs, err)
+	}
+
+	lbClient, err := s.LoadBalancer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lbID, err := loadbalancer.FindLoadBalancerID(ctx, lbClient, "web")
+	if err != nil || lbID != "lb-1" {
+		t.Fatalf("loadbalancer.FindLoadBalancerID = %q, %v", lbID, err)
+	}
+	if err := loadbalancer.WaitForLoadBalancerActive(ctx, lbClient, lbID, time.Millisecond); err != nil {
+		t.Fatalf("loadbalancer.WaitForLoadBalancerActive: %v", err)
+	}
+	if q, err := loadbalancer.ListQuotas(ctx, lbClient, ""); err != nil || len(q) != 1 || q[0].LoadBalancer == nil || *q[0].LoadBalancer != 5 {
+		t.Fatalf("loadbalancer.ListQuotas = %+v, %v", q, err)
 	}
 }

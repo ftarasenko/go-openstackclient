@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 // newPoolCommand builds "loadbalancer pool ...".
@@ -52,21 +53,7 @@ func poolFields(p *pools.Pool) ([]string, []any) {
 }
 
 func resolvePoolID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("pool", ref, func() ([]string, error) {
-		pages, err := pools.List(client, pools.ListOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := pools.ExtractPools(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, p := range all {
-			ids = append(ids, p.ID)
-		}
-		return ids, nil
-	})
+	return lookup("pool", ref, func() (string, error) { return loadbalancerapi.FindPoolID(ctx, client, ref) })
 }
 
 // --- list ------------------------------------------------------------------
@@ -140,13 +127,9 @@ func runPoolList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		}
 		opts.LoadbalancerID = lbID
 	}
-	pages, err := pools.List(client, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListPools(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing pools: %w", err)
-	}
-	all, err := pools.ExtractPools(pages)
-	if err != nil {
-		return fmt.Errorf("parsing pool list: %w", err)
+		return relabelList(err, "listing pools")
 	}
 
 	cols := []string{"ID", "Name", "Protocol", "LB Algorithm", "Members", "Operating Status"}
@@ -191,9 +174,9 @@ func runPoolShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	p, err := pools.Get(ctx, client, id).Extract()
+	p, err := loadbalancerapi.GetPool(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing pool %q: %w", ref, err)
+		return relabel(err, "showing pool %q", ref)
 	}
 	fields, values := poolFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -324,9 +307,9 @@ func runPoolCreate(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		}
 		opts.ListenerID = listenerID
 	}
-	p, err := pools.Create(ctx, client, opts).Extract()
+	p, err := loadbalancerapi.CreatePool(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating pool %q: %w", name, err)
+		return relabel(err, "creating pool %q", name)
 	}
 	fields, values := poolFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -449,9 +432,9 @@ func runPoolSet(ctx context.Context, client *gophercloud.ServiceClient, o *outpu
 	if err != nil {
 		return err
 	}
-	p, err := pools.Update(ctx, client, id, opts).Extract()
+	p, err := loadbalancerapi.UpdatePool(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating pool %q: %w", ref, err)
+		return relabel(err, "updating pool %q", ref)
 	}
 	fields, values := poolFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -484,8 +467,8 @@ func runPoolDelete(ctx context.Context, client *gophercloud.ServiceClient, refs 
 		if err != nil {
 			return err
 		}
-		if derr := pools.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting pool %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeletePool(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting pool %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of pool %s\n", ref); werr != nil {
 			return werr

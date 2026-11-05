@@ -1,4 +1,4 @@
-package loadbalancer
+package loadbalancer_test
 
 import (
 	"errors"
@@ -6,9 +6,11 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
+
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
-// getStatus is the mapping pollProvisioning applies to every Get before handing
+// GetStatus is the mapping the wait loop applies to every Get before handing
 // the result to a done callback. The 404 arm is the one that matters most: a
 // delete wait treats it as success, so misclassifying it as an error would turn
 // a completed teardown into a failure.
@@ -23,8 +25,8 @@ func TestGetStatus(t *testing.T) {
 	}{
 		{
 			name:       "a successful get yields the provisioning status",
-			lb:         &loadbalancers.LoadBalancer{ProvisioningStatus: statusActive},
-			wantStatus: statusActive,
+			lb:         &loadbalancers.LoadBalancer{ProvisioningStatus: loadbalancer.ProvisioningActive},
+			wantStatus: loadbalancer.ProvisioningActive,
 		},
 		{
 			name:       "a pending status is passed through unchanged",
@@ -61,7 +63,7 @@ func TestGetStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, gone, err := getStatus(tt.lb, tt.err)
+			status, gone, err := loadbalancer.GetStatus(tt.lb, tt.err)
 			if tt.wantErr != nil {
 				if err == nil || err.Error() != tt.wantErr.Error() {
 					t.Fatalf("getStatus() error = %v, want %v", err, tt.wantErr)

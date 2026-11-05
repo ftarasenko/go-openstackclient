@@ -2,15 +2,17 @@ package loadbalancer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
 	"github.com/spf13/pflag"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
+	lbapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
+	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
 )
 
 // changedSet records which flags an invocation actually gave, so the sparse-update
@@ -109,25 +111,9 @@ func resolveLBRefs(ctx context.Context, session *auth.Client, refs lbRefs) (reso
 	return out, nil
 }
 
-// resolveLoadBalancerID turns a load balancer name or ID into an ID. Octavia's
-// ?name= filter is exact, and names are not unique across a project, so more than
-// one match is rejected rather than picking arbitrarily.
+// resolveLoadBalancerID turns a load balancer name or ID into an ID.
 func resolveLoadBalancerID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("load balancer", ref, func() ([]string, error) {
-		pages, err := loadbalancers.List(client, loadbalancers.ListOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := loadbalancers.ExtractLoadBalancers(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, lb := range all {
-			ids = append(ids, lb.ID)
-		}
-		return ids, nil
-	})
+	return lookup("load balancer", ref, func() (string, error) { return lbapi.FindLoadBalancerID(ctx, client, ref) })
 }
 
 // The assign* helpers below build the sparse UpdateOpts every octavia noun uses:
@@ -200,26 +186,41 @@ func parseKeyValues(pairs []string, flag string) (map[string]string, error) {
 	return out, nil
 }
 
-// resolveByName is the shared name→ID policy for octavia nouns whose collection
-// endpoint filters exactly on name: a UUID passes through with no call, one match
-// wins, zero matches falls back to treating the ref as an ID (letting the server
-// produce the 404), and several matches is ambiguous.
-func resolveByName(kind, ref string, list func() ([]string, error)) (string, error) {
+// lookup is the CLI's name policy over a strict pkg/ resolver: an empty ref
+// or a UUID passes through with no call, one match wins, zero matches falls
+// back to the ref as an ID (letting the server produce the 404), and several
+// matches is ambiguous.
+func lookup(kind, ref string, find func() (string, error)) (string, error) {
 	if ref == "" || resolve.IsUUID(ref) {
 		return ref, nil
 	}
-	ids, err := list()
-	if err != nil {
-		return "", fmt.Errorf("looking up %s %q: %w", kind, ref, err)
-	}
-	switch len(ids) {
-	case 0:
+	id, err := find()
+	var notFound *osresolve.NotFoundError
+	var ambiguous *osresolve.AmbiguousError
+	switch {
+	case err == nil:
+		return id, nil
+	case errors.As(err, &notFound):
 		return ref, nil
-	case 1:
-		return ids[0], nil
-	default:
-		return "", fmt.Errorf("%s name %q is ambiguous: %d matches, use the ID", kind, ref, len(ids))
+	case errors.As(err, &ambiguous):
+		return "", fmt.Errorf("%s name %q is ambiguous: %d matches, use the ID", kind, ref, ambiguous.Count)
 	}
+	return "", fmt.Errorf("looking up %s %q: %w", kind, ref, errors.Unwrap(err))
+}
+
+// relabel rewords a pkg/ error the way the CLI always printed it, naming the
+// operator's reference instead of the ID.
+func relabel(err error, format string, args ...any) error {
+	return fmt.Errorf(format+": %w", append(args, errors.Unwrap(err))...)
+}
+
+// relabelList is relabel for a listing, whose parse error keeps pkg/'s
+// wording.
+func relabelList(err error, format string, args ...any) error {
+	if strings.HasPrefix(err.Error(), "parsing ") {
+		return err
+	}
+	return relabel(err, format, args...)
 }
 
 // parseCommaKeyValues parses one comma-separated "k=v,k=v" flag value, the shape

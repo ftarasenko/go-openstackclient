@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 // newL7PolicyCommand builds "loadbalancer l7policy ...".
@@ -78,21 +79,7 @@ func l7RuleFields(r *l7policies.Rule) ([]string, []any) {
 }
 
 func resolveL7PolicyID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("l7policy", ref, func() ([]string, error) {
-		pages, err := l7policies.List(client, l7policies.ListOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := l7policies.ExtractL7Policies(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, p := range all {
-			ids = append(ids, p.ID)
-		}
-		return ids, nil
-	})
+	return lookup("l7policy", ref, func() (string, error) { return loadbalancerapi.FindL7PolicyID(ctx, client, ref) })
 }
 
 // --- l7policy list/show ----------------------------------------------------
@@ -151,13 +138,9 @@ func runL7PolicyList(ctx context.Context, client *gophercloud.ServiceClient, o *
 		}
 		opts.ListenerID = listenerID
 	}
-	pages, err := l7policies.List(client, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListL7Policies(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing l7 policies: %w", err)
-	}
-	all, err := l7policies.ExtractL7Policies(pages)
-	if err != nil {
-		return fmt.Errorf("parsing l7 policy list: %w", err)
+		return relabelList(err, "listing l7 policies")
 	}
 
 	cols := []string{"ID", "Name", "Action", "Position", "Listener ID", "Operating Status"}
@@ -200,9 +183,9 @@ func runL7PolicyShow(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	p, err := l7policies.Get(ctx, client, id).Extract()
+	p, err := loadbalancerapi.GetL7Policy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing l7 policy %q: %w", ref, err)
+		return relabel(err, "showing l7 policy %q", ref)
 	}
 	fields, values := l7PolicyFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -353,9 +336,9 @@ func runL7PolicyCreate(ctx context.Context, client *gophercloud.ServiceClient, o
 		}
 		opts.RedirectPoolID = poolID
 	}
-	p, err := l7policies.Create(ctx, client, opts).Extract()
+	p, err := loadbalancerapi.CreateL7Policy(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating l7 policy %q: %w", name, err)
+		return relabel(err, "creating l7 policy %q", name)
 	}
 	fields, values := l7PolicyFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -442,9 +425,9 @@ func runL7PolicySet(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	p, err := l7policies.Update(ctx, client, id, opts).Extract()
+	p, err := loadbalancerapi.UpdateL7Policy(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating l7 policy %q: %w", ref, err)
+		return relabel(err, "updating l7 policy %q", ref)
 	}
 	fields, values := l7PolicyFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -475,8 +458,8 @@ func runL7PolicyDelete(ctx context.Context, client *gophercloud.ServiceClient, r
 		if err != nil {
 			return err
 		}
-		if derr := l7policies.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting l7 policy %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeleteL7Policy(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting l7 policy %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of l7 policy %s\n", ref); werr != nil {
 			return werr
@@ -526,13 +509,9 @@ func runL7RuleList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return err
 	}
 	opts := l7policies.ListRulesOpts{RuleType: l7policies.RuleType(f.typ), CompareType: l7policies.CompareType(f.compareType)}
-	pages, err := l7policies.ListRules(client, policyID, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListL7Rules(ctx, client, policyID, opts)
 	if err != nil {
-		return fmt.Errorf("listing rules of l7 policy %q: %w", policyRef, err)
-	}
-	all, err := l7policies.ExtractRules(pages)
-	if err != nil {
-		return fmt.Errorf("parsing l7 rule list: %w", err)
+		return relabelList(err, "listing rules of l7 policy %q", policyRef)
 	}
 
 	cols := []string{"ID", "Type", "Compare Type", "Key", "Value", "Operating Status"}
@@ -577,9 +556,9 @@ func runL7RuleShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		return err
 	}
 	// Rules have no name, so there is nothing to resolve: the reference is the ID.
-	r, err := l7policies.GetRule(ctx, client, policyID, ruleID).Extract()
+	r, err := loadbalancerapi.GetL7Rule(ctx, client, policyID, ruleID)
 	if err != nil {
-		return fmt.Errorf("showing rule %s of l7 policy %q: %w", ruleID, policyRef, err)
+		return relabel(err, "showing rule %s of l7 policy %q", ruleID, policyRef)
 	}
 	fields, values := l7RuleFields(r)
 	return o.WriteSingle(w, fields, values)
@@ -682,9 +661,9 @@ func runL7RuleCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		Tags:         f.tag,
 		AdminStateUp: f.adminStateUp,
 	}
-	r, err := l7policies.CreateRule(ctx, client, policyID, opts).Extract()
+	r, err := loadbalancerapi.CreateL7Rule(ctx, client, policyID, opts)
 	if err != nil {
-		return fmt.Errorf("adding rule to l7 policy %q: %w", policyRef, err)
+		return relabel(err, "adding rule to l7 policy %q", policyRef)
 	}
 	fields, values := l7RuleFields(r)
 	return o.WriteSingle(w, fields, values)
@@ -773,9 +752,9 @@ func runL7RuleSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	r, err := l7policies.UpdateRule(ctx, client, policyID, ruleID, opts).Extract()
+	r, err := loadbalancerapi.UpdateL7Rule(ctx, client, policyID, ruleID, opts)
 	if err != nil {
-		return fmt.Errorf("updating rule %s of l7 policy %q: %w", ruleID, policyRef, err)
+		return relabel(err, "updating rule %s of l7 policy %q", ruleID, policyRef)
 	}
 	fields, values := l7RuleFields(r)
 	return o.WriteSingle(w, fields, values)
@@ -808,8 +787,8 @@ func runL7RuleDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	return batchdelete.Each(ruleIDs, func(ruleID string) error {
-		if derr := l7policies.DeleteRule(ctx, client, policyID, ruleID).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting rule %s of l7 policy %q: %w", ruleID, policyRef, derr)
+		if derr := loadbalancerapi.DeleteL7Rule(ctx, client, policyID, ruleID); derr != nil {
+			return relabel(derr, "deleting rule %s of l7 policy %q", ruleID, policyRef)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of l7 rule %s\n", ruleID); werr != nil {
 			return werr
