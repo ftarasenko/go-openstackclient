@@ -27,8 +27,9 @@ func ExampleSetInventory() {
 		var sent struct {
 			Generation int `json:"resource_provider_generation"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&sent)
-		fmt.Println("wrote VCPU at generation", sent.Generation)
+		if json.NewDecoder(r.Body).Decode(&sent) == nil && sent.Generation == 7 {
+			fmt.Println("wrote VCPU at the generation it read")
+		}
 		_, _ = io.WriteString(w, `{"total":64,"reserved":0,"allocation_ratio":4,"resource_provider_generation":8}`)
 	}))
 	defer placementAPI.Close()
@@ -52,6 +53,6 @@ func ExampleSetInventory() {
 	fmt.Println("VCPU total", inv.Total, "ratio", inv.AllocationRatio)
 	// Output:
 	// read the inventories
-	// wrote VCPU at generation 7
+	// wrote VCPU at the generation it read
 	// VCPU total 64 ratio 4
 }
