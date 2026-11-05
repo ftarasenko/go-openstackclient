@@ -2,10 +2,8 @@ package baremetal
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"slices"
-	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
@@ -13,7 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newNodeCommand builds "baremetal node ...".
@@ -156,7 +154,7 @@ func newNodeListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // service client so it can be exercised directly against a mock endpoint in
 // tests.
 func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, f *nodeListFlags, w io.Writer) error {
-	opts := nodeListQuery{
+	opts := bmapi.NodeListOpts{
 		ListOpts: nodes.ListOpts{
 			Limit:          f.limit,
 			Marker:         f.marker,
@@ -167,63 +165,23 @@ func runNodeList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			SortDir:        f.sortDir,
 		},
 	}
-	// gophercloud's nodes.ListOpts models these as plain bools with `q:` tags, so
-	// BuildQueryString drops the false zero-value and the API returns ALL nodes —
-	// silently ignoring --maintenance=false / --associated=false. Carry the
-	// explicitly-set values as pointers so the wrapper below always emits the
-	// parameter, including the negative case.
+	// Pointers, so --maintenance=false / --associated=false reach the API.
 	if f.maintenanceSet {
-		opts.maintenance = &f.maintenance
+		opts.Maintenance = &f.maintenance
 	}
 	if f.associatedSet {
-		opts.associated = &f.associated
+		opts.Associated = &f.associated
 	}
 
 	// ironic's plain list carries only the six short columns; anything else —
 	// --long, or a -c naming a detail column — needs /nodes/detail.
-	fields, list := nodeFields, nodes.List
+	fields, detail := nodeFields, false
 	if f.long || len(o.SelectedColumns(labels(nodeDetailFields)...)) > len(o.SelectedColumns(labels(nodeFields)...)) {
-		fields, list = nodeDetailFields, nodes.ListDetail
+		fields, detail = nodeDetailFields, true
 	}
-	all, err := paging.Collect(ctx, list(client, opts), f.limit, pageMaps("nodes"))
+	all, err := bmapi.ListNodes(ctx, client, opts, detail, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal nodes: %w", err)
+		return err
 	}
 	return o.WriteList(w, listTable(all, fields))
-}
-
-// nodeListQuery wraps nodes.ListOpts to force the boolean filters that
-// gophercloud's BuildQueryString would otherwise drop on their false
-// zero-value. When maintenance/associated are set, the parameter is appended
-// explicitly so both maintenance=true and maintenance=false reach the API.
-type nodeListQuery struct {
-	nodes.ListOpts
-	maintenance *bool
-	associated  *bool
-}
-
-// ToNodeListQuery implements nodes.ListOptsBuilder.
-func (q nodeListQuery) ToNodeListQuery() (string, error) {
-	s, err := q.ListOpts.ToNodeListQuery()
-	return q.withBools(s, err)
-}
-
-// ToNodeListDetailQuery implements nodes.ListOptsBuilder for /nodes/detail.
-func (q nodeListQuery) ToNodeListDetailQuery() (string, error) {
-	s, err := q.ListOpts.ToNodeListDetailQuery()
-	return q.withBools(s, err)
-}
-
-func (q nodeListQuery) withBools(s string, err error) (string, error) {
-	if err != nil {
-		return "", err
-	}
-	var extra []string
-	if q.maintenance != nil {
-		extra = append(extra, "maintenance="+strconv.FormatBool(*q.maintenance))
-	}
-	if q.associated != nil {
-		extra = append(extra, "associated="+strconv.FormatBool(*q.associated))
-	}
-	return appendQuery(s, extra...), nil
 }

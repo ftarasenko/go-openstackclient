@@ -17,6 +17,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // The tests in this file execute commands through cobra — Execute() → RunE →
@@ -46,7 +47,7 @@ func (f *execIronic) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	f.mu.Unlock()
-	w.Header().Set(ironicMaxVersionHeader, "1.112")
+	w.Header().Set(bmapi.MaxVersionHeader, "1.112")
 	if r.Method == http.MethodDelete || r.Method == http.MethodPut {
 		w.WriteHeader(http.StatusNoContent)
 		return

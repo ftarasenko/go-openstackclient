@@ -2,6 +2,7 @@ package baremetal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,10 +11,12 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/ports"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // "baremetal node network show" is koc-native: one read-only view of how a
@@ -96,16 +99,17 @@ func runNodeNetworkShow(ctx context.Context, ironic, neutron *gophercloud.Servic
 
 func readNodeWiring(ctx context.Context, ironic, neutron *gophercloud.ServiceClient, ref string) (*nodeWiring, error) {
 	nw := &nodeWiring{vifs: map[string]map[string]any{}, networks: map[string]map[string]any{}, trunks: map[string]map[string]any{}}
-	if err := ironicGet(ctx, ironic, joinPath("nodes", ref), &nw.node); err != nil {
-		return nil, fmt.Errorf("getting baremetal node %s: %w", ref, err)
+	var err error
+	if nw.node, err = bmapi.GetNode(ctx, ironic, ref); err != nil {
+		return nil, err
 	}
 	node := str(nw.node, "uuid")
-	var err error
-	if nw.ports, err = ironicList(ctx, ironic, "ports/detail", "ports", url.Values{"node": {node}}, 0); err != nil {
-		return nil, fmt.Errorf("listing ports of baremetal node %s: %w", ref, err)
+	byNode := bmapi.PortListOpts{ListOpts: ports.ListOpts{Node: node}}
+	if nw.ports, err = bmapi.ListPorts(ctx, ironic, byNode, true, 0); err != nil {
+		return nil, fmt.Errorf("listing ports of baremetal node %s: %w", ref, errors.Unwrap(err))
 	}
-	if nw.groups, err = ironicList(ctx, ironic, "portgroups/detail", "portgroups", url.Values{"node": {node}}, 0); err != nil {
-		return nil, fmt.Errorf("listing port groups of baremetal node %s: %w", ref, err)
+	if nw.groups, err = bmapi.ListPortGroups(ctx, ironic, url.Values{"node": {node}}, true, 0); err != nil {
+		return nil, fmt.Errorf("listing port groups of baremetal node %s: %w", ref, errors.Unwrap(err))
 	}
 	if neutron == nil {
 		return nw, nil

@@ -14,6 +14,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // Vendor passthru: driver-specific methods a node's vendor interface exposes
@@ -69,14 +70,9 @@ func newNodePassthruCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodePassthruList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node string, w io.Writer) error {
-	var methods map[string]struct {
-		HTTPMethods []string `json:"http_methods"`
-		Async       bool     `json:"async"`
-		Description string   `json:"description"`
-		Attach      bool     `json:"attach"`
-	}
-	if err := ironicGet(ctx, client, joinPath("nodes", node, "vendor_passthru", "methods"), &methods); err != nil {
-		return fmt.Errorf("listing vendor passthru methods of baremetal node %s: %w", node, err)
+	methods, err := bmapi.ListPassthruMethods(ctx, client, node)
+	if err != nil {
+		return err
 	}
 	fields := []string{"name", "http_methods", "async", "description", "attach"}
 	t := output.Table{Columns: labels(fields), Rows: make([][]any, 0, len(methods))}
@@ -110,21 +106,7 @@ func runNodePassthruCall(ctx context.Context, client *gophercloud.ServiceClient,
 	if body == nil {
 		body = map[string]any{}
 	}
-	opts := &gophercloud.RequestOpts{
-		OkCodes:          []int{http.StatusOK, http.StatusAccepted, http.StatusNoContent},
-		KeepResponseBody: true,
-	}
-	if httpMethod != http.MethodGet && httpMethod != http.MethodDelete {
-		opts.JSONBody = body
-	}
-	resp, err := client.Request(ctx, httpMethod, client.ServiceURL(joinPath("nodes", node, "vendor_passthru", method)), opts)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if err != nil {
-		return fmt.Errorf("calling vendor passthru %s on baremetal node %s: %w", method, node, err)
-	}
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := bmapi.CallPassthru(ctx, client, node, method, httpMethod, body)
 	if err != nil {
 		return err
 	}

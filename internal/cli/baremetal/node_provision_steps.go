@@ -16,6 +16,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // The provision-state verbs that carry a payload: clean, service and rescue.
@@ -27,34 +28,6 @@ import (
 // reference at https://docs.keystack.ru/ was not reachable at implementation
 // time (HTTP 403), so these are UNVERIFIED against KeyStack and fall back to
 // upstream semantics.
-
-// provisionStateOpts extends gophercloud's ProvisionStateOpts with the two
-// fields it does not model: `runbook` (ironic API 1.92) and `disable_ramdisk`
-// (1.70). Implementing ProvisionStateOptsBuilder over the typed struct keeps the
-// call itself typed — only the two extra keys are hand-written.
-type provisionStateOpts struct {
-	nodes.ProvisionStateOpts
-
-	// Runbook names a predefined runbook to run instead of explicit steps.
-	Runbook string
-	// DisableRamdisk skips booting ironic-python-agent, so only steps marked as
-	// not requiring it can run.
-	DisableRamdisk bool
-}
-
-func (o provisionStateOpts) ToProvisionStateMap() (map[string]any, error) {
-	body, err := o.ProvisionStateOpts.ToProvisionStateMap()
-	if err != nil {
-		return nil, err
-	}
-	if o.Runbook != "" {
-		body["runbook"] = o.Runbook
-	}
-	if o.DisableRamdisk {
-		body["disable_ramdisk"] = true
-	}
-	return body, nil
-}
 
 // stepsFlags is the shared --<verb>-steps / --runbook / --disable-ramdisk
 // surface of `node clean` and `node service`.
@@ -199,7 +172,7 @@ func runNodeClean(ctx context.Context, client *gophercloud.ServiceClient, id str
 	if err != nil {
 		return err
 	}
-	opts := provisionStateOpts{
+	opts := bmapi.ProvisionStateOpts{
 		ProvisionStateOpts: nodes.ProvisionStateOpts{Target: nodes.TargetClean},
 		Runbook:            f.runbook,
 		DisableRamdisk:     f.disableRamdisk,
@@ -246,7 +219,7 @@ func runNodeService(ctx context.Context, client *gophercloud.ServiceClient, id s
 	if err != nil {
 		return err
 	}
-	opts := provisionStateOpts{
+	opts := bmapi.ProvisionStateOpts{
 		ProvisionStateOpts: nodes.ProvisionStateOpts{Target: nodes.TargetService},
 		Runbook:            f.runbook,
 		DisableRamdisk:     f.disableRamdisk,
@@ -256,11 +229,11 @@ func runNodeService(ctx context.Context, client *gophercloud.ServiceClient, id s
 			return err
 		}
 	}
-	// The `service` target arrived at 1.87, above the Zed cap of 1.80, so an old
-	// cloud rejects the value rather than the version — see microversion.go.
+	// The service target is 1.87; a failed wait is explained as koc always
+	// has, so the request's own explanation is not repeated.
 	err = applyProvisionState(ctx, client, id,
 		provisionRequest{verb: "service", opts: opts, want: nodes.Active, wait: wf}, w)
-	return explainMicroversion(ctx, client, featureNodeService, err)
+	return explained(bmapi.ExplainMicroversion(ctx, client, bmapi.FeatureNodeService, err))
 }
 
 // --- rescue / unhold --------------------------------------------------------
@@ -328,9 +301,8 @@ func runNodeUnhold(ctx context.Context, client *gophercloud.ServiceClient, id st
 	wf *waitFlags, w io.Writer,
 ) error {
 	opts := nodes.ProvisionStateOpts{Target: nodes.TargetUnhold}
-	if err := nodes.ChangeProvisionState(ctx, client, id, opts).ExtractErr(); err != nil {
-		return explainMicroversion(ctx, client, featureNodeUnhold,
-			fmt.Errorf("requesting unhold on node %s: %w", id, err))
+	if err := bmapi.SetProvisionState(ctx, client, id, opts); err != nil {
+		return provisionErr("unhold", id, err)
 	}
 	if !wf.wait {
 		_, err := fmt.Fprintf(w, "Requested unhold for node %s\n", id)
@@ -368,8 +340,8 @@ type provisionRequest struct {
 func applyProvisionState(ctx context.Context, client *gophercloud.ServiceClient, id string,
 	r provisionRequest, w io.Writer,
 ) error {
-	if err := nodes.ChangeProvisionState(ctx, client, id, r.opts).ExtractErr(); err != nil {
-		return fmt.Errorf("requesting %s on node %s: %w", r.verb, id, err)
+	if err := bmapi.SetProvisionState(ctx, client, id, r.opts); err != nil {
+		return provisionErr(r.verb, id, err)
 	}
 	if !r.wait.wait {
 		_, err := fmt.Fprintf(w, "Requested %s for node %s\n", r.verb, id)

@@ -14,6 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // Volume connectors and targets describe a node's boot-from-volume wiring
@@ -34,21 +35,41 @@ type volumeResource struct {
 	key          string // "connectors"
 	fields       []string
 	detailFields []string
+
+	list   func(context.Context, *gophercloud.ServiceClient, url.Values, int) ([]map[string]any, error)
+	get    func(context.Context, *gophercloud.ServiceClient, string) (map[string]any, error)
+	create func(context.Context, *gophercloud.ServiceClient, map[string]any) (map[string]any, error)
+	update func(context.Context, *gophercloud.ServiceClient, string, bmapi.Patch) (map[string]any, error)
+	del    func(context.Context, *gophercloud.ServiceClient, string) error
 }
 
 var (
 	volumeConnector = volumeResource{
-		kind: "volume connector", path: "volume/connectors", key: "connectors",
+		kind:         "volume connector",
+		path:         "volume/connectors",
+		key:          "connectors",
 		fields:       []string{"uuid", "node_uuid", "type", "connector_id"},
 		detailFields: []string{"uuid", "node_uuid", "type", "connector_id", "extra", "created_at", "updated_at"},
+		list:         bmapi.ListVolumeConnectors,
+		get:          bmapi.GetVolumeConnector,
+		create:       bmapi.CreateVolumeConnector,
+		update:       bmapi.UpdateVolumeConnector,
+		del:          bmapi.DeleteVolumeConnector,
 	}
 	volumeTarget = volumeResource{
-		kind: "volume target", path: "volume/targets", key: "targets",
+		kind:   "volume target",
+		path:   "volume/targets",
+		key:    "targets",
 		fields: []string{"uuid", "node_uuid", "volume_type", "boot_index", "volume_id"},
 		detailFields: []string{
 			"uuid", "node_uuid", "volume_type", "properties", "boot_index", "extra", "volume_id",
 			"created_at", "updated_at",
 		},
+		list:   bmapi.ListVolumeTargets,
+		get:    bmapi.GetVolumeTarget,
+		create: bmapi.CreateVolumeTarget,
+		update: bmapi.UpdateVolumeTarget,
+		del:    bmapi.DeleteVolumeTarget,
 	}
 )
 
@@ -130,9 +151,9 @@ func runVolumeList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		fields = r.detailFields
 		q.Set("detail", "true")
 	}
-	items, err := ironicList(ctx, client, r.path, r.key, q, f.limit)
+	items, err := r.list(ctx, client, q, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal %ss: %w", r.kind, err)
+		return err
 	}
 	return o.WriteList(w, listTable(items, fields))
 }
@@ -161,9 +182,9 @@ func newVolumeShowCommand(a *auth.Options, o *output.Options, r volumeResource) 
 func runVolumeShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	r volumeResource, id string, w io.Writer,
 ) error {
-	var item map[string]any
-	if err := ironicGet(ctx, client, joinPath(append(strings.Split(r.path, "/"), id)...), &item); err != nil {
-		return fmt.Errorf("getting baremetal %s %s: %w", r.kind, id, err)
+	item, err := r.get(ctx, client, id)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(item, r.detailFields)
 	return o.WriteSingle(w, fields, values)
@@ -183,9 +204,9 @@ func volumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if m != nil {
 		body["extra"] = m
 	}
-	var item map[string]any
-	if err := ironicPost(ctx, client, r.path, body, &item); err != nil {
-		return fmt.Errorf("creating baremetal %s: %w", r.kind, err)
+	item, err := r.create(ctx, client, body)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(item, r.detailFields)
 	return o.WriteSingle(w, fields, values)
@@ -193,7 +214,7 @@ func volumeCreate(ctx context.Context, client *gophercloud.ServiceClient, o *out
 
 // volumePatch applies ops and renders the updated resource.
 func volumePatch(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	r volumeResource, id string, ops patchBuilder, w io.Writer,
+	r volumeResource, id string, ops bmapi.Patch, w io.Writer,
 ) error {
 	if err := o.CheckColumns(knownColumns(r.detailFields)...); err != nil {
 		return err
@@ -201,9 +222,9 @@ func volumePatch(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if len(ops) == 0 {
 		return fmt.Errorf("%s set/unset requires at least one attribute flag", r.kind)
 	}
-	var item map[string]any
-	if err := ironicPatch(ctx, client, joinPath(append(strings.Split(r.path, "/"), id)...), ops, &item); err != nil {
-		return fmt.Errorf("updating baremetal %s %s: %w", r.kind, id, err)
+	item, err := r.update(ctx, client, id, ops)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(item, r.detailFields)
 	return o.WriteSingle(w, fields, values)
@@ -303,21 +324,21 @@ func runVolumeConnectorSet(ctx context.Context, client *gophercloud.ServiceClien
 	}
 	// python-ironicclient patches every attribute with "add", which replaces
 	// an existing member.
-	var ops patchBuilder
+	var ops bmapi.Patch
 	if f.node != "" {
 		node, err := nodeUUID(ctx, client, f.node)
 		if err != nil {
 			return err
 		}
-		ops.add("/node_uuid", node)
+		ops.Add("/node_uuid", node)
 	}
 	if f.connType != "" {
-		ops.add("/type", f.connType)
+		ops.Add("/type", f.connType)
 	}
 	if f.connectorID != "" {
-		ops.add("/connector_id", f.connectorID)
+		ops.Add("/connector_id", f.connectorID)
 	}
-	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
+	if err := addKV(&ops, pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	return volumePatch(ctx, client, o, volumeConnector, id, ops, w)
@@ -428,27 +449,27 @@ func newVolumeTargetSetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runVolumeTargetSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, f *volumeTargetFlags, w io.Writer,
 ) error {
-	var ops patchBuilder
+	var ops bmapi.Patch
 	if f.node != "" {
 		node, err := nodeUUID(ctx, client, f.node)
 		if err != nil {
 			return err
 		}
-		ops.add("/node_uuid", node)
+		ops.Add("/node_uuid", node)
 	}
 	if f.volumeType != "" {
-		ops.add("/volume_type", f.volumeType)
+		ops.Add("/volume_type", f.volumeType)
 	}
 	if f.bootIndexSet {
-		ops.add("/boot_index", f.bootIndex)
+		ops.Add("/boot_index", f.bootIndex)
 	}
 	if f.volumeID != "" {
-		ops.add("/volume_id", f.volumeID)
+		ops.Add("/volume_id", f.volumeID)
 	}
-	if err := ops.addKV("/properties", "property", f.properties); err != nil {
+	if err := addKV(&ops, "/properties", "property", f.properties); err != nil {
 		return err
 	}
-	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
+	if err := addKV(&ops, pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	return volumePatch(ctx, client, o, volumeTarget, id, ops, w)
@@ -488,9 +509,9 @@ func newVolumeUnsetCommand(a *auth.Options, o *output.Options, r volumeResource)
 func runVolumeUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	r volumeResource, id string, f *volumeUnsetFlags, w io.Writer,
 ) error {
-	var ops patchBuilder
-	ops.removeKeys(pathExtra, f.extra)
-	ops.removeKeys("/properties", f.properties)
+	var ops bmapi.Patch
+	removeKeys(&ops, pathExtra, f.extra)
+	removeKeys(&ops, "/properties", f.properties)
 	return volumePatch(ctx, client, o, r, id, ops, w)
 }
 
@@ -516,8 +537,8 @@ func newVolumeDeleteCommand(a *auth.Options, o *output.Options, r volumeResource
 
 func runVolumeDelete(ctx context.Context, client *gophercloud.ServiceClient, r volumeResource, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := ironicDelete(ctx, client, joinPath(append(strings.Split(r.path, "/"), id)...)); err != nil {
-			return fmt.Errorf("deleting baremetal %s %s: %w", r.kind, id, err)
+		if err := r.del(ctx, client, id); err != nil {
+			return err
 		}
 		_, err := fmt.Fprintf(w, "Deleted %s %s\n", r.kind, id)
 		return err

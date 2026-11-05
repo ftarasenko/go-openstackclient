@@ -33,11 +33,4 @@ const (
 	pathAutomatedClean = "/automated_clean"
 	pathExtra          = "/extra"
 	keyVIFType         = "binding:vif_type"
-	releaseAntelope    = "OpenStack 2023.1"
-	releaseBobcat      = "OpenStack 2023.2"
-	releaseCaracal     = "OpenStack 2024.1"
-	releaseDalmatian   = "OpenStack 2024.2"
-	releaseEpoxy       = "OpenStack 2025.1"
-	releaseGazpacho    = "OpenStack 2026.1"
-	releaseHibiscus    = "OpenStack 2026.2"
 )

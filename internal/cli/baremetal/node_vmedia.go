@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"slices"
 	"strings"
 
@@ -12,14 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
-
-// Virtual media (API 1.89): attach an ISO or disk image to a node's BMC
-// without a deploy. python-ironicclient has no command for it (openstacksdk
-// has attach_vmedia_to_node/detach_vmedia_from_node), so these are
-// koc-native.
-
-var featureNodeVmedia = ironicFeature{"baremetal node vmedia", "1.89", releaseCaracal}
 
 // vmediaDevices are ironic's boot_devices.VMEDIA_DEVICES.
 var vmediaDevices = []string{"cdrom", "disk", "floppy"}
@@ -72,29 +65,22 @@ func runNodeVmediaAttach(ctx context.Context, client *gophercloud.ServiceClient,
 	if !slices.Contains(vmediaDevices, deviceType) {
 		return fmt.Errorf("--device-type %s: must be one of %s", deviceType, strings.Join(vmediaDevices, ", "))
 	}
-	body := map[string]any{"device_type": deviceType, "image_url": image}
-	setIf(body, "image_download_source", source)
-	if err := ironicPost(ctx, client, joinPath("nodes", node, "vmedia"), body, nil); err != nil {
-		return fmt.Errorf("attaching virtual media to baremetal node %s: %w", node,
-			explainMicroversion(ctx, client, featureNodeVmedia, err))
+	opts := bmapi.VirtualMediaOpts{DeviceType: deviceType, ImageURL: image, ImageDownloadSource: source}
+	if err := bmapi.AttachVirtualMedia(ctx, client, node, opts); err != nil {
+		return explained(err)
 	}
 	_, err := fmt.Fprintf(w, "Attached %s as %s to node %s\n", image, deviceType, node)
 	return err
 }
 
 func runNodeVmediaDetach(ctx context.Context, client *gophercloud.ServiceClient, node string, types []string, w io.Writer) error {
-	path := joinPath("nodes", node, "vmedia")
-	if len(types) > 0 {
-		for _, t := range types {
-			if !slices.Contains(vmediaDevices, t) {
-				return fmt.Errorf("--device-type %s: must be one of %s", t, strings.Join(vmediaDevices, ", "))
-			}
+	for _, t := range types {
+		if !slices.Contains(vmediaDevices, t) {
+			return fmt.Errorf("--device-type %s: must be one of %s", t, strings.Join(vmediaDevices, ", "))
 		}
-		path += "?" + url.Values{"device_types": {strings.Join(types, ",")}}.Encode()
 	}
-	if err := ironicDelete(ctx, client, path); err != nil {
-		return fmt.Errorf("detaching virtual media from baremetal node %s: %w", node,
-			explainMicroversion(ctx, client, featureNodeVmedia, err))
+	if err := bmapi.DetachVirtualMedia(ctx, client, node, types); err != nil {
+		return explained(err)
 	}
 	_, err := fmt.Fprintf(w, "Detached virtual media from node %s\n", node)
 	return err

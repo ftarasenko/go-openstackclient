@@ -4,19 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/allocations"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // "baremetal allocation" — ironic's node-reservation resource (API 1.52): ask
@@ -50,54 +47,9 @@ func newAllocationCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// allocation is ironic's allocation plus `owner`, which the API has carried
-// since microversion 1.60 — below the 1.80 Zed cap, so it exists on every cloud
-// koc supports — but which gophercloud v2 models nowhere: not on Allocation, not
-// on CreateOpts, not on ListOpts. Upstream `openstack baremetal allocation show`
-// prints it, so leaving it out was a visible gap against OSC.
-//
-// Embedding rather than re-declaring keeps the vendored decoding for every other
-// field; only the one missing attribute is koc's.
-type allocation struct {
-	allocations.Allocation
-	Owner string `json:"owner"`
-}
-
-// allocationListOpts adds ironic's `owner` filter, which gophercloud's ListOpts
-// has no field for. It satisfies the same builder interface, so the vendored
-// List still drives the pager.
-type allocationListOpts struct {
-	allocations.ListOpts
-	Owner string
-}
-
-func (o allocationListOpts) ToAllocationListQuery() (string, error) {
-	q, err := o.ListOpts.ToAllocationListQuery()
-	if err != nil || o.Owner == "" {
-		return q, err
-	}
-	sep := "?"
-	if strings.Contains(q, "?") {
-		sep = "&"
-	}
-	return q + sep + "owner=" + url.QueryEscape(o.Owner), nil
-}
-
-// extractAllocations decodes a page into koc's allocation type so that `owner`
-// survives; allocations.ExtractAllocations would drop it.
-func extractAllocations(page pagination.Page) ([]allocation, error) {
-	var s struct {
-		Allocations []allocation `json:"allocations"`
-	}
-	ap, ok := page.(allocations.AllocationPage)
-	if !ok {
-		return nil, fmt.Errorf("extractAllocations: unexpected page type %T", page)
-	}
-	if err := ap.ExtractInto(&s); err != nil {
-		return nil, err
-	}
-	return s.Allocations, nil
-}
+// allocation is ironic's allocation plus `owner`, which gophercloud v2 does
+// not model but upstream `openstack baremetal allocation show` prints.
+type allocation = bmapi.Allocation
 
 func allocationShowFields(al *allocation) ([]string, []any) {
 	return []string{
@@ -158,7 +110,7 @@ func newAllocationListCommand(a *auth.Options, o *output.Options) *cobra.Command
 func runAllocationList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	f *allocationListFlags, w io.Writer,
 ) error {
-	opts := allocationListOpts{
+	opts := bmapi.AllocationListOpts{
 		ListOpts: allocations.ListOpts{
 			Node:          f.node,
 			ResourceClass: f.resourceClass,
@@ -172,9 +124,9 @@ func runAllocationList(ctx context.Context, client *gophercloud.ServiceClient, o
 	}
 	// Ironic treats "limit" as a page size, so it is also enforced as a hard
 	// result cap — the same treatment node/port listings get.
-	all, err := paging.Collect(ctx, allocations.List(client, opts), f.limit, extractAllocations)
+	all, err := bmapi.ListAllocations(ctx, client, opts, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal allocations: %w", err)
+		return err
 	}
 	cols := []string{"UUID", "Name", "Resource Class", "State", "Node UUID"}
 	if f.long {
@@ -213,11 +165,11 @@ func newAllocationShowCommand(a *auth.Options, o *output.Options) *cobra.Command
 }
 
 func runAllocationShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	var al allocation
-	if err := allocations.Get(ctx, client, id).ExtractInto(&al); err != nil {
-		return fmt.Errorf("showing baremetal allocation %s: %w", id, err)
+	al, err := bmapi.GetAllocation(ctx, client, id)
+	if err != nil {
+		return err
 	}
-	fields, values := allocationShowFields(&al)
+	fields, values := allocationShowFields(al)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -242,8 +194,8 @@ func newAllocationDeleteCommand(a *auth.Options, o *output.Options) *cobra.Comma
 
 func runAllocationDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := allocations.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting baremetal allocation %s: %w", id, err)
+		if err := bmapi.DeleteAllocation(ctx, client, id); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "Deleted allocation %s\n", id); err != nil {
 			return err
@@ -264,22 +216,6 @@ type allocationCreateFlags struct {
 	extra          []string
 	wait           bool
 	waitTimeout    time.Duration
-}
-
-// allocationCreateOpts adds ironic's `owner`, absent from gophercloud's
-// CreateOpts. omitempty keeps the body unchanged when it is not given.
-type allocationCreateOpts struct {
-	allocations.CreateOpts
-	Owner string `json:"owner,omitempty"`
-}
-
-func (o allocationCreateOpts) ToAllocationCreateMap() (map[string]any, error) {
-	b, err := o.CreateOpts.ToAllocationCreateMap()
-	if err != nil || o.Owner == "" {
-		return b, err
-	}
-	b["owner"] = o.Owner
-	return b, nil
 }
 
 func newAllocationCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -328,7 +264,7 @@ func runAllocationCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return fmt.Errorf("parsing --extra: %w", err)
 	}
-	opts := allocationCreateOpts{
+	opts := bmapi.AllocationCreateOpts{
 		CreateOpts: allocations.CreateOpts{
 			ResourceClass:  f.resourceClass,
 			Name:           f.name,
@@ -339,18 +275,16 @@ func runAllocationCreate(ctx context.Context, client *gophercloud.ServiceClient,
 		},
 		Owner: f.owner,
 	}
-	var al allocation
-	if err := allocations.Create(ctx, client, opts).ExtractInto(&al); err != nil {
-		return fmt.Errorf("creating baremetal allocation: %w", err)
+	al, err := bmapi.CreateAllocation(ctx, client, opts)
+	if err != nil {
+		return err
 	}
 	if f.wait {
-		settled, err := waitForAllocation(ctx, client, al.UUID, f.waitTimeout)
-		if err != nil {
+		if al, err = waitForAllocation(ctx, client, al.UUID, f.waitTimeout); err != nil {
 			return err
 		}
-		al = *settled
 	}
-	fields, values := allocationShowFields(&al)
+	fields, values := allocationShowFields(al)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -365,29 +299,7 @@ func waitForAllocation(ctx context.Context, client *gophercloud.ServiceClient, i
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(allocationPollInterval)
-	defer ticker.Stop()
-
-	for {
-		var al allocation
-		if err := allocations.Get(ctx, client, id).ExtractInto(&al); err != nil {
-			if ctx.Err() != nil {
-				return nil, fmt.Errorf("waiting for allocation %s: %w", id, ctx.Err())
-			}
-			return nil, fmt.Errorf("polling allocation %s: %w", id, err)
-		}
-		switch al.State {
-		case "active":
-			return &al, nil
-		case "error":
-			return nil, fmt.Errorf("allocation %s failed: %s", id, al.LastError)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("waiting for allocation %s (last state %q): %w", id, al.State, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return bmapi.WaitForAllocation(ctx, client, id, allocationPollInterval)
 }
 
 // --- set / unset ------------------------------------------------------------
@@ -427,16 +339,16 @@ func newAllocationSetCommand(a *auth.Options, o *output.Options) *cobra.Command 
 func runAllocationSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, name string, extra []string, w io.Writer,
 ) error {
-	var ops []allocationPatchOp
+	var ops bmapi.Patch
 	if name != "" {
-		ops = append(ops, allocationPatchOp{Op: "replace", Path: "/name", Value: name})
+		ops.Replace("/name", name)
 	}
 	for _, pair := range extra {
 		k, v, err := parseKeyVal(pair)
 		if err != nil {
 			return fmt.Errorf("parsing --extra: %w", err)
 		}
-		ops = append(ops, allocationPatchOp{Op: "add", Path: "/extra/" + escapeJSONPointer(k), Value: v})
+		ops.Add("/extra/"+escapeJSONPointer(k), v)
 	}
 	return patchAllocation(ctx, client, o, id, ops, w)
 }
@@ -472,41 +384,27 @@ func newAllocationUnsetCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runAllocationUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, name bool, extra []string, w io.Writer,
 ) error {
-	var ops []allocationPatchOp
+	var ops bmapi.Patch
 	if name {
-		ops = append(ops, allocationPatchOp{Op: "remove", Path: "/name"})
+		ops.Remove("/name")
 	}
 	for _, k := range extra {
-		ops = append(ops, allocationPatchOp{Op: "remove", Path: "/extra/" + escapeJSONPointer(k)})
+		ops.Remove("/extra/" + escapeJSONPointer(k))
 	}
 	return patchAllocation(ctx, client, o, id, ops, w)
 }
 
-// allocationPatchOp is one RFC 6902 operation. Value is omitted for "remove",
-// which ironic rejects if it carries one.
-type allocationPatchOp struct {
-	Op    string `json:"op"`
-	Path  string `json:"path"`
-	Value any    `json:"value,omitempty"`
-}
-
 func patchAllocation(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
-	id string, ops []allocationPatchOp, w io.Writer,
+	id string, ops bmapi.Patch, w io.Writer,
 ) error {
 	if err := o.CheckColumns(allocationColumns...); err != nil {
 		return err
 	}
-	var al allocation
-	resp, err := client.Patch(ctx, client.ServiceURL("allocations", id), ops, &al, &gophercloud.RequestOpts{
-		OkCodes: []int{200},
-	})
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
+	al, err := bmapi.UpdateAllocation(ctx, client, id, ops)
 	if err != nil {
-		return fmt.Errorf("updating baremetal allocation %s: %w", id, err)
+		return err
 	}
-	fields, values := allocationShowFields(&al)
+	fields, values := allocationShowFields(al)
 	return o.WriteSingle(w, fields, values)
 }
 

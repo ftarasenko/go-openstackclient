@@ -2,7 +2,7 @@ package baremetal
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // Node read-outs and per-node subresources: validate, VIFs, BIOS settings,
@@ -51,9 +52,9 @@ func newNodeValidateCommand(a *auth.Options, o *output.Options) *cobra.Command {
 // misconfiguration — so the reason column is shown verbatim rather than being
 // summarised.
 func runNodeValidate(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	v, err := nodes.Validate(ctx, client, id).Extract()
+	v, err := bmapi.ValidateNode(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("validating node %s: %w", id, err)
+		return err
 	}
 	ifaces := []struct {
 		name string
@@ -107,9 +108,9 @@ func newNodeVIFListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeVIFList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	vifs, err := nodes.ListVirtualInterfaces(ctx, client, id).Extract()
+	vifs, err := bmapi.ListVIFs(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing virtual interfaces of node %s: %w", id, err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID"}, Rows: make([][]any, 0, len(vifs))}
 	for _, v := range vifs {
@@ -188,8 +189,8 @@ func runNodeVIFAttach(ctx context.Context, client *gophercloud.ServiceClient, id
 		},
 		Info: extra,
 	}
-	if err := nodes.AttachVirtualInterface(ctx, client, id, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("attaching VIF %s to node %s: %w", vifID, id, err)
+	if err := bmapi.AttachVIF(ctx, client, id, opts); err != nil {
+		return fmt.Errorf("attaching VIF %s to node %s: %w", vifID, id, errors.Unwrap(err))
 	}
 	_, err = fmt.Fprintf(w, "Attached VIF %s to node %s\n", vifID, id)
 	return err
@@ -215,8 +216,8 @@ func newNodeVIFDetachCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runNodeVIFDetach(ctx context.Context, client *gophercloud.ServiceClient, id, vifID string, w io.Writer) error {
-	if err := nodes.DetachVirtualInterface(ctx, client, id, vifID).ExtractErr(); err != nil {
-		return fmt.Errorf("detaching VIF %s from node %s: %w", vifID, id, err)
+	if err := bmapi.DetachVIF(ctx, client, id, vifID); err != nil {
+		return err
 	}
 	_, err := fmt.Fprintf(w, "Detached VIF %s from node %s\n", vifID, id)
 	return err
@@ -266,9 +267,9 @@ func newNodeBIOSSettingListCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runNodeBIOSSettingList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id string, long bool, w io.Writer,
 ) error {
-	settings, err := nodes.ListBIOSSettings(ctx, client, id, nodes.ListBIOSSettingsOpts{Detail: long}).Extract()
+	settings, err := bmapi.ListBIOSSettings(ctx, client, id, long)
 	if err != nil {
-		return fmt.Errorf("listing BIOS settings of node %s: %w", id, err)
+		return err
 	}
 	sort.Slice(settings, func(i, j int) bool { return settings[i].Name < settings[j].Name })
 
@@ -299,43 +300,6 @@ func derefAny[T any](p *T) any {
 	return *p
 }
 
-// extractBIOSSetting decodes the single-setting response, replacing
-// nodes.GetBIOSSettingResult.Extract.
-//
-// Ironic keys the object by the setting's own name —
-// `{"BootMode": {"name": "BootMode", ...}}`
-// (ironic/api/controllers/v1/bios.py get_one: `return {setting_name: ...}`).
-// gophercloud v2.13.0 decodes into SingleBIOSSetting{Setting BIOSSetting}, whose
-// untagged field matches the literal key "Setting", and its own fixture encodes
-// that shape — so against a real cloud Extract silently yields a zero-valued
-// setting rather than an error. Delete this and go back to the typed call once
-// that is fixed upstream.
-//
-// The single-entry fallback covers a cloud that keys the object by something
-// other than the name the caller asked for (a case-folded name, say).
-func extractBIOSSetting(res nodes.GetBIOSSettingResult, name string) (*nodes.BIOSSetting, error) {
-	if res.Err != nil {
-		return nil, res.Err
-	}
-	raw, err := json.Marshal(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	var byName map[string]nodes.BIOSSetting
-	if err := json.Unmarshal(raw, &byName); err != nil {
-		return nil, err
-	}
-	if s, ok := byName[name]; ok {
-		return &s, nil
-	}
-	if len(byName) == 1 {
-		for _, s := range byName {
-			return &s, nil
-		}
-	}
-	return nil, fmt.Errorf("response contained no setting named %q", name)
-}
-
 func newNodeBIOSSettingShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <node> <setting>",
@@ -358,9 +322,9 @@ func newNodeBIOSSettingShowCommand(a *auth.Options, o *output.Options) *cobra.Co
 func runNodeBIOSSettingShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	id, name string, w io.Writer,
 ) error {
-	s, err := extractBIOSSetting(nodes.GetBIOSSetting(ctx, client, id, name), name)
+	s, err := bmapi.GetBIOSSetting(ctx, client, id, name)
 	if err != nil {
-		return fmt.Errorf("getting BIOS setting %s of node %s: %w", name, id, err)
+		return err
 	}
 	fields := []string{
 		"name", "value", "attribute_type", "allowable_values", "lower_bound",
@@ -405,12 +369,9 @@ func newNodeFirmwareListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runNodeFirmwareList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	components, err := nodes.ListFirmware(ctx, client, id).Extract()
+	components, err := bmapi.ListFirmware(ctx, client, id)
 	if err != nil {
-		// The firmware interface arrived at 1.86, above the Zed cap, so an old
-		// cloud has no such route and answers a bare 404 — see microversion.go.
-		return explainMicroversion(ctx, client, featureNodeFirmware,
-			fmt.Errorf("listing firmware components of node %s: %w", id, err))
+		return explained(err)
 	}
 	t := output.Table{
 		Columns: []string{"Component", "Initial Version", "Current Version", "Last Version Flashed", "Updated At"},
@@ -454,8 +415,8 @@ func newNodeInjectNMICommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runNodeInjectNMI(ctx context.Context, client *gophercloud.ServiceClient, id string, w io.Writer) error {
-	if err := nodes.InjectNMI(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("injecting NMI into node %s: %w", id, err)
+	if err := bmapi.InjectNMI(ctx, client, id); err != nil {
+		return err
 	}
 	_, err := fmt.Fprintf(w, "Injected NMI into node %s\n", id)
 	return err

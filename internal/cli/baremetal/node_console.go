@@ -11,6 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // The node states sub-resources gophercloud's nodes package does not model:
@@ -47,9 +48,9 @@ func newNodeConsoleCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runNodeConsoleShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node string, w io.Writer) error {
-	var body map[string]any
-	if err := ironicGet(ctx, client, joinPath("nodes", node, "states", "console"), &body); err != nil {
-		return fmt.Errorf("getting console of baremetal node %s: %w", node, err)
+	body, err := bmapi.GetNodeConsole(ctx, client, node)
+	if err != nil {
+		return err
 	}
 	fields, values := showFields(body, []string{"console_enabled", "console_info"})
 	return o.WriteSingle(w, fields, values)
@@ -95,14 +96,14 @@ func newNodeStateToggleCommand(a *auth.Options, verb, short, state string, on bo
 // takes {"enabled": b}, secure boot {"target": b}; both answer 202 and finish
 // asynchronously in the conductor.
 func runNodeStateToggle(ctx context.Context, client *gophercloud.ServiceClient, nodes []string, state string, on bool, w io.Writer) error {
-	key, what := "enabled", "console"
+	set, what := bmapi.SetNodeConsole, "console"
 	if state == "secure_boot" {
-		key, what = "target", "secure boot"
+		set, what = bmapi.SetNodeSecureBoot, "secure boot"
 	}
 	verb := map[bool]string{true: "on", false: "off"}[on]
 	return batchdelete.Each(nodes, func(node string) error {
-		if err := ironicPut(ctx, client, joinPath("nodes", node, "states", state), map[string]any{key: on}); err != nil {
-			return fmt.Errorf("turning %s %s for baremetal node %s: %w", what, verb, node, err)
+		if err := set(ctx, client, node, on); err != nil {
+			return err
 		}
 		_, err := fmt.Fprintf(w, "Requested %s %s for node %s\n", what, verb, node)
 		return err

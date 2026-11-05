@@ -8,11 +8,11 @@ import (
 	"os"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // newNodeInventoryCommand builds "baremetal node inventory ...", the ironic-native
@@ -65,9 +65,9 @@ func newNodeInventorySaveCommand(a *auth.Options, o *output.Options) *cobra.Comm
 // when unset, to w (stdout). The raw gophercloud result body is re-encoded so
 // nothing the API returns is dropped by koc's typed structs.
 func runNodeInventorySave(ctx context.Context, client *gophercloud.ServiceClient, id string, f *nodeInventorySaveFlags, w io.Writer) (err error) {
-	res := nodes.GetInventory(ctx, client, id)
-	if res.Err != nil {
-		return fmt.Errorf("getting inventory for node %s: %w", id, explainMicroversion(ctx, client, featureNodeInventory, res.Err))
+	body, err := bmapi.GetNodeInventoryRaw(ctx, client, id)
+	if err != nil {
+		return explained(err)
 	}
 
 	dst := w
@@ -86,7 +86,7 @@ func runNodeInventorySave(ctx context.Context, client *gophercloud.ServiceClient
 
 	enc := json.NewEncoder(dst)
 	enc.SetIndent("", "  ")
-	if cerr := enc.Encode(res.Body); cerr != nil {
+	if cerr := enc.Encode(body); cerr != nil {
 		return fmt.Errorf("writing inventory JSON: %w", cerr)
 	}
 	return nil
@@ -113,9 +113,9 @@ func newNodeInventoryShowCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runNodeInventoryShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	data, err := nodes.GetInventory(ctx, client, id).Extract()
+	data, err := bmapi.GetNodeInventory(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting inventory for node %s: %w", id, explainMicroversion(ctx, client, featureNodeInventory, err))
+		return explained(err)
 	}
 	inv := data.Inventory
 	fields := []string{

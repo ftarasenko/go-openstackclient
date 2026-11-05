@@ -11,6 +11,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // Node traits (API 1.37) are what nova's flavor `trait:CUSTOM_X=required`
@@ -65,14 +66,12 @@ func newNodeTraitListCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func runNodeTraitList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, node string, w io.Writer) error {
-	var body struct {
-		Traits []string `json:"traits"`
+	traits, err := bmapi.ListNodeTraits(ctx, client, node)
+	if err != nil {
+		return err
 	}
-	if err := ironicGet(ctx, client, joinPath("nodes", node, "traits"), &body); err != nil {
-		return fmt.Errorf("listing traits of baremetal node %s: %w", node, err)
-	}
-	t := output.Table{Columns: []string{"Traits"}, Rows: make([][]any, 0, len(body.Traits))}
-	for _, tr := range body.Traits {
+	t := output.Table{Columns: []string{"Traits"}, Rows: make([][]any, 0, len(traits))}
+	for _, tr := range traits {
 		t.Rows = append(t.Rows, []any{tr})
 	}
 	return o.WriteList(w, t)
@@ -99,8 +98,8 @@ func newNodeTraitAddCommand(a *auth.Options, use string) *cobra.Command {
 func runNodeTraitAdd(ctx context.Context, client *gophercloud.ServiceClient, node string, traits []string, w io.Writer) error {
 	var errs []error
 	for _, tr := range traits {
-		if err := ironicPut(ctx, client, joinPath("nodes", node, "traits", tr), nil); err != nil {
-			errs = append(errs, fmt.Errorf("failed to add trait %s: %w", tr, err))
+		if err := bmapi.AddNodeTrait(ctx, client, node, tr); err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		if _, err := fmt.Fprintf(w, "Added trait %s\n", tr); err != nil {
@@ -134,15 +133,12 @@ func newNodeTraitRemoveCommand(a *auth.Options, use string) *cobra.Command {
 
 func runNodeTraitRemove(ctx context.Context, client *gophercloud.ServiceClient, node string, traits []string, all bool, w io.Writer) error {
 	if all {
-		if err := ironicDelete(ctx, client, joinPath("nodes", node, "traits")); err != nil {
-			return fmt.Errorf("removing all traits of baremetal node %s: %w", node, err)
-		}
-		return nil
+		return bmapi.RemoveNodeTraits(ctx, client, node)
 	}
 	var errs []error
 	for _, tr := range traits {
-		if err := ironicDelete(ctx, client, joinPath("nodes", node, "traits", tr)); err != nil {
-			errs = append(errs, fmt.Errorf("failed to remove trait %s: %w", tr, err))
+		if err := bmapi.RemoveNodeTrait(ctx, client, node, tr); err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		if _, err := fmt.Fprintf(w, "Removed trait %s\n", tr); err != nil {

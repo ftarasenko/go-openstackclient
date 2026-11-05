@@ -12,6 +12,8 @@ import (
 	"time"
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
+
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // captureProvisionRequest registers the provision endpoint for one node and
@@ -196,7 +198,7 @@ func TestRunNodeService_ExplainsMicroversionOnOldCloud(t *testing.T) {
 	// A Zed cloud negotiates down to 1.82 and then rejects target=service as an
 	// invalid value — a 400 that says nothing about microversions.
 	fakeServer.Mux.HandleFunc("/nodes/"+id+"/states/provision", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(ironicMaxVersionHeader, "1.82")
+		w.Header().Set(bmapi.MaxVersionHeader, "1.82")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error_message": "Invalid target"}`))
 	})
@@ -223,7 +225,7 @@ func TestRunNodeService_KeepsErrorOnNewCloud(t *testing.T) {
 	// A cloud that supports 1.87 rejecting the request means something else is
 	// wrong; the microversion explanation must not be bolted on.
 	fakeServer.Mux.HandleFunc("/nodes/"+id+"/states/provision", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(ironicMaxVersionHeader, "1.95")
+		w.Header().Set(bmapi.MaxVersionHeader, "1.95")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error_message": "node is not active"}`))
 	})

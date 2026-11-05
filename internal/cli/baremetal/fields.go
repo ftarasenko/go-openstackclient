@@ -1,13 +1,7 @@
 package baremetal
 
 import (
-	"encoding/json"
-	"fmt"
 	"slices"
-	"strings"
-
-	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 
 	"github.com/ftarasenko/go-openstackclient/internal/output"
 )
@@ -192,40 +186,4 @@ func listTable(rows []map[string]any, fields []string) output.Table {
 		t.Rows = append(t.Rows, row)
 	}
 	return t
-}
-
-// resultMap decodes a gophercloud result's body into a map.
-func resultMap(r gophercloud.Result) (map[string]any, error) {
-	if r.Err != nil {
-		return nil, r.Err
-	}
-	var m map[string]any
-	if err := r.ExtractInto(&m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-// pageMaps extracts the resources under key from a list page.
-func pageMaps(key string) func(pagination.Page) ([]map[string]any, error) {
-	return func(p pagination.Page) ([]map[string]any, error) {
-		var v map[string][]map[string]any
-		if err := decodeInto(p.GetBody(), &v); err != nil {
-			return nil, err
-		}
-		return v[key], nil
-	}
-}
-
-// decodeInto round-trips v through JSON into out; used to read a typed view of
-// a resource body.
-func decodeInto(v any, out any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(b, out); err != nil {
-		return fmt.Errorf("decoding %s: %w", strings.TrimPrefix(fmt.Sprintf("%T", out), "*"), err)
-	}
-	return nil
 }

@@ -11,21 +11,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-)
-
-// Runbooks are named, reusable step lists that `node clean --runbook` and
-// `node service --runbook` run. gophercloud has no package for them, so these
-// verbs use the raw helpers in raw.go (/v1/runbooks, API 1.92). Below 1.112 a
-// runbook's name is the trait a node must carry to run it; from 1.112 the
-// name is free-form and the traits are a separate list (/traits).
-//
-// Flag names follow python-ironicclient (`openstack baremetal runbook`).
-// UNVERIFIED against KeyStack (docs.keystack.ru unreachable, HTTP 403).
-
-var (
-	featureRunbooks           = ironicFeature{"baremetal runbook", "1.92", releaseDalmatian}
-	featureRunbookDescription = ironicFeature{"baremetal runbook --description", "1.112", releaseHibiscus}
-	featureRunbookTraits      = ironicFeature{"baremetal runbook trait", "1.112", releaseHibiscus}
+	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
 )
 
 // runbookDetailFields are python-ironicclient's RUNBOOK_DETAILED_RESOURCE;
@@ -107,9 +93,9 @@ func runRunbookList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		fields = runbookDetailFields
 		q.Set("detail", "True")
 	}
-	all, err := ironicList(ctx, client, "runbooks", "runbooks", q, f.limit)
+	all, err := bmapi.ListRunbooks(ctx, client, q, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing baremetal runbooks: %w", explainMicroversion(ctx, client, featureRunbooks, err))
+		return explained(err)
 	}
 	return o.WriteList(w, listTable(all, fields))
 }
@@ -128,9 +114,9 @@ func newRunbookShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runRunbookShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	var rb map[string]any
-	if err := ironicGet(ctx, client, joinPath("runbooks", ref), &rb); err != nil {
-		return fmt.Errorf("getting baremetal runbook %s: %w", ref, explainMicroversion(ctx, client, featureRunbooks, err))
+	rb, err := bmapi.GetRunbook(ctx, client, ref)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rb, runbookDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -166,16 +152,6 @@ func (f *runbookFlags) register(cmd *cobra.Command, verb string) {
 func (f *runbookFlags) changed(cmd *cobra.Command) {
 	f.publicSet = cmd.Flags().Changed("public")
 	f.ramdiskSet = cmd.Flags().Changed(flagDisableRamdisk)
-}
-
-// explain names the microversion a rejected request needed.
-func (f *runbookFlags) explain(ctx context.Context, client *gophercloud.ServiceClient, err error) error {
-	// Below 1.92 the description's requirement is the higher one, and still
-	// true; from 1.112 neither applies and err is returned unchanged.
-	if f.description != "" {
-		return explainMicroversion(ctx, client, featureRunbookDescription, err)
-	}
-	return explainMicroversion(ctx, client, featureRunbooks, err)
 }
 
 func newRunbookCreateCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -224,9 +200,9 @@ func runRunbookCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if extra != nil {
 		body["extra"] = extra
 	}
-	var rb map[string]any
-	if err := ironicPost(ctx, client, "runbooks", body, &rb); err != nil {
-		return fmt.Errorf("creating baremetal runbook: %w", f.explain(ctx, client, err))
+	rb, err := bmapi.CreateRunbook(ctx, client, body)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rb, runbookDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -256,34 +232,34 @@ func runRunbookSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	}
 	// Upstream's order: name, description, owner, public, steps, extra,
 	// disable_ramdisk.
-	var ops patchBuilder
+	var ops bmapi.Patch
 	for _, kv := range [][2]string{{"/name", f.name}, {"/description", f.description}, {"/owner", f.owner}} {
 		if kv[1] != "" {
-			ops.add(kv[0], kv[1])
+			ops.Add(kv[0], kv[1])
 		}
 	}
 	if f.publicSet {
-		ops.add("/public", f.public)
+		ops.Add("/public", f.public)
 	}
 	if f.steps != "" {
 		steps, err := stepsArg(f.steps, stdin)
 		if err != nil {
 			return err
 		}
-		ops.add("/steps", steps)
+		ops.Add("/steps", steps)
 	}
-	if err := ops.addKV(pathExtra, "extra", f.extra); err != nil {
+	if err := addKV(&ops, pathExtra, "extra", f.extra); err != nil {
 		return err
 	}
 	if f.ramdiskSet {
-		ops.add("/disable_ramdisk", f.disableRamdisk)
+		ops.Add("/disable_ramdisk", f.disableRamdisk)
 	}
 	if len(ops) == 0 {
 		return fmt.Errorf("runbook set requires at least one attribute flag")
 	}
-	var rb map[string]any
-	if err := ironicPatch(ctx, client, joinPath("runbooks", ref), ops, &rb); err != nil {
-		return fmt.Errorf("updating baremetal runbook %s: %w", ref, f.explain(ctx, client, err))
+	rb, err := bmapi.UpdateRunbook(ctx, client, ref, ops)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rb, runbookDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -321,7 +297,7 @@ func runRunbookUnset(ctx context.Context, client *gophercloud.ServiceClient, o *
 		return err
 	}
 	// Upstream's order: name, owner, public, disable_ramdisk, description, extra.
-	var ops patchBuilder
+	var ops bmapi.Patch
 	for _, u := range []struct {
 		set  bool
 		path string
@@ -330,20 +306,16 @@ func runRunbookUnset(ctx context.Context, client *gophercloud.ServiceClient, o *
 		{f.disableRamdisk, "/disable_ramdisk"}, {f.description, "/description"},
 	} {
 		if u.set {
-			ops.remove(u.path)
+			ops.Remove(u.path)
 		}
 	}
-	ops.removeKeys(pathExtra, f.extra)
+	removeKeys(&ops, pathExtra, f.extra)
 	if len(ops) == 0 {
 		return fmt.Errorf("runbook unset requires at least one attribute flag")
 	}
-	var rb map[string]any
-	if err := ironicPatch(ctx, client, joinPath("runbooks", ref), ops, &rb); err != nil {
-		feature := featureRunbooks
-		if f.description {
-			feature = featureRunbookDescription
-		}
-		return fmt.Errorf("updating baremetal runbook %s: %w", ref, explainMicroversion(ctx, client, feature, err))
+	rb, err := bmapi.UpdateRunbook(ctx, client, ref, ops)
+	if err != nil {
+		return explained(err)
 	}
 	fields, values := showFields(rb, runbookDetailFields)
 	return o.WriteSingle(w, fields, values)
@@ -362,8 +334,8 @@ func newRunbookDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 
 func runRunbookDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return batchdelete.Each(refs, func(ref string) error {
-		if err := ironicDelete(ctx, client, joinPath("runbooks", ref)); err != nil {
-			return fmt.Errorf("deleting baremetal runbook %s: %w", ref, explainMicroversion(ctx, client, featureRunbooks, err))
+		if err := bmapi.DeleteRunbook(ctx, client, ref); err != nil {
+			return explained(err)
 		}
 		_, err := fmt.Fprintf(w, "Deleted runbook %s\n", ref)
 		return err
@@ -382,14 +354,12 @@ func newRunbookTraitListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func runRunbookTraitList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref string, w io.Writer) error {
-	var body struct {
-		Traits []string `json:"traits"`
+	traits, err := bmapi.ListRunbookTraits(ctx, client, ref)
+	if err != nil {
+		return explained(err)
 	}
-	if err := ironicGet(ctx, client, joinPath("runbooks", ref, "traits"), &body); err != nil {
-		return fmt.Errorf("listing traits of baremetal runbook %s: %w", ref, explainMicroversion(ctx, client, featureRunbookTraits, err))
-	}
-	t := output.Table{Columns: []string{"Traits"}, Rows: make([][]any, 0, len(body.Traits))}
-	for _, tr := range body.Traits {
+	t := output.Table{Columns: []string{"Traits"}, Rows: make([][]any, 0, len(traits))}
+	for _, tr := range traits {
 		t.Rows = append(t.Rows, []any{tr})
 	}
 	return o.WriteList(w, t)
@@ -408,9 +378,8 @@ func newRunbookTraitAddCommand(a *auth.Options, o *output.Options) *cobra.Comman
 
 func runRunbookTraitAdd(ctx context.Context, client *gophercloud.ServiceClient, ref string, traits []string, w io.Writer) error {
 	return batchdelete.Each(traits, func(trait string) error {
-		if err := ironicPut(ctx, client, joinPath("runbooks", ref, "traits", trait), nil); err != nil {
-			return fmt.Errorf("adding trait %s to baremetal runbook %s: %w", trait, ref,
-				explainMicroversion(ctx, client, featureRunbookTraits, err))
+		if err := bmapi.AddRunbookTrait(ctx, client, ref, trait); err != nil {
+			return explained(err)
 		}
 		_, err := fmt.Fprintf(w, "Added trait %s\n", trait)
 		return err
@@ -438,17 +407,15 @@ func runRunbookTraitRemove(ctx context.Context, client *gophercloud.ServiceClien
 	case !all && len(traits) == 0:
 		return fmt.Errorf("specify the trait(s) to remove, or --all")
 	case all:
-		if err := ironicDelete(ctx, client, joinPath("runbooks", ref, "traits")); err != nil {
-			return fmt.Errorf("removing traits from baremetal runbook %s: %w", ref,
-				explainMicroversion(ctx, client, featureRunbookTraits, err))
+		if err := bmapi.RemoveRunbookTraits(ctx, client, ref); err != nil {
+			return explained(err)
 		}
 		_, err := fmt.Fprintf(w, "Removed all traits from runbook %s\n", ref)
 		return err
 	}
 	return batchdelete.Each(traits, func(trait string) error {
-		if err := ironicDelete(ctx, client, joinPath("runbooks", ref, "traits", trait)); err != nil {
-			return fmt.Errorf("removing trait %s from baremetal runbook %s: %w", trait, ref,
-				explainMicroversion(ctx, client, featureRunbookTraits, err))
+		if err := bmapi.RemoveRunbookTrait(ctx, client, ref, trait); err != nil {
+			return explained(err)
 		}
 		_, err := fmt.Fprintf(w, "Removed trait %s\n", trait)
 		return err
