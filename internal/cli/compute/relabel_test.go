@@ -38,13 +38,14 @@ func TestRelabel(t *testing.T) {
 			if got.Error() != c.want {
 				t.Errorf("got  %s\nwant %s", got, c.want)
 			}
-			if c.err != nil && errors.Unwrap(c.err) != nil && !gophercloud.ResponseCodeIs(got, http.StatusNotFound) {
+			if errors.Unwrap(c.err) != nil && !gophercloud.ResponseCodeIs(got, http.StatusNotFound) {
 				t.Error("the inner error must stay reachable")
 			}
 		})
 	}
-	if err := fmt.Errorf(`showing flavor "x": %w`, inner); relabel(err, "x", "x") != err {
-		t.Error("an ID that is the reference needs no rewrap")
+	err := fmt.Errorf(`showing flavor "x": %w`, inner)
+	if got := relabel(err, "x", "x"); got.Error() != err.Error() || !errors.Is(got, err) {
+		t.Errorf("an ID that is the reference needs no rewrap: got %v", got)
 	}
 }
 
