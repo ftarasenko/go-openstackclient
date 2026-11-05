@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
@@ -54,6 +55,12 @@ func cloud(t *testing.T) *httptest.Server {
 		answer(w, map[string]any{"services": []map[string]any{
 			{"id": "svc-1", "binary": "nova-compute", "host": "cmp-01", "status": "enabled", "admin_state": "Active"},
 		}})
+	})
+	mux.HandleFunc("POST /compute/servers/srv-1/action", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("GET /compute/servers/srv-1", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"server": map[string]any{"id": "srv-1", "status": "ACTIVE"}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -109,5 +116,11 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if id, err := compute.FindServiceID(ctx, computeClient, "cmp-01", "nova-compute"); err != nil || id != "svc-1" {
 		t.Fatalf("FindServiceID = %q, %v", id, err)
+	}
+	if err := compute.StartServer(ctx, computeClient, "srv-1"); err != nil {
+		t.Fatalf("StartServer: %v", err)
+	}
+	if err := compute.WaitForServerStatus(ctx, computeClient, "srv-1", []string{"ACTIVE"}, time.Millisecond); err != nil {
+		t.Fatalf("WaitForServerStatus: %v", err)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // Flag surface mirrors upstream OSC's `server volume list/set` and the
@@ -244,30 +245,35 @@ func updateVolumeAttachment(ctx context.Context, client *gophercloud.ServiceClie
 
 // --- add volume body ----------------------------------------------------------
 
-// volumeAttachBody builds the "server add volume" request body. It is built
-// here rather than through volumeattach.CreateOpts because that struct tags
-// DeleteOnTermination omitempty, so an explicit --disable-delete-on-termination
-// would vanish from the request instead of reaching nova as false.
+// volumeAttachBody is the "server add volume" request body that
+// volumeAttachOpts makes.
 func volumeAttachBody(client *gophercloud.ServiceClient, volumeID, device, tag string,
 	deleteOnTermination *bool,
 ) (map[string]any, error) {
-	att := map[string]any{"volumeId": volumeID}
-	if device != "" {
-		att["device"] = device
+	opts, err := volumeAttachOpts(client, volumeID, device, tag, deleteOnTermination)
+	if err != nil {
+		return nil, err
 	}
+	return opts.ToVolumeAttachmentCreateMap()
+}
+
+// volumeAttachOpts is the attachment request, refusing a field the client's
+// microversion is below.
+func volumeAttachOpts(client *gophercloud.ServiceClient, volumeID, device, tag string,
+	deleteOnTermination *bool,
+) (computeapi.VolumeAttachOpts, error) {
+	opts := computeapi.VolumeAttachOpts{VolumeID: volumeID, Device: device, Tag: tag, DeleteOnTermination: deleteOnTermination}
 	if tag != "" {
 		if !computeSupportsMicroversion(client, volumeTagMicroversion) {
-			return nil, fmt.Errorf("--tag requires nova microversion %s or later; this client is pinned to %s",
+			return opts, fmt.Errorf("--tag requires nova microversion %s or later; this client is pinned to %s",
 				volumeTagMicroversion, client.Microversion)
 		}
-		att["tag"] = tag
 	}
 	if deleteOnTermination != nil {
 		if !computeSupportsMicroversion(client, volumeDeleteOnTermMicroversion) {
-			return nil, fmt.Errorf("--%s/--%s require nova microversion %s or later; this client is pinned to %s",
+			return opts, fmt.Errorf("--%s/--%s require nova microversion %s or later; this client is pinned to %s",
 				flagEnableDeleteOnTerm, flagDisableDeleteOnTerm, volumeDeleteOnTermMicroversion, client.Microversion)
 		}
-		att["delete_on_termination"] = *deleteOnTermination
 	}
-	return map[string]any{"volumeAttachment": att}, nil
+	return opts, nil
 }
