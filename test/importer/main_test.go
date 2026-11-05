@@ -13,6 +13,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
@@ -77,6 +78,19 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /compute/os-migrations", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"migrations": []map[string]any{{"id": 1, "status": "completed"}}})
+	})
+	mux.HandleFunc("GET /compute/os-server-groups", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("all_projects") != "true" {
+			http.Error(w, "want all_projects", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"server_groups": []map[string]any{{"id": "grp-1", "name": "web", "policies": []string{"affinity"}}}})
+	})
+	mux.HandleFunc("GET /compute/servers/srv-1/os-instance-actions", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"instanceActions": []map[string]any{{"action": "create", "request_id": "req-1"}}})
+	})
+	mux.HandleFunc("GET /compute/servers/srv-1/os-volume_attachments", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"volumeAttachments": []map[string]any{{"device": "/dev/vdb", "volumeId": "vol-1", "attachment_id": "att-1"}}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -157,5 +171,14 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}, nil)
 	if err != nil || created.ID != "srv-1" {
 		t.Fatalf("CreateServer = %v, %v", created, err)
+	}
+	if gs, err := compute.ListServerGroups(ctx, computeClient, servergroups.ListOpts{AllProjects: true}, 0); err != nil || len(gs) != 1 {
+		t.Fatalf("ListServerGroups = %v, %v", gs, err)
+	}
+	if as, err := compute.ListInstanceActions(ctx, computeClient, "srv-1", compute.InstanceActionListOpts{}, 0); err != nil || len(as) != 1 {
+		t.Fatalf("ListInstanceActions = %v, %v", as, err)
+	}
+	if vs, err := compute.ListVolumeAttachments(ctx, computeClient, "srv-1"); err != nil || len(vs) != 1 || vs[0].AttachmentID != "att-1" {
+		t.Fatalf("ListVolumeAttachments = %v, %v", vs, err)
 	}
 }

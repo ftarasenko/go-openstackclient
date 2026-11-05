@@ -15,13 +15,13 @@ import (
 	"strings"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // "koc server password show" — the read side of nova's os-server-password.
@@ -102,9 +102,9 @@ func runServerPasswordShow(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	password, err := servers.GetPassword(ctx, client, id).ExtractPassword(key)
+	password, err := computeapi.GetServerPassword(ctx, client, id, key)
 	if err != nil {
-		return fmt.Errorf("reading the admin password of server %q: %w", ref, err)
+		return relabel(err, "reading the admin password of server %q", ref)
 	}
 	if password == "" {
 		// Nova answers 200 with an empty string until the guest agent posts one,

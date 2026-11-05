@@ -301,3 +301,43 @@ func ExampleListServers() {
 	// /servers/detail changes-since=2026-01-01T00%3A00%3A00Z&deleted=false compute 2.1
 	// web ACTIVE
 }
+
+// List a server's most recent actions, newest first, and the events of one.
+func ExampleListInstanceActions() {
+	novaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Println(strings.TrimSpace(r.URL.Path + " " + r.URL.RawQuery))
+		if strings.HasSuffix(r.URL.Path, "/req-2") {
+			_, _ = fmt.Fprint(w, `{"instanceAction":{"action":"reboot","request_id":"req-2",
+			  "events":[{"event":"compute_reboot_instance","result":"Success"}]}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"instanceActions":[{"action":"reboot","request_id":"req-2"},{"action":"create","request_id":"req-1"}]}`)
+	}))
+	defer novaAPI.Close()
+
+	client, err := sessionFor(novaAPI.URL).Compute()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ctx := context.Background()
+	const id = "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"
+	actions, err := compute.ListInstanceActions(ctx, client, id, compute.InstanceActionListOpts{}, 1)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	events, err := compute.ListInstanceActionEvents(ctx, client, id, actions[0].RequestID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, e := range events {
+		fmt.Println(actions[0].Action, e.Event, e.Result)
+	}
+	// Output:
+	// /servers/1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e/os-instance-actions limit=1
+	// /servers/1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e/os-instance-actions/req-2
+	// reboot compute_reboot_instance Success
+}

@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"net/url"
 	"sort"
 	"strings"
 
@@ -13,29 +11,15 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
-// gophercloud v2 has no compute "instanceactions" package, so "server event"
-// is implemented against the raw os-instance-actions endpoints (an
-// AGENTS.md-sanctioned raw fallback), decoding into koc-owned DTOs. These
-// endpoints record every user-visible action taken on a server (create, reboot,
-// resize, …) and — per request — the individual events that made up the action.
+// "server event" reads nova's os-instance-actions: every user-visible action
+// taken on a server (create, reboot, resize, …) and, per request, the steps
+// that made it up.
 
-// instanceActionsPath is the nova subresource all three raw calls below address.
-const instanceActionsPath = "os-instance-actions"
-
-// instanceAction is one entry from GET /servers/{id}/os-instance-actions.
-// updated_at appears at nova microversion 2.58.
-type instanceAction struct {
-	Action       string `json:"action"`
-	InstanceUUID string `json:"instance_uuid"`
-	Message      string `json:"message"`
-	ProjectID    string `json:"project_id"`
-	RequestID    string `json:"request_id"`
-	StartTime    string `json:"start_time"`
-	UpdatedAt    string `json:"updated_at"`
-	UserID       string `json:"user_id"`
-}
+// instanceAction is one entry of the action list.
+type instanceAction = computeapi.InstanceAction
 
 type eventListFlags struct {
 	long          bool
@@ -91,38 +75,13 @@ func runServerEventList(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	vals := url.Values{}
-	for key, val := range map[string]string{
-		"marker":         f.marker,
-		"changes-since":  f.changesSince,
-		"changes-before": f.changesBefore,
-	} {
-		if val != "" {
-			vals.Set(key, val)
-		}
-	}
-	// Nova treats limit only as a page size; ask for it as a hint but still
-	// enforce --limit as a hard cap after decoding.
-	if f.limit > 0 {
-		vals.Set("limit", fmt.Sprintf("%d", f.limit))
-	}
-	u := client.ServiceURL("servers", id, instanceActionsPath)
-	if q := vals.Encode(); q != "" {
-		u += "?" + q
-	}
-	var resp struct {
-		InstanceActions []instanceAction `json:"instanceActions"`
-	}
-	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
-	}
+	// Nova treats limit only as a page size; it is sent as a hint and still
+	// enforced as a hard cap.
+	all, err := computeapi.ListInstanceActions(ctx, client, id, computeapi.InstanceActionListOpts{
+		Marker: f.marker, ChangesSince: f.changesSince, ChangesBefore: f.changesBefore,
+	}, f.limit)
 	if err != nil {
-		return fmt.Errorf("listing events of server %q: %w", serverRef, err)
-	}
-	all := resp.InstanceActions
-	if f.limit > 0 && len(all) > f.limit {
-		all = all[:f.limit]
+		return relabel(err, "listing events of server %q", serverRef)
 	}
 	var results map[string]string
 	if f.result {
@@ -131,14 +90,8 @@ func runServerEventList(ctx context.Context, client *gophercloud.ServiceClient, 
 	return o.WriteList(w, eventTable(all, f.long, results))
 }
 
-// actionEvent is one entry of the "events" list on GET
-// /servers/{id}/os-instance-actions/{request_id}. Only "result" is decoded:
-// it is "Success" or "Error" once the step has finished and null while it is
-// still running, which is the whole of what the Result column needs. The
-// step's name and its admin-only traceback are left to "server event show".
-type actionEvent struct {
-	Result string `json:"result"`
-}
+// actionEvent is one step of an action; only its Result is read here.
+type actionEvent = computeapi.InstanceActionEvent
 
 // fetchEventResults reads each listed action's own events and reduces them to a
 // single outcome, keyed by request ID.
@@ -160,20 +113,11 @@ func fetchEventResults(ctx context.Context, client *gophercloud.ServiceClient,
 		if a.RequestID == "" {
 			continue
 		}
-		var resp struct {
-			InstanceAction struct {
-				Events []actionEvent `json:"events"`
-			} `json:"instanceAction"`
-		}
-		u := client.ServiceURL("servers", serverID, instanceActionsPath, a.RequestID)
-		r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
-		if r != nil {
-			_ = r.Body.Close()
-		}
+		events, err := computeapi.ListInstanceActionEvents(ctx, client, serverID, a.RequestID)
 		if err != nil {
 			continue
 		}
-		results[a.RequestID] = reduceEventResults(resp.InstanceAction.Events, a.Message)
+		results[a.RequestID] = reduceEventResults(events, a.Message)
 	}
 	return results
 }
@@ -261,19 +205,12 @@ func runServerEventShow(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	var resp struct {
-		InstanceAction map[string]any `json:"instanceAction"`
-	}
-	u := client.ServiceURL("servers", id, instanceActionsPath, requestID)
-	r, err := client.Get(ctx, u, &resp, &gophercloud.RequestOpts{OkCodes: []int{200}})
-	if r != nil {
-		_ = r.Body.Close()
-	}
+	action, err := computeapi.GetInstanceAction(ctx, client, id, requestID)
 	if err != nil {
-		return fmt.Errorf("showing event %s of server %q: %w", requestID, serverRef, err)
+		return relabel(err, "showing event %s of server %q", requestID, serverRef)
 	}
 	flatten := o.Format != output.FormatJSON && o.Format != output.FormatYAML
-	fields, values := eventShowFields(resp.InstanceAction, flatten)
+	fields, values := eventShowFields(action, flatten)
 	return o.WriteSingle(w, fields, values)
 }
 
