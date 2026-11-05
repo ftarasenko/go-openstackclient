@@ -412,3 +412,65 @@ func TestKeypairs_WrapWithTheName(t *testing.T) {
 		}
 	}
 }
+
+// TestErrorsNameTheCall drives every function against a nova that fails
+// everything: each error says what it was doing, names the reference it was
+// given, and keeps gophercloud's error reachable.
+func TestErrorsNameTheCall(t *testing.T) {
+	fs, sc := nova(t, "latest")
+	fs.Mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, http.StatusInternalServerError, `{"computeFault":{"code":500,"message":"boom"}}`)
+	})
+	ctx := context.Background()
+	id := `"` + flavorID + `"`
+	cases := []struct {
+		prefix string
+		call   func() error
+	}{
+		{"listing flavors: ", func() error { _, err := compute.ListFlavors(ctx, sc, flavors.ListOpts{}); return err }},
+		{"deleting flavor " + id + ": ", func() error { return compute.DeleteFlavor(ctx, sc, flavorID) }},
+		{"listing project access for flavor " + id + ": ", func() error {
+			_, err := compute.ListFlavorAccess(ctx, sc, flavorID)
+			return err
+		}},
+		{`revoking project "` + projectID + `" access to flavor ` + id + ": ", func() error {
+			_, err := compute.RemoveFlavorAccess(ctx, sc, flavorID, projectID)
+			return err
+		}},
+		{"setting properties on flavor " + id + ": ", func() error {
+			_, err := compute.SetFlavorExtraSpecs(ctx, sc, flavorID, map[string]string{"a": "1"})
+			return err
+		}},
+		{"listing properties of flavor " + id + ": ", func() error { return compute.ClearFlavorExtraSpecs(ctx, sc, flavorID) }},
+		{"listing keypairs: ", func() error { _, err := compute.ListKeypairs(ctx, sc, nil); return err }},
+	}
+	for _, c := range cases {
+		err := c.call()
+		if err == nil || !strings.HasPrefix(err.Error(), c.prefix) {
+			t.Errorf("err = %v, want prefix %q", err, c.prefix)
+			continue
+		}
+		if !gophercloud.ResponseCodeIs(err, http.StatusInternalServerError) {
+			t.Errorf("%q: gophercloud's 500 must stay reachable", c.prefix)
+		}
+	}
+}
+
+func TestClearFlavorExtraSpecs_StopsAtTheFirstFailedDelete(t *testing.T) {
+	fs, sc := nova(t, "latest")
+	rec := &recorder{}
+	fs.Mux.HandleFunc("/flavors/"+flavorID+"/os-extra_specs", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, http.StatusOK, `{"extra_specs":{"a":"1","b":"2"}}`)
+	})
+	fs.Mux.HandleFunc("/flavors/"+flavorID+"/os-extra_specs/", func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r)
+		w.WriteHeader(http.StatusForbidden)
+	})
+	err := compute.ClearFlavorExtraSpecs(context.Background(), sc, flavorID)
+	if want := `unsetting property "a" on flavor "` + flavorID + `": `; err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("err = %v", err)
+	}
+	if rec.all() != "DELETE /flavors/"+flavorID+"/os-extra_specs/a" {
+		t.Errorf("requests = %s", rec.all())
+	}
+}
