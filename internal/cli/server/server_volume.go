@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/volumeattach"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
@@ -26,11 +24,11 @@ import (
 // api/openstack/compute/schemas/volumes.py and the 2.70/2.79/2.89 view
 // changes). All are at or below Zed's 2.93 cap.
 const (
-	volumeTagMicroversion           = "2.49" // tag in the attach body
-	volumeTagShownMicroversion      = "2.70" // tag in the attachment view
-	volumeDeleteOnTermMicroversion  = "2.79" // delete_on_termination in attach body + view
-	volumeUpdateDeleteMicroversion  = "2.85" // PUT may change delete_on_termination
-	volumeAttachmentIDsMicroversion = "2.89" // attachment_id + bdm_uuid replace id
+	volumeTagMicroversion           = "2.49"                                        // tag in the attach body
+	volumeTagShownMicroversion      = "2.70"                                        // tag in the attachment view
+	volumeDeleteOnTermMicroversion  = "2.79"                                        // delete_on_termination in attach body + view
+	volumeUpdateDeleteMicroversion  = computeapi.VolumeAttachmentUpdateMicroversion // PUT may change delete_on_termination
+	volumeAttachmentIDsMicroversion = "2.89"                                        // attachment_id + bdm_uuid replace id
 )
 
 const (
@@ -69,13 +67,6 @@ func newServerVolumeListCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	}
 }
 
-// volumeAttachment adds the 2.89 fields gophercloud's VolumeAttachment lacks.
-type volumeAttachment struct {
-	volumeattach.VolumeAttachment
-	AttachmentID string `json:"attachment_id"`
-	BDMID        string `json:"bdm_uuid"`
-}
-
 // runServerVolumeList prints a server's volume attachments with upstream's
 // columns for the client's microversion: ID until 2.89 dropped it, Tag from
 // 2.70, Delete On Termination? from 2.79, the attachment and BDM IDs from 2.89.
@@ -86,21 +77,10 @@ func runServerVolumeList(ctx context.Context, client *gophercloud.ServiceClient,
 	if err != nil {
 		return err
 	}
-	pages, err := volumeattach.List(client, id).AllPages(ctx)
+	attachments, err := computeapi.ListVolumeAttachments(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("listing volume attachments of server %q: %w", ref, err)
+		return relabel(err, "listing volume attachments of server %q", ref)
 	}
-	page, ok := pages.(volumeattach.VolumeAttachmentPage)
-	if !ok {
-		return fmt.Errorf("listing volume attachments of server %q: unexpected page type %T", ref, pages)
-	}
-	var body struct {
-		VolumeAttachments []volumeAttachment `json:"volumeAttachments"`
-	}
-	if err := page.ExtractInto(&body); err != nil {
-		return fmt.Errorf("listing volume attachments of server %q: %w", ref, err)
-	}
-	attachments := body.VolumeAttachments
 
 	showID := !computeSupportsMicroversion(client, volumeAttachmentIDsMicroversion)
 	showTag := computeSupportsMicroversion(client, volumeTagShownMicroversion)
@@ -217,30 +197,8 @@ func runServerVolumeSet(ctx context.Context, client, volumeClient *gophercloud.S
 	if err != nil {
 		return err
 	}
-	if err := updateVolumeAttachment(ctx, client, id, volumeID, *deleteOnTermination); err != nil {
-		return fmt.Errorf("updating attachment of volume %q on server %q: %w", volumeRef, ref, err)
-	}
-	return nil
-}
-
-// updateVolumeAttachment is the raw PUT gophercloud's volumeattach package has
-// no call for (replace it once it does). Sending the attachment's own volume
-// ID makes it an update rather than a swap, which nova gates behind the
-// admin-only swap policy; delete_on_termination is the one field nova 2.85+
-// lets an update change. Nova answers 202 with no body.
-func updateVolumeAttachment(ctx context.Context, client *gophercloud.ServiceClient,
-	serverID, volumeID string, deleteOnTermination bool,
-) error {
-	body := map[string]any{"volumeAttachment": map[string]any{
-		"volumeId":              volumeID,
-		"delete_on_termination": deleteOnTermination,
-	}}
-	resp, err := client.Put(ctx, client.ServiceURL("servers", serverID, "os-volume_attachments", volumeID), body, nil,
-		&gophercloud.RequestOpts{OkCodes: []int{http.StatusOK, http.StatusAccepted, http.StatusNoContent}})
-	if resp != nil {
-		_ = resp.Body.Close()
-	}
-	return err
+	return relabel(computeapi.SetVolumeDeleteOnTermination(ctx, client, id, volumeID, *deleteOnTermination),
+		"updating attachment of volume %q on server %q", volumeRef, ref)
 }
 
 // --- add volume body ----------------------------------------------------------

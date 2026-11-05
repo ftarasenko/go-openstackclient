@@ -14,7 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
 )
 
 // "server group" — nova's scheduler affinity groups, a top-level noun upstream
@@ -30,7 +30,7 @@ import (
 // schema sets additionalProperties=false on both sides, so sending the wrong
 // one is a 400 rather than a field nova ignores — which form goes on the wire
 // has to follow the negotiated microversion.
-const serverGroupPolicyMicroversion = "2.64"
+const serverGroupPolicyMicroversion = computeapi.ServerGroupPolicyMicroversion
 
 // newServerGroupCommand builds "server group ...", attached to the existing
 // "server" noun by newServerCommand.
@@ -76,10 +76,9 @@ func newServerGroupListCommand(a *auth.Options, o *output.Options) *cobra.Comman
 func runServerGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	allProjects, long bool, limit int, w io.Writer,
 ) error {
-	opts := servergroups.ListOpts{AllProjects: allProjects, Limit: limit}
-	all, err := paging.Collect(ctx, servergroups.List(client, opts), limit, servergroups.ExtractServerGroups)
+	all, err := computeapi.ListServerGroups(ctx, client, servergroups.ListOpts{AllProjects: allProjects, Limit: limit}, limit)
 	if err != nil {
-		return fmt.Errorf("listing server groups: %w", err)
+		return err
 	}
 	cols := []string{"ID", "Name", "Policy"}
 	if long {
@@ -133,9 +132,9 @@ func runServerGroupShow(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil {
 		return err
 	}
-	g, err := servergroups.Get(ctx, client, id).Extract()
+	g, err := computeapi.GetServerGroup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing server group %q: %w", ref, err)
+		return relabel(err, "showing server group %q", ref)
 	}
 	return writeServerGroup(o, w, g)
 }
@@ -159,13 +158,9 @@ func resolveServerGroupID(ctx context.Context, client *gophercloud.ServiceClient
 	if isUUID(ref) {
 		return ref, nil
 	}
-	pages, err := servergroups.List(client, servergroups.ListOpts{AllProjects: true}).AllPages(ctx)
+	all, err := computeapi.ListServerGroups(ctx, client, servergroups.ListOpts{AllProjects: true}, 0)
 	if err != nil {
-		return "", fmt.Errorf("looking up server group %q: %w", ref, err)
-	}
-	all, err := servergroups.ExtractServerGroups(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing the server group list: %w", err)
+		return "", relabel(err, "looking up server group %q", ref)
 	}
 	var matches []string
 	for _, g := range all {
@@ -237,9 +232,9 @@ func runServerGroupCreate(ctx context.Context, client *gophercloud.ServiceClient
 		// and rejects `policy` outright.
 		opts.Policies = []string{policy}
 	}
-	g, err := servergroups.Create(ctx, client, opts).Extract()
+	g, err := computeapi.CreateServerGroup(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating server group %q: %w", name, err)
+		return err
 	}
 	return writeServerGroup(o, w, g)
 }
@@ -295,9 +290,6 @@ func runServerGroupDelete(ctx context.Context, client *gophercloud.ServiceClient
 		if err != nil {
 			return err
 		}
-		if err := servergroups.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return fmt.Errorf("deleting server group %q: %w", ref, err)
-		}
-		return nil
+		return relabel(computeapi.DeleteServerGroup(ctx, client, id), "deleting server group %q", ref)
 	})
 }
