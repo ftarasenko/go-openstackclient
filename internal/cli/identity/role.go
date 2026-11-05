@@ -7,11 +7,11 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack role ...`). The KeyStack command
@@ -61,13 +61,9 @@ func runRoleList(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	pages, err := roles.List(client, roles.ListOpts{DomainID: domainID}).AllPages(ctx)
+	all, err := identityapi.ListRoles(ctx, client, roles.ListOpts{DomainID: domainID})
 	if err != nil {
-		return fmt.Errorf("listing roles: %w", err)
-	}
-	all, err := roles.ExtractRoles(pages)
-	if err != nil {
-		return fmt.Errorf("parsing role list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", colDomainID}, Rows: make([][]any, 0, len(all))}
 	for _, r := range all {
@@ -100,9 +96,9 @@ func runRoleShow(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 	if err != nil {
 		return err
 	}
-	r, err := roles.Get(ctx, client, id).Extract()
+	r, err := identityapi.GetRole(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing role %q: %w", nameOrID, err)
+		return relabel(err, "showing role %q", nameOrID)
 	}
 	return o.WriteSingle(w,
 		[]string{"ID", "Name", colDomainID, "Description"},
@@ -284,10 +280,7 @@ func runRoleAdd(ctx context.Context, client *gophercloud.ServiceClient, roleName
 		return err
 	}
 	opts := roles.AssignOpts{UserID: g.userID, GroupID: g.groupID, ProjectID: g.projectID, DomainID: g.domainID, System: g.system}
-	if err := roles.Assign(ctx, client, g.roleID, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("granting role %q: %w", roleNameOrID, err)
-	}
-	return nil
+	return relabel(identityapi.AssignRole(ctx, client, g.roleID, opts), "granting role %q", roleNameOrID)
 }
 
 func newRoleRemoveCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -318,10 +311,7 @@ func runRoleRemove(ctx context.Context, client *gophercloud.ServiceClient, roleN
 		return err
 	}
 	opts := roles.UnassignOpts{UserID: g.userID, GroupID: g.groupID, ProjectID: g.projectID, DomainID: g.domainID, System: g.system}
-	if err := roles.Unassign(ctx, client, g.roleID, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("revoking role %q: %w", roleNameOrID, err)
-	}
-	return nil
+	return relabel(identityapi.UnassignRole(ctx, client, g.roleID, opts), "revoking role %q", roleNameOrID)
 }
 
 // newRoleAssignmentCommand builds "role assignment list".
@@ -381,27 +371,15 @@ func runRoleAssignmentList(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	pages, err := roles.ListAssignments(client, opts).AllPages(ctx)
+	all, err := identityapi.ListRoleAssignments(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing role assignments: %w", err)
-	}
-	all, err := roles.ExtractRoleAssignments(pages)
-	if err != nil {
-		return fmt.Errorf("parsing role assignment list: %w", err)
-	}
-	extra, err := extractAssignmentExtras(pages)
-	if err != nil {
-		return fmt.Errorf("parsing role assignment list: %w", err)
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"Role", "User", "Group", "Project", "Domain", "System", "Inherited"},
 		Rows:    make([][]any, 0, len(all)),
 	}
-	for i, ra := range all {
-		var x assignmentExtra
-		if i < len(extra) {
-			x = extra[i]
-		}
+	for _, ra := range all {
 		role := ra.Role.ID
 		user := ra.User.ID
 		group := ra.Group.ID
@@ -410,7 +388,7 @@ func runRoleAssignmentList(ctx context.Context, client *gophercloud.ServiceClien
 		if f.names {
 			// Upstream qualifies every name but the scope domain's own with the
 			// domain it lives in: admin@Default.
-			role = qualified(ra.Role.Name, x.Role.Domain.Name, role)
+			role = qualified(ra.Role.Name, ra.RoleDomain.Name, role)
 			user = qualified(ra.User.Name, ra.User.Domain.Name, user)
 			group = qualified(ra.Group.Name, ra.Group.Domain.Name, group)
 			project = qualified(ra.Scope.Project.Name, ra.Scope.Project.Domain.Name, project)
@@ -420,7 +398,7 @@ func runRoleAssignmentList(ctx context.Context, client *gophercloud.ServiceClien
 		if ra.Scope.System != nil && ra.Scope.System.All {
 			system = "all"
 		}
-		t.Rows = append(t.Rows, []any{role, user, group, project, domain, system, x.Scope.InheritedTo != ""})
+		t.Rows = append(t.Rows, []any{role, user, group, project, domain, system, ra.InheritedTo != ""})
 	}
 	return o.WriteList(w, t)
 }
@@ -475,31 +453,6 @@ func assignmentListOpts(ctx context.Context, client *gophercloud.ServiceClient, 
 		opts.IncludeNames = &f.names
 	}
 	return opts, nil
-}
-
-// assignmentExtra is what gophercloud's RoleAssignment leaves out: the
-// OS-INHERIT marker on an inherited assignment's scope, and a domain-specific
-// role's domain.
-type assignmentExtra struct {
-	Role struct {
-		Domain roles.Domain `json:"domain"`
-	} `json:"role"`
-	Scope struct {
-		InheritedTo string `json:"OS-INHERIT:inherited_to"`
-	} `json:"scope"`
-}
-
-// extractAssignmentExtras reads assignmentExtra from the same page, in order.
-func extractAssignmentExtras(page pagination.Page) ([]assignmentExtra, error) {
-	p, ok := page.(roles.RoleAssignmentPage)
-	if !ok {
-		return nil, fmt.Errorf("unexpected role assignment page type %T", page)
-	}
-	var out []assignmentExtra
-	if err := p.ExtractIntoSlicePtr(&out, "role_assignments"); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // qualified renders name@domain, or the fallback when keystone sent no name.

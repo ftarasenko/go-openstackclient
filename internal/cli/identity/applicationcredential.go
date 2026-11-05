@@ -16,6 +16,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack application credential ...`).
@@ -23,7 +24,7 @@ import (
 // at implementation time); falls back to upstream OSC semantics.
 //
 // Application credentials are nested under a user in keystone
-// (applicationcredentials.List(client, userID, ...)). When --user is omitted the
+// (identity.ListApplicationCredentials takes the user ID). When --user is omitted the
 // commands operate on the currently authenticated user, whose ID is read from
 // the token minted during authentication.
 
@@ -93,13 +94,9 @@ func newAppCredListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runAppCredList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, userID string, w io.Writer) error {
-	pages, err := applicationcredentials.List(client, userID, applicationcredentials.ListOpts{}).AllPages(ctx)
+	all, err := identityapi.ListApplicationCredentials(ctx, client, userID, applicationcredentials.ListOpts{})
 	if err != nil {
-		return fmt.Errorf("listing application credentials: %w", err)
-	}
-	all, err := applicationcredentials.ExtractApplicationCredentials(pages)
-	if err != nil {
-		return fmt.Errorf("parsing application credential list: %w", err)
+		return relabel(err, "listing application credentials")
 	}
 	t := output.Table{Columns: []string{"ID", "Name", colProjectID, "Description", colExpiresAt}, Rows: make([][]any, 0, len(all))}
 	for _, c := range all {
@@ -141,9 +138,9 @@ func runAppCredShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	c, err := applicationcredentials.Get(ctx, client, userID, id).Extract()
+	c, err := identityapi.GetApplicationCredential(ctx, client, userID, id)
 	if err != nil {
-		return fmt.Errorf("showing application credential %q: %w", ref, err)
+		return relabel(err, "showing application credential %q", ref)
 	}
 	return o.WriteSingle(w,
 		[]string{"ID", "Name", colProjectID, "Description", "Unrestricted", "Access Rules", colExpiresAt},
@@ -228,9 +225,9 @@ func runAppCredCreate(ctx context.Context, client *gophercloud.ServiceClient, o 
 		}
 		opts.AccessRules = rules
 	}
-	c, err := applicationcredentials.Create(ctx, client, userID, opts).Extract()
+	c, err := identityapi.CreateApplicationCredential(ctx, client, userID, opts)
 	if err != nil {
-		return fmt.Errorf("creating application credential %q: %w", name, err)
+		return relabel(err, "creating application credential %q", name)
 	}
 	return o.WriteSingle(w,
 		appCredCreateColumns,
@@ -307,10 +304,7 @@ func runAppCredDelete(ctx context.Context, client *gophercloud.ServiceClient, us
 	if err != nil {
 		return err
 	}
-	if err := applicationcredentials.Delete(ctx, client, userID, id).ExtractErr(); err != nil {
-		return fmt.Errorf("deleting application credential %q: %w", ref, err)
-	}
-	return nil
+	return relabel(identityapi.DeleteApplicationCredential(ctx, client, userID, id), "deleting application credential %q", ref)
 }
 
 // resolveAppCredID resolves an application credential name to its ID within the
@@ -318,13 +312,9 @@ func runAppCredDelete(ctx context.Context, client *gophercloud.ServiceClient, us
 // exactly one name match wins, zero matches falls back to treating ref as an ID,
 // and more than one match is ambiguous.
 func resolveAppCredID(ctx context.Context, client *gophercloud.ServiceClient, userID, ref string) (string, error) {
-	pages, err := applicationcredentials.List(client, userID, applicationcredentials.ListOpts{Name: ref}).AllPages(ctx)
+	all, err := identityapi.ListApplicationCredentials(ctx, client, userID, applicationcredentials.ListOpts{Name: ref})
 	if err != nil {
-		return "", fmt.Errorf("resolving application credential %q: %w", ref, err)
-	}
-	all, err := applicationcredentials.ExtractApplicationCredentials(pages)
-	if err != nil {
-		return "", fmt.Errorf("parsing application credential list: %w", err)
+		return "", relabel(err, "resolving application credential %q", ref)
 	}
 	switch len(all) {
 	case 0:

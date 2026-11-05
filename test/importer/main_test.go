@@ -1,6 +1,6 @@
 // Package importer_test builds a Session from FromProvider against an
-// httptest cloud and lists images, networks, flavors and projects through
-// pkg/, with nothing but the module's public import paths.
+// httptest cloud and lists images, networks, flavors, projects and role
+// assignments through pkg/, with nothing but the module's public import paths.
 package importer_test
 
 import (
@@ -17,6 +17,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
@@ -103,6 +104,14 @@ func cloud(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("PUT /identity/v3/groups/grp-1/users/usr-1", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /identity/v3/role_assignments", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("user.id") != "usr-1" {
+			http.Error(w, "want user.id", http.StatusBadRequest)
+			return
+		}
+		answer(w, map[string]any{"role_assignments": []map[string]any{{"role": map[string]any{"id": "rol-1"},
+			"user": map[string]any{"id": "usr-1"}, "scope": map[string]any{"project": map[string]any{"id": "prj-1"}, "OS-INHERIT:inherited_to": "projects"}}}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -203,5 +212,9 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if err := identity.AddUserToGroup(ctx, identityClient, "grp-1", "usr-1"); err != nil {
 		t.Fatal(err)
+	}
+	if as, err := identity.ListRoleAssignments(ctx, identityClient, roles.ListAssignmentsOpts{UserID: "usr-1"}); err != nil ||
+		len(as) != 1 || as[0].Role.ID != "rol-1" || as[0].InheritedTo != "projects" {
+		t.Fatalf("ListRoleAssignments = %+v, %v", as, err)
 	}
 }
