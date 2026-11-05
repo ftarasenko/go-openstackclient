@@ -2,19 +2,19 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/groups"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/policies"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/rules"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // Literals repeated within this file.
@@ -111,36 +111,18 @@ func (b fwRuleBody) ToRuleCreateMap() (map[string]any, error) { return fwWrap("f
 func (b fwRuleBody) ToRuleUpdateMap() (map[string]any, error) { return fwWrap("firewall_rule", b) }
 
 // resolveFirewallGroupID, resolveFirewallPolicyID and resolveFirewallRuleID
-// resolve a name or ID through resolveByName: a UUID passes through, otherwise
-// exactly one name match wins.
+// resolve a name or ID: a UUID passes through, otherwise exactly one name
+// match wins.
 func resolveFirewallGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "firewall group", nameOrID, func(c *gophercloud.ServiceClient) ([]groups.Group, error) {
-		pages, err := groups.List(c, groups.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return groups.ExtractGroups(pages)
-	}, func(g groups.Group) string { return g.ID })
+	return cliLookup(networkapi.FindFirewallGroupID(ctx, client, nameOrID))
 }
 
 func resolveFirewallPolicyID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "firewall policy", nameOrID, func(c *gophercloud.ServiceClient) ([]policies.Policy, error) {
-		pages, err := policies.List(c, policies.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return policies.ExtractPolicies(pages)
-	}, func(p policies.Policy) string { return p.ID })
+	return cliLookup(networkapi.FindFirewallPolicyID(ctx, client, nameOrID))
 }
 
 func resolveFirewallRuleID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "firewall rule", nameOrID, func(c *gophercloud.ServiceClient) ([]rules.Rule, error) {
-		pages, err := rules.List(c, rules.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return rules.ExtractRules(pages)
-	}, func(r rules.Rule) string { return r.ID })
+	return cliLookup(networkapi.FindFirewallRuleID(ctx, client, nameOrID))
 }
 
 // fwCreateName reconciles upstream's optional positional <name> with its
@@ -284,9 +266,9 @@ func fwGroupPorts(ctx context.Context, client *gophercloud.ServiceClient, f *fwG
 		return nil, err
 	}
 	if !f.noPort && groupID != "" {
-		g, err := groups.Get(ctx, client, groupID).Extract()
+		g, err := networkapi.GetFirewallGroup(ctx, client, groupID)
 		if err != nil {
-			return nil, fmt.Errorf("getting firewall group %s: %w", groupID, err)
+			return nil, err
 		}
 		ids = append(ids, g.Ports...)
 	}
@@ -359,9 +341,9 @@ func runFirewallGroupCreate(ctx context.Context, client *gophercloud.ServiceClie
 	if f.projectID != "" {
 		attrs["project_id"] = f.projectID
 	}
-	g, err := groups.Create(ctx, client, fwGroupBody(attrs)).Extract()
+	g, err := networkapi.CreateFirewallGroup(ctx, client, fwGroupBody(attrs))
 	if err != nil {
-		return fmt.Errorf("creating firewall group: %w", err)
+		return err
 	}
 	return writeFWGroup(o, w, g)
 }
@@ -389,7 +371,7 @@ func runFirewallGroupDelete(ctx context.Context, client *gophercloud.ServiceClie
 	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveFirewallGroupID(ctx, client, ref)
 		if err == nil {
-			err = groups.Delete(ctx, client, id).ExtractErr()
+			err = errors.Unwrap(networkapi.DeleteFirewallGroup(ctx, client, id))
 		}
 		if err != nil {
 			return fwaasErr(ctx, client, fmt.Errorf("deleting firewall group %s: %w", ref, err))
@@ -422,13 +404,9 @@ func newFirewallGroupListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 
 func runFirewallGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) (err error) {
 	defer func() { err = fwaasErr(ctx, client, err) }()
-	pages, err := groups.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListFirewallGroups(ctx, client, nil)
 	if err != nil {
-		return fmt.Errorf("listing firewall groups: %w", err)
-	}
-	all, err := groups.ExtractGroups(pages)
-	if err != nil {
-		return fmt.Errorf("parsing firewall group list: %w", err)
+		return err
 	}
 	cols := []string{"ID", "Name", "Ingress Policy ID", "Egress Policy ID"}
 	if long {
@@ -488,9 +466,9 @@ func runFirewallGroupSet(ctx context.Context, client *gophercloud.ServiceClient,
 }
 
 func updateFWGroup(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string, attrs map[string]any, w io.Writer) error {
-	g, err := groups.Update(ctx, client, id, fwGroupBody(attrs)).Extract()
+	g, err := networkapi.UpdateFirewallGroup(ctx, client, id, fwGroupBody(attrs))
 	if err != nil {
-		return fmt.Errorf("updating firewall group %s: %w", ref, err)
+		return relabel(err, "updating firewall group %s", ref)
 	}
 	return writeFWGroup(o, w, g)
 }
@@ -520,9 +498,9 @@ func runFirewallGroupShow(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	g, err := groups.Get(ctx, client, id).Extract()
+	g, err := networkapi.GetFirewallGroup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting firewall group %s: %w", ref, err)
+		return relabel(err, "getting firewall group %s", ref)
 	}
 	return writeFWGroup(o, w, g)
 }
@@ -596,9 +574,9 @@ func runFirewallGroupUnset(ctx context.Context, client *gophercloud.ServiceClien
 		attrs["admin_state_up"] = false
 	}
 	if len(f.ports) > 0 {
-		g, err := groups.Get(ctx, client, id).Extract()
+		g, err := networkapi.GetFirewallGroup(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("getting firewall group %s: %w", ref, err)
+			return relabel(err, "getting firewall group %s", ref)
 		}
 		removed, err := resolveEach(ctx, client, f.ports, resolvePortID)
 		if err != nil {

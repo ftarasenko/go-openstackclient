@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // vpnEndpointGroupTypes are the endpoint types upstream accepts on create.
@@ -29,13 +31,7 @@ func newVPNEndpointGroupCommand(a *auth.Options, o *output.Options) *cobra.Comma
 }
 
 func resolveVPNEndpointGroupID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "endpoint group", nameOrID, func(c *gophercloud.ServiceClient) ([]endpointgroups.EndpointGroup, error) {
-		pages, err := endpointgroups.List(c, endpointgroups.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return endpointgroups.ExtractEndpointGroups(pages)
-	}, func(g endpointgroups.EndpointGroup) string { return g.ID })
+	return cliLookup(networkapi.FindVPNEndpointGroupID(ctx, client, nameOrID))
 }
 
 func vpnEndpointGroupShowFields(g *endpointgroups.EndpointGroup) ([]string, []any) {
@@ -46,13 +42,9 @@ func vpnEndpointGroupShowFields(g *endpointgroups.EndpointGroup) ([]string, []an
 var vpnEndpointGroupColumns = fieldNames(vpnEndpointGroupShowFields(&endpointgroups.EndpointGroup{}))
 
 func runVPNEndpointGroupList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	pages, err := endpointgroups.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListVPNEndpointGroups(ctx, client, nil)
 	if err != nil {
-		return explainVPNEndpointGroups(ctx, client, fmt.Errorf("listing endpoint groups: %w", err))
-	}
-	all, err := endpointgroups.ExtractEndpointGroups(pages)
-	if err != nil {
-		return fmt.Errorf("parsing endpoint group list: %w", err)
+		return explainVPNEndpointGroups(ctx, client, err)
 	}
 	cols := []string{"ID", "Name", "Type", "Endpoints"}
 	if long {
@@ -75,9 +67,9 @@ func runVPNEndpointGroupShow(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
-	g, err := vpnExtracted(endpointgroups.Get(ctx, client, id).Extract())
+	g, err := networkapi.GetVPNEndpointGroup(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting endpoint group %s: %w", ref, err)
+		return relabel(err, "getting endpoint group %s", ref)
 	}
 	fields, values := vpnEndpointGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)
@@ -85,7 +77,7 @@ func runVPNEndpointGroupShow(ctx context.Context, client *gophercloud.ServiceCli
 
 func runVPNEndpointGroupDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return explainVPNEndpointGroups(ctx, client, runVPNDelete(ctx, client, "endpoint group", refs, resolveVPNEndpointGroupID,
-		func(id string) error { return endpointgroups.Delete(ctx, client, id).ExtractErr() }, w))
+		func(id string) error { return errors.Unwrap(networkapi.DeleteVPNEndpointGroup(ctx, client, id)) }, w))
 }
 
 type vpnEndpointGroupFlags struct {
@@ -160,9 +152,9 @@ func runVPNEndpointGroupCreate(ctx context.Context, client *gophercloud.ServiceC
 		}
 	}
 	attrs["endpoints"] = endpoints
-	g, err := vpnExtracted(endpointgroups.Create(ctx, client, vpnBody{key: "endpoint_group", attrs: attrs}).Extract())
+	g, err := networkapi.CreateVPNEndpointGroup(ctx, client, vpnBody{key: "endpoint_group", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("creating endpoint group: %w", err)
+		return err
 	}
 	fields, values := vpnEndpointGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)
@@ -211,9 +203,9 @@ func runVPNEndpointGroupSet(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	g, err := vpnExtracted(endpointgroups.Update(ctx, client, id, vpnBody{key: "endpoint_group", attrs: attrs}).Extract())
+	g, err := networkapi.UpdateVPNEndpointGroup(ctx, client, id, vpnBody{key: "endpoint_group", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("updating endpoint group %s: %w", ref, err)
+		return relabel(err, "updating endpoint group %s", ref)
 	}
 	fields, values := vpnEndpointGroupShowFields(g)
 	return o.WriteSingle(w, fields, values)

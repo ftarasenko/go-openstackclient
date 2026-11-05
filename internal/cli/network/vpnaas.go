@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // newVPNCommands builds the "vpn" noun. Its multi-word children are nested
@@ -95,15 +95,6 @@ func (b vpnBody) ToConnectionCreateMap() (map[string]any, error) { return b.toMa
 
 // ToConnectionUpdateMap implements siteconnections.UpdateOptsBuilder.
 func (b vpnBody) ToConnectionUpdateMap() (map[string]any, error) { return b.toMap(), nil }
-
-// vpnExtracted turns a response that decoded without its resource key into an
-// error: gophercloud's Extract returns a nil pointer and no error then.
-func vpnExtracted[T any](v *T, err error) (*T, error) {
-	if err == nil && v == nil {
-		err = errors.New("the response carried no resource")
-	}
-	return v, err
-}
 
 // explainVPNaaS names an undeployed VPNaaS plugin on a 404.
 func explainVPNaaS(ctx context.Context, client *gophercloud.ServiceClient, err error) error {
@@ -221,27 +212,9 @@ func parseVPNDPD(specs []string) (map[string]any, error) {
 	return out, nil
 }
 
-// vpnFlavorRef is the part of a neutron flavor the lookup needs.
-type vpnFlavorRef struct {
-	ID string `json:"id"`
-}
-
-// resolveVPNFlavorID resolves a neutron service flavor name or ID. No flavors
-// package is vendored, so the name lookup is one raw GET /flavors?name=.
+// resolveVPNFlavorID resolves a neutron service flavor name or ID.
 func resolveVPNFlavorID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "flavor", nameOrID, func(c *gophercloud.ServiceClient) ([]vpnFlavorRef, error) {
-		var body struct {
-			Flavors []vpnFlavorRef `json:"flavors"`
-		}
-		resp, err := c.Get(ctx, c.ServiceURL("flavors")+"?"+url.Values{"name": {nameOrID}}.Encode(), &body, nil)
-		if resp != nil {
-			defer func() { _ = resp.Body.Close() }()
-		}
-		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-			return nil, err
-		}
-		return body.Flavors, nil
-	}, func(f vpnFlavorRef) string { return f.ID })
+	return cliLookup(networkapi.FindNetworkFlavorID(ctx, client, nameOrID))
 }
 
 // vpnEnableDisable is upstream's --enable/--disable pair: admin_state_up is
@@ -356,13 +329,7 @@ func newVPNServiceCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func resolveVPNServiceID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "VPN service", nameOrID, func(c *gophercloud.ServiceClient) ([]services.Service, error) {
-		pages, err := services.List(c, services.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return services.ExtractServices(pages)
-	}, func(s services.Service) string { return s.ID })
+	return cliLookup(networkapi.FindVPNServiceID(ctx, client, nameOrID))
 }
 
 // vpnServiceShowFields renders upstream's show columns, which are the resource
@@ -380,13 +347,9 @@ func vpnServiceShowFields(s *services.Service) ([]string, []any) {
 var vpnServiceColumns = fieldNames(vpnServiceShowFields(&services.Service{}))
 
 func runVPNServiceList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	pages, err := services.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListVPNServices(ctx, client, nil)
 	if err != nil {
-		return explainVPNaaS(ctx, client, fmt.Errorf("listing VPN services: %w", err))
-	}
-	all, err := services.ExtractServices(pages)
-	if err != nil {
-		return fmt.Errorf("parsing VPN service list: %w", err)
+		return explainVPNaaS(ctx, client, err)
 	}
 	cols := []string{"ID", "Name", "Router", "Subnet", "Flavor", "State", "Status"}
 	if long {
@@ -409,9 +372,9 @@ func runVPNServiceShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	s, err := vpnExtracted(services.Get(ctx, client, id).Extract())
+	s, err := networkapi.GetVPNService(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting VPN service %s: %w", ref, err)
+		return relabel(err, "getting VPN service %s", ref)
 	}
 	fields, values := vpnServiceShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -419,7 +382,7 @@ func runVPNServiceShow(ctx context.Context, client *gophercloud.ServiceClient, o
 
 func runVPNServiceDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return explainVPNaaS(ctx, client, runVPNDelete(ctx, client, "VPN service", refs, resolveVPNServiceID,
-		func(id string) error { return services.Delete(ctx, client, id).ExtractErr() }, w))
+		func(id string) error { return errors.Unwrap(networkapi.DeleteVPNService(ctx, client, id)) }, w))
 }
 
 type vpnServiceFlags struct {
@@ -522,9 +485,9 @@ func runVPNServiceCreate(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	attrs["router_id"] = routerID
-	s, err := vpnExtracted(services.Create(ctx, client, vpnBody{key: "vpnservice", attrs: attrs}).Extract())
+	s, err := networkapi.CreateVPNService(ctx, client, vpnBody{key: "vpnservice", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("creating VPN service: %w", err)
+		return err
 	}
 	fields, values := vpnServiceShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -569,9 +532,9 @@ func runVPNServiceSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	s, err := vpnExtracted(services.Update(ctx, client, id, vpnBody{key: "vpnservice", attrs: attrs}).Extract())
+	s, err := networkapi.UpdateVPNService(ctx, client, id, vpnBody{key: "vpnservice", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("updating VPN service %s: %w", ref, err)
+		return relabel(err, "updating VPN service %s", ref)
 	}
 	fields, values := vpnServiceShowFields(s)
 	return o.WriteSingle(w, fields, values)

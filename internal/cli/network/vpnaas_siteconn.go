@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 const (
@@ -35,13 +36,7 @@ func newIPsecSiteConnectionCommand(a *auth.Options, o *output.Options) *cobra.Co
 }
 
 func resolveIPsecSiteConnectionID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	return resolveByName(client, "IPsec site connection", nameOrID, func(c *gophercloud.ServiceClient) ([]siteconnections.Connection, error) {
-		pages, err := siteconnections.List(c, siteconnections.ListOpts{Name: nameOrID}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return siteconnections.ExtractConnections(pages)
-	}, func(s siteconnections.Connection) string { return s.ID })
+	return cliLookup(networkapi.FindIPsecSiteConnectionID(ctx, client, nameOrID))
 }
 
 // vpnDPD renders a dpd attribute; absent when neutron sent none.
@@ -71,13 +66,9 @@ func ipsecSiteConnectionShowFields(s *siteconnections.Connection) ([]string, []a
 var ipsecSiteConnectionColumns = fieldNames(ipsecSiteConnectionShowFields(&siteconnections.Connection{}))
 
 func runIPsecSiteConnectionList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) error {
-	pages, err := siteconnections.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListIPsecSiteConnections(ctx, client, nil)
 	if err != nil {
-		return explainVPNaaS(ctx, client, fmt.Errorf("listing IPsec site connections: %w", err))
-	}
-	all, err := siteconnections.ExtractConnections(pages)
-	if err != nil {
-		return fmt.Errorf("parsing IPsec site connection list: %w", err)
+		return explainVPNaaS(ctx, client, err)
 	}
 	cols := []string{"ID", "Name", "Peer Address", colAuthAlgorithm, "Status"}
 	if long {
@@ -104,9 +95,9 @@ func runIPsecSiteConnectionShow(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return err
 	}
-	s, err := vpnExtracted(siteconnections.Get(ctx, client, id).Extract())
+	s, err := networkapi.GetIPsecSiteConnection(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting IPsec site connection %s: %w", ref, err)
+		return relabel(err, "getting IPsec site connection %s", ref)
 	}
 	fields, values := ipsecSiteConnectionShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -114,7 +105,7 @@ func runIPsecSiteConnectionShow(ctx context.Context, client *gophercloud.Service
 
 func runIPsecSiteConnectionDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []string, w io.Writer) error {
 	return explainVPNaaS(ctx, client, runVPNDelete(ctx, client, "IPsec site connection", refs, resolveIPsecSiteConnectionID,
-		func(id string) error { return siteconnections.Delete(ctx, client, id).ExtractErr() }, w))
+		func(id string) error { return errors.Unwrap(networkapi.DeleteIPsecSiteConnection(ctx, client, id)) }, w))
 }
 
 type ipsecSiteConnectionFlags struct {
@@ -294,9 +285,9 @@ func runIPsecSiteConnectionCreate(ctx context.Context, client *gophercloud.Servi
 	if f.projectID != "" {
 		attrs["project_id"] = f.projectID
 	}
-	s, err := vpnExtracted(siteconnections.Create(ctx, client, vpnBody{key: "ipsec_site_connection", attrs: attrs}).Extract())
+	s, err := networkapi.CreateIPsecSiteConnection(ctx, client, vpnBody{key: "ipsec_site_connection", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("creating IPsec site connection: %w", err)
+		return err
 	}
 	fields, values := ipsecSiteConnectionShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -341,9 +332,9 @@ func runIPsecSiteConnectionSet(ctx context.Context, client *gophercloud.ServiceC
 	if err != nil {
 		return err
 	}
-	s, err := vpnExtracted(siteconnections.Update(ctx, client, id, vpnBody{key: "ipsec_site_connection", attrs: attrs}).Extract())
+	s, err := networkapi.UpdateIPsecSiteConnection(ctx, client, id, vpnBody{key: "ipsec_site_connection", attrs: attrs})
 	if err != nil {
-		return fmt.Errorf("updating IPsec site connection %s: %w", ref, err)
+		return relabel(err, "updating IPsec site connection %s", ref)
 	}
 	fields, values := ipsecSiteConnectionShowFields(s)
 	return o.WriteSingle(w, fields, values)

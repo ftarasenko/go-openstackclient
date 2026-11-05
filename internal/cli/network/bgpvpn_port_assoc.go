@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // "bgpvpn port association" — a port bound to a BGP VPN, optionally with
@@ -273,7 +274,7 @@ func newBGPVPNPortAssocCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	return newBGPVPNAssocParent(kind,
 		create,
 		newBGPVPNAssocDeleteCommand(a, kind, func(ctx context.Context, client *gophercloud.ServiceClient, bgpvpnID, id string) error {
-			return bgpvpns.DeletePortAssociation(ctx, client, bgpvpnID, id).ExtractErr()
+			return networkapi.DeleteBGPVPNPortAssociation(ctx, client, bgpvpnID, id)
 		}),
 		newBGPVPNAssocListCommand(a, o, kind, runBGPVPNPortAssocList),
 		newBGPVPNPortAssocSetCommand(a, o, false),
@@ -304,9 +305,9 @@ func runBGPVPNPortAssocCreate(ctx context.Context, client *gophercloud.ServiceCl
 	if projectID != "" {
 		body["project_id"] = projectID
 	}
-	p, err := bgpvpns.CreatePortAssociation(ctx, client, bgpvpnID, body).Extract()
+	p, err := networkapi.CreateBGPVPNPortAssociation(ctx, client, bgpvpnID, body)
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("creating port association: %w", err))
+		return explainBGPVPNRoutesCtl(ctx, client, err)
 	}
 	return writeBGPVPNPortAssoc(o, w, p)
 }
@@ -350,17 +351,17 @@ func runBGPVPNPortAssocUpdate(ctx context.Context, client *gophercloud.ServiceCl
 	if err != nil {
 		return err
 	}
-	current, err := bgpvpns.GetPortAssociation(ctx, client, bgpvpnID, id).Extract()
+	current, err := networkapi.GetBGPVPNPortAssociation(ctx, client, bgpvpnID, id)
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("getting port association %s: %w", id, err))
+		return explainBGPVPNRoutesCtl(ctx, client, err)
 	}
 	body, err := buildPortAssocBody(ctx, client, f, current.Routes, unset)
 	if err != nil {
 		return err
 	}
-	p, err := bgpvpns.UpdatePortAssociation(ctx, client, bgpvpnID, id, body).Extract()
+	p, err := networkapi.UpdateBGPVPNPortAssociation(ctx, client, bgpvpnID, id, body)
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("updating port association %s: %w", id, err))
+		return explainBGPVPNRoutesCtl(ctx, client, err)
 	}
 	return writeBGPVPNPortAssoc(o, w, p)
 }
@@ -372,9 +373,9 @@ func runBGPVPNPortAssocShow(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	p, err := bgpvpns.GetPortAssociation(ctx, client, bgpvpnID, id).Extract()
+	p, err := networkapi.GetBGPVPNPortAssociation(ctx, client, bgpvpnID, id)
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("showing port association %s: %w", id, err))
+		return explainBGPVPNRoutesCtl(ctx, client, relabel(err, "showing port association %s", id))
 	}
 	return writeBGPVPNPortAssoc(o, w, p)
 }
@@ -390,13 +391,9 @@ func runBGPVPNPortAssocList(ctx context.Context, client *gophercloud.ServiceClie
 	if err != nil {
 		return err
 	}
-	pages, err := bgpvpns.ListPortAssociations(client, bgpvpnID, q).AllPages(ctx)
+	all, err := networkapi.ListBGPVPNPortAssociations(ctx, client, bgpvpnID, q)
 	if err != nil {
-		return explainBGPVPNRoutesCtl(ctx, client, fmt.Errorf("listing port associations: %w", err))
-	}
-	all, err := bgpvpns.ExtractPortAssociations(pages)
-	if err != nil {
-		return fmt.Errorf("parsing the port association list: %w", err)
+		return explainBGPVPNRoutesCtl(ctx, client, err)
 	}
 	cols := []string{"ID", "Port ID"}
 	if f.long {

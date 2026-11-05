@@ -14,6 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 const (
@@ -85,9 +86,9 @@ func buildFWPolicyAttrs(ctx context.Context, client *gophercloud.ServiceClient, 
 	case len(f.firewallRules) > 0:
 		var current []string
 		if !f.noFirewallRule && policyID != "" {
-			p, err := policies.Get(ctx, client, policyID).Extract()
+			p, err := networkapi.GetFirewallPolicy(ctx, client, policyID)
 			if err != nil {
-				return nil, fmt.Errorf("getting firewall policy %s: %w", policyID, err)
+				return nil, err
 			}
 			current = p.Rules
 		}
@@ -166,9 +167,9 @@ func runFirewallPolicyCreate(ctx context.Context, client *gophercloud.ServiceCli
 	if f.projectID != "" {
 		attrs["project_id"] = f.projectID
 	}
-	p, err := policies.Create(ctx, client, fwPolicyBody(attrs)).Extract()
+	p, err := networkapi.CreateFirewallPolicy(ctx, client, fwPolicyBody(attrs))
 	if err != nil {
-		return fmt.Errorf("creating firewall policy: %w", err)
+		return err
 	}
 	return writeFWPolicy(o, w, p)
 }
@@ -196,7 +197,7 @@ func runFirewallPolicyDelete(ctx context.Context, client *gophercloud.ServiceCli
 	return batchdelete.Each(refs, func(ref string) error {
 		id, err := resolveFirewallPolicyID(ctx, client, ref)
 		if err == nil {
-			err = policies.Delete(ctx, client, id).ExtractErr()
+			err = errors.Unwrap(networkapi.DeleteFirewallPolicy(ctx, client, id))
 		}
 		if err != nil {
 			return fwaasErr(ctx, client, fmt.Errorf("deleting firewall policy %s: %w", ref, err))
@@ -229,13 +230,9 @@ func newFirewallPolicyListCommand(a *auth.Options, o *output.Options) *cobra.Com
 
 func runFirewallPolicyList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, long bool, w io.Writer) (err error) {
 	defer func() { err = fwaasErr(ctx, client, err) }()
-	pages, err := policies.List(client, nil).AllPages(ctx)
+	all, err := networkapi.ListFirewallPolicies(ctx, client, nil)
 	if err != nil {
-		return fmt.Errorf("listing firewall policies: %w", err)
-	}
-	all, err := policies.ExtractPolicies(pages)
-	if err != nil {
-		return fmt.Errorf("parsing firewall policy list: %w", err)
+		return err
 	}
 	cols := []string{"ID", "Name", "Firewall Rules"}
 	if long {
@@ -298,9 +295,9 @@ func runFirewallPolicySet(ctx context.Context, client *gophercloud.ServiceClient
 }
 
 func updateFWPolicy(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, ref, id string, attrs map[string]any, w io.Writer) error {
-	p, err := policies.Update(ctx, client, id, fwPolicyBody(attrs)).Extract()
+	p, err := networkapi.UpdateFirewallPolicy(ctx, client, id, fwPolicyBody(attrs))
 	if err != nil {
-		return fmt.Errorf("updating firewall policy %s: %w", ref, err)
+		return relabel(err, "updating firewall policy %s", ref)
 	}
 	return writeFWPolicy(o, w, p)
 }
@@ -330,9 +327,9 @@ func runFirewallPolicyShow(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil {
 		return err
 	}
-	p, err := policies.Get(ctx, client, id).Extract()
+	p, err := networkapi.GetFirewallPolicy(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting firewall policy %s: %w", ref, err)
+		return relabel(err, "getting firewall policy %s", ref)
 	}
 	return writeFWPolicy(o, w, p)
 }
@@ -387,9 +384,9 @@ func runFirewallPolicyUnset(ctx context.Context, client *gophercloud.ServiceClie
 	}
 	attrs := map[string]any{}
 	if len(f.firewallRules) > 0 {
-		p, err := policies.Get(ctx, client, id).Extract()
+		p, err := networkapi.GetFirewallPolicy(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("getting firewall policy %s: %w", ref, err)
+			return relabel(err, "getting firewall policy %s", ref)
 		}
 		removed, err := resolveEach(ctx, client, f.firewallRules, resolveFirewallRuleID)
 		if err != nil {
@@ -472,8 +469,8 @@ func runFirewallPolicyAddRule(ctx context.Context, client *gophercloud.ServiceCl
 			return err
 		}
 	}
-	if err := policies.InsertRule(ctx, client, policyID, body).Err; err != nil {
-		return fmt.Errorf("inserting firewall rule %s into firewall policy %s: %w", ruleRef, policyRef, err)
+	if err := networkapi.InsertFirewallPolicyRule(ctx, client, policyID, body); err != nil {
+		return relabel(err, "inserting firewall rule %s into firewall policy %s", ruleRef, policyRef)
 	}
 	_, err = fmt.Fprintf(w, "Inserted firewall rule %s in firewall policy %s\n", body.ruleID, policyRef)
 	return err
@@ -511,8 +508,8 @@ func runFirewallPolicyRemoveRule(ctx context.Context, client *gophercloud.Servic
 	if err != nil {
 		return err
 	}
-	if err := policies.RemoveRule(ctx, client, policyID, ruleID).Err; err != nil {
-		return fmt.Errorf("removing firewall rule %s from firewall policy %s: %w", ruleRef, policyRef, err)
+	if err := networkapi.RemoveFirewallPolicyRule(ctx, client, policyID, ruleID); err != nil {
+		return relabel(err, "removing firewall rule %s from firewall policy %s", ruleRef, policyRef)
 	}
 	_, err = fmt.Fprintf(w, "Removed firewall rule %s from firewall policy %s\n", ruleID, policyRef)
 	return err

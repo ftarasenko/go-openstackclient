@@ -212,6 +212,15 @@ func cloud(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /network/v2.0/routers/router-1/l3-agents", func(w http.ResponseWriter, _ *http.Request) {
 		answer(w, map[string]any{"agents": []map[string]any{{"id": "agent-1", "ha_state": "active"}}})
 	})
+	mux.HandleFunc("GET /network/v2.0/bgpvpn/bgpvpns", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"bgpvpns": []map[string]any{{"id": "vpn-1", "type": "l3", "route_targets": []string{"64512:1"}}}})
+	})
+	mux.HandleFunc("GET /network/v2.0/fwaas/firewall_rules", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"firewall_rules": []map[string]any{{"id": "fwr-1", "action": "deny", "source_firewall_group_id": "fwg-1"}}})
+	})
+	mux.HandleFunc("GET /network/v2.0/vpn/vpnservices", func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, map[string]any{"vpnservices": []map[string]any{{"id": "vpns-1", "router_id": "router-1"}}})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -402,5 +411,14 @@ func TestPublicAPIFromAnotherModule(t *testing.T) {
 	}
 	if l3, err := network.ListRouterL3Agents(ctx, networkClient, "router-1"); err != nil || len(l3) != 1 || l3[0].HAState != "active" {
 		t.Fatalf("network.ListRouterL3Agents = %+v, %v", l3, err)
+	}
+	if vpns, err := network.ListBGPVPNs(ctx, networkClient, nil); err != nil || len(vpns) != 1 || vpns[0].RouteTargets[0] != "64512:1" {
+		t.Fatalf("network.ListBGPVPNs = %+v, %v", vpns, err)
+	}
+	if fr, err := network.ListFirewallRules(ctx, networkClient, nil); err != nil || len(fr) != 1 || fr[0].Action != "deny" || fr[0].SourceFirewallGroupID != "fwg-1" {
+		t.Fatalf("network.ListFirewallRules = %+v, %v", fr, err)
+	}
+	if svcs, err := network.ListVPNServices(ctx, networkClient, nil); err != nil || len(svcs) != 1 || svcs[0].RouterID != "router-1" {
+		t.Fatalf("network.ListVPNServices = %+v, %v", svcs, err)
 	}
 }
