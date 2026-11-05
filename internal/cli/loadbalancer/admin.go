@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	neturl "net/url"
 	"sort"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -20,6 +19,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 // This file holds the octavia admin tail: quotas, amphorae, providers and
@@ -88,28 +88,6 @@ func resolveQuotaProject(ctx context.Context, session *auth.Client, a *auth.Opti
 	return resolve.ProjectIDInDomain(ctx, identity, ref, domainRef)
 }
 
-// lbProjectQuota is one row of GET /v2.0/quotas: a project's quotas plus the
-// project they belong to.
-//
-// The fields are pointers and carry both spellings octavia has used, because
-// this cannot reuse quotas.Quota: that type defines UnmarshalJSON to reconcile
-// the legacy `load_balancer`/`health_monitor` names, and embedding it would
-// promote that method onto this struct and swallow project_id.
-type lbProjectQuota struct {
-	ProjectID string `json:"project_id"`
-
-	Loadbalancer *int `json:"loadbalancer"`
-	LoadBalancer *int `json:"load_balancer"` // legacy spelling
-
-	Listener      *int `json:"listener"`
-	Pool          *int `json:"pool"`
-	Member        *int `json:"member"`
-	Healthmonitor *int `json:"healthmonitor"`
-	HealthMonitor *int `json:"health_monitor"` // legacy spelling
-	L7Policy      *int `json:"l7policy"`
-	L7Rule        *int `json:"l7rule"`
-}
-
 // quotaValue renders one quota cell: octavia's -1 means unlimited, and a key the
 // deployment omits renders empty rather than as a misleading 0.
 func quotaValue(primary, legacy *int) any {
@@ -156,44 +134,13 @@ func newLBQuotaListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// runLBQuotaList reads GET /v2.0/quotas, for which gophercloud has no typed
-// call — its quotas package covers only the per-project Get/Update/Delete. Raw
-// fallback per AGENTS.md, on the same prefix the typed calls use (see the note
-// on runLBQuotaDefaultsShow). Octavia paginates with `quotas_links`, so the next
-// links are followed to completion.
+// runLBQuotaList lists the quotas of every project, or one.
 func runLBQuotaList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	project string, w io.Writer,
 ) error {
-	url := client.ServiceURL("quotas")
-	if project != "" {
-		url += "?project_id=" + neturl.QueryEscape(project)
-	}
-	var all []lbProjectQuota
-	seen := map[string]bool{}
-	for url != "" {
-		var page struct {
-			Quotas []lbProjectQuota `json:"quotas"`
-			Links  []struct {
-				Rel  string `json:"rel"`
-				HRef string `json:"href"`
-			} `json:"quotas_links"`
-		}
-		resp, err := client.Get(ctx, url, &page, nil)
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-		if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-			return fmt.Errorf("listing load balancer quotas: %w", err)
-		}
-		all = append(all, page.Quotas...)
-		seen[url] = true
-		url = ""
-		for _, l := range page.Links {
-			// Guard against a server that echoes the current page as "next".
-			if l.Rel == "next" && l.HRef != "" && !seen[l.HRef] {
-				url = l.HRef
-			}
-		}
+	all, err := loadbalancerapi.ListQuotas(ctx, client, project)
+	if err != nil {
+		return err
 	}
 
 	t := output.Table{
@@ -243,9 +190,9 @@ func newLBQuotaShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runLBQuotaShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, project string, w io.Writer) error {
-	q, err := quotas.Get(ctx, client, project).Extract()
+	q, err := loadbalancerapi.GetQuota(ctx, client, project)
 	if err != nil {
-		return fmt.Errorf("showing load balancer quotas for project %q: %w", project, err)
+		return relabel(err, "showing load balancer quotas for project %q", project)
 	}
 	fields, values := lbQuotaFields(q)
 	return o.WriteSingle(w, fields, values)
@@ -336,9 +283,9 @@ func runLBQuotaSet(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if !touched {
 		return fmt.Errorf("nothing to set: pass at least one quota flag")
 	}
-	q, err := quotas.Update(ctx, client, project, opts).Extract()
+	q, err := loadbalancerapi.UpdateQuota(ctx, client, project, opts)
 	if err != nil {
-		return fmt.Errorf("setting load balancer quotas for project %q: %w", project, err)
+		return relabel(err, "setting load balancer quotas for project %q", project)
 	}
 	fields, values := lbQuotaFields(q)
 	return o.WriteSingle(w, fields, values)
@@ -390,35 +337,18 @@ func newLBQuotaUnsetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// runLBQuotaUnset PUTs an explicit JSON null for each named quota, which is how
-// octavia is told "revert this one key to the deployment default". The typed
-// quotas.UpdateOpts cannot express it — its fields are `*int` with
-// `omitempty`, so a nil pointer is omitted rather than serialised as null — so
-// this is the raw fallback per AGENTS.md, against the same
-// PUT /v2.0/quotas/<project> the typed Update uses.
+// runLBQuotaUnset reverts each named quota to the deployment default.
 func runLBQuotaUnset(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	project string, names []string, w io.Writer,
 ) error {
 	if err := o.CheckColumns(lbQuotaColumns...); err != nil {
 		return err
 	}
-	quota := make(map[string]any, len(names))
-	for _, n := range names {
-		quota[n] = nil
+	q, err := loadbalancerapi.UnsetQuotas(ctx, client, project, names)
+	if err != nil {
+		return relabel(err, "unsetting load balancer quotas %v for project %q", names, project)
 	}
-	reqBody := map[string]any{"quota": quota}
-	var respBody struct {
-		Quota quotas.Quota `json:"quota"`
-	}
-	resp, err := client.Put(ctx, client.ServiceURL("quotas", project), reqBody, &respBody,
-		&gophercloud.RequestOpts{OkCodes: []int{200, 202}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("unsetting load balancer quotas %v for project %q: %w", names, project, err)
-	}
-	fields, values := lbQuotaFields(&respBody.Quota)
+	fields, values := lbQuotaFields(q)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -452,8 +382,8 @@ func newLBQuotaResetCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runLBQuotaReset(ctx context.Context, client *gophercloud.ServiceClient, project string, w io.Writer) error {
-	if err := quotas.Delete(ctx, client, project).ExtractErr(); err != nil {
-		return fmt.Errorf("resetting load balancer quotas for project %q: %w", project, err)
+	if err := loadbalancerapi.ResetQuota(ctx, client, project); err != nil {
+		return relabel(err, "resetting load balancer quotas for project %q", project)
 	}
 	if _, err := fmt.Fprintf(w, "Reset load balancer quotas for project %s to the defaults\n", project); err != nil {
 		return err
@@ -482,27 +412,12 @@ func newLBQuotaDefaultsCommand(a *auth.Options, o *output.Options) *cobra.Comman
 	return cmd
 }
 
-// runLBQuotaDefaultsShow reads GET /v2.0/quotas/defaults, for which gophercloud
-// has no typed call — the quotas package covers only the per-project
-// Get/Update/Delete. Raw fallback per AGENTS.md; replace it if a typed call lands.
-//
-// The path deliberately omits the "lbaas" segment even though octavia's API
-// reference documents /v2.0/lbaas/quotas: octavia serves its resources at both
-// prefixes, and gophercloud's typed quota calls use the shorter one. Matching
-// them keeps all four quota verbs on the same prefix, so they cannot disagree
-// about which one a given deployment answers.
 func runLBQuotaDefaultsShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	var body struct {
-		Quota quotas.Quota `json:"quota"`
+	q, err := loadbalancerapi.GetDefaultQuota(ctx, client)
+	if err != nil {
+		return relabel(err, "showing default load balancer quotas")
 	}
-	resp, err := client.Get(ctx, client.ServiceURL("quotas", "defaults"), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("showing default load balancer quotas: %w", err)
-	}
-	fields, values := lbQuotaFields(&body.Quota)
+	fields, values := lbQuotaFields(q)
 	return o.WriteSingle(w, fields, values)
 }
 
@@ -584,13 +499,9 @@ func runAmphoraList(ctx context.Context, client *gophercloud.ServiceClient, o *o
 		}
 		opts.LoadbalancerID = lbID
 	}
-	pages, err := amphorae.List(client, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListAmphorae(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing amphorae: %w", err)
-	}
-	all, err := amphorae.ExtractAmphorae(pages)
-	if err != nil {
-		return fmt.Errorf("parsing amphora list: %w", err)
+		return relabelList(err, "listing amphorae")
 	}
 
 	cols := []string{"ID", "Load Balancer ID", "Role", "Status", "LB Network IP", "HA IP"}
@@ -630,9 +541,9 @@ func newAmphoraShowCommand(a *auth.Options, o *output.Options) *cobra.Command {
 
 // Amphorae have no name, so every verb takes the ID: there is nothing to resolve.
 func runAmphoraShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	am, err := amphorae.Get(ctx, client, id).Extract()
+	am, err := loadbalancerapi.GetAmphora(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing amphora %s: %w", id, err)
+		return relabel(err, "showing amphora %s", id)
 	}
 	fields, values := amphoraFields(am)
 	return o.WriteSingle(w, fields, values)
@@ -658,8 +569,8 @@ func newAmphoraFailoverCommand(a *auth.Options, o *output.Options) *cobra.Comman
 }
 
 func runAmphoraFailover(ctx context.Context, client *gophercloud.ServiceClient, id string, w io.Writer) error {
-	if err := amphorae.Failover(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("failing over amphora %s: %w", id, err)
+	if err := loadbalancerapi.FailoverAmphora(ctx, client, id); err != nil {
+		return relabel(err, "failing over amphora %s", id)
 	}
 	if _, err := fmt.Fprintf(w, "Requested failover of amphora %s\n", id); err != nil {
 		return err
@@ -686,18 +597,9 @@ func newAmphoraConfigureCommand(a *auth.Options, o *output.Options) *cobra.Comma
 	}
 }
 
-// runAmphoraConfigure PUTs /v2.0/octavia/amphorae/<id>/config. gophercloud's
-// amphorae package covers only List/Get/Failover, so this is a raw fallback per
-// AGENTS.md. Note the /octavia/ path segment: the amphora admin endpoints sit
-// there rather than under /lbaas/.
 func runAmphoraConfigure(ctx context.Context, client *gophercloud.ServiceClient, id string, w io.Writer) error {
-	url := client.ServiceURL("octavia", "amphorae", id, "config")
-	resp, err := client.Put(ctx, url, nil, nil, &gophercloud.RequestOpts{OkCodes: []int{202}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("configuring amphora %s: %w", id, err)
+	if err := loadbalancerapi.ConfigureAmphora(ctx, client, id); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "Requested configuration update of amphora %s\n", id); err != nil {
 		return err
@@ -724,28 +626,16 @@ func newAmphoraDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command 
 	}
 }
 
-// runAmphoraDelete DELETEs /v2.0/octavia/amphorae/<id> — again no typed call.
 func runAmphoraDelete(ctx context.Context, client *gophercloud.ServiceClient, ids []string, w io.Writer) error {
 	return batchdelete.Each(ids, func(id string) error {
-		if err := deleteAmphoraRaw(ctx, client, id); err != nil {
-			return fmt.Errorf("deleting amphora %s: %w", id, err)
+		if err := loadbalancerapi.DeleteAmphora(ctx, client, id); err != nil {
+			return err
 		}
 		if _, werr := fmt.Fprintf(w, "Requested deletion of amphora %s\n", id); werr != nil {
 			return werr
 		}
 		return nil
 	})
-}
-
-func deleteAmphoraRaw(ctx context.Context, client *gophercloud.ServiceClient, id string) error {
-	resp, err := client.Delete(ctx, client.ServiceURL("octavia", "amphorae", id), &gophercloud.RequestOpts{
-		OkCodes: []int{204},
-	})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
 }
 
 func newAmphoraStatsCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -769,38 +659,16 @@ func newAmphoraStatsCommand(a *auth.Options, o *output.Options) *cobra.Command {
 	return cmd
 }
 
-// amphoraListenerStats is koc's DTO for one row of GET
-// /v2.0/octavia/amphorae/<id>/stats, which gophercloud has no typed call for.
-// Unlike the load balancer's own stats this endpoint returns one entry per
-// listener, so it renders as a list rather than a single record.
-type amphoraListenerStats struct {
-	ListenerID        string `json:"listener_id"`
-	LoadbalancerID    string `json:"loadbalancer_id"`
-	ID                string `json:"id"`
-	ActiveConnections int    `json:"active_connections"`
-	BytesIn           int    `json:"bytes_in"`
-	BytesOut          int    `json:"bytes_out"`
-	RequestErrors     int    `json:"request_errors"`
-	TotalConnections  int    `json:"total_connections"`
-}
-
 func runAmphoraStatsShow(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, id string, w io.Writer) error {
-	var body struct {
-		Stats []amphoraListenerStats `json:"amphora_stats"`
-	}
-	url := client.ServiceURL("octavia", "amphorae", id, "stats")
-	resp, err := client.Get(ctx, url, &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("getting statistics for amphora %s: %w", id, err)
+	stats, err := loadbalancerapi.GetAmphoraStats(ctx, client, id)
+	if err != nil {
+		return err
 	}
 	t := output.Table{
 		Columns: []string{"Listener ID", "Load Balancer ID", "Active Connections", "Bytes In", "Bytes Out", "Request Errors", "Total Connections"},
-		Rows:    make([][]any, 0, len(body.Stats)),
+		Rows:    make([][]any, 0, len(stats)),
 	}
-	for _, s := range body.Stats {
+	for _, s := range stats {
 		t.Rows = append(t.Rows, []any{
 			s.ListenerID, s.LoadbalancerID, s.ActiveConnections,
 			s.BytesIn, s.BytesOut, s.RequestErrors, s.TotalConnections,
@@ -840,13 +708,9 @@ func newProviderListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runProviderList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, w io.Writer) error {
-	pages, err := providers.List(client, providers.ListOpts{}).AllPages(ctx)
+	all, err := loadbalancerapi.ListProviders(ctx, client, providers.ListOpts{})
 	if err != nil {
-		return fmt.Errorf("listing load balancer providers: %w", err)
-	}
-	all, err := providers.ExtractProviders(pages)
-	if err != nil {
-		return fmt.Errorf("parsing provider list: %w", err)
+		return relabelList(err, "listing load balancer providers")
 	}
 	t := output.Table{Columns: []string{"Name", "Description"}, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
@@ -876,27 +740,15 @@ func newProviderCapabilityCommand(a *auth.Options, o *output.Options) *cobra.Com
 	return cmd
 }
 
-// runProviderCapabilityList reads GET /v2.0/lbaas/providers/<name>/capabilities,
-// which gophercloud's providers package (List only) does not cover. Raw fallback.
 func runProviderCapabilityList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options,
 	provider string, w io.Writer,
 ) error {
-	var body struct {
-		Capabilities []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		} `json:"flavor_capabilities"`
+	caps, err := loadbalancerapi.ListProviderCapabilities(ctx, client, provider)
+	if err != nil {
+		return relabel(err, "listing capabilities of provider %q", provider)
 	}
-	url := client.ServiceURL("lbaas", "providers", provider, "capabilities")
-	resp, err := client.Get(ctx, url, &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return fmt.Errorf("listing capabilities of provider %q: %w", provider, err)
-	}
-	t := output.Table{Columns: []string{"Name", "Description"}, Rows: make([][]any, 0, len(body.Capabilities))}
-	for _, c := range body.Capabilities {
+	t := output.Table{Columns: []string{"Name", "Description"}, Rows: make([][]any, 0, len(caps))}
+	for _, c := range caps {
 		t.Rows = append(t.Rows, []any{c.Name, c.Description})
 	}
 	return o.WriteList(w, t)
@@ -920,21 +772,7 @@ func newFlavorCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func resolveFlavorID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("flavor", ref, func() ([]string, error) {
-		pages, err := flavors.List(client, flavors.ListOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := flavors.ExtractFlavors(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, fl := range all {
-			ids = append(ids, fl.ID)
-		}
-		return ids, nil
-	})
+	return lookup("flavor", ref, func() (string, error) { return loadbalancerapi.FindFlavorID(ctx, client, ref) })
 }
 
 func newFlavorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -960,13 +798,9 @@ func newFlavorListCommand(a *auth.Options, o *output.Options) *cobra.Command {
 }
 
 func runFlavorList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	pages, err := flavors.List(client, flavors.ListOpts{Name: name}).AllPages(ctx)
+	all, err := loadbalancerapi.ListFlavors(ctx, client, flavors.ListOpts{Name: name})
 	if err != nil {
-		return fmt.Errorf("listing load balancer flavors: %w", err)
-	}
-	all, err := flavors.ExtractFlavors(pages)
-	if err != nil {
-		return fmt.Errorf("parsing flavor list: %w", err)
+		return relabelList(err, "listing load balancer flavors")
 	}
 	t := output.Table{
 		Columns: []string{"ID", "Name", "Enabled", "Flavor Profile ID", "Description"},
@@ -1002,9 +836,9 @@ func runFlavorShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	fl, err := flavors.Get(ctx, client, id).Extract()
+	fl, err := loadbalancerapi.GetFlavor(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing load balancer flavor %q: %w", ref, err)
+		return relabel(err, "showing load balancer flavor %q", ref)
 	}
 	fields, values := flavorFields(fl)
 	return o.WriteSingle(w, fields, values)
@@ -1062,14 +896,14 @@ func runFlavorCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	fl, err := flavors.Create(ctx, client, flavors.CreateOpts{
+	fl, err := loadbalancerapi.CreateFlavor(ctx, client, flavors.CreateOpts{
 		Name:            name,
 		Description:     f.description,
 		FlavorProfileId: profileID,
 		Enabled:         !f.disable,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating load balancer flavor %q: %w", name, err)
+		return relabel(err, "creating load balancer flavor %q", name)
 	}
 	fields, values := flavorFields(fl)
 	return o.WriteSingle(w, fields, values)
@@ -1135,8 +969,8 @@ func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 
 	if changed["disable"] {
-		if err := setFlavorEnabledRaw(ctx, client, id, false); err != nil {
-			return fmt.Errorf("disabling load balancer flavor %q: %w", ref, err)
+		if err := loadbalancerapi.SetFlavorEnabled(ctx, client, id, false); err != nil {
+			return relabel(err, "disabling load balancer flavor %q", ref)
 		}
 	}
 	opts := flavors.UpdateOpts{}
@@ -1155,36 +989,20 @@ func runFlavorSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	}
 	var fl *flavors.Flavor
 	if touched {
-		fl, err = flavors.Update(ctx, client, id, opts).Extract()
+		fl, err = loadbalancerapi.UpdateFlavor(ctx, client, id, opts)
 		if err != nil {
-			return fmt.Errorf("updating load balancer flavor %q: %w", ref, err)
+			return relabel(err, "updating load balancer flavor %q", ref)
 		}
 	} else {
 		// Only --disable was given, which went through the raw PUT above; re-read so
 		// the reported record reflects it.
-		fl, err = flavors.Get(ctx, client, id).Extract()
+		fl, err = loadbalancerapi.GetFlavor(ctx, client, id)
 		if err != nil {
-			return fmt.Errorf("getting load balancer flavor %q: %w", ref, err)
+			return relabel(err, "getting load balancer flavor %q", ref)
 		}
 	}
 	fields, values := flavorFields(fl)
 	return o.WriteSingle(w, fields, values)
-}
-
-// setFlavorEnabledRaw PUTs enabled explicitly. flavors.UpdateOpts tags Enabled
-// omitempty, so a false would be dropped from the body and --disable would
-// silently do nothing; this sends it. Raw fallback per AGENTS.md — delete it once
-// gophercloud makes the field a pointer.
-func setFlavorEnabledRaw(ctx context.Context, client *gophercloud.ServiceClient, id string, enabled bool) error {
-	body := map[string]any{"flavor": map[string]any{"enabled": enabled}}
-	resp, err := client.Put(ctx, client.ServiceURL("lbaas", "flavors", id), body, nil, &gophercloud.RequestOpts{
-		OkCodes: []int{200},
-	})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	_, _, err = gophercloud.ParseResponse(resp, err)
-	return err
 }
 
 func newFlavorDeleteCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -1212,8 +1030,8 @@ func runFlavorDelete(ctx context.Context, client *gophercloud.ServiceClient, ref
 		if err != nil {
 			return err
 		}
-		if derr := flavors.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting load balancer flavor %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeleteFlavor(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting load balancer flavor %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Deleted load balancer flavor %s\n", ref); werr != nil {
 			return werr
@@ -1240,24 +1058,7 @@ func newFlavorProfileCommand(a *auth.Options, o *output.Options) *cobra.Command 
 }
 
 func resolveFlavorProfileID(ctx context.Context, client *gophercloud.ServiceClient, ref string) (string, error) {
-	return resolveByName("flavor profile", ref, func() ([]string, error) {
-		pages, err := flavorprofiles.List(client, flavorprofiles.ListOpts{}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := flavorprofiles.ExtractFlavorProfiles(pages)
-		if err != nil {
-			return nil, err
-		}
-		// flavorprofiles.ListOpts has no name filter, so the match is client-side.
-		ids := make([]string, 0, 1)
-		for _, p := range all {
-			if p.Name == ref {
-				ids = append(ids, p.ID)
-			}
-		}
-		return ids, nil
-	})
+	return lookup("flavor profile", ref, func() (string, error) { return loadbalancerapi.FindFlavorProfileID(ctx, client, ref) })
 }
 
 func newFlavorProfileListCommand(a *auth.Options, o *output.Options) *cobra.Command {
@@ -1283,13 +1084,9 @@ func newFlavorProfileListCommand(a *auth.Options, o *output.Options) *cobra.Comm
 }
 
 func runFlavorProfileList(ctx context.Context, client *gophercloud.ServiceClient, o *output.Options, name string, w io.Writer) error {
-	pages, err := flavorprofiles.List(client, flavorprofiles.ListOpts{Name: name}).AllPages(ctx)
+	all, err := loadbalancerapi.ListFlavorProfiles(ctx, client, flavorprofiles.ListOpts{Name: name})
 	if err != nil {
-		return fmt.Errorf("listing flavor profiles: %w", err)
-	}
-	all, err := flavorprofiles.ExtractFlavorProfiles(pages)
-	if err != nil {
-		return fmt.Errorf("parsing flavor profile list: %w", err)
+		return relabelList(err, "listing flavor profiles")
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Provider Name"}, Rows: make([][]any, 0, len(all))}
 	for _, p := range all {
@@ -1322,9 +1119,9 @@ func runFlavorProfileShow(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	p, err := flavorprofiles.Get(ctx, client, id).Extract()
+	p, err := loadbalancerapi.GetFlavorProfile(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing flavor profile %q: %w", ref, err)
+		return relabel(err, "showing flavor profile %q", ref)
 	}
 	fields, values := flavorProfileFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -1369,13 +1166,13 @@ func runFlavorProfileCreate(ctx context.Context, client *gophercloud.ServiceClie
 	if err := o.CheckColumns(flavorProfileColumns...); err != nil {
 		return err
 	}
-	p, err := flavorprofiles.Create(ctx, client, flavorprofiles.CreateOpts{
+	p, err := loadbalancerapi.CreateFlavorProfile(ctx, client, flavorprofiles.CreateOpts{
 		Name:         name,
 		ProviderName: providerName,
 		FlavorData:   flavorData,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("creating flavor profile %q: %w", name, err)
+		return relabel(err, "creating flavor profile %q", name)
 	}
 	fields, values := flavorProfileFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -1427,13 +1224,13 @@ func runFlavorProfileSet(ctx context.Context, client *gophercloud.ServiceClient,
 		return err
 	}
 	// Every UpdateOpts field is omitempty, so the empty ones are simply not sent.
-	p, err := flavorprofiles.Update(ctx, client, id, flavorprofiles.UpdateOpts{
+	p, err := loadbalancerapi.UpdateFlavorProfile(ctx, client, id, flavorprofiles.UpdateOpts{
 		Name:         f.name,
 		ProviderName: f.providerName,
 		FlavorData:   f.flavorData,
-	}).Extract()
+	})
 	if err != nil {
-		return fmt.Errorf("updating flavor profile %q: %w", ref, err)
+		return relabel(err, "updating flavor profile %q", ref)
 	}
 	fields, values := flavorProfileFields(p)
 	return o.WriteSingle(w, fields, values)
@@ -1464,8 +1261,8 @@ func runFlavorProfileDelete(ctx context.Context, client *gophercloud.ServiceClie
 		if err != nil {
 			return err
 		}
-		if derr := flavorprofiles.Delete(ctx, client, id).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting flavor profile %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeleteFlavorProfile(ctx, client, id); derr != nil {
+			return relabel(derr, "deleting flavor profile %q", ref)
 		}
 		if _, werr := fmt.Fprintf(w, "Deleted flavor profile %s\n", ref); werr != nil {
 			return werr

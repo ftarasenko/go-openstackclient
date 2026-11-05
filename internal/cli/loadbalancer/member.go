@@ -13,6 +13,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 // newMemberCommand builds "loadbalancer member ...".
@@ -52,21 +53,7 @@ func memberFields(m *pools.Member) ([]string, []any) {
 // member list has a name filter, but member names are not unique within a pool, so
 // an ambiguous name is rejected rather than resolved arbitrarily.
 func resolveMemberID(ctx context.Context, client *gophercloud.ServiceClient, poolID, ref string) (string, error) {
-	return resolveByName("member", ref, func() ([]string, error) {
-		pages, err := pools.ListMembers(client, poolID, pools.ListMembersOpts{Name: ref}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := pools.ExtractMembers(pages)
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(all))
-		for _, m := range all {
-			ids = append(ids, m.ID)
-		}
-		return ids, nil
-	})
+	return lookup("member", ref, func() (string, error) { return loadbalancerapi.FindMemberID(ctx, client, poolID, ref) })
 }
 
 // --- list ------------------------------------------------------------------
@@ -135,13 +122,9 @@ func runMemberList(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 		ProjectID:    projectID,
 		AdminStateUp: f.adminStateUp,
 	}
-	pages, err := pools.ListMembers(client, poolID, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListMembers(ctx, client, poolID, opts)
 	if err != nil {
-		return fmt.Errorf("listing members of pool %q: %w", poolRef, err)
-	}
-	all, err := pools.ExtractMembers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing member list: %w", err)
+		return relabelList(err, "listing members of pool %q", poolRef)
 	}
 
 	cols := []string{"ID", "Name", "Address", "Protocol Port", "Weight", "Operating Status"}
@@ -192,9 +175,9 @@ func runMemberShow(ctx context.Context, client *gophercloud.ServiceClient, o *ou
 	if err != nil {
 		return err
 	}
-	m, err := pools.GetMember(ctx, client, poolID, memberID).Extract()
+	m, err := loadbalancerapi.GetMember(ctx, client, poolID, memberID)
 	if err != nil {
-		return fmt.Errorf("showing member %q of pool %q: %w", memberRef, poolRef, err)
+		return relabel(err, "showing member %q of pool %q", memberRef, poolRef)
 	}
 	fields, values := memberFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -323,9 +306,9 @@ func runMemberCreate(ctx context.Context, client *gophercloud.ServiceClient, o *
 		opts.Backup = &backup
 	}
 
-	m, err := pools.CreateMember(ctx, client, poolID, opts).Extract()
+	m, err := loadbalancerapi.CreateMember(ctx, client, poolID, opts)
 	if err != nil {
-		return fmt.Errorf("adding member %q to pool %q: %w", name, poolRef, err)
+		return relabel(err, "adding member %q to pool %q", name, poolRef)
 	}
 	fields, values := memberFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -409,9 +392,9 @@ func runMemberSet(ctx context.Context, client *gophercloud.ServiceClient, o *out
 	if err != nil {
 		return err
 	}
-	m, err := pools.UpdateMember(ctx, client, poolID, memberID, opts).Extract()
+	m, err := loadbalancerapi.UpdateMember(ctx, client, poolID, memberID, opts)
 	if err != nil {
-		return fmt.Errorf("updating member %q of pool %q: %w", memberRef, poolRef, err)
+		return relabel(err, "updating member %q of pool %q", memberRef, poolRef)
 	}
 	fields, values := memberFields(m)
 	return o.WriteSingle(w, fields, values)
@@ -450,8 +433,8 @@ func runMemberDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if rerr != nil {
 			return rerr
 		}
-		if derr := pools.DeleteMember(ctx, client, poolID, memberID).ExtractErr(); derr != nil {
-			return fmt.Errorf("removing member %q from pool %q: %w", ref, poolRef, derr)
+		if derr := loadbalancerapi.DeleteMember(ctx, client, poolID, memberID); derr != nil {
+			return relabel(derr, "removing member %q from pool %q", ref, poolRef)
 		}
 		if _, werr := fmt.Fprintf(w, "Requested removal of member %s from pool %s\n", ref, poolRef); werr != nil {
 			return werr

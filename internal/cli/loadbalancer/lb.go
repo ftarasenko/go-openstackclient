@@ -14,6 +14,7 @@ import (
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/nameflag"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
 )
 
 func lbFields(lb *loadbalancers.LoadBalancer) ([]string, []any) {
@@ -119,13 +120,9 @@ func runLBList(ctx context.Context, client *gophercloud.ServiceClient, o *output
 		FlavorID:           f.flavor,
 		AdminStateUp:       f.adminStateUp,
 	}
-	pages, err := loadbalancers.List(client, opts).AllPages(ctx)
+	all, err := loadbalancerapi.ListLoadBalancers(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("listing load balancers: %w", err)
-	}
-	all, err := loadbalancers.ExtractLoadBalancers(pages)
-	if err != nil {
-		return fmt.Errorf("parsing load balancer list: %w", err)
+		return relabelList(err, "listing load balancers")
 	}
 
 	cols := []string{"ID", "Name", "Project", "VIP Address", "Provisioning Status", "Operating Status", "Provider"}
@@ -169,9 +166,9 @@ func runLBShow(ctx context.Context, client *gophercloud.ServiceClient, o *output
 	if err != nil {
 		return err
 	}
-	lb, err := loadbalancers.Get(ctx, client, id).Extract()
+	lb, err := loadbalancerapi.GetLoadBalancer(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("showing load balancer %q: %w", ref, err)
+		return relabel(err, "showing load balancer %q", ref)
 	}
 	fields, values := lbFields(lb)
 	return o.WriteSingle(w, fields, values)
@@ -292,9 +289,9 @@ func runLBCreate(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 		Tags:             f.tag,
 		AdminStateUp:     f.adminStateUp,
 	}
-	lb, err := loadbalancers.Create(ctx, client, opts).Extract()
+	lb, err := loadbalancerapi.CreateLoadBalancer(ctx, client, opts)
 	if err != nil {
-		return fmt.Errorf("creating load balancer %q: %w", name, err)
+		return relabel(err, "creating load balancer %q", name)
 	}
 	if f.wait {
 		if werr := waitForLoadBalancerActive(ctx, client, lb.ID, f.waitTimeout); werr != nil {
@@ -310,9 +307,9 @@ func runLBCreate(ctx context.Context, client *gophercloud.ServiceClient, o *outp
 			}
 			return werr
 		}
-		lb, err = loadbalancers.Get(ctx, client, lb.ID).Extract()
+		lb, err = loadbalancerapi.GetLoadBalancer(ctx, client, lb.ID)
 		if err != nil {
-			return fmt.Errorf("getting load balancer %s after --wait: %w", lb.ID, err)
+			return relabel(err, "getting load balancer %s after --wait", lb.ID)
 		}
 	}
 	fields, values := lbFields(lb)
@@ -415,9 +412,9 @@ func runLBSet(ctx context.Context, client *gophercloud.ServiceClient, o *output.
 	if err != nil {
 		return err
 	}
-	lb, err := loadbalancers.Update(ctx, client, id, opts).Extract()
+	lb, err := loadbalancerapi.UpdateLoadBalancer(ctx, client, id, opts)
 	if err != nil {
-		return fmt.Errorf("updating load balancer %q: %w", ref, err)
+		return relabel(err, "updating load balancer %q", ref)
 	}
 	fields, values := lbFields(lb)
 	return o.WriteSingle(w, fields, values)
@@ -459,8 +456,8 @@ func runLBDelete(ctx context.Context, client *gophercloud.ServiceClient, refs []
 		if err != nil {
 			return err
 		}
-		if derr := loadbalancers.Delete(ctx, client, id, loadbalancers.DeleteOpts{Cascade: cascade}).ExtractErr(); derr != nil {
-			return fmt.Errorf("deleting load balancer %q: %w", ref, derr)
+		if derr := loadbalancerapi.DeleteLoadBalancer(ctx, client, id, loadbalancers.DeleteOpts{Cascade: cascade}); derr != nil {
+			return relabel(derr, "deleting load balancer %q", ref)
 		}
 		if wait {
 			if werr := waitForLoadBalancerDeleted(ctx, client, id, waitTimeout); werr != nil {
@@ -514,8 +511,8 @@ func runLBFailover(ctx context.Context, client *gophercloud.ServiceClient, ref s
 	if err != nil {
 		return err
 	}
-	if err := loadbalancers.Failover(ctx, client, id).ExtractErr(); err != nil {
-		return fmt.Errorf("failing over load balancer %q: %w", ref, err)
+	if err := loadbalancerapi.FailoverLoadBalancer(ctx, client, id); err != nil {
+		return relabel(err, "failing over load balancer %q", ref)
 	}
 	if wait {
 		if err := waitForLoadBalancerActive(ctx, client, id, waitTimeout); err != nil {
@@ -560,9 +557,9 @@ func runLBStatsShow(ctx context.Context, client *gophercloud.ServiceClient, o *o
 	if err != nil {
 		return err
 	}
-	stats, err := loadbalancers.GetStats(ctx, client, id).Extract()
+	stats, err := loadbalancerapi.GetLoadBalancerStats(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting statistics for load balancer %q: %w", ref, err)
+		return relabel(err, "getting statistics for load balancer %q", ref)
 	}
 	return o.WriteSingle(w,
 		[]string{"active_connections", "bytes_in", "bytes_out", "request_errors", "total_connections"},
@@ -599,9 +596,9 @@ func runLBStatusShow(ctx context.Context, client *gophercloud.ServiceClient, o *
 	if err != nil {
 		return err
 	}
-	tree, err := loadbalancers.GetStatuses(ctx, client, id).Extract()
+	tree, err := loadbalancerapi.GetLoadBalancerStatuses(ctx, client, id)
 	if err != nil {
-		return fmt.Errorf("getting status tree for load balancer %q: %w", ref, err)
+		return relabel(err, "getting status tree for load balancer %q", ref)
 	}
 	if tree.Loadbalancer == nil {
 		return fmt.Errorf("octavia returned no status tree for load balancer %q", ref)
