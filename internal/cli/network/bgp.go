@@ -4,18 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"strconv"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgp/speakers"
-	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // BGP dynamic routing (neutron-dynamic-routing) mirrors upstream's
@@ -96,21 +94,9 @@ func parseASNumber(flag, s string) (int64, error) {
 	return n, nil
 }
 
-// resolveBGPSpeakerID resolves a BGP speaker name or ID. speakers.List takes
-// no filter, so the name query is added here; the exact-name match guards a
-// server that ignores it.
+// resolveBGPSpeakerID resolves a BGP speaker name or ID.
 func resolveBGPSpeakerID(ctx context.Context, client *gophercloud.ServiceClient, nameOrID string) (string, error) {
-	id, err := resolveByName(client, "BGP speaker", nameOrID, func(c *gophercloud.ServiceClient) ([]speakers.BGPSpeaker, error) {
-		u := c.ServiceURL("bgp-speakers") + "?" + url.Values{"name": {nameOrID}}.Encode()
-		pages, err := pagination.NewPager(c, u, func(r pagination.PageResult) pagination.Page {
-			return speakers.BGPSpeakerPage{SinglePageBase: pagination.SinglePageBase(r)}
-		}).AllPages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		all, err := speakers.ExtractBGPSpeakers(pages)
-		return keepUnmatched(all, func(s speakers.BGPSpeaker) bool { return s.Name != nameOrID }), err
-	}, func(s speakers.BGPSpeaker) string { return s.ID })
+	id, err := cliLookup(networkapi.FindBGPSpeakerID(ctx, client, nameOrID))
 	return id, explainMissingService(ctx, client, err, extBGP)
 }
 
@@ -238,9 +224,9 @@ func runBGPSpeakerCreate(ctx context.Context, client *gophercloud.ServiceClient,
 	if f.projectID != "" {
 		attrs["project_id"] = f.projectID
 	}
-	s, err := speakers.Create(ctx, client, bgptapBody{key: "bgp_speaker", attrs: attrs}).Extract()
+	s, err := networkapi.CreateBGPSpeaker(ctx, client, bgptapBody{key: "bgp_speaker", attrs: attrs})
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("creating BGP speaker: %w", err), extBGP)
+		return explainMissingService(ctx, client, err, extBGP)
 	}
 	fields, values := bgpSpeakerShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -271,8 +257,8 @@ func runBGPSpeakerDelete(ctx context.Context, client *gophercloud.ServiceClient,
 		if err != nil {
 			return err
 		}
-		if err := speakers.Delete(ctx, client, id).ExtractErr(); err != nil {
-			return explainMissingService(ctx, client, fmt.Errorf("deleting BGP speaker %s: %w", ref, err), extBGP)
+		if err := networkapi.DeleteBGPSpeaker(ctx, client, id); err != nil {
+			return explainMissingService(ctx, client, relabel(err, "deleting BGP speaker %s", ref), extBGP)
 		}
 		_, err = fmt.Fprintf(w, "Deleted BGP speaker %s\n", ref)
 		return err
@@ -310,21 +296,14 @@ func runBGPSpeakerList(ctx context.Context, client *gophercloud.ServiceClient, o
 		err error
 	)
 	if agentID != "" {
-		var pages pagination.Page
-		if pages, err = agents.ListBGPSpeakers(client, agentID).AllPages(ctx); err != nil {
-			return explainMissingService(ctx, client,
-				fmt.Errorf("listing BGP speakers hosted by agent %s: %w", agentID, err), extBGPDRAgentSchedule)
-		}
-		all, err = agents.ExtractBGPSpeakers(pages)
+		all, err = networkapi.ListDRAgentBGPSpeakers(ctx, client, agentID)
+		err = explainMissingService(ctx, client, err, extBGPDRAgentSchedule)
 	} else {
-		var pages pagination.Page
-		if pages, err = speakers.List(client).AllPages(ctx); err != nil {
-			return explainMissingService(ctx, client, fmt.Errorf("listing BGP speakers: %w", err), extBGP)
-		}
-		all, err = speakers.ExtractBGPSpeakers(pages)
+		all, err = networkapi.ListBGPSpeakers(ctx, client)
+		err = explainMissingService(ctx, client, err, extBGP)
 	}
 	if err != nil {
-		return fmt.Errorf("parsing BGP speaker list: %w", err)
+		return err
 	}
 	t := output.Table{Columns: []string{"ID", "Name", "Local AS", "IP Version"}, Rows: make([][]any, 0, len(all))}
 	for _, s := range all {
@@ -377,9 +356,9 @@ func runBGPSpeakerSet(ctx context.Context, client *gophercloud.ServiceClient, o 
 	if err != nil {
 		return err
 	}
-	s, err := speakers.Update(ctx, client, id, bgptapBody{key: "bgp_speaker", attrs: attrs}).Extract()
+	s, err := networkapi.UpdateBGPSpeaker(ctx, client, id, bgptapBody{key: "bgp_speaker", attrs: attrs})
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("updating BGP speaker %s: %w", ref, err), extBGP)
+		return explainMissingService(ctx, client, relabel(err, "updating BGP speaker %s", ref), extBGP)
 	}
 	fields, values := bgpSpeakerShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -409,9 +388,9 @@ func runBGPSpeakerShow(ctx context.Context, client *gophercloud.ServiceClient, o
 	if err != nil {
 		return err
 	}
-	s, err := speakers.Get(ctx, client, id).Extract()
+	s, err := networkapi.GetBGPSpeaker(ctx, client, id)
 	if err != nil {
-		return explainMissingService(ctx, client, fmt.Errorf("getting BGP speaker %s: %w", ref, err), extBGP)
+		return explainMissingService(ctx, client, relabel(err, "getting BGP speaker %s", ref), extBGP)
 	}
 	fields, values := bgpSpeakerShowFields(s)
 	return o.WriteSingle(w, fields, values)
@@ -465,10 +444,9 @@ func runBGPSpeakerAddNetwork(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
-	opts := speakers.AddGatewayNetworkOpts{NetworkID: netID}
-	if _, err := speakers.AddGatewayNetwork(ctx, client, speakerID, opts).Extract(); err != nil {
+	if err := networkapi.AddBGPSpeakerGatewayNetwork(ctx, client, speakerID, netID); err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("adding network %s to BGP speaker %s: %w", netRef, speakerRef, err), extBGP)
+			relabel(err, "adding network %s to BGP speaker %s", netRef, speakerRef), extBGP)
 	}
 	_, err = fmt.Fprintf(w, "Added network %s to BGP speaker %s\n", netRef, speakerRef)
 	return err
@@ -483,10 +461,9 @@ func runBGPSpeakerRemoveNetwork(ctx context.Context, client *gophercloud.Service
 	if err != nil {
 		return err
 	}
-	opts := speakers.RemoveGatewayNetworkOpts{NetworkID: netID}
-	if err := speakers.RemoveGatewayNetwork(ctx, client, speakerID, opts).ExtractErr(); err != nil {
+	if err := networkapi.RemoveBGPSpeakerGatewayNetwork(ctx, client, speakerID, netID); err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("removing network %s from BGP speaker %s: %w", netRef, speakerRef, err), extBGP)
+			relabel(err, "removing network %s from BGP speaker %s", netRef, speakerRef), extBGP)
 	}
 	_, err = fmt.Fprintf(w, "Removed network %s from BGP speaker %s\n", netRef, speakerRef)
 	return err
@@ -501,10 +478,9 @@ func runBGPSpeakerAddPeer(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil {
 		return err
 	}
-	opts := speakers.AddBGPPeerOpts{BGPPeerID: peerID}
-	if _, err := speakers.AddBGPPeer(ctx, client, speakerID, opts).Extract(); err != nil {
+	if err := networkapi.AddBGPSpeakerPeer(ctx, client, speakerID, peerID); err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("adding BGP peer %s to BGP speaker %s: %w", peerRef, speakerRef, err), extBGP)
+			relabel(err, "adding BGP peer %s to BGP speaker %s", peerRef, speakerRef), extBGP)
 	}
 	_, err = fmt.Fprintf(w, "Added BGP peer %s to BGP speaker %s\n", peerRef, speakerRef)
 	return err
@@ -519,10 +495,9 @@ func runBGPSpeakerRemovePeer(ctx context.Context, client *gophercloud.ServiceCli
 	if err != nil {
 		return err
 	}
-	opts := speakers.RemoveBGPPeerOpts{BGPPeerID: peerID}
-	if err := speakers.RemoveBGPPeer(ctx, client, speakerID, opts).ExtractErr(); err != nil {
+	if err := networkapi.RemoveBGPSpeakerPeer(ctx, client, speakerID, peerID); err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("removing BGP peer %s from BGP speaker %s: %w", peerRef, speakerRef, err), extBGP)
+			relabel(err, "removing BGP peer %s from BGP speaker %s", peerRef, speakerRef), extBGP)
 	}
 	_, err = fmt.Fprintf(w, "Removed BGP peer %s from BGP speaker %s\n", peerRef, speakerRef)
 	return err
@@ -557,14 +532,10 @@ func runBGPSpeakerListAdvertisedRoutes(ctx context.Context, client *gophercloud.
 	if err != nil {
 		return err
 	}
-	pages, err := speakers.GetAdvertisedRoutes(client, id).AllPages(ctx)
+	routes, err := networkapi.ListBGPSpeakerAdvertisedRoutes(ctx, client, id)
 	if err != nil {
 		return explainMissingService(ctx, client,
-			fmt.Errorf("listing routes advertised by BGP speaker %s: %w", ref, err), extBGP)
-	}
-	routes, err := speakers.ExtractAdvertisedRoutes(pages)
-	if err != nil {
-		return fmt.Errorf("parsing advertised routes: %w", err)
+			relabelList(err, "listing routes advertised by BGP speaker %s", ref), extBGP)
 	}
 	t := output.Table{Columns: []string{"Destination", "Nexthop"}, Rows: make([][]any, 0, len(routes))}
 	for _, r := range routes {

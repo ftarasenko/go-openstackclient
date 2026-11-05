@@ -2,6 +2,8 @@ package network
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -72,5 +74,22 @@ func TestResolveProjectRef_ShortCircuitsWithoutASession(t *testing.T) {
 				t.Errorf("resolveProjectRef(%q) = %q, want %q", tc.ref, got, tc.want)
 			}
 		})
+	}
+}
+
+// relabelList rewords a listing's failure but leaves a parse failure as
+// pkg worded it.
+func TestRelabelList(t *testing.T) {
+	inner := errors.New("boom")
+	listing := fmt.Errorf("listing L3 agents hosting router %s: %w", "id-1", inner)
+	if err := relabelList(listing, "listing L3 agents hosting router %q", "r1"); err.Error() != `listing L3 agents hosting router "r1": boom` || !errors.Is(err, inner) {
+		t.Errorf("listing = %v", err)
+	}
+	parsing := fmt.Errorf("parsing L3 agent list: %w", inner)
+	if err := relabelList(parsing, "listing L3 agents hosting router %q", "r1"); err != parsing {
+		t.Errorf("parsing = %v", err)
+	}
+	if err := relabelList(nil, "x"); err != nil {
+		t.Errorf("nil = %v", err)
 	}
 }

@@ -6,11 +6,11 @@ import (
 	"io"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 	"github.com/spf13/cobra"
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
 )
 
 // This file holds the agent scheduling verbs: "network agent add/remove
@@ -102,8 +102,8 @@ func newAgentRemoveRouterCommand(a *auth.Options, o *output.Options) *cobra.Comm
 func agentTarget(ctx context.Context, client *gophercloud.ServiceClient, agentID, ref string,
 	resolveID func(context.Context, *gophercloud.ServiceClient, string) (string, error),
 ) (string, error) {
-	if _, err := agents.Get(ctx, client, agentID).Extract(); err != nil {
-		return "", fmt.Errorf("getting network agent %s: %w", agentID, err)
+	if _, err := networkapi.GetAgent(ctx, client, agentID); err != nil {
+		return "", err
 	}
 	return resolveID(ctx, client, ref)
 }
@@ -113,9 +113,8 @@ func runAgentAddNetwork(ctx context.Context, client *gophercloud.ServiceClient, 
 	if err != nil || !dhcp {
 		return err
 	}
-	opts := agents.ScheduleDHCPNetworkOpts{NetworkID: netID}
-	if err := agents.ScheduleDHCPNetwork(ctx, client, agentID, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("adding network %q to DHCP agent %s: %w", ref, agentID, err)
+	if err := networkapi.AddDHCPAgentNetwork(ctx, client, agentID, netID); err != nil {
+		return relabel(err, "adding network %q to DHCP agent %s", ref, agentID)
 	}
 	_, err = fmt.Fprintf(w, "Added network %s to DHCP agent %s\n", ref, agentID)
 	return err
@@ -126,8 +125,8 @@ func runAgentRemoveNetwork(ctx context.Context, client *gophercloud.ServiceClien
 	if err != nil || !dhcp {
 		return err
 	}
-	if err := agents.RemoveDHCPNetwork(ctx, client, agentID, netID).ExtractErr(); err != nil {
-		return fmt.Errorf("removing network %q from DHCP agent %s: %w", ref, agentID, err)
+	if err := networkapi.RemoveDHCPAgentNetwork(ctx, client, agentID, netID); err != nil {
+		return relabel(err, "removing network %q from DHCP agent %s", ref, agentID)
 	}
 	_, err = fmt.Fprintf(w, "Removed network %s from DHCP agent %s\n", ref, agentID)
 	return err
@@ -138,23 +137,11 @@ func runAgentRemoveRouter(ctx context.Context, client *gophercloud.ServiceClient
 	if err != nil || !l3 {
 		return err
 	}
-	if err := agents.RemoveL3Router(ctx, client, agentID, routerID).ExtractErr(); err != nil {
-		return fmt.Errorf("removing router %q from L3 agent %s: %w", ref, agentID, err)
+	if err := networkapi.RemoveL3AgentRouter(ctx, client, agentID, routerID); err != nil {
+		return relabel(err, "removing router %q from L3 agent %s", ref, agentID)
 	}
 	_, err = fmt.Fprintf(w, "Removed router %s from L3 agent %s\n", ref, agentID)
 	return err
-}
-
-// l3RouterScheduleOpts is agents.ScheduleL3RouterOpts plus ha_chassis_priority,
-// which ML2/OVN's L3 scheduler accepts and gophercloud does not model. It is
-// nil (omitted) unless --ha-chassis-priority was given, as upstream.
-type l3RouterScheduleOpts struct {
-	RouterID          string `json:"router_id" required:"true"`
-	HAChassisPriority *int   `json:"ha_chassis_priority,omitempty"`
-}
-
-func (opts l3RouterScheduleOpts) ToAgentScheduleL3RouterMap() (map[string]any, error) {
-	return gophercloud.BuildRequestBody(opts, "")
 }
 
 type agentAddRouterFlags struct {
@@ -197,13 +184,15 @@ func runAgentAddRouter(ctx context.Context, client *gophercloud.ServiceClient, a
 	if err != nil || !f.l3 {
 		return err
 	}
-	opts := l3RouterScheduleOpts{RouterID: routerID}
+	// HAChassisPriority stays nil (omitted) unless --ha-chassis-priority
+	// was given, as upstream.
+	opts := networkapi.L3AgentRouterOpts{RouterID: routerID}
 	if f.prioritySet {
 		p := f.priority
 		opts.HAChassisPriority = &p
 	}
-	if err := agents.ScheduleL3Router(ctx, client, agentID, opts).ExtractErr(); err != nil {
-		return fmt.Errorf("adding router %q to L3 agent %s: %w", ref, agentID, err)
+	if err := networkapi.AddL3AgentRouter(ctx, client, agentID, opts); err != nil {
+		return relabel(err, "adding router %q to L3 agent %s", ref, agentID)
 	}
 	_, err = fmt.Fprintf(w, "Added router %s to L3 agent %s\n", ref, agentID)
 	return err
@@ -239,23 +228,9 @@ func runAgentRouterSet(ctx context.Context, client *gophercloud.ServiceClient, a
 	if err != nil {
 		return err
 	}
-	if err := updateAgentL3Router(ctx, client, agentID, routerID, priority); err != nil {
-		return fmt.Errorf("setting router %q on L3 agent %s: %w", ref, agentID, err)
+	if err := networkapi.SetL3AgentRouterPriority(ctx, client, agentID, routerID, priority); err != nil {
+		return relabel(err, "setting router %q on L3 agent %s", ref, agentID)
 	}
 	_, err = fmt.Fprintf(w, "Set HA chassis priority %d for router %s on L3 agent %s\n", priority, ref, agentID)
-	return err
-}
-
-// updateAgentL3Router is PUT /agents/{agent}/l3-routers/{router} with
-// {"ha_chassis_priority": N}, as openstacksdk's Agent.update_router_in_agent
-// sends it — no envelope. Only the ML2/OVN L3 scheduler implements the PUT;
-// gophercloud has no call for it, so it is raw and isolated here.
-func updateAgentL3Router(ctx context.Context, client *gophercloud.ServiceClient, agentID, routerID string, priority int) error {
-	body := map[string]any{"ha_chassis_priority": priority}
-	resp, err := client.Put(ctx, client.ServiceURL("agents", agentID, "l3-routers", routerID), body, nil,
-		&gophercloud.RequestOpts{OkCodes: []int{200, 201, 202, 204}})
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
 	return err
 }

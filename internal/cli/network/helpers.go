@@ -124,6 +124,17 @@ func relabel(err error, format string, args ...any) error {
 	return fmt.Errorf(format+": %w", append(args, errors.Unwrap(err))...)
 }
 
+// relabelList is relabel for a pkg listing whose parse step can fail on its
+// own: a single-page listing (pagination.SinglePageBase) skips IsEmpty, so
+// AllPages succeeds and the extract after it fails. That error ("parsing
+// …") names no ref, and the CLI always printed it as pkg words it.
+func relabelList(err error, format string, args ...any) error {
+	if err == nil || strings.HasPrefix(err.Error(), "parsing ") {
+		return err
+	}
+	return relabel(err, format, args...)
+}
+
 // cliLookup words an ambiguous match as the CLI always has (pickID).
 func cliLookup(id string, err error) (string, error) {
 	var amb *osresolve.AmbiguousError

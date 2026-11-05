@@ -176,3 +176,44 @@ func ExampleCreateQoSRule() {
 	// Output:
 	// rule-1 minimum_packet_rate 1000 egress
 }
+
+// Which L3 agents host a router, and which one is active.
+func ExampleListRouterL3Agents() {
+	neutronAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v2.0/routers" {
+			_, _ = io.WriteString(w, `{"routers":[{"id":"router-1","name":"edge"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"agents":[`+
+			`{"id":"agent-1","host":"net-1","alive":true,"ha_state":"active"},`+
+			`{"id":"agent-2","host":"net-2","alive":true,"ha_state":"standby"}]}`)
+	}))
+	defer neutronAPI.Close()
+
+	pc := &gophercloud.ProviderClient{
+		EndpointLocator: func(gophercloud.EndpointOpts) (string, error) { return neutronAPI.URL + "/", nil },
+	}
+	nc, err := openstack.FromProvider(pc, gophercloud.EndpointOpts{}, openstack.Options{}).Network()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	ctx := context.Background()
+	routerID, err := network.FindRouterID(ctx, nc, "edge")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	hosts, err := network.ListRouterL3Agents(ctx, nc, routerID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, a := range hosts {
+		fmt.Println(a.Host, a.HAState)
+	}
+	// Output:
+	// net-1 active
+	// net-2 standby
+}

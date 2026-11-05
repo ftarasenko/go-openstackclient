@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -10,52 +11,23 @@ import (
 
 	"github.com/ftarasenko/go-openstackclient/internal/auth"
 	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
 )
 
-// This file is a raw-ServiceClient fallback per AGENTS.md: gophercloud v2.13.0
-// vendors the individual networking/v2/extensions/* subpackages but has no
-// package for the root /v2.0/extensions discovery endpoint itself, so there is
-// no typed List/Get to call. The requests are two plain GETs isolated behind
-// listNetworkExtensions / getNetworkExtension below; replace them with the
-// typed calls if gophercloud ever adds the package. Neutron sends no
-// microversion header, so nothing needs pinning.
+// The discovery calls are pkg/openstack/extension's, which nova, cinder and
+// neutron share. These wrappers hand back gophercloud's error unwrapped, so
+// each caller words it as it always has.
 
-// networkExtension is koc's DTO for one entry of the neutron extension
-// discovery document.
-type networkExtension struct {
-	Alias       string `json:"alias"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Updated     string `json:"updated"`
-	Links       []any  `json:"links"`
-}
+type networkExtension = extension.Extension
 
 func listNetworkExtensions(ctx context.Context, client *gophercloud.ServiceClient) ([]networkExtension, error) {
-	var body struct {
-		Extensions []networkExtension `json:"extensions"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("extensions"), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return nil, err
-	}
-	return body.Extensions, nil
+	all, err := extension.List(ctx, client)
+	return all, errors.Unwrap(err)
 }
 
 func getNetworkExtension(ctx context.Context, client *gophercloud.ServiceClient, alias string) (*networkExtension, error) {
-	var body struct {
-		Extension networkExtension `json:"extension"`
-	}
-	resp, err := client.Get(ctx, client.ServiceURL("extensions", alias), &body, nil)
-	if resp != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	if _, _, err = gophercloud.ParseResponse(resp, err); err != nil {
-		return nil, err
-	}
-	return &body.Extension, nil
+	e, err := extension.Get(ctx, client, alias)
+	return e, errors.Unwrap(err)
 }
 
 // newExtensionCommand builds "network extension ...".
