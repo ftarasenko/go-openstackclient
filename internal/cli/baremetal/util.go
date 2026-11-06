@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/koc/internal/output"
+	bmapi "github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may

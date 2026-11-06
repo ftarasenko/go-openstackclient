@@ -13,8 +13,8 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // These tests execute every leaf of the plugin namespaces (fwaas, bgp,

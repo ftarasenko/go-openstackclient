@@ -3,8 +3,8 @@ package keyvrm
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // NewCommand builds the "koc keyvrm" command tree for the KeyVRM service. KeyVRM

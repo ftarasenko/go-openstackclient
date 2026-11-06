@@ -9,9 +9,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/drivers"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	bmapi "github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // newDriverCommand builds "baremetal driver ...".

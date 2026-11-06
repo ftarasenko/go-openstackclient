@@ -9,8 +9,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/keyvrm"
+	"github.com/ftarasenko/koc/pkg/openstack"
 )
 
 // List the HA-marked host aggregates of one availability zone, a page at a

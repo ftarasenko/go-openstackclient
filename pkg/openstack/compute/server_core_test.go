@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 const otherServerID = "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"

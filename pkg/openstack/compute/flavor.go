@@ -9,8 +9,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // FlavorDescriptionMicroversion is the nova microversion that added a

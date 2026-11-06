@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // runKVDecrypt reads a report produced by "vault kv export" and renders every

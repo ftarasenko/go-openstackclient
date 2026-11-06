@@ -12,11 +12,11 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/batchdelete"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	"github.com/ftarasenko/koc/internal/output"
+	computeapi "github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 // Flag names and semantics below follow upstream python-openstackclient

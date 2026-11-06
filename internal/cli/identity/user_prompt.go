@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/pwprompt"
+	"github.com/ftarasenko/koc/internal/cli/pwprompt"
 )
 
 // flagPasswordPrompt is upstream's `user create|set --password-prompt`: the

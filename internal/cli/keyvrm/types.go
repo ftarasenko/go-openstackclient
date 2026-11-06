@@ -7,7 +7,7 @@
 // the cobra/output CLI layer over it.
 package keyvrm
 
-import keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
+import keyvrmapi "github.com/ftarasenko/koc/pkg/keyvrm"
 
 // AppConfig and the other DTOs are the public request layer's, named here so
 // the CLI layer reads as before.

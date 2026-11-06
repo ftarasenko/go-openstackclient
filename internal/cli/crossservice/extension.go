@@ -10,9 +10,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	extensionapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	extensionapi "github.com/ftarasenko/koc/pkg/openstack/extension"
 )
 
 // `extension list` and `extension show` are upstream's openstack.common

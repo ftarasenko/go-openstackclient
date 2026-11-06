@@ -18,7 +18,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/koc/pkg/openstack/image"
 )
 
 const imageID = "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"

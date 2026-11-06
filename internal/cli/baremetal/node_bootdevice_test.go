@@ -11,7 +11,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 func TestRunNodeBootDeviceSet_RequestBodyAndOutput(t *testing.T) {

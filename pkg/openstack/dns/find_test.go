@@ -13,8 +13,8 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/dns"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // routes serves fixed bodies by request path and counts every request.

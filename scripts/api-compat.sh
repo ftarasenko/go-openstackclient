@@ -16,7 +16,6 @@
 # release), the job only reports.
 set -euo pipefail
 
-module=$(go list -m)
 base=${1:-$(git describe --tags --abbrev=0 --match 'v*' HEAD)}
 
 work=$(mktemp -d)
@@ -30,8 +29,11 @@ trap cleanup EXIT
 quiet() { grep -v '^Ignoring internal package' || true; }
 
 git worktree add --detach --quiet "$work/base" "$base"
-(cd "$work/base" && apidiff -m -w "$work/base.export" "$module" 2>&1 | quiet)
-apidiff -m -w "$work/head.export" "$module" 2>&1 | quiet
+# Each tree under its own module path: v0.42.0 and older are
+# github.com/ftarasenko/go-openstackclient. apidiff -m matches packages by
+# their path inside the module, so a rename alone reports no change.
+(cd "$work/base" && apidiff -m -w "$work/base.export" "$(go list -m)" 2>&1 | quiet)
+apidiff -m -w "$work/head.export" "$(go list -m)" 2>&1 | quiet
 
 echo "Public API changes, $base → HEAD:"
 apidiff -m "$work/base.export" "$work/head.export" 2>&1 | quiet

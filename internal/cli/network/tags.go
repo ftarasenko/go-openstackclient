@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 // Literals repeated within this file.

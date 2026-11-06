@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	bmapi "github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // featureCommand names the koc command behind a gated ironic feature, as the

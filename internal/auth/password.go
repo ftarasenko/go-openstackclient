@@ -10,7 +10,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"golang.org/x/term"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // Two ways to supply the Keystone password other than --os-password /

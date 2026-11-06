@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // strayDirs points HOME, XDG_CONFIG_HOME, XDG_CONFIG_DIRS, the working

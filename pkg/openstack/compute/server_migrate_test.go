@@ -11,7 +11,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 type serverCall func(ctx context.Context, sc *gophercloud.ServiceClient) error

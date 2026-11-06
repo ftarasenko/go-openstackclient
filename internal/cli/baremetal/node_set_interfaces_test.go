@@ -10,7 +10,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 func TestRunNodeSet_HardwareInterfacesAndAutomatedClean(t *testing.T) {

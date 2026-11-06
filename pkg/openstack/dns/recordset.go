@@ -8,8 +8,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/recordsets"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // RecordSet is a recordset whose TTL may be null. Designate sends null when

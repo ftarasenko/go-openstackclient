@@ -139,7 +139,7 @@ const KeyVRMServiceType = "keyvrm"
 // rooted at its v1 API. The endpoint is [Options.KeyVRMEndpoint] when set, and
 // otherwise the catalog entry of type [KeyVRMServiceType]. KeyVRM takes the
 // plain Keystone token and has no microversions. Package
-// github.com/ftarasenko/go-openstackclient/pkg/keyvrm holds its requests.
+// github.com/ftarasenko/koc/pkg/keyvrm holds its requests.
 func (s *Session) KeyVRM() (*gophercloud.ServiceClient, error) {
 	if s.opts.KeyVRMEndpoint != "" {
 		return s.keyvrmClientAt(s.opts.KeyVRMEndpoint), nil

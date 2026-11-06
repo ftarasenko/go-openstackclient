@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/shell"
+	"github.com/ftarasenko/koc/internal/cli/shell"
 )
 
 // runShell runs `koc shell` over piped lines through the real command tree.

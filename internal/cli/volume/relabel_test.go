@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	volumeapi "github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 func TestRelabel(t *testing.T) {

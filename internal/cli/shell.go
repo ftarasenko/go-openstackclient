@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/shell"
+	"github.com/ftarasenko/koc/internal/cli/shell"
 )
 
 // newShellCommand is `koc shell`. The shell package cannot import this one —

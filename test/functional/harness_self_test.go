@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli"
+	"github.com/ftarasenko/koc/internal/cli"
 )
 
 // The harness's own tests. They need no cloud, so they run wherever the

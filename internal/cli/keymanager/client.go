@@ -7,7 +7,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/koc/internal/auth"
 )
 
 // newKeyManagerClient authenticates once and derives the barbican client shared

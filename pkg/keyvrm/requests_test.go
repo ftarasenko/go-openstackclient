@@ -11,7 +11,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
+	"github.com/ftarasenko/koc/pkg/keyvrm"
 )
 
 func keyvrmTestClient(fakeServer th.FakeServer) *gophercloud.ServiceClient {

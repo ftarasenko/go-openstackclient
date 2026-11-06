@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/shell"
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/cli/shell"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // The embedded profile (KOC_PROFILE=embedded) is koc inside a web-console terminal: a short-lived sandbox holding

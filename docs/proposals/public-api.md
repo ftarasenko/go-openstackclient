@@ -457,7 +457,9 @@ and crossservice, network core, placement, then the rest as listed.
    and nothing from it lands here.
 2. **`internal/vault`, `internal/s3` and `internal/kube` stay internal.**
    Importers use each system's official client.
-3. **The module path stays** `github.com/ftarasenko/go-openstackclient`.
+3. **The module path is** `github.com/ftarasenko/koc` (owner, 2026-11-06: the
+   repository was renamed from `go-openstackclient` before the API's first
+   release; v0.42.0 and older carry the old path).
 4. **Versioning:** the version keeps bumping by the existing rules; `v1.0.0`
    is not tied to a downstream release.
 5. **Return gophercloud types**, as built. koc-owned types exist only for koc's

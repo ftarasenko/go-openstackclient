@@ -5,7 +5,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // classifyProvisionState is the decision waitForProvisionState makes on every

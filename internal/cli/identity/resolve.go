@@ -12,7 +12,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/users"
 
-	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
+	identityapi "github.com/ftarasenko/koc/pkg/openstack/identity"
 )
 
 // The keystone API keys grants, assignments and endpoint creation on IDs, but

@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // --password-prompt asks before anything else happens, on stderr, and its

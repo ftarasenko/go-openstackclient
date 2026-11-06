@@ -18,8 +18,8 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // srcFlags holds the --src-vault-* connection overrides for "kv copy". The env

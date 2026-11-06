@@ -9,7 +9,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/resourceproviders"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // Nova 2.88 removed a hypervisor's usage fields (vcpus, memory_mb, local_gb,

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 func testCopyFlags() *copyFlags { return &copyFlags{concurrency: 1} }

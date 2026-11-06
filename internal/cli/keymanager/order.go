@@ -9,9 +9,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/keymanager/v1/orders"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	kmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/keymanager"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	kmapi "github.com/ftarasenko/koc/pkg/openstack/keymanager"
 )
 
 func newOrderCommand(a *auth.Options, o *output.Options) *cobra.Command {

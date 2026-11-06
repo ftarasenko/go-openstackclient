@@ -84,7 +84,7 @@ users wire it up with the command above.)
 
 Each release publishes static binaries for **linux/amd64, linux/arm64,
 darwin/amd64, darwin/arm64, windows/amd64, windows/arm64** with a
-`checksums.txt`, attached to the [GitHub release](https://github.com/ftarasenko/go-openstackclient/releases).
+`checksums.txt`, attached to the [GitHub release](https://github.com/ftarasenko/koc/releases).
 Alongside them: **`.rpm` and `.deb` packages** for the two linux architectures
 (for a local yum/apt mirror on an air-gapped node — these do install the shell
 completions), an **SPDX SBOM bundle** (`koc_<ver>_sboms.tar.gz`, one
@@ -95,16 +95,17 @@ can be re-derived independently from the tag.
 
 ```sh
 cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
-  --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+  --certificate-identity-regexp 'https://github.com/ftarasenko/koc/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum -c checksums.txt
 
 # What built it: repo, workflow, commit, runner.
 gh attestation verify koc_<version>_linux_amd64.tar.gz \
-  --repo ftarasenko/go-openstackclient
+  --repo ftarasenko/koc
 ```
 
-The two identity flags are the part that matters — without them you have checked
+For v0.42.0 and older, released as `ftarasenko/go-openstackclient`, use that
+name in the regexp and in `--repo`. The two identity flags are the part that matters — without them you have checked
 only that *somebody* signed the file. Verify the signature first, then let
 `sha256sum -c` carry that trust to each artifact.
 
@@ -1042,18 +1043,19 @@ complete.
 ## Using koc as a library
 
 The OpenStack layer under the CLI is a public Go API in
-`github.com/ftarasenko/go-openstackclient/pkg/...`: an authenticated session
+`github.com/ftarasenko/koc/pkg/...`: an authenticated session
 with per-region service clients, paging, cross-service name resolution, and
 per-service calls that return gophercloud v2 types. The CLI is built on it, so
-an importer sends the same requests `koc` does.
+an importer sends the same requests `koc` does. The repository was
+`go-openstackclient` until v0.42.0, and those tags keep that module path.
 
 ```go
 import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/image"
 )
 
 s, err := openstack.New(ctx, openstack.Config{
@@ -1089,7 +1091,7 @@ gophercloud types they use; it versions with the repository's tags. Before
 removed only after carrying `// Deprecated:` for at least two minor releases
 and 90 days. A gophercloud major-version bump is a breaking change. The CLI's
 flags and output are a separate contract. Details, examples and the full
-policy: [pkg.go.dev](https://pkg.go.dev/github.com/ftarasenko/go-openstackclient/pkg/openstack).
+policy: [pkg.go.dev](https://pkg.go.dev/github.com/ftarasenko/koc/pkg/openstack).
 
 ## Layout
 

@@ -11,11 +11,11 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/usage"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
-	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	"github.com/ftarasenko/koc/internal/output"
+	computeapi "github.com/ftarasenko/koc/pkg/openstack/compute"
+	identityapi "github.com/ftarasenko/koc/pkg/openstack/identity"
 )
 
 // `usage list` and `usage show` read nova's os-simple-tenant-usage, which

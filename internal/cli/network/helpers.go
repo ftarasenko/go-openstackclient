@@ -11,10 +11,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
-	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
+	osresolve "github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // boolPtr returns a pointer to b, for the *bool option fields used across

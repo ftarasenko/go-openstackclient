@@ -127,7 +127,7 @@ jobs:
       - name: The importer's graph carries no CLI dependency
         working-directory: test/importer
         run: |
-          if go list -deps -test ./... | grep -E '^(github.com/spf13/|golang.org/x/term|github.com/ftarasenko/go-openstackclient/internal/)'; then
+          if go list -deps -test ./... | grep -E '^(github.com/spf13/|golang.org/x/term|github.com/ftarasenko/koc/internal/)'; then
             echo "::error::pkg/ pulls a CLI-only dependency into an importer's build"
             exit 1
           fi

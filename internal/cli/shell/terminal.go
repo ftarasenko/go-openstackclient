@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // console is where the shell reads lines from: an x/term line editor on a

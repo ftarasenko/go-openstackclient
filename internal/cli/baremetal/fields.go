@@ -3,7 +3,7 @@ package baremetal
 import (
 	"slices"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // Ironic resources are rendered from the raw response body rather than from

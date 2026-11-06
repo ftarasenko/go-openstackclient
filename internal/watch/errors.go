@@ -9,7 +9,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 // A watched command fails in two very different ways, and the loop has to tell

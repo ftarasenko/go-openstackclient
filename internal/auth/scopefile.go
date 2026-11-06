@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // A scope file is how an embedding host — a web console running `koc shell`

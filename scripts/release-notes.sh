@@ -8,7 +8,7 @@ set -euo pipefail
 # Usage: scripts/release-notes.sh <new-tag>
 # Requires full git history (fetch-depth: 0 in CI).
 TAG="${1:?tag required}"
-REPO="${GITHUB_REPOSITORY:-ftarasenko/go-openstackclient}"
+REPO="${GITHUB_REPOSITORY:-ftarasenko/koc}"
 
 # End of range: the tag itself if it already exists (re-run / tag-push build),
 # otherwise HEAD (first-time cut, before action-gh-release creates the tag).

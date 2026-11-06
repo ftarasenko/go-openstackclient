@@ -30,7 +30,7 @@
 // # API stability
 //
 // The public API is the exported identifiers in
-// github.com/ftarasenko/go-openstackclient/pkg/... and the gophercloud v2 types
+// github.com/ftarasenko/koc/pkg/... and the gophercloud v2 types
 // they accept and return. Nothing under internal/ is part of it, and neither is
 // the koc command line: its flags and output are a separate, user-facing
 // contract with its own compatibility rules.

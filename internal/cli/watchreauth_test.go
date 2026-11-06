@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/watch"
+	"github.com/ftarasenko/koc/internal/watch"
 )
 
 // A watch runs for as long as an operator leaves it running, and a Keystone

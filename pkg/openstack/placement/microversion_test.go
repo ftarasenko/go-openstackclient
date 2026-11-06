@@ -7,7 +7,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
+	"github.com/ftarasenko/koc/pkg/openstack/placement"
 )
 
 // --- parseMicroversion -------------------------------------------------------

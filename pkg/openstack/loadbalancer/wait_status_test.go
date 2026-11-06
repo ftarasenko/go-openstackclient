@@ -7,7 +7,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
+	"github.com/ftarasenko/koc/pkg/openstack/loadbalancer"
 )
 
 // GetStatus is the mapping the wait loop applies to every Get before handing

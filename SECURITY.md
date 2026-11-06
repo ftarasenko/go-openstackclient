@@ -76,7 +76,7 @@ Verify the signature, then the artifact:
 
 ```sh
 cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
-  --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+  --certificate-identity-regexp 'https://github.com/ftarasenko/koc/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 sha256sum -c checksums.txt
@@ -86,6 +86,11 @@ No key distribution is involved: the signing identity is the release workflow
 itself, asserted by the certificate. The `--certificate-identity-regexp` and
 `--certificate-oidc-issuer` flags are the check that matters — without them you
 have verified only that *somebody* signed the file.
+
+The repository was `ftarasenko/go-openstackclient` until v0.42.0, and the
+certificates of those releases name it. For v0.42.0 and older, put
+`go-openstackclient` in place of `koc` in the identity regexp and in
+`gh attestation verify --repo`.
 
 `checksums.txt.bundle` is a Sigstore bundle carrying the signature, the signing
 certificate and the transparency-log inclusion proof together, so it is the only
@@ -101,7 +106,7 @@ Provenance — what built the artifact, from which commit and workflow:
 
 ```sh
 gh attestation verify koc_<version>_linux_amd64.tar.gz \
-  --repo ftarasenko/go-openstackclient
+  --repo ftarasenko/koc
 ```
 
 The SBOMs ship as one asset, `koc_<version>_sboms.tar.gz`. Unpack it to get one
@@ -138,7 +143,7 @@ cosign trusted-root create --with-default-services --out trusted_root.json
 # Inside the enclave — no Rekor call, no TUF fetch:
 cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
   --trusted-root trusted_root.json \
-  --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+  --certificate-identity-regexp 'https://github.com/ftarasenko/koc/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

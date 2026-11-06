@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/vault/vaulttest"
+	"github.com/ftarasenko/koc/internal/vault/vaulttest"
 )
 
 // koc's Vault path end to end: the real binary against internal/vault/vaulttest,

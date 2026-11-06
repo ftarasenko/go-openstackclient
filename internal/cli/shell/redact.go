@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/koc/internal/auth"
 )
 
 // redacted replaces a secret flag's value wherever a line is recorded: the

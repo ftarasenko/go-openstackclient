@@ -5,7 +5,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/koc/internal/auth"
 )
 
 // newDNSClient authenticates once and derives the designate (dns v2) service

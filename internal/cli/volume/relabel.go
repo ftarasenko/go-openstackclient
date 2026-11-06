@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	volumeapi "github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 // relabel rewords an error from pkg/openstack/volume the way this command has
