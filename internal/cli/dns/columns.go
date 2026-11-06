@@ -7,7 +7,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/tsigkeys"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
 
-	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
+	dnsapi "github.com/ftarasenko/koc/pkg/openstack/dns"
 )
 
 // Every column each resource's write verbs can render, taken from the field

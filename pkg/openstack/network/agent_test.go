@@ -10,7 +10,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgp/speakers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/taas/tapmirrors"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 const (

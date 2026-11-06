@@ -9,9 +9,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
-	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	dnsapi "github.com/ftarasenko/koc/pkg/openstack/dns"
+	osresolve "github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // withTrailingDot returns the DNS-canonical form of a name (designate zone and

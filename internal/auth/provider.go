@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack"
 )
 
 // Client bundles the authenticated provider with the resolved endpoint options

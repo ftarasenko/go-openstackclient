@@ -8,7 +8,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/services"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // Compute services (nova-compute, nova-conductor, …) are keyed by ID — a UUID

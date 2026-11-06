@@ -16,7 +16,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2/pagination"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
 )
 
 // listAll collects every page of pager, wrapping a failure as "listing <what>".

@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/allocations"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
 )
 
 // Allocation is ironic's allocation plus owner (API 1.60), which gophercloud

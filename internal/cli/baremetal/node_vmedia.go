@@ -10,8 +10,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/koc/internal/auth"
+	bmapi "github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // vmediaDevices are ironic's boot_devices.VMEDIA_DEVICES.

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 // listingHandler serves one page of the given <Contents> and the bytes "data"

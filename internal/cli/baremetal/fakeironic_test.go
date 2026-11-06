@@ -10,7 +10,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	bmapi "github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // fakeIronic is a scripted ironic for the raw-request verbs: each route answers

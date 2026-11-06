@@ -10,8 +10,8 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	bmapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/koc/internal/output"
+	bmapi "github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // versionedNode is a node as ironic renders it: fields introduced after the

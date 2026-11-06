@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/services"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/transfers"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	"github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 const trID = "3e2d1c0b-9a8f-4e7d-8c6b-5a4f3e2d1c0b"

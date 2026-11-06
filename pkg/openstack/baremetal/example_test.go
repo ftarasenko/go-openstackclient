@@ -13,8 +13,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/nodes"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/baremetal"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/baremetal"
 )
 
 // session points an openstack.Session at a fake ironic.

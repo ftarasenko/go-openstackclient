@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // A write verb that fails only while rendering says the write went through,

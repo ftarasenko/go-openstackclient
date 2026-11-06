@@ -10,7 +10,8 @@ current when the structure or conventions change.
 the upstream `openstack` client's `noun → verb → flags` syntax and ships as one
 dependency-free binary for air-gapped / FSTEC-regulated deployment.
 
-- **Module**: `github.com/ftarasenko/go-openstackclient` (binary name: `koc`)
+- **Module**: `github.com/ftarasenko/koc` (binary name: `koc`); v0.42.0 and
+  older were `github.com/ftarasenko/go-openstackclient`, the repository's old name
 - **Go**: `go.mod` floors the build at `go 1.26.0` (what `golang.org/x/crypto`
   forces); **develop on 1.27+** — CI builds and formats there, and gofmt differs
   (see "Build / test / lint")
@@ -912,7 +913,7 @@ correct if only one is present.
 
 ## Private data never leaves the org
 
-`github.com/ftarasenko/go-openstackclient` is a **public** repository. Nothing
+`github.com/ftarasenko/koc` is a **public** repository. Nothing
 committed to it — code, comments, docs, tests, fixtures, commit messages — may
 carry private data:
 

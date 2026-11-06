@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 func readFixture(t *testing.T) *vault.Client {

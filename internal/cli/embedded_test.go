@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // fileFlagRe spots a flag (by name or help text) or a command (by usage line)

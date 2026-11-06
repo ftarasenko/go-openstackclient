@@ -6,7 +6,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	loadbalancerapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
+	loadbalancerapi "github.com/ftarasenko/koc/pkg/openstack/loadbalancer"
 )
 
 // Octavia builds and tears down load balancers asynchronously: create returns

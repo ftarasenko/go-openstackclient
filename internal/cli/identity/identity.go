@@ -7,8 +7,8 @@ package identity
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // NewCommand builds every identity noun command and returns them as a slice so

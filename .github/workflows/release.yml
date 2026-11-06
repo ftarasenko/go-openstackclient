@@ -126,7 +126,7 @@ jobs:
       # checksums.txt: that proves the bytes were released by this workflow, this
       # proves what produced them. Verify with:
       #   gh attestation verify koc_<v>_linux_amd64.tar.gz \
-      #     --repo ftarasenko/go-openstackclient
+      #     --repo ftarasenko/koc
       # Pinned to a full commit SHA per repo convention. On v4, which upstream
       # has reduced to a thin wrapper over actions/attest — `subject-path` still
       # behaves as it did on v2, which is the only input used here. New work

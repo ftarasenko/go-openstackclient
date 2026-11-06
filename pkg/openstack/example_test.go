@@ -8,7 +8,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	gcopenstack "github.com/gophercloud/gophercloud/v2/openstack"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack"
 )
 
 // New authenticates from explicit credentials — here an application

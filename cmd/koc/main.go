@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli"
+	"github.com/ftarasenko/koc/internal/cli"
 )
 
 // version is overridden at build time via

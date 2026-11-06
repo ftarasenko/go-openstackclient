@@ -7,7 +7,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/koc/internal/auth"
 )
 
 // newKeyVRMClient authenticates once and derives the KeyVRM service client

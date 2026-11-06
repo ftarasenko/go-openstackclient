@@ -7,9 +7,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	identityapi "github.com/ftarasenko/koc/pkg/openstack/identity"
 )
 
 // token issue introspects the token minted during authentication. There is no

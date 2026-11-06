@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/vault/vaulttest"
+	"github.com/ftarasenko/koc/internal/vault/vaulttest"
 )
 
 // TestContract pins the fake to the OpenBao 2.7.0 probe, row by row: the status

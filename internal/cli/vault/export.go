@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // The JUnit document mirrors the report vault-helper.py's --junit-save produced,

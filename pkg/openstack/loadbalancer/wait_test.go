@@ -13,7 +13,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
+	"github.com/ftarasenko/koc/pkg/openstack/loadbalancer"
 )
 
 // sequenced answers successive GETs of the load balancer from seq: a

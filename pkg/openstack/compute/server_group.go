@@ -7,7 +7,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servergroups"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
 )
 
 // ServerGroupPolicyMicroversion is the microversion that replaced a group's

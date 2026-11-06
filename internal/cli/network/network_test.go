@@ -11,7 +11,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // changedFlags is a minimal flagSet stand-in for the set/unset seams: a flag

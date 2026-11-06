@@ -6,7 +6,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/limits"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack"
 )
 
 // GetLimits returns nova's absolute limits and usage for the token's

@@ -11,8 +11,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/loadbalancer"
 )
 
 // Create a load balancer by its VIP subnet and wait until octavia has built

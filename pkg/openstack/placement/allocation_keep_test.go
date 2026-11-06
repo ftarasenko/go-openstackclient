@@ -6,7 +6,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2/openstack/placement/v1/allocations"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
+	"github.com/ftarasenko/koc/pkg/openstack/placement"
 )
 
 // keepAllocations is the survivor computation behind "allocation unset".

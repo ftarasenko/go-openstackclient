@@ -18,9 +18,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // NewCommand builds the "quota" command group.

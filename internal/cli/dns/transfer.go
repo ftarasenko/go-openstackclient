@@ -10,10 +10,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/transfer/request"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/batchdelete"
+	"github.com/ftarasenko/koc/internal/output"
+	dnsapi "github.com/ftarasenko/koc/pkg/openstack/dns"
 )
 
 // newZoneTransferCommand builds "zone transfer ...", designate's two-step handover

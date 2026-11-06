@@ -11,7 +11,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/ratelimit"
+	"github.com/ftarasenko/koc/pkg/openstack/ratelimit"
 )
 
 func fake(t *testing.T, status int, body string, query *string) *gophercloud.ServiceClient {

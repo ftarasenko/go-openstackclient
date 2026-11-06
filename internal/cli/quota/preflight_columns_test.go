@@ -12,7 +12,7 @@ import (
 	networkquotas "github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/quotas"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // preflightMock counts every request and answers none, so a test can assert

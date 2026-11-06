@@ -3,7 +3,7 @@ package server
 import (
 	"strings"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // serverCreateColumns is every column `server create` can render: what

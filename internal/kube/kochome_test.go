@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 func TestResolveKubeconfigPath_KOCHome(t *testing.T) {

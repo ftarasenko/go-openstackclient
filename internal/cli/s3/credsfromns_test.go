@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 // writeKubeconfig points a kubeconfig at the mock apiserver. It mirrors the

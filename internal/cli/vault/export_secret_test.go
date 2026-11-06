@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // exportSecret is the per-secret half of "vault kv export". Its point is that an

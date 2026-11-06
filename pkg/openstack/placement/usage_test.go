@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
+	"github.com/ftarasenko/koc/pkg/openstack/placement"
 )
 
 // Below 1.38 each value is a class's usage.

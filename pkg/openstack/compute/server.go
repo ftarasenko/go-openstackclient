@@ -10,7 +10,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
 )
 
 // ServerListOpts adds to servers.ListOpts the filters it has no fields for.

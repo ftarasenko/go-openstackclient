@@ -9,9 +9,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	volumeapi "github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 // newVolumeExtendCommand builds "volume extend <volume> <size>", the cinder CLI's

@@ -16,7 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli"
+	"github.com/ftarasenko/koc/internal/cli"
 )
 
 // Every leaf command has a functional test. AGENTS.md states the rule; this

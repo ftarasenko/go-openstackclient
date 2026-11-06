@@ -64,7 +64,7 @@ linters:
               desc: pkg/ is the public API; flags belong in internal/cli and internal/auth
             - pkg: golang.org/x/term
               desc: pkg/ is the public API; terminals belong in the CLI
-            - pkg: github.com/ftarasenko/go-openstackclient/internal
+            - pkg: github.com/ftarasenko/koc/internal
               desc: pkg/ may not depend on internal/ — move the helper into pkg/
     # The other half of the pkg/ contract: a library takes its inputs as
     # arguments, so it reads no environment variable, touches no standard
@@ -168,7 +168,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/ftarasenko/go-openstackclient
+        - github.com/ftarasenko/koc
   exclusions:
     paths:
       - vendor

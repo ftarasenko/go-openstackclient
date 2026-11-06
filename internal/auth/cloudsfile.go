@@ -12,7 +12,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // clouds.yaml discovery, following openstacksdk's loader

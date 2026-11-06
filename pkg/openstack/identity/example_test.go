@@ -11,8 +11,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/identity"
 )
 
 // List a domain's projects, then add a user to a group.

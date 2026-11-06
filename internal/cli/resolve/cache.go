@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // A resolver turns a name into an ID with an API call, and every command that

@@ -7,7 +7,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // serverColumn is one optional "server list" column: the header and how to read

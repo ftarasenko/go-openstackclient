@@ -3,8 +3,8 @@ package s3cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // s3Long documents the credential sources on the group itself. The connection

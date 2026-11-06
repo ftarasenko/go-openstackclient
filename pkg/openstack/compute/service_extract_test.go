@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 // fakeServicePage is a minimal pagination.Page that is deliberately not a

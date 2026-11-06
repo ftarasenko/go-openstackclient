@@ -26,10 +26,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/services"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/batchdelete"
+	"github.com/ftarasenko/koc/internal/output"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 // newVPNCommands builds the "vpn" noun. Its multi-word children are nested

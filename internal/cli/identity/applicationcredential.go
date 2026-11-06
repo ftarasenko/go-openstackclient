@@ -14,9 +14,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	identityapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	identityapi "github.com/ftarasenko/koc/pkg/openstack/identity"
 )
 
 // Flag names follow upstream OSC (`openstack application credential ...`).

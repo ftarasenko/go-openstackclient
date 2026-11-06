@@ -8,9 +8,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 // This file holds the agent scheduling verbs: "network agent add/remove

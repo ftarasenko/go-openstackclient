@@ -8,7 +8,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 const migrationID = "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d"

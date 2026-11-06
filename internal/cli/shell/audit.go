@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // An embedding host records every line a console user runs as an audit event.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // --delimiter turns a flat keyspace into one directory level: the subtrees come

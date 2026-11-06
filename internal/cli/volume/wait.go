@@ -8,7 +8,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	volumeapi "github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 // volumePollTimeout bounds a --wait. A retype that has to migrate copies the

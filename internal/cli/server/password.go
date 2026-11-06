@@ -19,9 +19,9 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	computeapi "github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 // "koc server password show" — the read side of nova's os-server-password.

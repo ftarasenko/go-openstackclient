@@ -12,7 +12,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/bgpvpns"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // Synthetic IDs: every reference in these tests is a UUID so no resolver ever

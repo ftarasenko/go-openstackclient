@@ -11,8 +11,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/fwaas_v2/rules"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 // Read a project's network quotas and the defaults neutron would apply.

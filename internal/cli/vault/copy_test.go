@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // clearSrcEnv unsets the VAULT_SRC_* variables so a developer's shell (or a CI

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/shell"
+	"github.com/ftarasenko/koc/internal/cli/shell"
 )
 
 // regionCloud is a mock Keystone whose catalog has one nova per region

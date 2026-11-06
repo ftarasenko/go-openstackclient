@@ -11,8 +11,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/image"
 )
 
 // sessionFor is a Session whose catalog points every service at url — what

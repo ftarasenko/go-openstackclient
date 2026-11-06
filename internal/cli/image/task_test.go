@@ -10,7 +10,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 const taskID = "88888888-8888-8888-8888-888888888888"

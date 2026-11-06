@@ -11,7 +11,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/extension"
+	"github.com/ftarasenko/koc/pkg/openstack/extension"
 )
 
 // fake answers "GET /path" from routes, 404 otherwise.

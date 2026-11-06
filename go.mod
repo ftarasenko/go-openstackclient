@@ -1,4 +1,4 @@
-module github.com/ftarasenko/go-openstackclient
+module github.com/ftarasenko/koc
 
 go 1.26.0
 

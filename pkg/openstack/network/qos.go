@@ -9,7 +9,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/qos/ruletypes"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack"
 )
 
 // FindQoSPolicyID resolves a QoS policy name or ID to an ID.

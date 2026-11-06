@@ -16,7 +16,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/placement"
+	"github.com/ftarasenko/koc/pkg/openstack/placement"
 )
 
 const (

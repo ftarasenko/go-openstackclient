@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
-	"github.com/ftarasenko/go-openstackclient/internal/vault/vaulttest"
+	"github.com/ftarasenko/koc/internal/vault"
+	"github.com/ftarasenko/koc/internal/vault/vaulttest"
 )
 
 // koc's own Vault client against the fake: what each probed behaviour turns

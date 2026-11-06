@@ -10,10 +10,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/batchdelete"
+	"github.com/ftarasenko/koc/internal/output"
+	imageapi "github.com/ftarasenko/koc/pkg/openstack/image"
 )
 
 // imageColumns are the fields of a single image.

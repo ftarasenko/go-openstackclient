@@ -7,8 +7,8 @@ import (
 	"io"
 	"sort"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // runKVList lists the immediate children of a KV v2 path. Folder entries keep

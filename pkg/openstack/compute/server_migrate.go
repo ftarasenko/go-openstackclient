@@ -9,7 +9,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
 )
 
 // ServerAction posts a server action body as given, at c's microversion, and

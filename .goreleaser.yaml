@@ -90,7 +90,7 @@ nfpms:
     formats: [rpm, deb]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: ftarasenko
-    homepage: "https://github.com/ftarasenko/go-openstackclient"
+    homepage: "https://github.com/ftarasenko/koc"
     maintainer: "ftarasenko <ftarasenko@users.noreply.github.com>"
     description: "Single-binary OpenStack CLI for KeyStack (gophercloud v2)"
     license: "Apache-2.0"
@@ -151,7 +151,7 @@ sboms:
 # Verify (the bundle carries signature, certificate and transparency-log
 # inclusion proof, so it is the only extra file needed; no key distribution):
 #   cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
-#     --certificate-identity-regexp 'https://github.com/ftarasenko/go-openstackclient/.*' \
+#     --certificate-identity-regexp 'https://github.com/ftarasenko/koc/.*' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #   sha256sum -c checksums.txt
 #
@@ -193,7 +193,7 @@ homebrew_casks:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/ftarasenko/go-openstackclient"
+    homepage: "https://github.com/ftarasenko/koc"
     description: "Single-binary OpenStack CLI for KeyStack (gophercloud v2)"
     license: "Apache-2.0"
     commit_author:

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 func testSyncFlags() *syncFlags {

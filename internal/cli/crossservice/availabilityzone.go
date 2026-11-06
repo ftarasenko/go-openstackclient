@@ -11,11 +11,11 @@ import (
 	computeaz "github.com/gophercloud/gophercloud/v2/openstack/compute/v2/availabilityzones"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
-	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	computeapi "github.com/ftarasenko/koc/pkg/openstack/compute"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
+	volumeapi "github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 // `availability zone list` merges three separate endpoints — nova's

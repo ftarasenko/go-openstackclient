@@ -16,7 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kochome"
 )
 
 // kubeconfig is the minimal subset of a kubeconfig document koc needs to reach

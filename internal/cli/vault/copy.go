@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // copyFlags are the flags of "vault kv copy" that are independent of the source

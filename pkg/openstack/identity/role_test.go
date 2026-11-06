@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/applicationcredentials"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/roles"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/identity"
+	"github.com/ftarasenko/koc/pkg/openstack/identity"
 )
 
 func TestListRoleAssignments_KeepsWhatGophercloudDrops(t *testing.T) {

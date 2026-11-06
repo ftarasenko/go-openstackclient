@@ -12,7 +12,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // extensionServer serves one service's GET /extensions and counts the calls.

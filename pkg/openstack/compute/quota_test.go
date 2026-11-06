@@ -11,8 +11,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/quotasets"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/usage"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 // novaRoutes is a fake nova that answers "METHOD /path" from routes, 404

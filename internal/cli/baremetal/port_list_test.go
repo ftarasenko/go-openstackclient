@@ -9,7 +9,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // boundPort is a port as ironic 1.101 returns it once a VIF is bound.

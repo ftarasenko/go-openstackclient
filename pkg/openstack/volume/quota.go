@@ -8,7 +8,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/quotasets"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack"
 )
 
 // QuotaSet is a cinder quota set: gophercloud's typed quotas, plus the ones

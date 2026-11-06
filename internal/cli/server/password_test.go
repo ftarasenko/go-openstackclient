@@ -18,7 +18,7 @@ import (
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 const passwordServerID = "5cb3a2c1-1111-2222-3333-444455556666"

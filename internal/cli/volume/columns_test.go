@@ -10,7 +10,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // An unknown -c fails every write verb before cinder sees a request: once it

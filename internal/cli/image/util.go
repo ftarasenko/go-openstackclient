@@ -8,8 +8,8 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	imageapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/image"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	imageapi "github.com/ftarasenko/koc/pkg/openstack/image"
 )
 
 // parseKeyVal splits a "key=value" string into its two halves. The value may

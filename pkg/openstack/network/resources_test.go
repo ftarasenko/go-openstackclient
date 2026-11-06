@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 const (

@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/watch"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/watch"
 )
 
 // watchAnnotation marks a command the watch layer has wrapped. It is what lets

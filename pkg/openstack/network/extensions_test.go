@@ -18,8 +18,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/subnetpools"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/trunks"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 const (

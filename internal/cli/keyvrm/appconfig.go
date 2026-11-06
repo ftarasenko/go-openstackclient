@@ -7,9 +7,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	keyvrmapi "github.com/ftarasenko/go-openstackclient/pkg/keyvrm"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	keyvrmapi "github.com/ftarasenko/koc/pkg/keyvrm"
 )
 
 func newAppConfigCommand(a *auth.Options, o *output.Options) *cobra.Command {

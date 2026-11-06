@@ -8,7 +8,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/aggregates"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // Host aggregates are keyed by nova's integer ID.

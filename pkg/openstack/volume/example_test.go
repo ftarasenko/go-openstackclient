@@ -13,8 +13,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/qos"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	"github.com/ftarasenko/koc/pkg/openstack"
+	"github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 // Create a volume and wait until cinder has finished building it.

@@ -10,10 +10,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
-	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	dnsapi "github.com/ftarasenko/koc/pkg/openstack/dns"
+	osresolve "github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // The designate calls, typed and raw, live in pkg/openstack/dns; this package

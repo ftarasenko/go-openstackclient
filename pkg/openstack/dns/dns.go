@@ -11,7 +11,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // Scope is designate's per-request admin context.

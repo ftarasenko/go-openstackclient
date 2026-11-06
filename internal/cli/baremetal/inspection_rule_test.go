@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 const testRuleUUID = "77777777-0000-0000-0000-000000000001"

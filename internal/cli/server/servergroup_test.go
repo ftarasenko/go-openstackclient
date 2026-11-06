@@ -10,7 +10,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 const serverGroupID = "66666666-6666-6666-6666-666666666666"

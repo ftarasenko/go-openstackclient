@@ -13,8 +13,8 @@ import (
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // quotaSession builds a session whose three service factories point at the given

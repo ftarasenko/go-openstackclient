@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // exportFixture serves a subtree with one ordinary secret, one ssl_certificates

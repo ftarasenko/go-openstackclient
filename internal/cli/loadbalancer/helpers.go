@@ -9,10 +9,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	lbapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/loadbalancer"
-	osresolve "github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	lbapi "github.com/ftarasenko/koc/pkg/openstack/loadbalancer"
+	osresolve "github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // changedSet records which flags an invocation actually gave, so the sparse-update

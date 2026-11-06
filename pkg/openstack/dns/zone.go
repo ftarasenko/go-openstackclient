@@ -7,8 +7,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/paging"
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/resolve"
+	"github.com/ftarasenko/koc/pkg/openstack/paging"
+	"github.com/ftarasenko/koc/pkg/openstack/resolve"
 )
 
 // ZoneDetail is a zone plus the attributes zones.Zone does not model.

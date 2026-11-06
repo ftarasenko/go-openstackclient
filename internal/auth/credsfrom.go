@@ -19,9 +19,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ftarasenko/go-openstackclient/internal/kochome"
-	"github.com/ftarasenko/go-openstackclient/internal/kube"
-	"github.com/ftarasenko/go-openstackclient/internal/vault"
+	"github.com/ftarasenko/koc/internal/kochome"
+	"github.com/ftarasenko/koc/internal/kube"
+	"github.com/ftarasenko/koc/internal/vault"
 )
 
 // LCM deployment conventions for Vault connection auto-discovery: the operator's

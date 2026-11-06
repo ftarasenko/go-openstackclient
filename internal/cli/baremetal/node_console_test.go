@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 func TestNodeConsoleAndSecureBoot(t *testing.T) {

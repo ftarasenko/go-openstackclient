@@ -8,7 +8,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
+	"github.com/ftarasenko/koc/internal/auth"
 )
 
 // imageNamer maps image IDs to names. A nil imageNamer, or an ID missing from

@@ -16,7 +16,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/remoteconsoles"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 const (

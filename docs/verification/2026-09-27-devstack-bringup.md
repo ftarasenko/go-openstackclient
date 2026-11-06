@@ -86,7 +86,7 @@ echo "stack ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/stack
 sudo -u stack -i
 
 # 2. The branch under test.
-git clone -b claude/quirky-carson-1o8rgn https://github.com/ftarasenko/go-openstackclient.git koc
+git clone -b claude/quirky-carson-1o8rgn https://github.com/ftarasenko/koc.git koc
 cd koc
 
 # 3. koc itself, for smoke.sh's koc checks. Either build it here (Go 1.27):

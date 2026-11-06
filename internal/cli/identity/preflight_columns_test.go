@@ -9,7 +9,7 @@ import (
 
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // preflightMock counts every request and answers none, so a test can assert

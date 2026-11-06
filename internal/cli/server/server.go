@@ -24,13 +24,13 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/allprojects"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/pwprompt"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/resolve"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/allprojects"
+	"github.com/ftarasenko/koc/internal/cli/batchdelete"
+	"github.com/ftarasenko/koc/internal/cli/pwprompt"
+	"github.com/ftarasenko/koc/internal/cli/resolve"
+	"github.com/ftarasenko/koc/internal/output"
+	computeapi "github.com/ftarasenko/koc/pkg/openstack/compute"
 )
 
 // NewCommand builds just the "server" command group. It exists so the root

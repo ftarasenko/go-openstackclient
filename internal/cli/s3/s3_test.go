@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/output"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 // newMockClient builds a real client against a mock endpoint, so the runXxx

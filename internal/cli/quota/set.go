@@ -13,11 +13,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	computeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/compute"
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
-	volumeapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
+	computeapi "github.com/ftarasenko/koc/pkg/openstack/compute"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
+	volumeapi "github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 // quotaSetFlags is one flat flag surface across all three services, matching

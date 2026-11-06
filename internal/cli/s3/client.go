@@ -24,9 +24,9 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/kube"
-	"github.com/ftarasenko/go-openstackclient/internal/s3"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/kube"
+	"github.com/ftarasenko/koc/internal/s3"
 )
 
 // defaultCredsSecret is the Secret --s3-creds-from-ns reads when only a

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ftarasenko/go-openstackclient/pkg/openstack/volume"
+	"github.com/ftarasenko/koc/pkg/openstack/volume"
 )
 
 const typeID = "5f4e3d2c-1b0a-4f9e-8d7c-6b5a4f3e2d1c"

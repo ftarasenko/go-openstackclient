@@ -8,8 +8,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	networkapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/network"
+	"github.com/ftarasenko/koc/internal/output"
+	networkapi "github.com/ftarasenko/koc/pkg/openstack/network"
 )
 
 // Flag and attribute names used only by the network noun's verbs. They are

@@ -11,10 +11,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/dns/v2/zones"
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/cli/batchdelete"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
-	dnsapi "github.com/ftarasenko/go-openstackclient/pkg/openstack/dns"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/cli/batchdelete"
+	"github.com/ftarasenko/koc/internal/output"
+	dnsapi "github.com/ftarasenko/koc/pkg/openstack/dns"
 )
 
 // newZoneCommand builds "dns zone ..." (exposed as the top-level "zone" noun).

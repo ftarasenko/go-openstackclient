@@ -6,8 +6,8 @@ package dns
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/ftarasenko/go-openstackclient/internal/auth"
-	"github.com/ftarasenko/go-openstackclient/internal/output"
+	"github.com/ftarasenko/koc/internal/auth"
+	"github.com/ftarasenko/koc/internal/output"
 )
 
 // NewCommand builds the DNS (designate v2) command surface. Upstream splits the
